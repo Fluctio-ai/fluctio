@@ -41,6 +41,7 @@ import {
   type ProjectEntry,
   type StatusResponse,
 } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 // Extract agent ID from pathname like /agents/default/chat/. The second
 // capture is an explicit allow-list of sub-routes so the bare /agents/
@@ -68,33 +69,23 @@ function extractAgentId(pathname: string): string | null {
 // and a slim User group with API Keys. Settings is a click-only item —
 // its onClick is attached at render time so it can call into component
 // state.
-const OVERVIEW_ITEM: NavItem = {
-  title: "Overview",
-  url: "/overview/",
-  icon: LayoutDashboardIcon,
+const AGENT_NAV = (
+  agentId: string,
+  pathname: string,
+  hasSession: boolean,
+  t: (k: string) => string,
+): NavItem[] => {
+  const base = `/agents/${agentId}/chat`;
+  const onNewChatRoute = pathname === base || pathname === `${base}/`;
+  return [
+    {
+      title: t("nav.newChat"),
+      url: `${base}/`,
+      icon: PlusIcon,
+      active: onNewChatRoute && !hasSession,
+    },
+  ];
 };
-
-const USER_AGENT_GROUP: NavItem[] = [
-  { title: "Agents", url: "/agents/", icon: BotIcon },
-  { title: "Models", url: "/models/", icon: BrainIcon },
-];
-
-const ADMIN_AGENT_GROUP: NavItem[] = [
-  { title: "Agents", url: "/agents/", icon: BotIcon },
-  { title: "Models", url: "/models/", icon: BrainIcon },
-  { title: "Skills", url: "/skills/", icon: SparklesIcon },
-  { title: "Tools", url: "/tools/", icon: WrenchIcon },
-];
-
-const USER_USER_GROUP: NavItem[] = [
-  { title: "API Keys", url: "/apikeys/", icon: KeyRoundIcon },
-];
-
-const ADMIN_USER_GROUP: NavItem[] = [
-  { title: "Chats", url: "/admin/chats/", icon: MessagesSquareIcon },
-  { title: "Token Usage", url: "/admin/usage/", icon: CoinsIcon },
-  { title: "API Keys", url: "/apikeys/", icon: KeyRoundIcon },
-];
 
 // "New chat" is active iff we're parked on the bare /chat/ page with
 // no session open. A session can be encoded two ways:
@@ -107,23 +98,6 @@ const ADMIN_USER_GROUP: NavItem[] = [
 // Configuration tabs (Customize / Models / Skills / Channels /
 // Scheduler) live in the footer Settings dialog — for owners only —
 // so the sidebar nav itself just exposes "New chat" regardless of role.
-const AGENT_NAV = (
-  agentId: string,
-  pathname: string,
-  hasSession: boolean,
-): NavItem[] => {
-  const base = `/agents/${agentId}/chat`;
-  const onNewChatRoute = pathname === base || pathname === `${base}/`;
-  return [
-    {
-      title: "New chat",
-      url: `${base}/`,
-      icon: PlusIcon,
-      active: onNewChatRoute && !hasSession,
-    },
-  ];
-};
-
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -258,6 +232,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   }, [activeAgentId]);
 
   const isAdmin = status?.isAdmin ?? false;
+  const t = useT();
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
@@ -270,19 +245,35 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent>
         {activeAgentId ? (
           <NavMain
-            label="Agent"
-            items={AGENT_NAV(activeAgentId, pathname, hasOpenSession)}
+            label={t("nav.group.agent")}
+            items={AGENT_NAV(activeAgentId, pathname, hasOpenSession, t)}
           />
         ) : (
           <>
-            <NavMain items={[OVERVIEW_ITEM]} />
+            <NavMain items={[{ title: t("nav.overview"), url: "/overview/", icon: LayoutDashboardIcon }]} />
             <NavMain
-              label="Agent"
-              items={isAdmin ? ADMIN_AGENT_GROUP : USER_AGENT_GROUP}
+              label={t("nav.group.agent")}
+              items={(isAdmin
+                ? [
+                    { title: t("nav.agents"), url: "/agents/", icon: BotIcon },
+                    { title: t("nav.models"), url: "/models/", icon: BrainIcon },
+                    { title: t("nav.skills"), url: "/skills/", icon: SparklesIcon },
+                    { title: t("nav.tools"), url: "/tools/", icon: WrenchIcon },
+                  ]
+                : [
+                    { title: t("nav.agents"), url: "/agents/", icon: BotIcon },
+                    { title: t("nav.models"), url: "/models/", icon: BrainIcon },
+                  ]) as NavItem[]}
             />
             <NavMain
-              label="User"
-              items={isAdmin ? ADMIN_USER_GROUP : USER_USER_GROUP}
+              label={t("nav.group.user")}
+              items={(isAdmin
+                ? [
+                    { title: t("nav.chats"), url: "/admin/chats/", icon: MessagesSquareIcon },
+                    { title: t("nav.tokenUsage"), url: "/admin/usage/", icon: CoinsIcon },
+                    { title: t("nav.apiKeys"), url: "/apikeys/", icon: KeyRoundIcon },
+                  ]
+                : [{ title: t("nav.apiKeys"), url: "/apikeys/", icon: KeyRoundIcon }]) as NavItem[]}
             />
           </>
         )}

@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthGuard } from "@/components/auth-guard";
 import { AppShell } from "@/components/app-shell";
+import { I18nProvider } from "@/lib/i18n";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 
@@ -52,7 +53,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeProvider><AuthGuard><AppShell>{children}</AppShell></AuthGuard></ThemeProvider>
+        <ThemeProvider><I18nProvider><AuthGuard><AppShell>{children}</AppShell></AuthGuard></I18nProvider></ThemeProvider>
       </body>
     </html>
   );
