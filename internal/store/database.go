@@ -13,8 +13,9 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq"  // PostgreSQL driver
-	_ "modernc.org/sqlite" // SQLite driver (pure Go)
+	_ "github.com/lib/pq"      // PostgreSQL driver
+	_ "modernc.org/sqlite"     // SQLite driver (pure Go)
+	_ "modernc.org/sqlite/vec" // sqlite-vec vector search (auto-registers vec_* SQL funcs)
 )
 
 // DBStore implements Store using a SQL database (PostgreSQL or SQLite).
@@ -162,6 +163,18 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	}
 	if err := d.migrateConfigsDropLegacyColumns(ctx); err != nil {
 		return fmt.Errorf("migrate configs drop legacy columns: %w", err)
+	}
+	if err := d.migrateConversationSummaries(ctx); err != nil {
+		return fmt.Errorf("migrate conversation_summaries: %w", err)
+	}
+	if err := d.migrateConversationSummariesUniqueIndex(ctx); err != nil {
+		return fmt.Errorf("migrate conversation_summaries unique index: %w", err)
+	}
+	if err := d.migrateConversationSummariesScoring(ctx); err != nil {
+		return fmt.Errorf("migrate conversation_summaries scoring columns: %w", err)
+	}
+	if err := d.migrateConversationSummariesSegments(ctx); err != nil {
+		return fmt.Errorf("migrate conversation_summaries segments column: %w", err)
 	}
 	return nil
 }
@@ -4290,6 +4303,252 @@ func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID,
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// migrateConversationSummaries creates the tables that back the
+// cross-session memory recall system:
+//
+//	conversation_summaries       — main table (1 row per extracted summary)
+//	conversation_summaries_vec   — vec0 virtual table for vector recall (1024-dim, SQLite)
+//	conversation_summaries_meta  — key-value metadata (model switching detection)
+//
+// SQLite path uses sqlite-vec (vec0). Postgres path uses pgvector —
+// pgvector must be installed (CREATE EXTENSION vector) before this runs.
+// The vec0 table is skipped on Postgres; the embedding column lives
+// directly on conversation_summaries with an HNSW index.
+func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
+	hasTable, err := d.tableExists(ctx, "conversation_summaries")
+	if err != nil {
+		return fmt.Errorf("check conversation_summaries existence: %w", err)
+	}
+	if hasTable {
+		return nil // idempotent
+	}
+
+	if d.dialect == "postgres" {
+		pgStmts := []string{
+			`CREATE TABLE IF NOT EXISTS conversation_summaries (
+				id SERIAL PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				agent_id TEXT NOT NULL,
+				session_key TEXT NOT NULL,
+				chatter_user_id TEXT NOT NULL DEFAULT '',
+				summary TEXT NOT NULL,
+				keywords TEXT NOT NULL DEFAULT '[]',
+				seq_start INTEGER NOT NULL,
+				seq_end INTEGER NOT NULL,
+				embedding_model TEXT,
+				embedding vector(1024),
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_conv_summ_chatter
+				ON conversation_summaries(chatter_user_id, agent_id, created_at DESC)`,
+			`CREATE INDEX IF NOT EXISTS idx_conv_summ_session
+				ON conversation_summaries(agent_id, session_key)`,
+			`CREATE TABLE IF NOT EXISTS conversation_summaries_meta (
+				key TEXT PRIMARY KEY,
+				value TEXT NOT NULL
+			)`,
+		}
+		for _, s := range pgStmts {
+			if _, err := d.db.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("migrate conversation_summaries (pg): %w (stmt=%q)", err, s)
+			}
+		}
+		// HNSW index on embedding — wrapped in a check because pgvector
+		// extension or the index may already exist.
+		_, _ = d.db.ExecContext(ctx,
+			`CREATE INDEX IF NOT EXISTS idx_conv_summ_emb
+				ON conversation_summaries USING hnsw (embedding vector_cosine_ops)`)
+		return nil
+	}
+
+	// SQLite path
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS conversation_summaries (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			session_key TEXT NOT NULL,
+			chatter_user_id TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL,
+			keywords TEXT NOT NULL DEFAULT '[]',
+			seq_start INTEGER NOT NULL,
+			seq_end INTEGER NOT NULL,
+			embedding_model TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_conv_summ_chatter
+			ON conversation_summaries(chatter_user_id, agent_id, created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_conv_summ_session
+			ON conversation_summaries(agent_id, session_key)`,
+
+		// No FTS5 table — keyword recall uses LIKE on the main table
+		// (unicode61 can't match CJK substrings, so an FTS index added no
+		// value and its delete trigger was buggy).
+
+		`CREATE VIRTUAL TABLE conversation_summaries_vec USING vec0(
+			summary_id INTEGER PRIMARY KEY,
+			embedding float[1024]
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS conversation_summaries_meta (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)`,
+	}
+
+	for _, s := range stmts {
+		if _, err := d.db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("migrate conversation_summaries (sqlite): %w (stmt=%q)", err, s)
+		}
+	}
+	return nil
+}
+
+// migrateConversationSummariesUniqueIndex backfills a unique composite
+// index onto an existing conversation_summaries table so the
+// InsertConversationSummary upsert (ON CONFLICT) works. It runs on every
+// boot (idempotent) and cleans up data that would otherwise violate the
+// unique constraint:
+//
+//  1. Delete rows with empty chatter_user_id — invalid under the new
+//     store rule (empty chatter defeats per-chatter recall isolation).
+//  2. Collapse duplicate (chatter,agent,session,seq_start,seq_end)
+//     groups to the newest id (pre-upsert code could have written dups).
+//  3. Drop vec0 orphans left behind by step 1/2 (SQLite only — Postgres
+//     embeds the vector in the main row).
+//  4. CREATE UNIQUE INDEX IF NOT EXISTS.
+func (d *DBStore) migrateConversationSummariesUniqueIndex(ctx context.Context) error {
+	hasTable, err := d.tableExists(ctx, "conversation_summaries")
+	if err != nil {
+		return err
+	}
+	if !hasTable {
+		return nil
+	}
+
+	// Drop the legacy FTS5 table + its triggers. The FTS index was never
+	// queried (keyword recall uses LIKE) and the delete trigger was buggy
+	// — it passed summary_id where FTS5 expects rowid, so every DELETE on
+	// conversation_summaries errored with "SQL logic error". Dropping
+	// them unblocks the cleanup DELETEs below and removes dead weight.
+	for _, drop := range []string{
+		`DROP TRIGGER IF EXISTS conv_summ_ad`,
+		`DROP TRIGGER IF EXISTS conv_summ_ai`,
+		`DROP TABLE IF EXISTS conversation_summaries_fts`,
+	} {
+		if _, err := d.db.ExecContext(ctx, drop); err != nil {
+			return fmt.Errorf("drop legacy FTS (%q): %w", drop, err)
+		}
+	}
+
+	if _, err := d.db.ExecContext(ctx,
+		`DELETE FROM conversation_summaries WHERE chatter_user_id = ''`); err != nil {
+		return fmt.Errorf("drop empty-chatter summaries: %w", err)
+	}
+	if _, err := d.db.ExecContext(ctx, `DELETE FROM conversation_summaries WHERE id NOT IN (
+		SELECT MAX(id) FROM conversation_summaries
+		GROUP BY chatter_user_id, agent_id, session_key, seq_start, seq_end)`); err != nil {
+		return fmt.Errorf("dedupe summaries: %w", err)
+	}
+	if d.dialect != "postgres" {
+		if _, err := d.db.ExecContext(ctx,
+			`DELETE FROM conversation_summaries_vec WHERE summary_id NOT IN
+			 (SELECT id FROM conversation_summaries)`); err != nil {
+			// vec table may not exist on a fresh install where
+			// migrateConversationSummaries hasn't created it yet — non-fatal.
+			slog.Debug("conversation_summaries_vec orphan cleanup skipped", "error", err)
+		}
+	}
+
+	switch d.dialect {
+	case "postgres":
+		_, err = d.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_summ_unique
+			ON conversation_summaries(chatter_user_id, agent_id, session_key, seq_start, seq_end)`)
+	default:
+		_, err = d.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_summ_unique
+			ON conversation_summaries(chatter_user_id, agent_id, session_key, seq_start, seq_end)`)
+	}
+	if err != nil {
+		return fmt.Errorf("create unique index: %w", err)
+	}
+	return nil
+}
+
+// migrateConversationSummariesScoring adds the importance / access_count /
+// last_accessed_at columns to an existing conversation_summaries table.
+// These back the three-factor recall score (importance×recency×access)
+// and reinforcement. Idempotent — skips columns that already exist.
+// Legacy rows get importance=0 / access_count=0, treated as neutral by
+// the scorer.
+func (d *DBStore) migrateConversationSummariesScoring(ctx context.Context) error {
+	hasTable, err := d.tableExists(ctx, "conversation_summaries")
+	if err != nil {
+		return err
+	}
+	if !hasTable {
+		return nil
+	}
+	type col struct {
+		name, decl string
+	}
+	columns := []col{
+		{"importance", "INTEGER NOT NULL DEFAULT 0"},
+		{"access_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"last_accessed_at", "TIMESTAMP"},
+	}
+	for _, c := range columns {
+		has, err := d.tableHasColumn(ctx, "conversation_summaries", c.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(
+			`ALTER TABLE conversation_summaries ADD COLUMN %s %s`, c.name, c.decl)); err != nil {
+			return fmt.Errorf("add column %s: %w", c.name, err)
+		}
+	}
+	return nil
+}
+
+// migrateConversationSummariesSegments adds the topic + segments columns
+// that back topic-segmented summaries. `segments` is a JSON array of
+// [seq_start, seq_end] pairs — a single topic in an interleaved
+// conversation often spans several disjoint seq ranges. Legacy rows get
+// '[]' and fall back to seq_start/seq_end; fetch_messages treats an
+// empty segments list as the single range [seq_start, seq_end].
+func (d *DBStore) migrateConversationSummariesSegments(ctx context.Context) error {
+	hasTable, err := d.tableExists(ctx, "conversation_summaries")
+	if err != nil {
+		return err
+	}
+	if !hasTable {
+		return nil
+	}
+	type col struct {
+		name, decl string
+	}
+	columns := []col{
+		{"topic", "TEXT NOT NULL DEFAULT ''"},
+		{"segments", "TEXT NOT NULL DEFAULT '[]'"},
+	}
+	for _, c := range columns {
+		has, err := d.tableHasColumn(ctx, "conversation_summaries", c.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(
+			`ALTER TABLE conversation_summaries ADD COLUMN %s %s`, c.name, c.decl)); err != nil {
+			return fmt.Errorf("add column %s: %w", c.name, err)
+		}
+	}
+	return nil
 }
 
 var _ Store = (*DBStore)(nil)
