@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -49,7 +50,15 @@ type Agent struct {
 	// embedder generates vectors for conversation-summary recall; nil
 	// (or !Available) → vector path skipped, FTS-only recall.
 	embedder             embedding.Embedder
-	maxTokens            int
+	// authGate enforces the per-agent write/exec authorization policy
+	// (hardline commands + workspace boundary + dangerous-pattern tier).
+	// nil when the agent has no relational store; evaluateCall is a no-op
+	// (allow) in that case.
+	authGate *authGate
+	// authMode is the session-authorization mode (ask/auto/yolo). Empty
+	// defaults to ask. /yolo /auto slash commands flip it at runtime.
+	authMode  string
+	maxTokens int
 	temperature          float64
 	maxToolIterations    int
 	maxParallelToolCalls int // 0 = unlimited
@@ -159,6 +168,9 @@ func (a *Agent) SetSandboxPool(p sandbox.ExecutorPool) {
 	a.sandboxPool = p
 	if a.ctxBuilder != nil {
 		a.ctxBuilder.sandboxEnabled = p != nil
+	}
+	if a.authGate != nil {
+		a.authGate.setSandboxed(p != nil)
 	}
 	// Tell the tool registry sandbox is required so its host-shell exec
 	// fallback refuses to run when bindSession can't bind an executor.
@@ -357,6 +369,11 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 		engine:               eng,
 		costTracker:          eng.costTracker,
 	}
+
+	// authGate enforces the per-agent write/exec policy (hardline command
+	// floor + workspace boundary + dangerous-pattern tier). Built once
+	// from the agent root + workspace; policy.json reloads on agent reload.
+	ag.authGate = newAuthGate(filepath.Dir(rc.Home), workspace)
 
 	// Multi-bubble split-replies: per-agent only — system-level toggle
 	// was removed since "every agent splits the same way" is rarely
@@ -2242,6 +2259,32 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// (Brave free tier 1RPS, etc.) set it to 1 / 2 to force
 		// strict serial / lightly-parallel execution.
 		executeCalls := resp.ToolCalls
+		// Auth gate: evaluate each call against the three-tier policy
+		// (hardline block, dangerous/outside-workspace follow mode).
+		// Blocked/prompted calls are dropped from execution and folded
+		// back as deny tool_results so the LLM sees the refusal paired
+		// to the tool_use id (no orphan 400 on the next request).
+		var authBlocked []toolCallResult
+		if a.authGate != nil {
+			mode := a.authMode
+			if mode == "" {
+				mode = AuthModeAsk
+			}
+			var allowed []provider.ToolCall
+			for _, tc := range executeCalls {
+				dec := a.authGate.evaluateCall(tc.Function.Name, tc.Function.Arguments, mode)
+				if dec.action == authAllow {
+					allowed = append(allowed, tc)
+				} else {
+					authBlocked = append(authBlocked, toolCallResult{
+						toolCallID: tc.ID,
+						toolName:   tc.Function.Name,
+						result:     denyMessageBypass(dec.reason),
+					})
+				}
+			}
+			executeCalls = allowed
+		}
 		var deferredCalls []provider.ToolCall
 		if a.maxParallelToolCalls > 0 && len(resp.ToolCalls) > a.maxParallelToolCalls {
 			executeCalls = resp.ToolCalls[:a.maxParallelToolCalls]
@@ -2259,6 +2302,9 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			"count", len(executeCalls),
 		)
 		results := a.engine.executeToolsConcurrently(ctx, a.registry, executeCalls, a.workspacePath)
+		// Merge auth-denied calls (each already paired to its tool_use id)
+		// into the result set so the next API request is well-formed.
+		results = append(results, authBlocked...)
 		// Append synthetic deferred results so every original tool_use
 		// id has a paired tool_result. The deferred message tells the
 		// model exactly why it didn't run — it can re-issue next
@@ -2935,8 +2981,33 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeToolCall, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID})
 		}
 
+		// Auth gate: evaluate each call against the three-tier policy.
+		// Blocked/prompted calls are dropped + folded back as deny results.
+		streamCalls := resp.ToolCalls
+		var authBlocked []toolCallResult
+		if a.authGate != nil {
+			mode := a.authMode
+			if mode == "" {
+				mode = AuthModeAsk
+			}
+			var allowed []provider.ToolCall
+			for _, tc := range streamCalls {
+				dec := a.authGate.evaluateCall(tc.Function.Name, tc.Function.Arguments, mode)
+				if dec.action == authAllow {
+					allowed = append(allowed, tc)
+				} else {
+					authBlocked = append(authBlocked, toolCallResult{
+						toolCallID: tc.ID,
+						toolName:   tc.Function.Name,
+						result:     denyMessageBypass(dec.reason),
+					})
+				}
+			}
+			streamCalls = allowed
+		}
 		// Execute tools concurrently via SDK engine
-		results := a.engine.executeToolsConcurrently(ctx, a.registry, resp.ToolCalls, a.workspacePath)
+		results := a.engine.executeToolsConcurrently(ctx, a.registry, streamCalls, a.workspacePath)
+		results = append(results, authBlocked...)
 		totalToolCalls += len(results)
 
 		for idx, r := range results {

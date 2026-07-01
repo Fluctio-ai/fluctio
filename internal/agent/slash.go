@@ -96,6 +96,18 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 	case "/compact":
 		return a.slashCompact(msg)
 
+	case "/yolo":
+		a.authMode = AuthModeYolo
+		return slashResult{handled: true, reply: "🔓 YOLO mode: all tool calls auto-approved (hardline commands still blocked)."}
+
+	case "/auto":
+		a.authMode = AuthModeAuto
+		return slashResult{handled: true, reply: "🛑 Auto-deny mode: outside-workspace / dangerous calls denied without prompt."}
+
+	case "/ask":
+		a.authMode = AuthModeAsk
+		return slashResult{handled: true, reply: "❓ Ask mode: outside-workspace / dangerous calls return a denial — re-issue after /yolo if intended."}
+
 	case "/status":
 		return a.slashStatus(msg)
 
@@ -154,6 +166,8 @@ var writeSlashCommands = map[string]bool{
 	"/undo":        true,
 	"/retry":       true,
 	"/compact":     true,
+	"/yolo":        true,
+	"/auto":        true,
 	"/model":       true,
 	"/personality": true,
 }
