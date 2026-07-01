@@ -166,6 +166,8 @@ type Registry struct {
 	// builder still reads them via the separate small-state Store.
 	workspaceStore workspace.Store
 	agentID        string
+	// msgFetcher is the store handle for fetch_messages.
+	msgFetcher MessageFetcher
 	// sessionID scopes workspace.Store reads/writes so concurrent sessions
 	// of the same agent don't collide on `report.md` etc. Set per-turn by
 	// the agent loop via SetSessionID; an empty value falls back to
@@ -353,6 +355,11 @@ func (r *Registry) SetSystemFileStore(s SystemFileStore, agentID string) {
 // systemFileUserID time.
 func (r *Registry) SetOwnerUserID(userID string) {
 	r.userID = userID
+}
+
+// SetMessageFetcher wires the store handle for fetch_messages.
+func (r *Registry) SetMessageFetcher(f MessageFetcher) {
+	r.msgFetcher = f
 }
 
 // OwnerUserID returns the boot-time UserSpace owner. Billing quota is
@@ -872,6 +879,7 @@ func (r *Registry) registerBuiltins() {
 	registerBashOutput(r)
 	registerKillShell(r)
 	registerMessage(r)
+	RegisterFetchMessages(r)
 }
 
 // StartTurn resets per-turn tool-call state. Called by the agent loop

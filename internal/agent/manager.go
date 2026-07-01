@@ -247,6 +247,13 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		// on an in-memory counter that restart-clears) can hit the
 		// store directly without re-plumbing through Manager.
 		ag.dataStore = m.opts.dataStore
+		// fetch_messages reads verbatim session_messages by seq ranges
+		// (pointers come from memory_search). Needs *DBStore for
+		// ListSessionMessagesBySeq; agents without the relational store
+		// get a self-reporting "not available" at call time.
+		if db, ok := m.opts.dataStore.(*store.DBStore); ok {
+			ag.registry.SetMessageFetcher(db)
+		}
 		// Date line in the chatter's timezone — needs dataStore for the
 		// scope-prefs lookup, hence wired here and re-applied by
 		// ReloadWorkspaceFiles after every ctxBuilder rebuild.

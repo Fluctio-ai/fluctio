@@ -4224,4 +4224,72 @@ func (d *DBStore) ReorderRegexHooks(ctx context.Context, agentID string, hookIDs
 	return nil
 }
 
+// ListSessionMessagesBySeq returns messages whose seq falls in any of
+// the supplied [start,end] ranges (inclusive), ordered by seq. Used by
+// the fetch_messages tool to retrieve the verbatim messages of a topic,
+// which may span several disjoint ranges in an interleaved conversation.
+func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey, chatterUserID string, ranges [][2]int) ([]SessionMessage, error) {
+	if len(ranges) == 0 {
+		return nil, nil
+	}
+	// Build "(seq >= ? AND seq <= ?)" per range with dialect-correct
+	// placeholders, OR'd together. Caller is expected to have merged
+	// overlaps (fetch_messages.normalizeSegments does).
+	orClauses := make([]string, len(ranges))
+	args := make([]any, 0, len(ranges)+5)
+	args = append(args, userID, agentID, sessionKey)
+	ph := 4
+	for i, rg := range ranges {
+		orClauses[i] = fmt.Sprintf("(seq >= %s AND seq <= %s)", d.ph(ph), d.ph(ph+1))
+		args = append(args, rg[0], rg[1])
+		ph += 2
+	}
+	args = append(args, chatterUserID)
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
+			FROM session_messages
+			WHERE user_id = %s AND agent_id = %s AND session_key = %s
+			  AND (%s)
+			  AND (chatter_user_id = %s OR chatter_user_id = '')
+			ORDER BY seq ASC`,
+			d.ph(1), d.ph(2), d.ph(3), strings.Join(orClauses, " OR "), d.ph(ph)),
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionMessage
+	for rows.Next() {
+		var m SessionMessage
+		var seq int
+		var contentParts, toolCalls, metadata, rawAssistant string
+		if err := rows.Scan(&seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp); err != nil {
+			return nil, err
+		}
+		if contentParts != "" && contentParts != "null" {
+			var v interface{}
+			if json.Unmarshal([]byte(contentParts), &v) == nil {
+				m.ContentParts = v
+			}
+		}
+		if toolCalls != "" && toolCalls != "null" {
+			var v interface{}
+			if json.Unmarshal([]byte(toolCalls), &v) == nil {
+				m.ToolCalls = v
+			}
+		}
+		if metadata != "" && metadata != "null" {
+			var v map[string]interface{}
+			if json.Unmarshal([]byte(metadata), &v) == nil {
+				m.Metadata = v
+			}
+		}
+		if rawAssistant != "" && rawAssistant != "null" {
+			m.RawAssistant = json.RawMessage(rawAssistant)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 var _ Store = (*DBStore)(nil)
