@@ -10,6 +10,7 @@ import (
 
 	"github.com/fastclaw-ai/fastclaw/internal/embedding"
 	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fastclaw-ai/fastclaw/internal/session"
 	"github.com/fastclaw-ai/fastclaw/internal/store"
 )
 
@@ -466,4 +467,43 @@ func messagesAfterSeq(messages []store.SessionMessage, lastSeq int) []store.Sess
 		}
 	}
 	return out
+}
+
+// maybeExtractSummary fires a background persistConversationSummary for
+// the session. Called by /compact (after compaction) and /new (before
+// minting a fresh session) so a topic snapshot of the just-closed range
+// enters cross-session recall. Best-effort: logs + returns on any error.
+//
+// `trigger` is a label for log context ("compaction", "new_session").
+func (a *Agent) maybeExtractSummary(sess *session.Session, trigger string) {
+	if a.dataStore == nil {
+		return
+	}
+	db, ok := a.dataStore.(*store.DBStore)
+	if !ok {
+		slog.Debug("summary extraction: store is not DBStore, skipping",
+			"agent", a.agentID, "trigger", trigger)
+		return
+	}
+
+	// Capture variables — the goroutine outlives the calling turn.
+	// Messages are loaded inside persistConversationSummary (straight
+	// from the store, each carrying its true DB seq) so we don't thread
+	// a possibly-stale in-memory snapshot through.
+	owner := a.ownerUserID
+	agentID := a.agentID
+	sessionKey := sess.SessionKey()
+	chatterUID := sess.ChatterUserID()
+	prov := a.provider
+	model := a.summaryModelFor()
+	emb := a.embedder
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		slog.Debug("summary extraction: background goroutine started",
+			"agent", agentID, "session", sessionKey, "trigger", trigger)
+		persistConversationSummary(ctx, db, prov, model, emb,
+			owner, agentID, sessionKey, chatterUID)
+	}()
 }

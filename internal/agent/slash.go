@@ -74,6 +74,11 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 			// For web channel, don't delete the session file — frontend handles new session creation
 			return slashResult{handled: true, reply: "__NEW_SESSION__"}
 		}
+		// Snapshot the soon-to-be-closed session into cross-session
+		// recall before minting the fresh one.
+		if oldSess := a.sessions.Get(msg.Channel, msg.AccountID, msg.ChatID, msg.ProjectID); oldSess != nil {
+			a.maybeExtractSummary(oldSess, "new_session")
+		}
 		// Mint a fresh session under the same (channel, account, chat)
 		// triple so this conversation thread starts blank but the prior
 		// thread is preserved as history. Subsequent inbound messages
@@ -281,6 +286,7 @@ func (a *Agent) slashCompact(msg bus.InboundMessage) slashResult {
 	}
 	if result != nil && result.Pruned {
 		sess.ReplaceMessages(result.Messages)
+		a.maybeExtractSummary(sess, "compaction")
 		return slashResult{handled: true, reply: fmt.Sprintf("✅ Compacted: %d → %d messages.", len(sessionMsgs), len(result.Messages))}
 	}
 	return slashResult{handled: true, reply: "Session is within limits, no compaction needed."}

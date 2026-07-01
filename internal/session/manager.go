@@ -103,6 +103,15 @@ func (s *Session) SetChatter(uid string) {
 	s.mu.Unlock()
 }
 
+// ChatterUserID returns the per-turn conversation participant bound by
+// SetChatter (empty when unset). Used by the summary path to scope
+// conversation_summaries to the chatter.
+func (s *Session) ChatterUserID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.chatterUserID
+}
+
 // SetProviderModel binds the current LLM provider and model to this
 // Session so Append stamps them onto assistant messages. Called by the
 // agent loop alongside SetChatter.
