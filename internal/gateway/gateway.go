@@ -32,6 +32,7 @@ import (
 	"github.com/fastclaw-ai/fastclaw/internal/rediscoord"
 	coderuntime "github.com/fastclaw-ai/fastclaw/internal/runtime"
 	"github.com/fastclaw-ai/fastclaw/internal/sandbox"
+	"github.com/fastclaw-ai/fastclaw/internal/memoryindex"
 	"github.com/fastclaw-ai/fastclaw/internal/scope"
 	"github.com/fastclaw-ai/fastclaw/internal/store"
 	"github.com/fastclaw-ai/fastclaw/internal/taskqueue"
@@ -662,6 +663,24 @@ func (g *Gateway) Run() error {
 		plugin.RegisterPluginProviders(ctx, g.pluginMgr, toolProviderRegistry)
 	}
 	slog.Info("gateway started")
+	// Periodic memory backfill: every interval, re-embed conversation
+	// summaries that lack vectors across every agent with embedding
+	// enabled. Picked up at boot + on each tick so a backlog clears
+	// without operator action. Interval from system-scope
+	// memory.settings.reindexIntervalMin (default 10 min).
+	if dbs, ok := g.store.(*store.DBStore); ok {
+		interval := 10 * time.Minute
+		var mem config.MemoryCfg
+		if err := scope.SettingInto(context.Background(), g.store, NSMemory, "", "", &mem); err == nil && mem.Settings.ReindexIntervalMin > 0 {
+			interval = time.Duration(mem.Settings.ReindexIntervalMin) * time.Minute
+		}
+		perCallDelay := 200 * time.Millisecond
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			memoryindex.RunLoop(ctx, dbs, interval, perCallDelay)
+		}()
+	}
 	wg.Wait()
 	if g.taskQueue != nil {
 		g.taskQueue.Stop()

@@ -257,6 +257,17 @@ type MemoryCfg struct {
 	// SummaryModel overrides the model used to distill conversation
 	// summaries (defaults to the agent's primary model when empty).
 	SummaryModel string `json:"summaryModel,omitempty"`
+	// Settings holds memory-feature operational knobs (backfill interval).
+	Settings MemorySettingsCfg `json:"settings,omitempty"`
+}
+
+// MemorySettingsCfg holds operational knobs for the memory subsystem.
+type MemorySettingsCfg struct {
+	Enabled bool `json:"enabled"`
+	// ReindexIntervalMin is how often the background reindex loop wakes
+	// to backfill summaries lacking vectors. 0 = default (10 min). The
+	// loop also runs once shortly after boot so a backlog clears fast.
+	ReindexIntervalMin int `json:"reindexIntervalMin,omitempty"`
 }
 
 type EmbeddingCfg struct {
