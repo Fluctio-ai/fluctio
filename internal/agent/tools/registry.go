@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/fastclaw-ai/fastclaw/internal/buildinfo"
+	"github.com/fastclaw-ai/fastclaw/internal/embedding"
 	"github.com/fastclaw-ai/fastclaw/internal/provider"
 	"github.com/fastclaw-ai/fastclaw/internal/sandbox"
 	"github.com/fastclaw-ai/fastclaw/internal/workspace"
@@ -168,6 +169,20 @@ type Registry struct {
 	agentID        string
 	// msgFetcher is the store handle for fetch_messages.
 	msgFetcher MessageFetcher
+	// summaryDB is the relational store handle used by memory_search to
+	// query conversation_summaries across sessions. Wired after Agent
+	// construction by the manager. nil → memory_search falls back to
+	// the legacy JSONL / FTS5 scan.
+	summaryDB SummarySearcher
+	// vecDB is the vector-search handle for memory_search KNN recall.
+	// Wired alongside summaryDB. nil → vector path skipped.
+	vecDB VectorSearcher
+	// embedder converts query text to vectors for KNN search.
+	// nil or !Available() → vector path skipped.
+	embedder embedding.Embedder
+	// reranker is the cross-encoder for stage-3 re-rank.
+	// nil or !Available() → reranker path skipped.
+	reranker Reranker
 	// sessionID scopes workspace.Store reads/writes so concurrent sessions
 	// of the same agent don't collide on `report.md` etc. Set per-turn by
 	// the agent loop via SetSessionID; an empty value falls back to
@@ -360,6 +375,28 @@ func (r *Registry) SetOwnerUserID(userID string) {
 // SetMessageFetcher wires the store handle for fetch_messages.
 func (r *Registry) SetMessageFetcher(f MessageFetcher) {
 	r.msgFetcher = f
+}
+
+// SetSummarySearcher wires the relational DB handle that memory_search
+// uses to query conversation_summaries. Called by the agent manager
+// after Agent construction once dataStore is available.
+func (r *Registry) SetSummarySearcher(db SummarySearcher) {
+	r.summaryDB = db
+}
+
+// SetVectorSearcher wires the vector search handle.
+func (r *Registry) SetVectorSearcher(db VectorSearcher) {
+	r.vecDB = db
+}
+
+// SetEmbedder wires the embedder for query vectorization.
+func (r *Registry) SetEmbedder(emb embedding.Embedder) {
+	r.embedder = emb
+}
+
+// SetReranker wires the reranker model for cross-encoder re-rank.
+func (r *Registry) SetReranker(rr Reranker) {
+	r.reranker = rr
 }
 
 // OwnerUserID returns the boot-time UserSpace owner. Billing quota is

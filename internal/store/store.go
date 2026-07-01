@@ -90,6 +90,18 @@ type Store interface {
 	// updated_at DESC. When agentIDs is nil every agent is included (admin
 	// view); otherwise only the listed agents. Returns (rows, totalCount, err).
 	ListSessionsPaginated(ctx context.Context, agentIDs []string, offset, limit int) ([]SessionMeta, int, error)
+	// ListIdleSessions returns sessions under (userID, agentID) whose
+	// updated_at is before cutoff and message_count >= minMessages —
+	// candidates for the idle-summary background sweep. The sweep
+	// double-checks updated_at again before summarizing (the row may
+	// have been touched between scan and processing).
+	ListIdleSessions(ctx context.Context, userID, agentID string, cutoff time.Time, minMessages int) ([]IdleSession, error)
+	// SetSessionLastSummarizedSeq records the highest session_messages.seq
+	// the conversation summary has covered, so the next summary trigger
+	// runs incremental (only newer messages) instead of full. Stamped
+	// after a successful persist by every trigger path (compact,
+	// new-session, idle sweep).
+	SetSessionLastSummarizedSeq(ctx context.Context, userID, agentID, sessionKey string, seq int) error
 	DeleteSession(ctx context.Context, userID, agentID, sessionKey string) error
 	RenameSession(ctx context.Context, userID, agentID, sessionKey, title string) error
 	// MoveSession reassigns a session to a different project (or
@@ -401,10 +413,32 @@ type SessionRecord struct {
 	ProjectID string           `json:"projectId,omitempty"`
 	Messages  []SessionMessage `json:"messages"`
 	UpdatedAt time.Time        `json:"updatedAt"`
+	// LastSummarizedSeq is the highest session_messages.seq the
+	// conversation summary has covered. 0 = never summarized (full
+	// extraction next trigger); >0 = next extraction is incremental
+	// (only messages with seq > this value). Managed by the summary
+	// path, independent of Messages.
+	LastSummarizedSeq int `json:"lastSummarizedSeq,omitempty"`
+}
+
+// IdleSession is a session that hasn't been touched since a cutoff,
+// with enough messages to be worth summarizing. Used by the idle-
+// summary background sweep.
+type IdleSession struct {
+	SessionKey    string
+	ChatterUserID string
+	MessageCount  int
+	UpdatedAt     time.Time
 }
 
 // SessionMessage is a single message in a session.
 type SessionMessage struct {
+	// Seq is the message's position in session_messages (0-based,
+	// COALESCE(MAX(seq),-1)+1). Populated by ListSessionMessages /
+	// ListSessionMessagesBySeq; zero on freshly-constructed rows that
+	// haven't been appended yet. Carries the true DB seq up to the
+	// summary path so topic segments point at real rows.
+	Seq          int                    `json:"seq,omitempty"`
 	Role         string                 `json:"role"`
 	Content      string                 `json:"content"`
 	ContentParts interface{}            `json:"contentParts,omitempty"`

@@ -143,6 +143,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionsAddChatterUserID(ctx); err != nil {
 		return fmt.Errorf("migrate sessions chatter_user_id: %w", err)
 	}
+	if err := d.migrateSessionsAddLastSummarizedSeq(ctx); err != nil {
+		return fmt.Errorf("migrate sessions.last_summarized_seq: %w", err)
+	}
 	if err := d.migrateSessionMessagesAddProviderModel(ctx); err != nil {
 		return fmt.Errorf("migrate session_messages provider/model: %w", err)
 	}
@@ -1464,6 +1467,7 @@ func (d *DBStore) migrationSQL() []string {
 			messages TEXT NOT NULL DEFAULT '[]',
 			message_count INTEGER NOT NULL DEFAULT 0,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			last_summarized_seq INTEGER NOT NULL DEFAULT 0,
 			-- chatter_user_id is the actual conversation participant. For
 			-- web / dashboard chats it equals user_id (= the logged-in
 			-- user). For IM channels with per-sender app_users it's the
@@ -2308,12 +2312,12 @@ func scanAgents(rows *sql.Rows) ([]AgentRecord, error) {
 
 func (d *DBStore) GetSession(ctx context.Context, userID, agentID, sessionKey string) (*SessionRecord, error) {
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT messages, channel, account_id, chat_id, project_id, updated_at FROM sessions WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
+		fmt.Sprintf(`SELECT messages, channel, account_id, chat_id, project_id, updated_at, last_summarized_seq FROM sessions WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
 			d.ph(1), d.ph(2), d.ph(3)),
 		userID, agentID, sessionKey)
 	var msgsStr string
 	var rec SessionRecord
-	if err := row.Scan(&msgsStr, &rec.Channel, &rec.AccountID, &rec.ChatID, &rec.ProjectID, &rec.UpdatedAt); err != nil {
+	if err := row.Scan(&msgsStr, &rec.Channel, &rec.AccountID, &rec.ChatID, &rec.ProjectID, &rec.UpdatedAt, &rec.LastSummarizedSeq); err != nil {
 		return nil, scanErr(err)
 	}
 	json.Unmarshal([]byte(msgsStr), &rec.Messages)
@@ -2757,7 +2761,7 @@ func (d *DBStore) LatestSessionEventSeq(ctx context.Context, userID, agentID, se
 // to sessions.messages should check len() and decide.
 func (d *DBStore) ListSessionMessages(ctx context.Context, userID, agentID, sessionKey string) ([]SessionMessage, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model
+		fmt.Sprintf(`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model
 			FROM session_messages
 			WHERE user_id = %s AND agent_id = %s AND session_key = %s
 			ORDER BY seq ASC`, d.ph(1), d.ph(2), d.ph(3)),
@@ -2770,7 +2774,7 @@ func (d *DBStore) ListSessionMessages(ctx context.Context, userID, agentID, sess
 	for rows.Next() {
 		var m SessionMessage
 		var contentParts, toolCalls, metadata, rawAssistant string
-		if err := rows.Scan(&m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp, &m.Provider, &m.Model); err != nil {
+		if err := rows.Scan(&m.Seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp, &m.Provider, &m.Model); err != nil {
 			return nil, err
 		}
 		if contentParts != "" && contentParts != "null" {
@@ -4274,9 +4278,8 @@ func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID,
 	var out []SessionMessage
 	for rows.Next() {
 		var m SessionMessage
-		var seq int
 		var contentParts, toolCalls, metadata, rawAssistant string
-		if err := rows.Scan(&seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp); err != nil {
+		if err := rows.Scan(&m.Seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp); err != nil {
 			return nil, err
 		}
 		if contentParts != "" && contentParts != "null" {
@@ -4549,6 +4552,59 @@ func (d *DBStore) migrateConversationSummariesSegments(ctx context.Context) erro
 		}
 	}
 	return nil
+}
+
+// migrateSessionsAddLastSummarizedSeq adds the last_summarized_seq column
+// to sessions, tracking how far the conversation summary has progressed
+// so the next trigger runs incremental instead of full. Idempotent.
+func (d *DBStore) migrateSessionsAddLastSummarizedSeq(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "sessions", "last_summarized_seq")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx,
+		`ALTER TABLE sessions ADD COLUMN last_summarized_seq INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return fmt.Errorf("add column last_summarized_seq: %w", err)
+	}
+	return nil
+}
+
+func (d *DBStore) SetSessionLastSummarizedSeq(ctx context.Context, userID, agentID, sessionKey string, seq int) error {
+	if d.dialect == "postgres" {
+		_, err := d.db.ExecContext(ctx,
+			`UPDATE sessions SET last_summarized_seq=$1 WHERE user_id=$2 AND agent_id=$3 AND session_key=$4`,
+			seq, userID, agentID, sessionKey)
+		return err
+	}
+	_, err := d.db.ExecContext(ctx,
+		`UPDATE sessions SET last_summarized_seq=? WHERE user_id=? AND agent_id=? AND session_key=?`,
+		seq, userID, agentID, sessionKey)
+	return err
+}
+
+func (d *DBStore) ListIdleSessions(ctx context.Context, userID, agentID string, cutoff time.Time, minMessages int) ([]IdleSession, error) {
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT session_key, COALESCE(NULLIF(chatter_user_id, ''), user_id), message_count, updated_at FROM sessions
+			WHERE user_id = %s AND agent_id = %s AND updated_at < %s AND message_count >= %s
+			ORDER BY updated_at ASC`,
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
+		userID, agentID, cutoff, minMessages)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []IdleSession
+	for rows.Next() {
+		var s IdleSession
+		if err := rows.Scan(&s.SessionKey, &s.ChatterUserID, &s.MessageCount, &s.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
 }
 
 var _ Store = (*DBStore)(nil)

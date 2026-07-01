@@ -408,6 +408,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/agents/{id}/regex-hooks/scripts", auth(s.handleUploadHookScript))
 	mux.HandleFunc("DELETE /api/agents/{id}/regex-hooks/scripts/{name}", auth(s.handleDeleteHookScript))
 
+	// Memory (conversation-summary recall: embedding/reranker config test
+	// + per-agent force re-vectorize).
+	mux.HandleFunc("POST /api/memory/test-embedding", auth(s.handleTestEmbedding))
+	mux.HandleFunc("POST /api/memory/test-reranker", auth(s.handleTestReranker))
+	mux.HandleFunc("POST /api/agents/{id}/memory/reindex", auth(s.handleReindexAgentMemory))
+
 	// Tasks
 	mux.HandleFunc("GET /api/tasks", admin(s.handleListTasks))
 

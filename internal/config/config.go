@@ -248,6 +248,37 @@ type RateLimitCfg struct {
 type MemoryCfg struct {
 	AutoPersist AutoPersistCfg `json:"autoPersist,omitempty"`
 	FTS         FTSCfg         `json:"fts,omitempty"`
+	// Embedding configures the optional vector-recall embedder for
+	// conversation-summary memory_search. Disabled by default.
+	Embedding EmbeddingCfg `json:"embedding,omitempty"`
+	// Reranker configures the optional cross-encoder second-stage
+	// reranker for memory_search recall. Disabled by default.
+	Reranker RerankerCfg `json:"reranker,omitempty"`
+	// SummaryModel overrides the model used to distill conversation
+	// summaries (defaults to the agent's primary model when empty).
+	SummaryModel string `json:"summaryModel,omitempty"`
+}
+
+type EmbeddingCfg struct {
+	Enabled  bool   `json:"enabled"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	APIKey   string `json:"apiKey,omitempty"`
+	APIBase  string `json:"apiBase,omitempty"`
+	Dim      int    `json:"dim,omitempty"`
+	// DimEnabled sends the `dimensions` param to the embedding API. Off by
+	// default: most models reject it (SiliconFlow bge-m3 → 400); only some
+	// (Qwen3-Embedding) accept a non-native dim. Dim stays the expected
+	// vector length for the startup probe regardless.
+	DimEnabled bool `json:"dimEnabled,omitempty"`
+}
+
+type RerankerCfg struct {
+	Enabled  bool   `json:"enabled"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	APIKey   string `json:"apiKey,omitempty"`
+	APIBase  string `json:"apiBase,omitempty"`
 }
 
 type AutoPersistCfg struct {

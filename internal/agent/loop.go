@@ -18,6 +18,7 @@ import (
 	"github.com/fastclaw-ai/fastclaw/internal/bus"
 	"github.com/fastclaw-ai/fastclaw/internal/channels"
 	"github.com/fastclaw-ai/fastclaw/internal/config"
+	"github.com/fastclaw-ai/fastclaw/internal/embedding"
 	"github.com/fastclaw-ai/fastclaw/internal/mcp"
 	"github.com/fastclaw-ai/fastclaw/internal/privacy"
 	"github.com/fastclaw-ai/fastclaw/internal/provider"
@@ -42,6 +43,12 @@ type Agent struct {
 	mcpMgr               *mcp.Manager
 	hooks                *HookRegistry
 	model                string
+	// summaryModel overrides model for conversation-summary extraction;
+	// empty falls back to model. Set by the manager from memory config.
+	summaryModel         string
+	// embedder generates vectors for conversation-summary recall; nil
+	// (or !Available) → vector path skipped, FTS-only recall.
+	embedder             embedding.Embedder
 	maxTokens            int
 	temperature          float64
 	maxToolIterations    int

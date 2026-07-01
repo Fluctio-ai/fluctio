@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -8,7 +9,9 @@ import (
 	"github.com/fastclaw-ai/fastclaw/internal/agent/tools"
 	"github.com/fastclaw-ai/fastclaw/internal/bus"
 	"github.com/fastclaw-ai/fastclaw/internal/config"
+	"github.com/fastclaw-ai/fastclaw/internal/embedding"
 	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fastclaw-ai/fastclaw/internal/scope"
 	"github.com/fastclaw-ai/fastclaw/internal/session"
 	"github.com/fastclaw-ai/fastclaw/internal/store"
 	"github.com/fastclaw-ai/fastclaw/internal/usage"
@@ -247,12 +250,32 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		// on an in-memory counter that restart-clears) can hit the
 		// store directly without re-plumbing through Manager.
 		ag.dataStore = m.opts.dataStore
-		// fetch_messages reads verbatim session_messages by seq ranges
-		// (pointers come from memory_search). Needs *DBStore for
-		// ListSessionMessagesBySeq; agents without the relational store
-		// get a self-reporting "not available" at call time.
+		// Wire the relational store onto the tool registry so memory_search
+		// + fetch_messages can query conversation_summaries / session_messages.
+		// *store.DBStore satisfies the tools.Searcher interfaces implicitly.
 		if db, ok := m.opts.dataStore.(*store.DBStore); ok {
 			ag.registry.SetMessageFetcher(db)
+			ag.registry.SetSummarySearcher(db)
+			ag.registry.SetVectorSearcher(db)
+			// Build embedder + reranker from the agent's merged memory config
+			// (system→owner→agent). ProbeEmbedder pings once so a misconfigured
+			// endpoint degrades to nilEmbedder (vector recall skipped) instead
+			// of erroring every search.
+			var mem config.MemoryCfg
+			if err := scope.SettingInto(context.Background(), db, "memory", m.uid, rc.ID, &mem); err == nil {
+				ag.summaryModel = mem.SummaryModel
+				if mem.Embedding.Enabled {
+					ec := mem.Embedding
+					emb := embedding.ProbeEmbedder(context.Background(),
+						embedding.NewOpenAICompatEmbedder(ec.APIBase, ec.APIKey, ec.Model, ec.Dim, ec.DimEnabled))
+					ag.embedder = emb
+					ag.registry.SetEmbedder(emb)
+				}
+				if mem.Reranker.Enabled {
+					rr := mem.Reranker
+					ag.registry.SetReranker(embedding.NewJinaReranker(rr.APIBase, rr.APIKey, rr.Model))
+				}
+			}
 		}
 		// Date line in the chatter's timezone — needs dataStore for the
 		// scope-prefs lookup, hence wired here and re-applied by
