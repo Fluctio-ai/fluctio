@@ -70,16 +70,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
         return;
       }
 
-      // /signup is a public route when admin opens registration. Let it
-      // render unauthenticated — the page itself re-checks the toggle and
-      // surfaces "registration is closed" if the admin flipped it off
-      // between page load and submit.
-      if (pathname === "/signup" || pathname.startsWith("/signup/")) {
-        setAuthed(true);
-        setChecked(true);
-        return;
-      }
-
       try {
         const me = await getMe();
         if (me.ok && me.user) {

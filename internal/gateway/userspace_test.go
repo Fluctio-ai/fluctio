@@ -86,9 +86,8 @@ func TestResolveChatterSeparatesIMSendersForRegularOwner(t *testing.T) {
 		Username:     "owner",
 		Email:        "owner@example.com",
 		PasswordHash: "x",
-		Role:         users.RoleUser,
+		Role:         users.RoleSuperAdmin,
 		Status:       users.StatusActive,
-		AgentQuota:   -1,
 		CreatedAt:    time.Now().UTC(),
 		UpdatedAt:    time.Now().UTC(),
 	}

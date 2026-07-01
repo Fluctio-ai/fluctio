@@ -83,7 +83,7 @@ func (s *Server) resolveChannelBindingScope(w http.ResponseWriter, r *http.Reque
 		return uid, agentID, true
 	}
 	// Non-owner: must be able to at least read the agent.
-	if (ident.AuthMethod == "apikey" && ident.CanAccessAgent(agentID)) || rec.IsPublic {
+	if ident.AuthMethod == "apikey" && ident.CanAccessAgent(agentID) {
 		return uid, agentID, true
 	}
 	jsonResponse(w, http.StatusForbidden, map[string]any{"error": "not your agent"})

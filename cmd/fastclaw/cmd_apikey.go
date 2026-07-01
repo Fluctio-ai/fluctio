@@ -22,16 +22,13 @@ func apikeyCmd() *cobra.Command {
 }
 
 func apikeyCreateCmd() *cobra.Command {
-	var name, keyType, owner string
+	var name, owner string
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a new API key",
+		Short: "Create a new API key (owner-level)",
 		Long: `Create a new API key for the specified owner (or the first super_admin).
 
-Key types:
-  admin  — full platform access (only super_admin should own these)
-  user   — scoped to owner's resources; supports X-Fastclaw-End-User for app_user provisioning
-  agent  — locked to explicit agent list (requires --agents)`,
+Single-user mode: every key is owner-level (admin) — full platform access.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := openStoreFromEnv()
 			if err != nil {
@@ -63,18 +60,17 @@ Key types:
 			if err != nil {
 				return err
 			}
-			rec, token, err := ak.Create(context.Background(), owner, name, keyType, nil)
+			rec, token, err := ak.Create(context.Background(), owner, name, users.APIKeyTypeAdmin, nil)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("created apikey id=%s name=%s type=%s owner=%s\n", rec.ID, name, keyType, owner)
+			fmt.Printf("created apikey id=%s name=%s owner=%s\n", rec.ID, name, owner)
 			fmt.Printf("token: %s\n", token)
 			fmt.Println("(save this token now — it won't be shown again)")
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "key name (required)")
-	cmd.Flags().StringVar(&keyType, "type", "user", "'admin', 'user', or 'agent'")
 	cmd.Flags().StringVar(&owner, "owner", "", "owner user ID (defaults to first super_admin)")
 	cmd.MarkFlagRequired("name")
 	return cmd

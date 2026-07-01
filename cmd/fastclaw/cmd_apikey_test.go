@@ -42,15 +42,6 @@ func TestApikeyCreateCmd_RequiredFlags(t *testing.T) {
 		t.Fatal("missing --name flag")
 	}
 
-	// --type defaults to "user"
-	typeFlag := cmd.Flags().Lookup("type")
-	if typeFlag == nil {
-		t.Fatal("missing --type flag")
-	}
-	if typeFlag.DefValue != "user" {
-		t.Errorf("expected --type default='user', got %q", typeFlag.DefValue)
-	}
-
 	// --owner is optional
 	ownerFlag := cmd.Flags().Lookup("owner")
 	if ownerFlag == nil {

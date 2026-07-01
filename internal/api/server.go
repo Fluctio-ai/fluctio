@@ -77,13 +77,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /v1/agents",
 			s.authMiddleware(rateLimitMiddleware(s.limiter, getUserID, s.HandleListAgents)))
 	}
-	// Explicit provisioning of an app_user for a downstream end-user.
-	// Always available — any api_key call can use the same identity-
-	// switch (header or `user` body field) without precreating, this
-	// endpoint just exists for callers that prefer to mint up front and
-	// store the returned fastclaw user_id locally.
-	mux.HandleFunc("POST /v1/users",
-		s.authMiddleware(rateLimitMiddleware(s.limiter, getUserID, s.HandleProvisionAppUser)))
 
 	// Billing: usage query + quota management. Available to any
 	// authenticated api_key caller so upstream SaaS apps (weclaw etc.)

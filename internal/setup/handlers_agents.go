@@ -231,13 +231,9 @@ func (s *Server) effectiveUserID(r *http.Request) string {
 // requireWritable returns true if the caller may mutate, writing a 4xx
 // response and false otherwise.
 func (s *Server) requireWritable(w http.ResponseWriter, r *http.Request) bool {
-	ident, ok := auth.FromContext(r.Context())
+	_, ok := auth.FromContext(r.Context())
 	if !ok {
 		jsonResponse(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauthorized"})
-		return false
-	}
-	if ident.ReadOnly() {
-		jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "read-only"})
 		return false
 	}
 	return true
@@ -247,18 +243,6 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	uid := s.effectiveUserID(r)
 	if uid == "" {
 		jsonResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
-		return
-	}
-	// ?all=true is the cross-tenant view (replaces /api/admin/agents).
-	// Admin-only — for the platform-wide "Agents" admin page that
-	// joins owner usernames in.
-	if r.URL.Query().Get("all") == "true" {
-		ident, _ := auth.FromContext(r.Context())
-		if !ident.CanAdminPlatform() {
-			jsonResponse(w, http.StatusForbidden, map[string]any{"error": "all=true requires admin"})
-			return
-		}
-		s.respondAllAgents(w, r)
 		return
 	}
 	owned, err := s.dataStore.ListAgents(r.Context(), uid)
@@ -278,7 +262,6 @@ func (s *Server) handleListAgents(w http.ResponseWriter, r *http.Request) {
 			"createdAt":   ar.CreatedAt,
 			"userId":      ar.UserID,
 			"role":        "owner",
-			"isPublic":    ar.IsPublic,
 		})
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"agents": out})
@@ -308,23 +291,6 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "name required"})
 		return
-	}
-	// Enforce per-user agent quota. -1 = unlimited (default), 0 = no
-	// self-creation (single-tenant customers — admin provisions for
-	// them via POST /api/users/{id}/agents under admin caller),
-	// N>0 = max N owned at once. Admin path bypasses this check.
-	if u, err := s.dataStore.GetUser(r.Context(), uid); err == nil && u != nil && u.AgentQuota >= 0 {
-		owned, err := s.dataStore.ListAgents(r.Context(), uid)
-		if err != nil {
-			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-		if int64(len(owned)) >= u.AgentQuota {
-			jsonResponse(w, http.StatusForbidden, map[string]any{
-				"error": fmt.Sprintf("agent quota reached (%d) — contact your admin to provision more", u.AgentQuota),
-			})
-			return
-		}
 	}
 	id, err := generateID("agt_")
 	if err != nil {
@@ -460,9 +426,6 @@ func (s *Server) requireAgentReadable(w http.ResponseWriter, r *http.Request, ag
 	if ident.AuthMethod == "apikey" && ident.CanAccessAgent(agentID) {
 		return true
 	}
-	if rec.IsPublic && uid != "" {
-		return true
-	}
 	jsonResponse(w, http.StatusForbidden, map[string]any{"error": "not your agent"})
 	return false
 }
@@ -480,7 +443,6 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		Name              string    `json:"name,omitempty"`
 		Description       *string   `json:"description,omitempty"` // ptr so empty-string clears it
 		Model             *string   `json:"model,omitempty"`       // ptr so empty-string clears the agent-scope override
-		IsPublic          *bool     `json:"isPublic,omitempty"`    // ptr so caller can leave it unchanged
 		ShareModelConfig  *bool     `json:"shareModelConfig,omitempty"`
 		// PromptMode is a ptr so the caller can distinguish "leave
 		// unchanged" (omitted / null) from "clear override" (empty
@@ -533,9 +495,6 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		} else {
 			rec.Config["description"] = *req.Description
 		}
-	}
-	if req.IsPublic != nil {
-		rec.IsPublic = *req.IsPublic
 	}
 	// shareModelConfig controls whether a chatter using this agent
 	// inherits the owner's model + provider configuration. Default
@@ -659,7 +618,6 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			"sharedIdentity":   s.agentScopeSharedIdentity(r, rec.UserID, rec.ID),
 			"plugins":          s.agentScopePlugins(r, rec.ID),
 			"config":           rec.Config,
-			"isPublic":         rec.IsPublic,
 			"shareModelConfig": share,
 		},
 	})
@@ -701,7 +659,6 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 			"plugins":          s.agentScopePlugins(r, rec.ID),
 			"avatarUrl":        "/api/agents/" + rec.ID + "/files/avatar.png",
 			"createdAt":        rec.CreatedAt,
-			"isPublic":         rec.IsPublic,
 			"shareModelConfig": share,
 		},
 	})

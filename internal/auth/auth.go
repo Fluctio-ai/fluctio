@@ -38,68 +38,22 @@ type Identity struct {
 	// AuthMethod is "session" or "apikey".
 	AuthMethod string
 
-	// APIKeyID is set when AuthMethod=="apikey". APIKeyType is one of
-	// users.APIKeyType{Admin,User,Agent}. APIKeyAgents is the agent
-	// scope resolved at auth time:
-	//   - type=admin: empty (the agent gate short-circuits on type)
-	//   - type=user:  every agent owned by the apikey owner at the
-	//     moment of the request (resolved fresh per request)
-	//   - type=agent: the explicit ACL from apikey_agents
-	APIKeyID     string
-	APIKeyType   string
-	APIKeyAgents []string
+	// APIKeyID is set when AuthMethod=="apikey".
+	APIKeyID string
 
-	// ActAsUserID is non-empty when a super_admin is browsing another
-	// user's resources read-only via ?actAs=. Mutating handlers MUST
-	// 403 when this is set.
-	ActAsUserID string
 }
 
-// EffectiveUserID is who we read data for. For super_admin in actAs mode
-// it's the impersonated user; otherwise it's the caller themselves.
+// EffectiveUserID is the caller. Single-user mode has no impersonation,
+// so this is always UserID.
 func (i Identity) EffectiveUserID() string {
-	if i.ActAsUserID != "" {
-		return i.ActAsUserID
-	}
 	return i.UserID
 }
 
-// IsActingAs reports whether super_admin is impersonating another user.
-func (i Identity) IsActingAs() bool {
-	return i.ActAsUserID != "" && i.ActAsUserID != i.UserID
-}
-
-// ReadOnly reports whether mutating endpoints must reject this request.
-// Active actAs mode is the only read-only condition we enforce here.
-func (i Identity) ReadOnly() bool {
-	return i.IsActingAs()
-}
-
 // CanAccessAgent answers "is this caller authorized for agentID?"
-//   - super_admin (session): yes, on any agent (read-only when actAs)
-//   - apikey type=admin: yes, on any agent
-//   - apikey type=user/agent: only if agentID ∈ APIKeyAgents (the list
-//     is pre-resolved at auth time per type — see Resolved.Agents)
-//   - session user (non-admin): agent must belong to UserID (verified by
-//     the caller querying agents table; we don't carry that list on
-//     Identity)
+// Single-user mode: the owner owns every agent, so any authenticated
+// caller is authorized. (Per-agent ownership is still enforced by the
+// caller via UserSpace lookup.)
 func (i Identity) CanAccessAgent(agentID string) bool {
-	if i.AuthMethod == "apikey" {
-		if i.APIKeyType == users.APIKeyTypeAdmin {
-			return true
-		}
-		for _, a := range i.APIKeyAgents {
-			if a == agentID {
-				return true
-			}
-		}
-		return false
-	}
-	if i.Role == users.RoleSuperAdmin {
-		return true
-	}
-	// session caller: agent ownership check happens in the handler
-	// after reading the agent row (cheap M:1 lookup, no list scan).
 	return true
 }
 
@@ -109,19 +63,14 @@ func (i Identity) CanAccessAgent(agentID string) bool {
 // super_admin's type=user/agent apikey deliberately downgrades them to
 // the narrower scope they signed it for.
 func (i Identity) CanAdminPlatform() bool {
-	if i.AuthMethod == "apikey" {
-		return i.APIKeyType == users.APIKeyTypeAdmin
-	}
-	return i.Role == users.RoleSuperAdmin
+	// Single-user mode: the owner (super_admin session or any apikey) is
+	// the platform admin.
+	return i.Role == users.RoleSuperAdmin || i.AuthMethod == "apikey"
 }
 
 // CanCreateAgent answers "may this caller create new agents?"
-// type=agent keys explicitly cannot — they're sandboxed to a fixed list.
-// Everyone else (sessions and admin/user keys) can.
+// Single-user mode: the owner can always create agents.
 func (i Identity) CanCreateAgent() bool {
-	if i.AuthMethod == "apikey" && i.APIKeyType == users.APIKeyTypeAgent {
-		return false
-	}
 	return true
 }
 
@@ -243,52 +192,12 @@ func (r *Resolver) ResolveBearer(ctx context.Context, token string) (Identity, e
 		return Identity{}, err
 	}
 	return Identity{
-		UserID:       res.Account.ID,
-		Role:         res.Account.Role,
-		AuthMethod:   "apikey",
-		APIKeyID:     res.APIKey.ID,
-		APIKeyType:   res.APIKey.Type,
-		APIKeyAgents: append([]string(nil), res.Agents...),
+		UserID:     res.Account.ID,
+		Role:       res.Account.Role,
+		AuthMethod: "apikey",
+		APIKeyID:   res.APIKey.ID,
 	}, nil
 }
-
-// SwitchToAppUser rebinds ident to the app_user for (owner account,
-// externalID), minting that row the first time it's seen. The app_user is
-// keyed on the api_key's OWNER account — NOT the api_key id — so the calling
-// app can rotate/replace its api_key without orphaning the end-user. APIKeyID
-// + APIKeyAgents are preserved (only UserID + Role flip) so the apikey's agent
-// ACL still gates access. Empty externalID passes through untouched. Only
-// valid for AuthMethod=="apikey"; session callers stay as-is.
-func (r *Resolver) SwitchToAppUser(ctx context.Context, ident Identity, externalID string) (Identity, error) {
-	if externalID == "" {
-		return ident, nil
-	}
-	if ident.AuthMethod != "apikey" || ident.APIKeyID == "" {
-		return ident, errors.New("auth.SwitchToAppUser: api_key auth required")
-	}
-	// Already an app_user (request switched once) — re-keying off the
-	// app_user's own id would mint a nested user. No-op instead.
-	if ident.Role == users.RoleAppUser {
-		return ident, nil
-	}
-	// ident.UserID is the api_key's owner account here (pre-switch); key the
-	// app_user on it so rotating/replacing the api_key keeps the same user.
-	acc, err := r.accounts.EnsureAppUser(ctx, ident.UserID, externalID, "", ident.APIKeyID)
-	if err != nil {
-		return ident, err
-	}
-	ident.UserID = acc.ID
-	ident.Role = acc.Role
-	return ident, nil
-}
-
-// EndUserHeader is the per-request header that names the calling app's
-// end-user. When set on an api_key authenticated request, the auth
-// middleware will lazily mint (or look up) a fastclaw user for
-// (apikey, header) and switch the request identity to it. Sessions and
-// agent_files written under that identity then partition cleanly per
-// end-user instead of piling up under the api_key owner.
-const EndUserHeader = "X-Fastclaw-End-User"
 
 // ErrUnauthorized is returned when no valid credential is present.
 var ErrUnauthorized = errors.New("unauthorized")
@@ -397,25 +306,6 @@ func (r *Resolver) resolve(req *http.Request) (Identity, error) {
 	return Identity{}, ErrUnauthorized
 
 done:
-	// actAs is reserved for super_admin and only applies to session
-	// callers (apikey impersonation would defeat the apikey ACL).
-	if act := req.URL.Query().Get("actAs"); act != "" {
-		if ident.AuthMethod == "session" && ident.Role == users.RoleSuperAdmin {
-			ident.ActAsUserID = act
-		}
-	}
-	// If the calling app named an end-user via X-Fastclaw-End-User on an
-	// api_key request, rebind to the corresponding app_user (lazy mint).
-	// We swallow errors here so a malformed header can't 401 a request —
-	// the request just stays under the api_key owner. The OpenAI
-	// /v1/chat/completions handler also honors `user` in the request
-	// body for clients that prefer the OpenAI shape; that path calls
-	// SwitchToAppUser explicitly after parsing the body.
-	if eu := strings.TrimSpace(req.Header.Get(EndUserHeader)); eu != "" {
-		if next, swErr := r.SwitchToAppUser(req.Context(), ident, eu); swErr == nil {
-			ident = next
-		}
-	}
 	return ident, nil
 }
 
@@ -435,12 +325,6 @@ func RequireSuperAdmin(next http.HandlerFunc) http.HandlerFunc {
 			writeForbidden(w, "super_admin required")
 			return
 		}
-		// Apikey callers must additionally hold a type=admin key — a
-		// super_admin's type=user key is intentionally narrower.
-		if ident.AuthMethod == "apikey" && ident.APIKeyType != users.APIKeyTypeAdmin {
-			writeForbidden(w, "admin apikey required")
-			return
-		}
 		next(w, req)
 	}
 }
@@ -454,23 +338,6 @@ func RequirePlatformAdmin(next http.HandlerFunc) http.HandlerFunc {
 		ident, ok := FromContext(req.Context())
 		if !ok || !ident.CanAdminPlatform() {
 			writeForbidden(w, "platform admin required")
-			return
-		}
-		next(w, req)
-	}
-}
-
-// RequireWritable rejects requests where Identity.ReadOnly() (i.e. the
-// caller is acting as another user). Wrap mutating handlers.
-func RequireWritable(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		ident, ok := FromContext(req.Context())
-		if !ok {
-			writeUnauthorized(w)
-			return
-		}
-		if ident.ReadOnly() {
-			writeForbidden(w, "read-only: cannot mutate while acting as another user")
 			return
 		}
 		next(w, req)

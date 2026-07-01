@@ -71,10 +71,6 @@ func (s *Server) authorizeScope(w http.ResponseWriter, r *http.Request, sc, scop
 		// the upstream stack configured for them); only mutating
 		// callers reach this path via requireWritable, but we hard-
 		// reject up front to be unambiguous.
-		if ident.Role == users.RoleAppUser {
-			jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "app_user cannot manage user-scope configs"})
-			return false
-		}
 		return true
 	case scope.Agent:
 		// Must own the agent. We do an inexpensive store lookup to verify.
@@ -99,7 +95,7 @@ func (s *Server) authorizeScope(w http.ResponseWriter, r *http.Request, sc, scop
 		// is using and which models are available. Writes stay owner-only.
 		if op == scopeRead {
 			if agentShareModelConfig(rec) {
-				if rec.IsPublic || s.callerOwnsAgent(r, scopeID) {
+				if s.callerOwnsAgent(r, scopeID) {
 					return true
 				}
 				// Mirror requireAgentReadable's apikey-ACL gate so an

@@ -29,9 +29,7 @@ import (
 // end-user. There is intentionally no fine-grained scheme — anything
 // more complex lives in the apikey ACL layer.
 const (
-	RoleSuperAdmin = "super_admin"
-	RoleUser       = "user"
-	RoleAppUser    = "app_user"
+	RoleSuperAdmin  = "super_admin"
 	RoleChannelUser = "channel_user"
 )
 
@@ -58,7 +56,6 @@ type Account struct {
 	APIKeyID    string    `json:"apikeyId,omitempty"`
 	ExternalID  string    `json:"externalId,omitempty"`
 	AvatarURL   string    `json:"avatarUrl,omitempty"`
-	AgentQuota  int64     `json:"agentQuota"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -84,13 +81,7 @@ func (a *Accounts) Count(ctx context.Context) (int, error) {
 }
 
 // CreateInput is the bag of fields Create writes onto a new user row.
-// Required: Username, Email, Password. Role defaults to RoleUser.
-//
-// AgentQuota:
-//   - nil           — unlimited (platform default for self-registered users)
-//   - *value < 0    — unlimited
-//   - *value = 0    — caller cannot self-create agents (admin provisions only)
-//   - *value > 0    — caller can hold up to N owned agents
+// Required: Username, Email, Password. Role defaults to RoleSuperAdmin.
 //
 // APIKeyID + ExternalID are the upstream-provisioning idempotency pair.
 // Set APIKeyID to the apikey that's minting this row (handler reads it
@@ -108,7 +99,6 @@ type CreateInput struct {
 	Password    string
 	DisplayName string
 	Role        string
-	AgentQuota  *int64
 	AvatarURL   string
 	APIKeyID    string
 	ExternalID  string
@@ -141,9 +131,9 @@ func (a *Accounts) Create(ctx context.Context, in CreateInput) (*Account, error)
 	}
 	role := in.Role
 	if role == "" {
-		role = RoleUser
+		role = RoleSuperAdmin
 	}
-	if role != RoleSuperAdmin && role != RoleUser {
+	if role != RoleSuperAdmin {
 		return nil, errors.New("users.Create: invalid role")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
@@ -153,10 +143,6 @@ func (a *Accounts) Create(ctx context.Context, in CreateInput) (*Account, error)
 	id, err := newID("u_")
 	if err != nil {
 		return nil, err
-	}
-	quota := int64(-1)
-	if in.AgentQuota != nil {
-		quota = *in.AgentQuota
 	}
 	rec := &store.UserRecord{
 		ID:           id,
@@ -169,7 +155,6 @@ func (a *Accounts) Create(ctx context.Context, in CreateInput) (*Account, error)
 		APIKeyID:     apikeyID,
 		ExternalID:   externalID,
 		AvatarURL:    in.AvatarURL,
-		AgentQuota:   quota,
 	}
 	if err := a.store.CreateUser(ctx, rec); err != nil {
 		// Race: another concurrent request minted the same
@@ -215,7 +200,7 @@ func (a *Accounts) Authenticate(ctx context.Context, login, password string) (*A
 	// would still fail-closed, but checking explicitly keeps the
 	// failure mode unambiguous and avoids burning bcrypt cycles on
 	// every probe.
-	if rec.PasswordHash == "" || rec.Role == RoleAppUser || rec.Role == RoleChannelUser {
+	if rec.PasswordHash == "" || rec.Role == RoleChannelUser {
 		return nil, ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(rec.PasswordHash), []byte(password)); err != nil {
@@ -248,7 +233,7 @@ func (a *Accounts) List(ctx context.Context) ([]*Account, error) {
 
 // Update applies non-credential changes (display name, role, status). Use
 // SetPassword for password rotation.
-func (a *Accounts) Update(ctx context.Context, id, displayName, role, status string, agentQuota *int64) (*Account, error) {
+func (a *Accounts) Update(ctx context.Context, id, displayName, role, status string) (*Account, error) {
 	rec, err := a.store.GetUser(ctx, id)
 	if err != nil {
 		return nil, err
@@ -257,7 +242,7 @@ func (a *Accounts) Update(ctx context.Context, id, displayName, role, status str
 		rec.DisplayName = displayName
 	}
 	if role != "" {
-		if role != RoleSuperAdmin && role != RoleUser {
+		if role != RoleSuperAdmin {
 			return nil, errors.New("users.Update: invalid role")
 		}
 		rec.Role = role
@@ -267,9 +252,6 @@ func (a *Accounts) Update(ctx context.Context, id, displayName, role, status str
 			return nil, errors.New("users.Update: invalid status")
 		}
 		rec.Status = status
-	}
-	if agentQuota != nil {
-		rec.AgentQuota = *agentQuota
 	}
 	if err := a.store.UpdateUser(ctx, rec); err != nil {
 		return nil, err
@@ -330,53 +312,6 @@ func (a *Accounts) SetPassword(ctx context.Context, id, newPassword string) erro
 	return a.store.UpdateUser(ctx, rec)
 }
 
-// EnsureAppUser returns the fastclaw user representing (ownerUserID, externalID),
-// creating one with role=app_user the first time it's seen. Idempotent:
-// later calls with the same pair return the existing row.
-//
-// ownerUserID is the user who owns this app_user — typically the user
-// who created the API key that provisioned it. Stored in owner_user_id.
-//
-// apiKeyID is the specific API key used (stored in apikey_id for audit).
-// Pass "" when not applicable.
-func (a *Accounts) EnsureAppUser(ctx context.Context, ownerUserID, externalID, displayName, apiKeyID string) (*Account, error) {
-	ownerUserID = strings.TrimSpace(ownerUserID)
-	externalID = strings.TrimSpace(externalID)
-	if ownerUserID == "" || externalID == "" {
-		return nil, errors.New("users.EnsureAppUser: ownerUserID and externalID are required")
-	}
-	// Fast path — already provisioned.
-	if rec, err := a.store.GetUserByExternal(ctx, ownerUserID, externalID); err == nil {
-		return toAccount(rec), nil
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return nil, err
-	}
-	id, err := newID("u_")
-	if err != nil {
-		return nil, err
-	}
-	rec := &store.UserRecord{
-		ID:           id,
-		Username:     id,
-		Email:        id + "@app_user",
-		PasswordHash: "",
-		DisplayName:  displayName,
-		Role:         RoleAppUser,
-		Status:       StatusActive,
-		OwnerUserID:  ownerUserID,
-		APIKeyID:     apiKeyID,
-		ExternalID:   externalID,
-		AgentQuota:   -1,
-	}
-	if err := a.store.CreateUser(ctx, rec); err != nil {
-		if again, qerr := a.store.GetUserByExternal(ctx, ownerUserID, externalID); qerr == nil {
-			return toAccount(again), nil
-		}
-		return nil, err
-	}
-	return toAccount(rec), nil
-}
-
 // EnsureChatter returns the fastclaw user representing an IM channel
 // end-user under (ownerUserID, externalID), creating one with
 // role=chatter the first time it's seen. Idempotent.
@@ -409,7 +344,6 @@ func (a *Accounts) EnsureChatter(ctx context.Context, ownerUserID, externalID, d
 		Status:       StatusActive,
 		OwnerUserID:  ownerUserID,
 		ExternalID:   externalID,
-		AgentQuota:   -1,
 	}
 	if err := a.store.CreateUser(ctx, rec); err != nil {
 		if again, qerr := a.store.GetUserByExternal(ctx, ownerUserID, externalID); qerr == nil {
@@ -418,32 +352,6 @@ func (a *Accounts) EnsureChatter(ctx context.Context, ownerUserID, externalID, d
 		return nil, err
 	}
 	return toAccount(rec), nil
-}
-
-// Delete removes an account and its owned rows (cascade implemented in the
-// store). Refuses to drop the last super_admin so the install doesn't lock
-// itself out.
-func (a *Accounts) Delete(ctx context.Context, id string) error {
-	target, err := a.store.GetUser(ctx, id)
-	if err != nil {
-		return err
-	}
-	if target.Role == RoleSuperAdmin {
-		all, err := a.store.ListUsers(ctx)
-		if err != nil {
-			return err
-		}
-		admins := 0
-		for _, u := range all {
-			if u.Role == RoleSuperAdmin && u.Status == StatusActive {
-				admins++
-			}
-		}
-		if admins <= 1 {
-			return errors.New("users.Delete: refusing to remove the last active super_admin")
-		}
-	}
-	return a.store.DeleteUser(ctx, id)
 }
 
 func toAccount(r *store.UserRecord) *Account {
@@ -460,7 +368,6 @@ func toAccount(r *store.UserRecord) *Account {
 		APIKeyID:    r.APIKeyID,
 		ExternalID:  r.ExternalID,
 		AvatarURL:   r.AvatarURL,
-		AgentQuota:  r.AgentQuota,
 		CreatedAt:   r.CreatedAt,
 		UpdatedAt:   r.UpdatedAt,
 	}

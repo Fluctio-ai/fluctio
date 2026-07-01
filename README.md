@@ -54,13 +54,12 @@ Open `http://localhost:18953` and login with your admin token.
 - **Agents** — Create and manage agents, each with its own personality and model
 - **Skills** — Install shared skills from ClawHub or GitHub
 - **Models** — Configure LLM providers (OpenAI, Anthropic, Ollama, OpenRouter, etc.)
-- **API Keys** — Issue programmatic credentials (admin / user / agent tiers)
+- **API Keys** — Issue programmatic owner-level credentials
 - **Settings** — General (theme), Account (profile + password), Runtime (sandbox config; admin only)
 
-> Non-admin users get scoped access to **Models**, **API Keys**, and
-> **Settings (General + Account)** out of the box. They see admin-shared
-> resources as `Inherited` and can layer their own private overlays on
-> top — same inheritance pattern the agent runtime uses.
+> Single-user mode: the dashboard serves one owner. There is no
+> self-registration and no multi-user management — the owner account is
+> created via onboarding or `fastclaw admin create-user`.
 
 ### 3. Agent Management
 
@@ -73,13 +72,6 @@ Click an agent to enter its management panel:
 - **Channels** — Connect IM bots (Telegram, Discord, Slack) so end-users can chat with the agent on their platform of choice
 - **Scheduler** — Inspect and manage cron jobs the agent created via `create_cron_job` ("每天 9 点提醒我", "5 分钟后叫我"); pause / delete from the UI
 - **Sessions** — Conversation history
-
-**Sharing.** Each agent has a `Public access` toggle in the Edit dialog
-(default off). When on, anyone with the chat URL — `/agents/{id}/chat/`
-— can chat with the agent under their own account; sessions / memory /
-USER.md partition per chatter, while SOUL / IDENTITY / skills are
-shared from the owner's row. When off, only the owner (or super_admin)
-can access it.
 
 ## Architecture
 
@@ -106,10 +98,9 @@ table and is edited through the dashboard or `fastclaw agents config`.
 | Data | Belongs to | Backing store |
 |------|-----------|---------------|
 | Agent records, SOUL.md / IDENTITY.md / MEMORY.md / agent.json | Agent | DB (`agent_files` table) |
-| Sessions (chat history) | Agent × user | DB (`sessions` table) |
-| API keys, users, scoped configs (providers/channels/settings) | Platform | DB |
+| Sessions (chat history) | Agent × session | DB (`sessions` table) |
+| API keys, scoped configs (providers/channels/settings) | Platform | DB |
 | Skills | Agent / Global | Filesystem (`skills/`, `agents/<id>/agent/skills/`) |
-| User accounts, billing | Application | Your app (ChatClaw, etc.) |
 | Output files | Application | Your app / S3 |
 
 ## Features
@@ -142,24 +133,16 @@ table and is edited through the dashboard or `fastclaw agents config`.
 
 ### API
 - OpenAI-compatible `/v1/chat/completions` (streaming)
-- Upstream app integration contract: [`docs/upstream-api.md`](docs/upstream-api.md)
+- HTTP API reference: [`docs/upstream-api.md`](docs/upstream-api.md)
 - Web chat `/api/chat/stream` (SSE)
 - Live agent push via `/api/chat/subscribe` (SSE) — surfaces cron-fired and other async replies into the open chat panel without a refresh
 - Session management `/api/chat/sessions`
-- Agent CRUD `/api/agents` (`?all=true` returns the cross-tenant view, admin-only)
+- Agent CRUD `/api/agents`
 - Per-agent scheduler `/api/agents/{id}/cron` (list / toggle / delete)
 - Provider management `/api/config`
 - Skill install `/api/skills/install` (ClawHub + GitHub)
-- API key management `/api/apikeys` (per-user; tiers: admin / user / agent)
-- User management `/api/users` (admin) — top-level CRUD + nested
-  `/api/users/{id}/apikeys` and `/api/users/{id}/agents` for
-  admin-driven provisioning. The `agents` endpoint accepts
-  `forkFrom` to clone an existing agent's identity (SOUL / IDENTITY /
-  skills / model defaults) into the new user's namespace — primary
-  building block for "user buys a bot" flows. Per-user `agent_quota`
-  caps how many agents a non-admin can self-create
-  (`-1` = unlimited, `0` = admin-provisioned only).
-- App-user provisioning `POST /v1/users` — third-party apps mint a stable fastclaw user_id per end-user, idempotent on `(api_key, external_id)`. Or pass `user` on `/v1/chat/completions` (or `X-Fastclaw-End-User` header) for lazy mint on first call
+- API key management `/api/apikeys` (owner-level; single tier)
+- Per-owner API key + agent creation via `/api/users/{id}/apikeys` and `/api/users/{id}/agents` (self-service)
 
 ## Configuration
 
@@ -315,21 +298,13 @@ file editor uses. Allowlisted filenames: `SOUL.md`, `IDENTITY.md`,
 
 ### Manage API keys from the CLI (`fastclaw apikey …`)
 
-Issue and manage programmatic credentials for external integrations.
-
-#### Key types
-
-| type | Scope | Use case |
-|------|-------|----------|
-| `admin` | Full platform access, all agents | Admin automation, CI/CD |
-| `user` | Owner's agents; supports `X-Fastclaw-End-User` for app_user provisioning | SaaS proxy layer, multi-tenant apps |
-| `agent` | Explicit agent list only; cannot create agents | Bots, single-purpose integrations |
-
-#### Commands
+Issue and manage programmatic owner-level credentials for external
+integrations. Every key has full owner scope — single-user mode has no
+key tiers and no per-agent ACL.
 
 ```bash
 # Create a key (token shown once — save immediately)
-fastclaw apikey create --name "my-key" --type user [--owner <user-id>]
+fastclaw apikey create --name "my-key" [--owner <user-id>]
 
 # List keys for a user (defaults to first super_admin)
 fastclaw apikey list [--owner <user-id>]
@@ -343,22 +318,7 @@ fastclaw apikey rotate --id <apikey-id>
 
 **Flags:**
 - `--name` (required): human-readable key name
-- `--type` (default `user`): `admin`, `user`, or `agent`
 - `--owner` (optional): owner user ID; defaults to first super_admin
-
-#### Multi-tenant app_user flow
-
-A `type=user` key combined with the `X-Fastclaw-End-User` header enables
-per-end-user data isolation without pre-registering users in FastClaw:
-
-```
-Authorization: Bearer <user-key-token>
-X-Fastclaw-End-User: <your-app-user-id>
-```
-
-FastClaw lazily mints a stable internal user for each unique
-`(api_key_id, external_id)` pair. Sessions, memory, and files are fully
-isolated per end-user.
 
 ### Docker
 ```bash

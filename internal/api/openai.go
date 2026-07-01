@@ -177,21 +177,6 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// OpenAI's `user` body field, when present on an api_key call,
-	// rebinds the identity to the corresponding app_user (lazy mint).
-	// Header X-Fastclaw-End-User does the same job pre-handler in the
-	// auth middleware; we run this *after* the middleware so the body
-	// value wins iff both are present (the body field is more
-	// specific to this call than a static header). Errors here are
-	// non-fatal — request continues under the unswitched identity.
-	if req.User != "" && s.authResolver != nil {
-		if ident, ok := auth.FromContext(r.Context()); ok {
-			if next, swErr := s.authResolver.SwitchToAppUser(r.Context(), ident, req.User); swErr == nil {
-				r = r.WithContext(auth.WithIdentity(r.Context(), next))
-			}
-		}
-	}
-
 	// Resolve the caller's user space (set by authMiddleware) and pick an
 	// agent out of it.
 	space, err := s.userSpaceFor(r)

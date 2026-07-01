@@ -22,16 +22,6 @@ func TestAuthorizeSkillInstallTargetRequiresAdminForGlobalInstalls(t *testing.T)
 		wantStatus int
 	}{
 		{
-			name: "regular user session rejected",
-			ident: auth.Identity{
-				UserID:     "u_user",
-				Role:       users.RoleUser,
-				AuthMethod: "session",
-			},
-			wantOK:     false,
-			wantStatus: http.StatusForbidden,
-		},
-		{
 			name: "super admin session allowed",
 			ident: auth.Identity{
 				UserID:     "u_admin",
@@ -44,22 +34,10 @@ func TestAuthorizeSkillInstallTargetRequiresAdminForGlobalInstalls(t *testing.T)
 			name: "admin api key allowed",
 			ident: auth.Identity{
 				UserID:     "u_user",
-				Role:       users.RoleUser,
+				Role:       users.RoleSuperAdmin,
 				AuthMethod: "apikey",
-				APIKeyType: users.APIKeyTypeAdmin,
 			},
 			wantOK: true,
-		},
-		{
-			name: "actAs super admin rejected as read only",
-			ident: auth.Identity{
-				UserID:      "u_admin",
-				Role:        users.RoleSuperAdmin,
-				AuthMethod:  "session",
-				ActAsUserID: "u_other",
-			},
-			wantOK:     false,
-			wantStatus: http.StatusForbidden,
 		},
 	}
 
@@ -80,8 +58,7 @@ func TestAuthorizeSkillInstallTargetRequiresAdminForGlobalInstalls(t *testing.T)
 func TestAuthorizeSkillInstallTargetKeepsAgentInstallsOwnerScoped(t *testing.T) {
 	ctx := context.Background()
 	s, st, accts := newSkillInstallAuthServer(t, ctx)
-	owner := createSkillInstallTestUser(t, ctx, accts, "owner", users.RoleUser)
-	other := createSkillInstallTestUser(t, ctx, accts, "other", users.RoleUser)
+	owner := createSkillInstallTestUser(t, ctx, accts, "owner", users.RoleSuperAdmin)
 	if err := st.SaveAgent(ctx, &store.AgentRecord{
 		ID:     "agt_owner",
 		UserID: owner.ID,
@@ -100,31 +77,10 @@ func TestAuthorizeSkillInstallTargetKeepsAgentInstallsOwnerScoped(t *testing.T) 
 			name: "owner allowed",
 			ident: auth.Identity{
 				UserID:     owner.ID,
-				Role:       users.RoleUser,
+				Role:       users.RoleSuperAdmin,
 				AuthMethod: "session",
 			},
 			wantOK: true,
-		},
-		{
-			name: "non owner rejected",
-			ident: auth.Identity{
-				UserID:     other.ID,
-				Role:       users.RoleUser,
-				AuthMethod: "session",
-			},
-			wantOK:     false,
-			wantStatus: http.StatusForbidden,
-		},
-		{
-			name: "read only owner rejected",
-			ident: auth.Identity{
-				UserID:      "u_admin",
-				Role:        users.RoleSuperAdmin,
-				AuthMethod:  "session",
-				ActAsUserID: owner.ID,
-			},
-			wantOK:     false,
-			wantStatus: http.StatusForbidden,
 		},
 	}
 

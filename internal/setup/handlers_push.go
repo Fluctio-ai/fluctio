@@ -23,7 +23,7 @@ type savePushDeviceReq struct {
 
 func (s *Server) handleSavePushDevice(w http.ResponseWriter, r *http.Request) {
 	ident, ok := auth.FromContext(r.Context())
-	if !ok || ident.ReadOnly() {
+	if !ok {
 		jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "read-only"})
 		return
 	}
@@ -65,7 +65,7 @@ func (s *Server) handleSavePushDevice(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeletePushDevice(w http.ResponseWriter, r *http.Request) {
 	ident, ok := auth.FromContext(r.Context())
-	if !ok || ident.ReadOnly() {
+	if !ok {
 		jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "read-only"})
 		return
 	}

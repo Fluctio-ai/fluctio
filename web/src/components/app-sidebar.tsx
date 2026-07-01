@@ -28,7 +28,6 @@ import {
   PlusIcon,
   SettingsIcon,
   SparklesIcon,
-  UsersIcon,
   WrenchIcon,
 } from "lucide-react";
 import {
@@ -92,7 +91,6 @@ const USER_USER_GROUP: NavItem[] = [
 ];
 
 const ADMIN_USER_GROUP: NavItem[] = [
-  { title: "Users", url: "/admin/users/", icon: UsersIcon },
   { title: "Chats", url: "/admin/chats/", icon: MessagesSquareIcon },
   { title: "Token Usage", url: "/admin/usage/", icon: CoinsIcon },
   { title: "API Keys", url: "/apikeys/", icon: KeyRoundIcon },
@@ -260,24 +258,13 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   }, [activeAgentId]);
 
   const isAdmin = status?.isAdmin ?? false;
-  // quotaLocked = caller has agent_quota=0 (admin-provisions-only,
-  // typical single-agent customer model). The agent switcher header
-  // is locked (static label, no "Manage agents" dropdown), but the
-  // /agents page itself stays reachable so they can browse what's
-  // been provisioned and jump into chat — it just hides the Create
-  // button. So we keep the Agents nav entry visible.
-  const quotaLocked = me?.user?.agentQuota === 0;
-
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
         <AgentSwitcher
           agents={agents}
           activeAgentId={activeAgentId}
-          locked={
-            quotaLocked ||
-            (!!activeAgentId && agentRoles[activeAgentId] === "viewer")
-          }
+          locked={!!activeAgentId && agentRoles[activeAgentId] === "viewer"}
         />
       </SidebarHeader>
       <SidebarContent>

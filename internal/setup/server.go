@@ -247,11 +247,6 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/push/devices/{token}", auth(s.handleDeletePushDevice))
 	mux.HandleFunc("POST /api/test-provider", opt(s.handleTestProvider))
 	mux.HandleFunc("POST /api/onboard", s.handleOnboard)
-	mux.HandleFunc("POST /api/register", s.handleRegister)
-	mux.HandleFunc("GET /api/public/agents", s.handlePublicAgents)
-	mux.HandleFunc("GET /api/public/skills", s.handlePublicSkills)
-	mux.HandleFunc("GET /api/admin/registration", admin(s.handleGetRegistration))
-	mux.HandleFunc("PUT /api/admin/registration", admin(s.handleSetRegistration))
 	mux.HandleFunc("GET /api/admin/chats", admin(s.handleAdminChats))
 
 	// Per-user config (system_settings + scoped providers/channels).
@@ -409,16 +404,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/apikeys", auth(s.handleCreateAPIKey))
 	mux.HandleFunc("DELETE /api/apikeys/{id}", auth(s.handleDeleteAPIKey))
 	mux.HandleFunc("POST /api/apikeys/{id}/rotate", auth(s.handleRotateAPIKey))
-	mux.HandleFunc("PUT /api/apikeys/{id}/agents", auth(s.handleSetAPIKeyAgents))
 
 	// Users — flat resource paths. Top-level CRUD is admin-only;
 	// nested {id}/apikeys + {id}/agents accept admin-or-self
 	// (gated in-handler via requireUserOrAdmin).
-	mux.HandleFunc("GET /api/users", admin(s.handleListUsers))
-	mux.HandleFunc("POST /api/users", admin(s.handleCreateUser))
-	mux.HandleFunc("PUT /api/users/{id}", admin(s.handleUpdateUser))
-	mux.HandleFunc("DELETE /api/users/{id}", admin(s.handleDeleteUser))
-	mux.HandleFunc("POST /api/users/{id}/password", admin(s.handleResetUserPassword))
 	mux.HandleFunc("POST /api/users/{id}/apikeys", auth(s.handleCreateUserAPIKey))
 	mux.HandleFunc("GET /api/users/{id}/agents", auth(s.handleListUserAgents))
 	mux.HandleFunc("POST /api/users/{id}/agents", auth(s.handleCreateUserAgent))

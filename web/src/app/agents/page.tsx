@@ -25,13 +25,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Bot, Plus, Trash2, ImagePlus, Pencil, Copy, Check } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
+import { Bot, Plus, Trash2, ImagePlus, Pencil } from "lucide-react";
 import {
   adminListAgents,
   apiFetch,
   getAgents,
-  getMe,
   getStatus,
   createAgent,
   updateAgent,
@@ -90,12 +88,6 @@ export default function AgentsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<"own" | "others">("own");
-  // quotaLocked = true when the caller has agent_quota=0 (admin
-  // provisions only). They can still browse /agents to see what's
-  // been provisioned for them and jump into chat — we just hide the
-  // Create button. If nothing has been provisioned yet, the empty
-  // state tells them to contact their admin.
-  const [quotaLocked, setQuotaLocked] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AgentDetail | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -117,11 +109,9 @@ export default function AgentsPage() {
   // Edit dialog state
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
-  const [editIsPublic, setEditIsPublic] = useState(false);
   const [editAvatar, setEditAvatar] = useState<File | null>(null);
   const [editAvatarPreview, setEditAvatarPreview] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [editLinkCopied, setEditLinkCopied] = useState(false);
   const editAvatarInput = useRef<HTMLInputElement>(null);
 
   const resetCreateForm = () => {
@@ -136,12 +126,10 @@ export default function AgentsPage() {
   const resetEditForm = () => {
     setEditName("");
     setEditDescription("");
-    setEditIsPublic(false);
     setEditAvatar(null);
     if (editAvatarPreview) URL.revokeObjectURL(editAvatarPreview);
     setEditAvatarPreview(null);
     setEditError(null);
-    setEditLinkCopied(false);
   };
 
   const openEdit = (agent: AgentDetail) => {
@@ -149,7 +137,6 @@ export default function AgentsPage() {
     setEditTarget(agent);
     setEditName(agent.name || "");
     setEditDescription(agent.description || "");
-    setEditIsPublic(!!agent.isPublic);
   };
 
   const fetchAgents = async () => {
@@ -180,23 +167,6 @@ export default function AgentsPage() {
 
   useEffect(() => {
     fetchAgents();
-  }, []);
-
-  // Resolve quotaLocked from /api/me. agent_quota === 0 means the
-  // caller can't self-create — we hide the Create button but still
-  // render the list so they can see admin-provisioned agents and
-  // jump into chat.
-  useEffect(() => {
-    let aborted = false;
-    getMe()
-      .then((me) => {
-        if (aborted) return;
-        if (me?.user?.agentQuota === 0) setQuotaLocked(true);
-      })
-      .catch(() => {});
-    return () => {
-      aborted = true;
-    };
   }, []);
 
   async function uploadAvatar(agentID: string, file: File) {
@@ -240,7 +210,6 @@ export default function AgentsPage() {
     const resp = await updateAgent(editTarget.id, {
       name: editName.trim(),
       description: editDescription.trim(),
-      isPublic: editIsPublic,
     });
     if (resp && (resp.ok === false || resp.error)) {
       setEditError(resp.error || "Failed to update agent");
@@ -284,12 +253,10 @@ export default function AgentsPage() {
             Manage your AI agents and their configurations
           </p>
         </div>
-        {!quotaLocked && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Agent
-          </Button>
-        )}
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          New Agent
+        </Button>
       </div>
 
       {loading ? (
@@ -304,20 +271,14 @@ export default function AgentsPage() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 mb-4">
               <Bot className="h-7 w-7 text-primary" />
             </div>
-            <p className="text-sm text-muted-foreground">
-              {quotaLocked
-                ? "No agent has been provisioned for your account yet — contact your admin."
-                : "No agents configured yet"}
-            </p>
-            {!quotaLocked && (
-              <Button
-                onClick={() => setCreateOpen(true)}
-                variant="outline"
-                className="mt-4"
-              >
-                Create your first agent
-              </Button>
-            )}
+            <p className="text-sm text-muted-foreground">No agents configured yet</p>
+            <Button
+              onClick={() => setCreateOpen(true)}
+              variant="outline"
+              className="mt-4"
+            >
+              Create your first agent
+            </Button>
           </div>
         </div>
       ) : (
@@ -362,22 +323,9 @@ export default function AgentsPage() {
             >
               <div className="flex items-start justify-between mb-4">
                 <AgentAvatar agent={agent} bust={avatarBust[agent.id]} size={48} />
-                {agent.isPublic ? (
-                  <Badge
-                    variant="outline"
-                    className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                  >
-                    <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    Public
-                  </Badge>
-                ) : (
-                  <Badge
-                    variant="outline"
-                    className="bg-muted/60 text-muted-foreground"
-                  >
-                    Private
-                  </Badge>
-                )}
+                <Badge variant="outline" className="bg-muted/60 text-muted-foreground">
+                  Private
+                </Badge>
               </div>
               <p className="text-base font-medium mb-1 truncate">{agent.name || agent.id}</p>
               <p
@@ -395,37 +343,32 @@ export default function AgentsPage() {
               {/* mt-auto pins the action row to the card bottom so cards
                   with no description don't shrink — keeps the grid row
                   aligned regardless of content length. */}
-              {/* quotaLocked users (agent_quota=0) are admin-provisioned —
-                  they can browse and chat but can't mutate the agent
-                  record, so hide Edit/Remove entirely. */}
-              {!quotaLocked && (
-                <div className="flex items-center gap-2 mt-auto pt-3 border-t border-border">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openEdit(agent);
-                    }}
-                  >
-                    <Pencil className="h-3 w-3 mr-1.5" />
-                    Edit
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 text-xs text-destructive hover:text-destructive"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDeleteId(agent.id);
-                    }}
-                  >
-                    <Trash2 className="h-3 w-3 mr-1.5" />
-                    Remove
-                  </Button>
-                </div>
-              )}
+              <div className="flex items-center gap-2 mt-auto pt-3 border-t border-border">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openEdit(agent);
+                  }}
+                >
+                  <Pencil className="h-3 w-3 mr-1.5" />
+                  Edit
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs text-destructive hover:text-destructive"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteId(agent.id);
+                  }}
+                >
+                  <Trash2 className="h-3 w-3 mr-1.5" />
+                  Remove
+                </Button>
+              </div>
             </div>
           ))}
         </div>
@@ -638,70 +581,6 @@ export default function AgentsPage() {
             {/* Public/Private toggle. Off (default) = owner-only.
                 On = anyone with the chat URL can chat under their own
                 account; sessions/memory partition per chatter. */}
-            <div className="space-y-3 rounded-lg border border-border p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <Label htmlFor="agent-edit-public" className="text-sm font-medium">
-                    Public access
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    {editIsPublic
-                      ? "Anyone with the link can chat. Their history stays private to them."
-                      : "Only you can use this agent."}
-                  </p>
-                </div>
-                <Switch
-                  id="agent-edit-public"
-                  checked={editIsPublic}
-                  onCheckedChange={(v) => {
-                    setEditIsPublic(!!v);
-                    setEditLinkCopied(false);
-                  }}
-                />
-              </div>
-              {editIsPublic && editTarget && (
-                <div className="flex gap-2">
-                  <Input
-                    readOnly
-                    value={
-                      typeof window !== "undefined"
-                        ? `${window.location.origin}/agents/${editTarget.id}/chat/`
-                        : `/agents/${editTarget.id}/chat/`
-                    }
-                    onFocus={(e) => e.currentTarget.select()}
-                    className="font-mono text-xs"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={async () => {
-                      if (!editTarget) return;
-                      const url = `${window.location.origin}/agents/${editTarget.id}/chat/`;
-                      try {
-                        await navigator.clipboard.writeText(url);
-                        setEditLinkCopied(true);
-                        setTimeout(() => setEditLinkCopied(false), 2000);
-                      } catch {
-                        // clipboard blocked — user can still select the input
-                      }
-                    }}
-                  >
-                    {editLinkCopied ? (
-                      <>
-                        <Check className="h-4 w-4 mr-1.5" />
-                        Copied
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="h-4 w-4 mr-1.5" />
-                        Copy
-                      </>
-                    )}
-                  </Button>
-                </div>
-              )}
-            </div>
-
             {editError && <p className="text-sm text-destructive">{editError}</p>}
           </div>
           <DialogFooter>

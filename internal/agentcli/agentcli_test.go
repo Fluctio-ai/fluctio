@@ -182,7 +182,7 @@ func TestInitRejectsRebindToOtherUser(t *testing.T) {
 		Email:       "bob@local",
 		Password:    "secret-bob",
 		DisplayName: "Bob",
-		Role:        users.RoleUser,
+		Role:        users.RoleSuperAdmin,
 	}); err != nil {
 		t.Fatalf("create bob: %v", err)
 	}
@@ -274,16 +274,13 @@ func TestInitFailsWhenNoSuperAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
-	accts, _ := users.NewAccounts(st)
-	if _, err := accts.Update(context.Background(), res.Agent.UserID, "", users.RoleUser, "", nil); err != nil {
-		t.Fatalf("demote admin: %v", err)
-	}
-	// Rename so the "admin" lookup doesn't short-circuit before the
-	// super_admin scan.
+	// Demote + rename so the DB has a user but no super_admin (the
+	// "admin" lookup must not short-circuit before the super_admin scan).
 	rec, _ := st.GetUser(context.Background(), res.Agent.UserID)
 	rec.Username = "alice"
+	rec.Role = "" // demote: no longer super_admin
 	if err := st.UpdateUser(context.Background(), rec); err != nil {
-		t.Fatalf("rename: %v", err)
+		t.Fatalf("demote+rename: %v", err)
 	}
 
 	_, err = Init(context.Background(), st, "beta", InitOptions{})

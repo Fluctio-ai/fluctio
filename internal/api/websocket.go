@@ -96,11 +96,8 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			// Stash the full resolved identity — type + ACL + everything
 			// — so later frames (`agents.list`, future verbs) reuse the
-			// same authorization context the HTTP path uses. The previous
-			// `auth.Identity{UserID, AuthMethod:"apikey"}` rebuild dropped
-			// APIKeyType and APIKeyAgents, so CanAccessAgent's apikey
-			// branch returned false for every agent and the list came
-			// back empty regardless of scope.
+			// same authorization context the HTTP path uses (rebuilding the
+			// Identity from scratch previously lost the auth state).
 			wsIdent = ident
 			authenticated = true
 			s.wsRespondOK(conn, frame.ID, json.RawMessage(`{}`))

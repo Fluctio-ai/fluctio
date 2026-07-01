@@ -4,16 +4,12 @@ import * as React from "react";
 import { usePathname } from "next/navigation";
 import { SidebarLayout } from "@/components/sidebar";
 
-// Paths that render on their own (no sidebar chrome). /signup is in
-// here because hitting it directly while signed out (e.g. from an admin
-// invite link) was leaking the authenticated app chrome — Overview /
-// Agents / Models in the sidebar — to a not-yet-registered visitor.
-const BARE_PATHS = ["/", "/onboard", "/signup"];
+// Paths that render on their own (no sidebar chrome).
+const BARE_PATHS = ["/", "/onboard"];
 
 function wantsSidebar(pathname: string) {
   if (BARE_PATHS.includes(pathname)) return false;
   if (pathname.startsWith("/onboard/")) return false;
-  if (pathname.startsWith("/signup/")) return false;
   return true;
 }
 

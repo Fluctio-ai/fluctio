@@ -16,37 +16,6 @@ export interface StatusResponse {
   users?: number;
 }
 
-export interface RegisterRequest {
-  username: string;
-  email: string;
-  password: string;
-  displayName?: string;
-}
-
-export async function register(req: RegisterRequest): Promise<MeResponse> {
-  const res = await fetch("/api/register", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  return res.json();
-}
-
-export async function getRegistration(): Promise<{ open: boolean }> {
-  const res = await apiFetch("/api/admin/registration");
-  return res.json();
-}
-
-export async function setRegistration(open: boolean): Promise<{ open: boolean }> {
-  const res = await apiFetch("/api/admin/registration", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ open }),
-  });
-  return res.json();
-}
-
 export interface AgentInfo {
   id: string;
   name?: string;
@@ -79,10 +48,6 @@ export interface AgentDetail {
   // (Customize / Skills / Channels / Scheduler / Models). Backend
   // always sends one of these on /api/agents and /api/agents/{id}.
   role?: "owner" | "viewer";
-  // isPublic: when true, anyone with the chat URL can chat with this
-  // agent under their own user_id (sessions/memory partition per
-  // chatter). Owner-editable from the Edit dialog. Default false.
-  isPublic?: boolean;
   // shareModelConfig: when true, chatters using this agent inherit the
   // owner's user-scope + agent-scope model and provider configuration
   // (current "fall back to owner's keys" behavior). When false (default),
@@ -329,11 +294,8 @@ export interface MeResponse {
     displayName?: string;
     avatarUrl?: string;
     status: string;
-    // -1 = unlimited, 0 = no self-creation, N>0 = up to N owned agents
-    agentQuota?: number;
   };
   authMethod?: string;
-  actAsUserId?: string;
   readOnly?: boolean;
   // 'self-hosted' (default) or 'hosted' — driven by FASTCLAW_DEPLOY
   // env var on the daemon. Frontend uses this to gate local-only
@@ -429,48 +391,6 @@ export async function adminListAgents() {
   return res.json();
 }
 
-export async function adminCreateUser(req: {
-  username: string;
-  email: string;
-  password: string;
-  displayName?: string;
-  role?: string;
-  agentQuota?: number | null;
-}) {
-  const res = await apiFetch("/api/users", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  return res.json();
-}
-
-export async function adminUpdateUser(
-  id: string,
-  req: { displayName?: string; role?: string; status?: string; agentQuota?: number | null },
-) {
-  const res = await apiFetch(`/api/users/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  return res.json();
-}
-
-export async function adminDeleteUser(id: string) {
-  const res = await apiFetch(`/api/users/${id}`, { method: "DELETE" });
-  return res.json();
-}
-
-export async function adminResetPassword(id: string, password: string) {
-  const res = await apiFetch(`/api/users/${id}/password`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ password }),
-  });
-  return res.json();
-}
-
 // Apikeys (per-user)
 
 export async function listApikeys() {
@@ -478,9 +398,7 @@ export async function listApikeys() {
   return res.json();
 }
 
-export type ApikeyType = "admin" | "user" | "agent";
-
-export async function createApikey(req: { name: string; type: ApikeyType; agentIds?: string[] }) {
+export async function createApikey(req: { name: string }) {
   const res = await apiFetch("/api/apikeys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -496,15 +414,6 @@ export async function deleteApikey(id: string) {
 
 export async function rotateApikey(id: string) {
   const res = await apiFetch(`/api/apikeys/${id}/rotate`, { method: "POST" });
-  return res.json();
-}
-
-export async function setApikeyAgents(id: string, agentIds: string[]) {
-  const res = await apiFetch(`/api/apikeys/${id}/agents`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agentIds }),
-  });
   return res.json();
 }
 
@@ -1338,9 +1247,6 @@ export interface AgentUpdatePayload {
   // Whole-map replace: omit to leave providers untouched, send {} to
   // clear them, or send the full desired map to replace.
   providers?: Record<string, ProviderData>;
-  // Toggle the "anyone with the link can chat" gate. Omit to leave the
-  // current value alone.
-  isPublic?: boolean;
   // Toggle whether chatters using this agent inherit the owner's
   // model + provider configuration. Omit to leave unchanged.
   shareModelConfig?: boolean;

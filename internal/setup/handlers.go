@@ -123,16 +123,11 @@ func (s *Server) saveUserConfig(r *http.Request, cfg *config.Config) error {
 		return errors.New("store not configured")
 	}
 	ident, ok := authIdentity(r)
-	// Decide who owns the rows we're about to save:
-	//   - super_admin without ?actAs=  → system rows (user_id='')
-	//   - super_admin with ?actAs=X    → write into user X's scope
-	//   - regular user                 → write into their own scope
+	// Single-user mode: the owner is super_admin and writes to system
+	// scope (uid=''). A non-super_admin caller (if any) writes to its
+	// own scope.
 	uid := ""
-	if ok && ident.Role == "super_admin" {
-		if ident.IsActingAs() {
-			uid = ident.EffectiveUserID()
-		}
-	} else if ok {
+	if ok && ident.Role != "super_admin" {
 		uid = ident.UserID
 	}
 	for _, ns := range settingNamespaces {
@@ -299,24 +294,11 @@ func (s *Server) resolveAgent(r *http.Request, agentID string) AgentHandle {
 		return nil
 	}
 	ag := space.Agents.AgentByID(agentID)
-	// Lazy-attach when the agent isn't in the caller's UserSpace but
-	// the caller is otherwise authorized to use it. Concrete scenarios:
-	//
-	//   1. super_admin browsing another user's agent.
-	//   2. api_key whose ACL grants this agent — typically the key
-	//      owner == agent owner, but this path also handles the
-	//      app_user case where SwitchToAppUser flipped the identity
-	//      to a fresh app_user whose UserSpace has no agents at all.
-	//      Sessions/files written under that UserSpace then partition
-	//      per end-user, which is the desired isolation.
-	//   3. session user accessing a public agent owned by someone else
-	//      (link-based sharing — gated on agents.is_public).
-	//
-	// For the public-agent path we DO need a DB hit to confirm
-	// is_public; everything else (super_admin, apikey ACL) is already
-	// answered by Identity. EnsureAgent is idempotent so the lookup
-	// only fires before the agent lands in the user's Manager — once
-	// attached, AgentByID succeeds on subsequent requests.
+	// Lazy-attach when the agent isn't in the caller's UserSpace yet
+	// (e.g. first request after server start, before the cache fills).
+	// Single-user mode: the owner owns every agent, so any authenticated
+	// caller is authorized. EnsureAgent is idempotent — once attached,
+	// AgentByID succeeds on subsequent requests.
 	if ag == nil {
 		injector, hasInjector := s.userResolver.(api.AgentInjector)
 		// super_admin can lazy-attach foreign agents regardless of actAs
@@ -328,11 +310,6 @@ func (s *Server) resolveAgent(r *http.Request, agentID string) AgentHandle {
 		// though the session_messages rows existed in the DB.
 		canAttach := hasInjector &&
 			(ident.AuthMethod == "apikey" || ident.Role == users.RoleSuperAdmin)
-		if !canAttach && hasInjector && uid != "" && s.dataStore != nil {
-			if rec, err := s.dataStore.GetAgent(r.Context(), agentID); err == nil && rec != nil && rec.IsPublic {
-				canAttach = true
-			}
-		}
 		if canAttach {
 			if err := injector.EnsureAgent(r.Context(), uid, agentID); err == nil {
 				ag = space.Agents.AgentByID(agentID)
@@ -376,7 +353,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{
 		"configured":       configured,
-		"registrationOpen": s.registrationOpen(r),
 		"running":          s.userResolver != nil,
 		"port":             s.port,
 		"version":          buildinfo.Version,
@@ -524,8 +500,8 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
-	ident, ok := auth.FromContext(r.Context())
-	if !ok || ident.ReadOnly() {
+	_, ok := auth.FromContext(r.Context())
+	if !ok {
 		jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "read-only"})
 		return
 	}
@@ -637,10 +613,7 @@ func (s *Server) reloadSystemSandbox() error {
 func (s *Server) scopeForSave(r *http.Request) (string, string) {
 	ident, ok := authIdentity(r)
 	if ok && ident.Role == "super_admin" {
-		if !ident.IsActingAs() {
-			return scope.System, ""
-		}
-		return scope.User, ident.EffectiveUserID()
+		return scope.System, ""
 	}
 	if ok {
 		return scope.User, ident.UserID
@@ -1602,14 +1575,11 @@ func (s *Server) handleChats(w http.ResponseWriter, r *http.Request) {
 		pageSize = 30
 	}
 
-	// Resolve which agent IDs the caller may see.
-	var agentIDs []string // nil = all (admin)
-	switch {
-	case ident.AuthMethod == "apikey" && ident.APIKeyType == users.APIKeyTypeAdmin:
-		agentIDs = nil // admin sees everything
-	case ident.AuthMethod == "apikey" && ident.APIKeyType == users.APIKeyTypeAgent:
-		agentIDs = ident.APIKeyAgents
-	default:
+	// Resolve which agent IDs the caller may see. Apikey callers (all
+	// owner-level in single-user mode) see every agent; session callers
+	// see their own.
+	var agentIDs []string // nil = all
+	if ident.AuthMethod != "apikey" {
 		uid := ident.EffectiveUserID()
 		agents, agentsErr := s.dataStore.ListAgents(r.Context(), uid)
 		if agentsErr != nil {

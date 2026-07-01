@@ -54,14 +54,8 @@ type Store interface {
 	RotateAPIKey(ctx context.Context, id, keyHash, keyPrefix string) error
 	LookupAPIKeyByHash(ctx context.Context, keyHash string) (*APIKeyRecord, error)
 
-	// --- API key ↔ agent permissions (M:N) ---
-	SetAPIKeyAgents(ctx context.Context, apikeyID string, agentIDs []string) error
-	ListAPIKeyAgents(ctx context.Context, apikeyID string) ([]string, error)
-	APIKeyCanAccessAgent(ctx context.Context, apikeyID, agentID string) (bool, error)
-
 	// --- Agents (atomic; agents.id is globally unique) ---
 	ListAgents(ctx context.Context, ownerUserID string) ([]AgentRecord, error)
-	ListPublicAgents(ctx context.Context) ([]AgentRecord, error)
 	GetAgent(ctx context.Context, agentID string) (*AgentRecord, error)
 	SaveAgent(ctx context.Context, agent *AgentRecord) error
 	DeleteAgent(ctx context.Context, agentID string) error
@@ -320,15 +314,6 @@ type UserRecord struct {
 	// handler at write time (256KB by default). Empty means "no avatar"
 	// — UI falls back to initials.
 	AvatarURL string `json:"avatarUrl,omitempty"`
-	// AgentQuota caps how many agents this user may self-create via
-	// POST /api/agents. Semantics:
-	//   -1 (default) — unlimited
-	//    0          — self-creation forbidden (e.g. single-tenant
-	//                 customers whose agent is provisioned by admin)
-	//    N > 0      — at most N owned agents at once
-	// Admin provisioning paths (POST /api/admin/users/{id}/agents)
-	// bypass this — quota only governs caller-initiated creation.
-	AgentQuota int64     `json:"agentQuota"`
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
@@ -356,11 +341,7 @@ type PushDeviceRecord struct {
 // the plaintext is shown to the caller exactly once at create/rotate.
 //
 // Type is the key's authority tier:
-//   - "admin": full platform — issues users, manages providers/models/skills
-//   - "user":  the apikey owner's own resources — can create agents,
-//     access every agent owned by the apikey owner (resolved at auth time)
-//   - "agent": locked to the explicit list in apikey_agents — cannot
-//     create agents
+// In single-user mode every key is "admin" (owner-level).
 type APIKeyRecord struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"userId"`
@@ -379,17 +360,11 @@ type APIKeyRecord struct {
 // in configs as kind=setting, scope=agent, scope_id=<aid>, name=
 // "agents.defaults", which is the same path system + user defaults take.
 // Resolution happens in loadUserSpace via scope.SettingInto.
-// IsPublic flips the "anyone with the link can chat" gate. Default
-// false (private — owner-only). When true, requireAgentReadable +
-// resolveAgent let any authenticated session lazy-attach the agent
-// into their own UserSpace; sessions/memory/agent_files still
-// partition per chatter, so only the agent identity is shared.
 type AgentRecord struct {
 	ID        string                 `json:"id"`
 	UserID    string                 `json:"userId"`
 	Name      string                 `json:"name"`
 	Config    map[string]interface{} `json:"config,omitempty"`
-	IsPublic  bool                   `json:"isPublic"`
 	CreatedAt time.Time              `json:"createdAt"`
 	UpdatedAt time.Time              `json:"updatedAt"`
 }

@@ -71,7 +71,7 @@ func newAuthTestServer(t *testing.T, ctx context.Context) (*Server, *auth.Resolv
 		t.Fatalf("NewAccounts: %v", err)
 	}
 	adminUser := createAuthTestUser(t, ctx, accts, "admin", users.RoleSuperAdmin)
-	regularUser := createAuthTestUser(t, ctx, accts, "user", users.RoleUser)
+	regularUser := createAuthTestUser(t, ctx, accts, "user", users.RoleSuperAdmin)
 	resolver, err := auth.NewResolver(st)
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)

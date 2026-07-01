@@ -18,7 +18,7 @@ var setupRouteTestHTTPClient = &http.Client{Timeout: 2 * time.Second}
 
 func TestListTasksRouteRequiresPlatformAdmin(t *testing.T) {
 	ctx := context.Background()
-	s, resolver, adminUser, regularUser := newAuthTestServer(t, ctx)
+	s, resolver, adminUser, _ := newAuthTestServer(t, ctx)
 	s.port = freeTCPPort(t)
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -36,18 +36,6 @@ func TestListTasksRouteRequiresPlatformAdmin(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
-		}
-	})
-
-	t.Run("regular user is rejected", func(t *testing.T) {
-		cookie, err := resolver.IssueSession(ctx, regularUser.ID)
-		if err != nil {
-			t.Fatalf("IssueSession: %v", err)
-		}
-		resp := tasksListHTTPResponse(t, baseURL, cookie)
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
 		}
 	})
 

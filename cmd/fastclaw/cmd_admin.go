@@ -11,20 +11,16 @@ import (
 	"github.com/fastclaw-ai/fastclaw/internal/users"
 )
 
-// adminCmd groups the admin-only CLI operations: create users, reset
-// passwords, grant roles. These bypass the HTTP API and write to the DB
-// directly so an operator who's lost super_admin access can recover.
+// adminCmd groups the admin-only CLI operations. Single-user mode keeps
+// just create-user (bootstrap the owner) and reset-password (lockout
+// recovery). These bypass the HTTP API and write to the DB directly.
 func adminCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "admin",
-		Short: "Administrative DB operations (create user, reset password, grant role)",
+		Short: "Administrative DB operations (create owner, reset password)",
 	}
 	cmd.AddCommand(adminCreateUserCmd())
 	cmd.AddCommand(adminResetPasswordCmd())
-	cmd.AddCommand(adminGrantRoleCmd())
-	cmd.AddCommand(adminListUsersCmd())
-	cmd.AddCommand(adminUpdateUserCmd())
-	cmd.AddCommand(adminDeleteUserCmd())
 	return cmd
 }
 
@@ -39,10 +35,10 @@ func openStoreFromEnv() (store.Store, error) {
 }
 
 func adminCreateUserCmd() *cobra.Command {
-	var username, email, password, displayName, role string
+	var username, email, password, displayName string
 	cmd := &cobra.Command{
 		Use:   "create-user",
-		Short: "Create a new user account",
+		Short: "Create the owner account (single-user mode: always super_admin)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := openStoreFromEnv()
 			if err != nil {
@@ -53,20 +49,17 @@ func adminCreateUserCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if role == "" {
-				role = users.RoleUser
-			}
 			acct, err := accts.Create(context.Background(), users.CreateInput{
 				Username:    username,
 				Email:       email,
 				Password:    password,
 				DisplayName: displayName,
-				Role:        role,
+				Role:        users.RoleSuperAdmin,
 			})
 			if err != nil {
 				return err
 			}
-			fmt.Printf("created user %s (%s) role=%s id=%s\n", acct.Username, acct.Email, acct.Role, acct.ID)
+			fmt.Printf("created owner %s (%s) id=%s\n", acct.Username, acct.Email, acct.ID)
 			return nil
 		},
 	}
@@ -74,7 +67,6 @@ func adminCreateUserCmd() *cobra.Command {
 	cmd.Flags().StringVar(&email, "email", "", "email (required)")
 	cmd.Flags().StringVar(&password, "password", "", "password (required)")
 	cmd.Flags().StringVar(&displayName, "display-name", "", "display name")
-	cmd.Flags().StringVar(&role, "role", "user", "'super_admin' or 'user'")
 	cmd.MarkFlagRequired("username")
 	cmd.MarkFlagRequired("email")
 	cmd.MarkFlagRequired("password")
@@ -85,7 +77,7 @@ func adminResetPasswordCmd() *cobra.Command {
 	var login, password string
 	cmd := &cobra.Command{
 		Use:   "reset-password",
-		Short: "Reset a user's password by username or email",
+		Short: "Reset the owner's password by username or email",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := openStoreFromEnv()
 			if err != nil {
@@ -108,130 +100,5 @@ func adminResetPasswordCmd() *cobra.Command {
 	cmd.Flags().StringVar(&password, "password", "", "new password (required)")
 	cmd.MarkFlagRequired("user")
 	cmd.MarkFlagRequired("password")
-	return cmd
-}
-
-func adminGrantRoleCmd() *cobra.Command {
-	var login, role string
-	cmd := &cobra.Command{
-		Use:   "grant-role",
-		Short: "Change a user's role",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := openStoreFromEnv()
-			if err != nil {
-				return err
-			}
-			defer st.Close()
-			accts, _ := users.NewAccounts(st)
-			rec, err := st.GetUserByLogin(context.Background(), login)
-			if err != nil {
-				return err
-			}
-			if _, err := accts.Update(context.Background(), rec.ID, "", role, "", nil); err != nil {
-				return err
-			}
-			fmt.Printf("role for %s set to %s\n", rec.Username, role)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&login, "user", "", "username or email (required)")
-	cmd.Flags().StringVar(&role, "role", "", "'super_admin' or 'user' (required)")
-	cmd.MarkFlagRequired("user")
-	cmd.MarkFlagRequired("role")
-	return cmd
-}
-
-func adminListUsersCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list-users",
-		Short: "List all user accounts",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := openStoreFromEnv()
-			if err != nil {
-				return err
-			}
-			defer st.Close()
-			accts, _ := users.NewAccounts(st)
-			list, err := accts.List(context.Background())
-			if err != nil {
-				return err
-			}
-			fmt.Printf("%-20s %-30s %-15s %-10s %s\n", "USERNAME", "EMAIL", "ROLE", "STATUS", "ID")
-			for _, u := range list {
-				fmt.Printf("%-20s %-30s %-15s %-10s %s\n", u.Username, u.Email, u.Role, u.Status, u.ID)
-			}
-			return nil
-		},
-	}
-}
-
-func adminUpdateUserCmd() *cobra.Command {
-	var login, displayName, role, status string
-	var quota int64
-	var setQuota bool
-	cmd := &cobra.Command{
-		Use:   "update-user",
-		Short: "Update a user's display name, role, status, or agent quota",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := openStoreFromEnv()
-			if err != nil {
-				return err
-			}
-			defer st.Close()
-			ctx := context.Background()
-			accts, _ := users.NewAccounts(st)
-			rec, err := st.GetUserByLogin(ctx, login)
-			if err != nil {
-				return err
-			}
-			var quotaPtr *int64
-			if setQuota {
-				quotaPtr = &quota
-			}
-			acct, err := accts.Update(ctx, rec.ID, displayName, role, status, quotaPtr)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("updated user %s role=%s status=%s quota=%d id=%s\n", acct.Username, acct.Role, acct.Status, acct.AgentQuota, acct.ID)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&login, "user", "", "username or email (required)")
-	cmd.Flags().StringVar(&displayName, "display-name", "", "display name")
-	cmd.Flags().StringVar(&role, "role", "", "'super_admin' or 'user'")
-	cmd.Flags().StringVar(&status, "status", "", "'active' or 'disabled'")
-	cmd.Flags().Int64Var(&quota, "agent-quota", 0, "agent quota; -1 for unlimited")
-	cmd.Flags().BoolVar(&setQuota, "set-agent-quota", false, "write --agent-quota instead of leaving it unchanged")
-	cmd.MarkFlagRequired("user")
-	return cmd
-}
-
-func adminDeleteUserCmd() *cobra.Command {
-	var login string
-	cmd := &cobra.Command{
-		Use:     "delete-user",
-		Aliases: []string{"rm-user"},
-		Short:   "Delete a user account",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := openStoreFromEnv()
-			if err != nil {
-				return err
-			}
-			defer st.Close()
-			ctx := context.Background()
-			accts, _ := users.NewAccounts(st)
-			rec, err := st.GetUserByLogin(ctx, login)
-			if err != nil {
-				return err
-			}
-			if err := accts.Delete(ctx, rec.ID); err != nil {
-				return err
-			}
-			fmt.Printf("deleted user %s (%s)\n", rec.Username, rec.ID)
-			return nil
-		},
-	}
-	cmd.Flags().StringVar(&login, "user", "", "username or email (required)")
-	cmd.MarkFlagRequired("user")
 	return cmd
 }

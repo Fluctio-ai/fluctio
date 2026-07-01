@@ -6,9 +6,6 @@ import {
   createApikey,
   deleteApikey,
   rotateApikey,
-  setApikeyAgents,
-  apiFetch,
-  type ApikeyType,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,47 +45,24 @@ interface ApiKey {
   userId: string;
   name?: string;
   key: string;
-  type: ApikeyType;
-  agents: string[];
   createdAt: string;
-}
-
-interface MeResponse {
-  user?: { role?: string };
-}
-
-interface AgentMeta {
-  id: string;
-  name: string;
 }
 
 export default function ApikeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
-  const [agents, setAgents] = useState<AgentMeta[]>([]);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [error, setError] = useState("");
   const [createName, setCreateName] = useState("");
-  const [createType, setCreateType] = useState<ApikeyType>("user");
-  const [createAgents, setCreateAgents] = useState<string[]>([]);
   const [showToken, setShowToken] = useState<{ id: string; token: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
   const [rotateTarget, setRotateTarget] = useState<ApiKey | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [scopeTarget, setScopeTarget] = useState<ApiKey | null>(null);
-  const [scopeAgents, setScopeAgents] = useState<string[]>([]);
 
   async function refresh() {
     setError("");
     const r = await listApikeys();
     if (r.apikeys) setKeys(r.apikeys);
     if (r.error) setError(r.error);
-    const a = await apiFetch("/api/agents");
-    const aj = await a.json();
-    if (aj.agents) setAgents(aj.agents);
-    const me = await apiFetch("/api/me");
-    const mj = (await me.json()) as MeResponse;
-    setIsSuperAdmin(mj?.user?.role === "super_admin");
   }
   useEffect(() => {
     refresh();
@@ -98,14 +72,8 @@ export default function ApikeysPage() {
     e.preventDefault();
     setError("");
     if (!createName.trim()) return;
-    if (createType === "agent" && createAgents.length === 0) {
-      setError("Select at least one agent");
-      return;
-    }
     const res = await createApikey({
       name: createName.trim(),
-      type: createType,
-      agentIds: createType === "agent" ? createAgents : undefined,
     });
     if (res.error) {
       setError(res.error);
@@ -113,8 +81,6 @@ export default function ApikeysPage() {
     }
     if (res.token) setShowToken({ id: res.apikey.id, token: res.token });
     setCreateName("");
-    setCreateType("user");
-    setCreateAgents([]);
     setCreateOpen(false);
     refresh();
   }
@@ -138,27 +104,6 @@ export default function ApikeysPage() {
     refresh();
   }
 
-  async function handleSetAgents(id: string, agentIds: string[]) {
-    const res = await setApikeyAgents(id, agentIds);
-    if (res.error) setError(res.error);
-    refresh();
-  }
-
-  function openScopeDialog(k: ApiKey) {
-    setScopeTarget(k);
-    setScopeAgents(k.agents || []);
-  }
-
-  async function saveScope() {
-    if (!scopeTarget) return;
-    if (scopeAgents.length === 0) {
-      setError("type=agent keys need at least one agent");
-      return;
-    }
-    await handleSetAgents(scopeTarget.id, scopeAgents);
-    setScopeTarget(null);
-  }
-
   async function copyToken() {
     if (!showToken) return;
     await navigator.clipboard.writeText(showToken.token);
@@ -168,16 +113,8 @@ export default function ApikeysPage() {
 
   function openCreateDialog() {
     setCreateName("");
-    setCreateType("user");
-    setCreateAgents([]);
     setError("");
     setCreateOpen(true);
-  }
-
-  function typeBadgeVariant(t: ApikeyType): "default" | "secondary" | "outline" {
-    if (t === "admin") return "default";
-    if (t === "user") return "secondary";
-    return "outline";
   }
 
   return (
@@ -244,9 +181,8 @@ export default function ApikeysPage() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
                 <TableHead>Key</TableHead>
-                <TableHead>Scope</TableHead>
+                <TableHead>Access</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -256,25 +192,10 @@ export default function ApikeysPage() {
                 <TableRow key={k.id}>
                   <TableCell className="font-medium">{k.name || k.id}</TableCell>
                   <TableCell>
-                    <Badge variant={typeBadgeVariant(k.type)} className="text-xs">
-                      {k.type}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
                     <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{k.key}</code>
                   </TableCell>
                   <TableCell>
-                    {k.type === "admin" ? (
-                      <span className="text-xs text-muted-foreground">All agents (platform-wide)</span>
-                    ) : k.type === "user" ? (
-                      <span className="text-xs text-muted-foreground">All your agents (auto-includes new ones)</span>
-                    ) : (
-                      <ScopeChips
-                        selectedIds={k.agents || []}
-                        agents={agents}
-                        onClick={() => openScopeDialog(k)}
-                      />
-                    )}
+                    <span className="text-xs text-muted-foreground">All agents (owner-level)</span>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {new Date(k.createdAt).toLocaleString()}
@@ -321,79 +242,11 @@ export default function ApikeysPage() {
                 autoFocus
               />
             </div>
-            <div className="space-y-1.5">
-              <Label>Type</Label>
-              <div className="space-y-2">
-                {isSuperAdmin && (
-                  <TypeOption
-                    value="admin"
-                    selected={createType}
-                    onSelect={setCreateType}
-                    title="Admin"
-                    description="Full platform — manage users, providers, models, skills."
-                  />
-                )}
-                <TypeOption
-                  value="user"
-                  selected={createType}
-                  onSelect={setCreateType}
-                  title="User"
-                  description="Access all your agents (auto-includes future ones). Can create new agents."
-                />
-                <TypeOption
-                  value="agent"
-                  selected={createType}
-                  onSelect={setCreateType}
-                  title="Agent"
-                  description="Locked to specific agents. Cannot create new ones."
-                />
-              </div>
-            </div>
-            {createType === "agent" && (
-              <div className="space-y-1.5">
-                <Label>Allowed agents</Label>
-                {agents.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No agents yet — create one from the Agents page first.
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {agents.map((a) => {
-                      const active = createAgents.includes(a.id);
-                      return (
-                        <button
-                          key={a.id}
-                          type="button"
-                          onClick={() =>
-                            setCreateAgents((l) =>
-                              l.includes(a.id) ? l.filter((x) => x !== a.id) : [...l, a.id],
-                            )
-                          }
-                          className={
-                            "rounded-md border px-2.5 py-1 text-xs transition " +
-                            (active
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-border hover:bg-muted")
-                          }
-                        >
-                          {a.name || a.id}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                disabled={
-                  !createName.trim() || (createType === "agent" && createAgents.length === 0)
-                }
-              >
+              <Button type="submit" disabled={!createName.trim()}>
                 Create key
               </Button>
             </DialogFooter>
@@ -435,125 +288,6 @@ export default function ApikeysPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <Dialog open={scopeTarget !== null} onOpenChange={(o) => !o && setScopeTarget(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Edit allowed agents</DialogTitle>
-            <DialogDescription>
-              {scopeTarget?.name || scopeTarget?.id} — toggle which agents this key may operate on.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-2">
-            {agents.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No agents available.</p>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {agents.map((a) => {
-                  const active = scopeAgents.includes(a.id);
-                  return (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() =>
-                        setScopeAgents((l) =>
-                          l.includes(a.id) ? l.filter((x) => x !== a.id) : [...l, a.id],
-                        )
-                      }
-                      className={
-                        "rounded-md border px-2.5 py-1 text-xs transition " +
-                        (active
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border hover:bg-muted")
-                      }
-                    >
-                      {a.name || a.id}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setScopeTarget(null)}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={saveScope} disabled={scopeAgents.length === 0}>
-              Save
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
-  );
-}
-
-function ScopeChips({
-  selectedIds,
-  agents,
-  onClick,
-}: {
-  selectedIds: string[];
-  agents: AgentMeta[];
-  onClick: () => void;
-}) {
-  const selected = selectedIds
-    .map((id) => agents.find((a) => a.id === id))
-    .filter((a): a is AgentMeta => !!a);
-  const max = 3;
-  const shown = selected.slice(0, max);
-  const overflow = selected.length - shown.length;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="flex flex-wrap items-center gap-1.5 rounded-md p-1 -m-1 hover:bg-muted/60 transition"
-      title="Edit allowed agents"
-    >
-      {selected.length === 0 && (
-        <span className="text-xs text-muted-foreground italic">no agents — click to add</span>
-      )}
-      {shown.map((a) => (
-        <Badge key={a.id} variant="default" className="text-xs">
-          {a.name || a.id}
-        </Badge>
-      ))}
-      {overflow > 0 && (
-        <Badge variant="secondary" className="text-xs">
-          +{overflow}
-        </Badge>
-      )}
-    </button>
-  );
-}
-
-function TypeOption({
-  value,
-  selected,
-  onSelect,
-  title,
-  description,
-}: {
-  value: ApikeyType;
-  selected: ApikeyType;
-  onSelect: (v: ApikeyType) => void;
-  title: string;
-  description: string;
-}) {
-  const active = value === selected;
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(value)}
-      className={
-        "w-full rounded-md border px-3 py-2 text-left transition " +
-        (active
-          ? "border-primary bg-primary/10"
-          : "border-border hover:bg-muted")
-      }
-    >
-      <span className="text-sm font-medium">{title}</span>
-      <p className="mt-1 text-xs text-muted-foreground">{description}</p>
-    </button>
   );
 }
