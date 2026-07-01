@@ -11,6 +11,7 @@ import {
   Palette,
   Plug,
   RadioIcon,
+  Regex,
   ServerIcon,
   SparklesIcon,
   UserCog,
@@ -28,6 +29,7 @@ import AgentSkillsPage from "@/app/agents/[id]/skills/page";
 import AgentPluginsPage from "@/app/agents/[id]/plugins/page";
 import AgentChannelsPage from "@/app/agents/[id]/channels/page";
 import AgentSchedulerPage from "@/app/agents/[id]/scheduler/page";
+import AgentRegexHooksPage from "@/app/agents/[id]/regex-hooks/page";
 import AgentMCPPage from "@/app/agents/[id]/mcp/page";
 import AgentUsagePage from "@/app/agents/[id]/usage/page";
 import AccountSettingsPage from "@/app/settings/account/page";
@@ -45,6 +47,7 @@ export type AgentSettingsTab =
   | "plugins"
   | "channels"
   | "scheduler"
+  | "regex-hooks"
   | "usage"
   | "account"
   | "general"
@@ -62,6 +65,7 @@ const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> 
   { id: "plugins", label: "Plugins", icon: Plug },
   { id: "channels", label: "Channels", icon: RadioIcon },
   { id: "scheduler", label: "Scheduler", icon: ClockIcon },
+  { id: "regex-hooks", label: "Regex Hooks", icon: Regex },
   { id: "usage", label: "Token Usage", icon: CoinsIcon },
 ];
 
@@ -177,6 +181,7 @@ export function AgentSettingsDialog({
           {tab === "plugins" && <AgentPluginsPage />}
           {tab === "channels" && <AgentChannelsPage />}
           {tab === "scheduler" && <AgentSchedulerPage />}
+          {tab === "regex-hooks" && <AgentRegexHooksPage />}
           {tab === "usage" && <AgentUsagePage />}
           {tab === "account" && (
             <div className="p-6 max-w-3xl">

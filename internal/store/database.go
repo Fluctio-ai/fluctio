@@ -1776,6 +1776,23 @@ func (d *DBStore) migrationSQL() []string {
 			UNIQUE (type, account_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_channels_user ON channels (user_id, agent_id)`,
+		// Regex Hooks: per-agent message interception rules that bypass
+		// the LLM and execute a CLI command instead.
+		`CREATE TABLE IF NOT EXISTS agent_regex_hooks (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			pattern TEXT NOT NULL,
+			cli_command TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			continue_on_match BOOLEAN NOT NULL DEFAULT FALSE,
+			enabled BOOLEAN NOT NULL DEFAULT TRUE,
+			show_error BOOLEAN NOT NULL DEFAULT TRUE,
+			error_message TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_regex_hooks_agent ON agent_regex_hooks (agent_id, sort_order)`,
 	}
 }
 
@@ -4138,6 +4155,73 @@ func isUniqueViolation(err error) bool {
 		return true
 	}
 	return false
+}
+
+// --- Regex Hooks ---
+
+const regexHookCols = `id, agent_id, name, pattern, cli_command, sort_order, continue_on_match, enabled, show_error, error_message, created_at, updated_at`
+
+func (d *DBStore) ListRegexHooks(ctx context.Context, agentID string) ([]RegexHookRecord, error) {
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT `+regexHookCols+` FROM agent_regex_hooks WHERE agent_id = %s ORDER BY sort_order`, d.ph(1)),
+		agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var hooks []RegexHookRecord
+	for rows.Next() {
+		var h RegexHookRecord
+		if err := rows.Scan(&h.ID, &h.AgentID, &h.Name, &h.Pattern, &h.CLICommand, &h.SortOrder, &h.ContinueOnMatch, &h.Enabled, &h.ShowError, &h.ErrorMessage, &h.CreatedAt, &h.UpdatedAt); err != nil {
+			return nil, err
+		}
+		hooks = append(hooks, h)
+	}
+	return hooks, rows.Err()
+}
+
+func (d *DBStore) GetRegexHook(ctx context.Context, hookID string) (*RegexHookRecord, error) {
+	row := d.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT `+regexHookCols+` FROM agent_regex_hooks WHERE id = %s`, d.ph(1)), hookID)
+	var h RegexHookRecord
+	if err := row.Scan(&h.ID, &h.AgentID, &h.Name, &h.Pattern, &h.CLICommand, &h.SortOrder, &h.ContinueOnMatch, &h.Enabled, &h.ShowError, &h.ErrorMessage, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		return nil, scanErr(err)
+	}
+	return &h, nil
+}
+
+func (d *DBStore) SaveRegexHook(ctx context.Context, h *RegexHookRecord) error {
+	now := time.Now()
+	if h.CreatedAt.IsZero() {
+		h.CreatedAt = now
+	}
+	h.UpdatedAt = now
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`INSERT INTO agent_regex_hooks (%s) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+			ON CONFLICT(id) DO UPDATE SET name=%s, pattern=%s, cli_command=%s, sort_order=%s, continue_on_match=%s, enabled=%s, show_error=%s, error_message=%s, updated_at=%s`,
+			regexHookCols,
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8), d.ph(9), d.ph(10), d.ph(11), d.ph(12),
+			d.ph(13), d.ph(14), d.ph(15), d.ph(16), d.ph(17), d.ph(18), d.ph(19), d.ph(20), d.ph(21)),
+		h.ID, h.AgentID, h.Name, h.Pattern, h.CLICommand, h.SortOrder, h.ContinueOnMatch, h.Enabled, h.ShowError, h.ErrorMessage, h.CreatedAt, h.UpdatedAt,
+		h.Name, h.Pattern, h.CLICommand, h.SortOrder, h.ContinueOnMatch, h.Enabled, h.ShowError, h.ErrorMessage, h.UpdatedAt)
+	return err
+}
+
+func (d *DBStore) DeleteRegexHook(ctx context.Context, hookID string) error {
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM agent_regex_hooks WHERE id = %s`, d.ph(1)), hookID)
+	return err
+}
+
+func (d *DBStore) ReorderRegexHooks(ctx context.Context, agentID string, hookIDs []string) error {
+	for i, id := range hookIDs {
+		if _, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE agent_regex_hooks SET sort_order = %s WHERE id = %s AND agent_id = %s`, d.ph(1), d.ph(2), d.ph(3)),
+			i, id, agentID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var _ Store = (*DBStore)(nil)

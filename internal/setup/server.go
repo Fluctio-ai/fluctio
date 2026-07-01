@@ -396,6 +396,18 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/agents/{id}/cron/{jobId}", auth(s.handleDeleteAgentCronJob))
 	mux.HandleFunc("PUT /api/agents/{id}/cron/{jobId}", auth(s.handleToggleAgentCronJob))
 
+	// Regex hooks (per-agent message interception)
+	mux.HandleFunc("GET /api/agents/{id}/regex-hooks", auth(s.handleListRegexHooks))
+	mux.HandleFunc("GET /api/agents/{id}/regex-hooks/{hookId}", auth(s.handleGetRegexHook))
+	mux.HandleFunc("POST /api/agents/{id}/regex-hooks", auth(s.handleSaveRegexHook))
+	mux.HandleFunc("PUT /api/agents/{id}/regex-hooks/{hookId}", auth(s.handleSaveRegexHook))
+	mux.HandleFunc("DELETE /api/agents/{id}/regex-hooks/{hookId}", auth(s.handleDeleteRegexHook))
+	mux.HandleFunc("PUT /api/agents/{id}/regex-hooks/reorder", auth(s.handleReorderRegexHooks))
+	// Hook script management (upload / list / delete CLI scripts)
+	mux.HandleFunc("GET /api/agents/{id}/regex-hooks/scripts", auth(s.handleListHookScripts))
+	mux.HandleFunc("POST /api/agents/{id}/regex-hooks/scripts", auth(s.handleUploadHookScript))
+	mux.HandleFunc("DELETE /api/agents/{id}/regex-hooks/scripts/{name}", auth(s.handleDeleteHookScript))
+
 	// Tasks
 	mux.HandleFunc("GET /api/tasks", admin(s.handleListTasks))
 

@@ -1823,6 +1823,26 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 
 // HandleMessage processes an inbound message through the ReAct loop.
 func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) string {
+	// Regex hooks: intercept messages matching a pattern and execute CLI
+	// instead of the LLM. Evaluated before slash commands so fixed-format
+	// messages (e.g. "翻译 xxx") bypass the agent loop entirely.
+	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
+		chatterUID := a.chatterUserID(msg)
+		ctx = store.WithChatterUserID(ctx, chatterUID)
+		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
+		sess.SetChatter(chatterUID)
+		sess.BeginTurn()
+		sess.Append(buildUserMessage(msg))
+		sess.Append(provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()})
+		sess.Append(provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"})
+		sess.Append(provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()})
+		sess.EndTurn()
+		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "arguments": msg.Text}})
+		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "result": "matched"}})
+		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
+		emitEvent(ctx, ChatEvent{Type: "done"})
+		return reply
+	}
 	// Check for slash commands first. Empty reply means "handled but
 	// intentionally silent" — /goal foo and /goal resume both fall
 	// through to a streaming continuation that IS the response, so
@@ -2633,6 +2653,30 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 // a StreamReader for the final response. Tool call iterations use non-streaming Chat;
 // the final text response uses ChatStream for true SSE streaming.
 func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage) *provider.StreamReader {
+	// Regex hooks: intercept messages matching a pattern and execute CLI
+	// instead of the LLM.
+	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
+		chatterUID := a.chatterUserID(msg)
+		ctx = store.WithChatterUserID(ctx, chatterUID)
+		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
+		sess.SetChatter(chatterUID)
+		sess.BeginTurn()
+		sess.Append(buildUserMessage(msg))
+		sess.Append(provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()})
+		sess.Append(provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"})
+		sess.Append(provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()})
+		sess.EndTurn()
+		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "arguments": msg.Text}})
+		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "result": "matched"}})
+		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
+		emitEvent(ctx, ChatEvent{Type: "done"})
+		ch := make(chan provider.StreamChunk, 2)
+		go func() {
+			ch <- provider.StreamChunk{Content: reply, Done: true}
+			close(ch)
+		}()
+		return provider.NewStreamReader(ch)
+	}
 	// Reuse setup logic from HandleMessage. Empty reply is "handled
 	// but silent" — see the HandleMessage twin. Still emit a Done
 	// chunk so callers waiting on the stream don't hang.

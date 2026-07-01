@@ -278,6 +278,15 @@ type Store interface {
 	UpdateGoal(ctx context.Context, g *GoalRecord) error
 	DeleteGoal(ctx context.Context, goalID string) error
 
+	// --- Regex Hooks (per agent) ---
+	ListRegexHooks(ctx context.Context, agentID string) ([]RegexHookRecord, error)
+	GetRegexHook(ctx context.Context, hookID string) (*RegexHookRecord, error)
+	SaveRegexHook(ctx context.Context, h *RegexHookRecord) error
+	DeleteRegexHook(ctx context.Context, hookID string) error
+	// ReorderRegexHooks updates sort_order for the given hook IDs in
+	// the order provided (first element gets sort_order=0, etc.).
+	ReorderRegexHooks(ctx context.Context, agentID string, hookIDs []string) error
+
 	Close() error
 }
 
@@ -676,6 +685,21 @@ type GoalRecord struct {
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type RegexHookRecord struct {
+	ID              string    `json:"id"`
+	AgentID         string    `json:"agentId"`
+	Name            string    `json:"name"`
+	Pattern         string    `json:"pattern"`
+	CLICommand      string    `json:"cliCommand"`
+	SortOrder       int       `json:"sortOrder"`
+	ContinueOnMatch bool      `json:"continueOnMatch"`
+	Enabled         bool      `json:"enabled"`
+	ShowError       bool      `json:"showError"`
+	ErrorMessage    string    `json:"errorMessage,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 // CronJobRecord holds a scheduled job. agent_id is mandatory; user_id is

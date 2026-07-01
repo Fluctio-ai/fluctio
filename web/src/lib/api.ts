@@ -1659,6 +1659,121 @@ export interface AgentCronJob {
   createdAt: string;
 }
 
+// --- Regex Hooks ---
+
+export interface RegexHook {
+  id: string;
+  agentId: string;
+  name: string;
+  pattern: string;
+  cliCommand: string;
+  sortOrder: number;
+  continueOnMatch: boolean;
+  enabled: boolean;
+  showError: boolean;
+  errorMessage: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listRegexHooks(agentId: string): Promise<RegexHook[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/regex-hooks`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.hooks || [];
+}
+
+export async function getRegexHook(
+  agentId: string,
+  hookId: string,
+): Promise<RegexHook | null> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/regex-hooks/${encodeURIComponent(hookId)}`,
+  );
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function saveRegexHook(
+  agentId: string,
+  hook: Partial<RegexHook> & { name: string; pattern: string; cliCommand: string },
+): Promise<{ ok: boolean; hook?: RegexHook; error?: string }> {
+  const url = hook.id
+    ? `/api/agents/${agentId}/regex-hooks/${encodeURIComponent(hook.id)}`
+    : `/api/agents/${agentId}/regex-hooks`;
+  const res = await apiFetch(url, {
+    method: hook.id ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(hook),
+  });
+  return res.json();
+}
+
+export async function deleteRegexHook(
+  agentId: string,
+  hookId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/regex-hooks/${encodeURIComponent(hookId)}`,
+    { method: "DELETE" },
+  );
+  return res.json();
+}
+
+export async function reorderRegexHooks(
+  agentId: string,
+  hookIds: string[],
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/regex-hooks/reorder`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hookIds }),
+    },
+  );
+  return res.json();
+}
+
+// --- Hook Scripts ---
+
+export interface HookScript {
+  name: string;
+  size: number;
+  modTime: string;
+}
+
+export async function listHookScripts(agentId: string): Promise<HookScript[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/regex-hooks/scripts`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.scripts || [];
+}
+
+export async function uploadHookScript(
+  agentId: string,
+  file: File,
+): Promise<{ ok: boolean; files?: { name: string; size: number }[]; error?: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await apiFetch(`/api/agents/${agentId}/regex-hooks/scripts`, {
+    method: "POST",
+    body: form,
+  });
+  return res.json();
+}
+
+export async function deleteHookScript(
+  agentId: string,
+  name: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/regex-hooks/scripts/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+  return res.json();
+}
+
 export async function listAgentCronJobs(agentId: string): Promise<AgentCronJob[]> {
   const res = await apiFetch(`/api/agents/${agentId}/cron`);
   if (!res.ok) return [];
