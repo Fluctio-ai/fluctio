@@ -478,6 +478,10 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// send {} to clear, or send the full desired map to replace.
 		MCPServers      map[string]config.MCPServerConfig `json:"mcpServers,omitempty"`
 		MCPServersReset bool                              `json:"mcpServersReset,omitempty"`
+		// KB auto-query config (slice 4b-1). nil = leave unchanged;
+		// non-nil = write the per-agent KB override. Send enabled=false
+		// to disable (no separate reset signal).
+		KB *config.AgentKBCfg `json:"kb,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -530,6 +534,15 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		} else {
 			rec.Config["mcpServers"] = req.MCPServers
 		}
+	}
+	// KB auto-query override lives in the agent config blob alongside
+	// mcpServers; MergedAgentConfig forwards it into ResolvedAgent.KB so
+	// the manager's AutoQueryHook + RegisterKBTools wiring picks it up.
+	if req.KB != nil {
+		if rec.Config == nil {
+			rec.Config = map[string]interface{}{}
+		}
+		rec.Config["kb"] = req.KB
 	}
 	if err := s.dataStore.SaveAgent(r.Context(), rec); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

@@ -463,8 +463,10 @@ func (s *Server) Run(ctx context.Context) error {
 		s.apiServer.RegisterRoutes(mux)
 	}
 
-	// Static UI files.
-	webRoot, err := fs.Sub(webFS, "web")
+	// Static UI files. web/out is the Next.js static-export root (pnpm
+	// build emits it); fs.Sub strips the "web/out" prefix so spaHandler
+	// serves index.html + agents/default/... at the expected paths.
+	webRoot, err := fs.Sub(webFS, "web/out")
 	if err != nil {
 		return fmt.Errorf("setup: embed sub: %w", err)
 	}
