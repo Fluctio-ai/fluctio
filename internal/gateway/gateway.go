@@ -681,6 +681,15 @@ func (g *Gateway) Run() error {
 			memoryindex.RunLoop(ctx, dbs, interval, perCallDelay)
 		}()
 	}
+	// Wiki auto-generation: hourly central ticker walks every agent with
+	// memory.wikiAutoGen.enabled and generates wiki pages for KB sources
+	// whose wiki_generated_at is NULL. Decoupled from chat traffic so idle
+	// agents still pick up new KB content.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.wikiAutoGenTicker(ctx)
+	}()
 	wg.Wait()
 	if g.taskQueue != nil {
 		g.taskQueue.Stop()

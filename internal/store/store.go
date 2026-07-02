@@ -60,6 +60,12 @@ type Store interface {
 	SaveAgent(ctx context.Context, agent *AgentRecord) error
 	DeleteAgent(ctx context.Context, agentID string) error
 	ListAllAgents(ctx context.Context) ([]AgentRecord, error)
+	// GetWikiAutoGenLastRun returns the agent's last background wiki-generation
+	// run timestamp; zero Time when never run. The gateway ticker gates on
+	// WikiAutoGen.Interval against this value.
+	GetWikiAutoGenLastRun(ctx context.Context, agentID string) (time.Time, error)
+	// SetWikiAutoGenLastRun UPSERTs the agent's last wiki-generation run.
+	SetWikiAutoGenLastRun(ctx context.Context, agentID string, t time.Time) error
 
 	// --- Sessions (per user, per agent — chat history is private) ---
 	GetSession(ctx context.Context, userID, agentID, sessionKey string) (*SessionRecord, error)

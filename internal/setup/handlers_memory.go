@@ -13,6 +13,36 @@ import (
 	"github.com/fastclaw-ai/fastclaw/internal/store"
 )
 
+// --- /api/agents/{id}/memory (GET/PUT) ---
+//
+// Reads/writes the agent-scope "memory" override row (MemoryCfg JSON).
+// The web Wiki page uses these to persist memory.wikiAutoGen (the background
+// auto-generation toggle + interval). Single-user target: no owner check.
+
+func (s *Server) handleGetAgentMemory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var mem config.MemoryCfg
+	if s.dataStore != nil {
+		_ = scope.SettingInto(r.Context(), s.dataStore, "memory", "", id, &mem)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"memory": mem})
+}
+
+func (s *Server) handleUpdateAgentMemory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	mem, _ := body["memory"].(map[string]any)
+	if err := scope.SaveSetting(r.Context(), s.dataStore, "", id, "memory", mem); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // --- /api/memory/test-embedding + /api/memory/test-reranker ---
 //
 // These take the form's inline credentials (not the saved row) so an

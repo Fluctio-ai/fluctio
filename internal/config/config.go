@@ -13,6 +13,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 	"strings"
 )
 
@@ -259,6 +260,17 @@ type MemoryCfg struct {
 	SummaryModel string `json:"summaryModel,omitempty"`
 	// Settings holds memory-feature operational knobs (backfill interval).
 	Settings MemorySettingsCfg `json:"settings,omitempty"`
+	// WikiAutoGen drives the background wiki generator: every Interval,
+	// the gateway ticker scans the agent's KB for sources whose
+	// wiki_generated_at is NULL and runs the two-step wiki pipeline.
+	WikiAutoGen WikiAutoGenCfg `json:"wikiAutoGen,omitempty"`
+}
+
+// WikiAutoGenCfg configures the background wiki auto-generation sweep.
+type WikiAutoGenCfg struct {
+	Enabled  bool          `json:"enabled"`
+	Interval time.Duration `json:"interval,omitempty"` // default 6h
+	Model    string        `json:"model,omitempty"`    // empty = agent default
 }
 
 // MemorySettingsCfg holds operational knobs for the memory subsystem.

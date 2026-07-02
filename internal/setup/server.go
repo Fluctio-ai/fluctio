@@ -432,6 +432,8 @@ func (s *Server) Run(ctx context.Context) error {
 	// + per-agent force re-vectorize).
 	mux.HandleFunc("POST /api/memory/test-embedding", auth(s.handleTestEmbedding))
 	mux.HandleFunc("POST /api/memory/test-reranker", auth(s.handleTestReranker))
+	mux.HandleFunc("GET /api/agents/{id}/memory", auth(s.handleGetAgentMemory))
+	mux.HandleFunc("PUT /api/agents/{id}/memory", auth(s.handleUpdateAgentMemory))
 	mux.HandleFunc("POST /api/agents/{id}/memory/reindex", auth(s.handleReindexAgentMemory))
 
 	// Tasks

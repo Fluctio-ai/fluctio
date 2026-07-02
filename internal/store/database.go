@@ -182,6 +182,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateKBWiki(ctx); err != nil {
 		return fmt.Errorf("migrate kb/wiki tables: %w", err)
 	}
+	if err := d.migrateWikiAutoGenLastRun(ctx); err != nil {
+		return fmt.Errorf("migrate wiki autogen last-run table: %w", err)
+	}
 	return nil
 }
 
@@ -191,6 +194,45 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 // errors and Search falls back to searchLike) and wiki_pages / wiki_links
 // (generated wiki). Idempotent — every stmt is CREATE ... IF NOT EXISTS,
 // safe on every boot. agent_id scopes every row to its owning agent.
+// migrateWikiAutoGenLastRun creates the wiki_autogen_last_run table that
+// records each agent's last background wiki-generation sweep timestamp.
+// (Source Lununda reuses skill_evolution_state.wiki_last_run_at; FastClaw
+// has no skill_evolution_state table, so this is a dedicated table instead.)
+func (d *DBStore) migrateWikiAutoGenLastRun(ctx context.Context) error {
+	_, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS wiki_autogen_last_run (
+		agent_id    TEXT PRIMARY KEY,
+		last_run_at TEXT NOT NULL
+	)`)
+	return err
+}
+
+// GetWikiAutoGenLastRun returns the agent's last background wiki-generation
+// run timestamp; zero Time when never run.
+func (d *DBStore) GetWikiAutoGenLastRun(ctx context.Context, agentID string) (time.Time, error) {
+	var s string
+	err := d.db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT last_run_at FROM wiki_autogen_last_run WHERE agent_id = %s`, d.ph(1)), agentID).Scan(&s)
+	if err == sql.ErrNoRows {
+		return time.Time{}, nil
+	}
+	if err != nil {
+		return time.Time{}, err
+	}
+	if s == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
+// SetWikiAutoGenLastRun UPSERTs the agent's last wiki-generation run.
+func (d *DBStore) SetWikiAutoGenLastRun(ctx context.Context, agentID string, t time.Time) error {
+	_, err := d.db.ExecContext(ctx, fmt.Sprintf(
+		`INSERT INTO wiki_autogen_last_run (agent_id, last_run_at) VALUES (%s, %s)
+		 ON CONFLICT (agent_id) DO UPDATE SET last_run_at = excluded.last_run_at`,
+		d.ph(1), d.ph(2)), agentID, t.Format(time.RFC3339))
+	return err
+}
+
 func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS kb_sources (
