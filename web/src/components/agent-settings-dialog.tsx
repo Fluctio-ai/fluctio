@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  BookMarkedIcon,
   BookOpenIcon,
   BrainIcon,
   ClockIcon,
@@ -32,6 +33,7 @@ import AgentChannelsPage from "@/app/agents/[id]/channels/page";
 import AgentSchedulerPage from "@/app/agents/[id]/scheduler/page";
 import AgentRegexHooksPage from "@/app/agents/[id]/regex-hooks/page";
 import AgentKnowledgePage from "@/app/agents/[id]/knowledge/page";
+import AgentWikiPage from "@/app/agents/[id]/wiki/page";
 import AgentMCPPage from "@/app/agents/[id]/mcp/page";
 import AgentUsagePage from "@/app/agents/[id]/usage/page";
 import AccountSettingsPage from "@/app/settings/account/page";
@@ -51,6 +53,7 @@ export type AgentSettingsTab =
   | "scheduler"
   | "regex-hooks"
   | "knowledge"
+  | "wiki"
   | "usage"
   | "account"
   | "general"
@@ -70,6 +73,7 @@ const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> 
   { id: "scheduler", label: "Scheduler", icon: ClockIcon },
   { id: "regex-hooks", label: "Regex Hooks", icon: Regex },
   { id: "knowledge", label: "Knowledge", icon: BookOpenIcon },
+  { id: "wiki", label: "Wiki", icon: BookMarkedIcon },
   { id: "usage", label: "Token Usage", icon: CoinsIcon },
 ];
 
@@ -187,6 +191,7 @@ export function AgentSettingsDialog({
           {tab === "scheduler" && <AgentSchedulerPage />}
           {tab === "regex-hooks" && <AgentRegexHooksPage />}
           {tab === "knowledge" && <AgentKnowledgePage />}
+          {tab === "wiki" && <AgentWikiPage />}
           {tab === "usage" && <AgentUsagePage />}
           {tab === "account" && (
             <div className="p-6 max-w-3xl">

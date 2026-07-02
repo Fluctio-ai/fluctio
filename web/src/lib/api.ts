@@ -1417,6 +1417,72 @@ export async function generateWiki(agentId: string, sourceIds: string[], force?:
   return res.json();
 }
 
+// --- Wiki types + API (slice 4a REST handlers + slice 3 wiki pkg) ---
+export interface WikiPage {
+  id: string;
+  agent_id: string;
+  page_type: string;
+  slug: string;
+  title: string;
+  body?: string;
+  summary: string;
+  source_ids: string[];
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+  revision: number;
+}
+export interface WikiLink { src_page_id: string; dst_page_id: string; relation: string; weight: number; }
+export interface WikiStats { page_counts: Record<string, number>; total_pages: number; total_edges: number; }
+export interface WikiGraph { nodes: WikiPage[]; edges: WikiLink[] | null; }
+export interface WikiAutoGenCfg { enabled: boolean; interval?: number; model?: string; }
+
+export async function getWikiStats(agentId: string): Promise<WikiStats> {
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/stats`);
+  return res.json().catch(() => ({ page_counts: {}, total_pages: 0, total_edges: 0 }));
+}
+export async function listWikiPages(agentId: string, type?: string): Promise<{ pages: WikiPage[]; total: number }> {
+  const qs = type ? `?type=${encodeURIComponent(type)}` : "";
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/pages${qs}`);
+  if (!res.ok) return { pages: [], total: 0 };
+  return res.json().catch(() => ({ pages: [], total: 0 }));
+}
+export async function getWikiPage(agentId: string, pageId: string): Promise<WikiPage> {
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/pages/${encodeURIComponent(pageId)}`);
+  return res.json();
+}
+export async function deleteWikiPage(agentId: string, pageId: string): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/pages/${encodeURIComponent(pageId)}`, { method: "DELETE" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function getWikiGraph(agentId: string): Promise<WikiGraph> {
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/graph`);
+  return res.json().catch(() => ({ nodes: [], edges: [] }));
+}
+export async function getWikiProgress(agentId: string): Promise<{ total?: number; done?: number; failed?: number; status: string; updated_at?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/progress`);
+  return res.json().catch(() => ({ status: "idle" }));
+}
+
+// --- Agent memory (wiki auto-gen config). Backend GET/PUT /api/agents/{id}/memory
+// lands in slice 4c (MemoryCfg.WikiAutoGen); until then these return {}
+// on the 404 and the wiki page's auto-gen toggle stays at its default. ---
+export interface AgentMemory { wikiAutoGen?: WikiAutoGenCfg; [k: string]: any; }
+export async function getAgentMemory(agentId: string): Promise<{ memory?: AgentMemory }> {
+  const res = await apiFetch(`/api/agents/${agentId}/memory`);
+  if (!res.ok) return {};
+  return res.json().catch(() => ({}));
+}
+export async function setAgentMemory(agentId: string, memory: AgentMemory): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/memory`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(memory),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+
 // Fetch the raw agent.json for one agent (per-agent overrides only — not
 // the merged/resolved config). Used by the per-agent Models and Skills
 // admin pages.
