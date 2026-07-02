@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/fastclaw-ai/fastclaw/internal/agent/tools"
 	"github.com/fastclaw-ai/fastclaw/internal/bus"
@@ -425,6 +426,25 @@ func (m *Manager) Names() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// SummarizeIdleSessions runs the idle-summary sweep across every agent in
+// this manager. Called periodically by the gateway's idleSummaryTicker.
+// Each agent is recovered independently so one panic doesn't kill the sweep.
+func (m *Manager) SummarizeIdleSessions(ctx context.Context, idleAfter time.Duration, minMessages int) {
+	for _, ag := range m.All() {
+		if ctx.Err() != nil {
+			return
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Warn("idle summary sweep panic", "agent", ag.agentID, "error", r)
+				}
+			}()
+			ag.summarizeIdleSessions(ctx, idleAfter, minMessages)
+		}()
+	}
 }
 
 // UpdateProvider replaces the LLM provider for all agents (hot-reload).
