@@ -21,6 +21,16 @@ const (
 	PostTurn // fires after a complete agent turn (response + all tool calls)
 )
 
+// SyntheticToolCall carries a tool_call/tool_result pair a hook injects
+// into the session history. The pair is recorded so the model sees both the
+// call and its result when it next looks at the transcript. kb.AutoQueryHook
+// uses this to surface knowledgebase_search results as a real tool exchange.
+type SyntheticToolCall struct {
+	Name   string
+	Args   string
+	Result string
+}
+
 // HookContext carries data available to hooks at each hook point.
 type HookContext struct {
 	AgentName     string
@@ -62,6 +72,19 @@ type HookContext struct {
 	// user's back — plan mode exists precisely to let the user review
 	// before more work happens.
 	IsPlanMode bool
+
+	// KB auto-query hook outputs (consumed by the agent loop in slice 4b-2).
+	// SkipLLM: the hook precomputed a response — skip the LLM call and
+	// emit PrebuiltContent directly. IndicatorText: a status line ("[KB]
+	// 已引用 N 条") the loop emits alongside the response.
+	// SyntheticToolCalls: synthetic tool_call/result pairs to record into
+	// the transcript. The existing Messages field above is the rewrite
+	// target — the hook overwrites it with the KB-injected slice, so the
+	// loop must use hc.Messages (not its pre-hook copy) after hooks.Run.
+	SkipLLM            bool
+	PrebuiltContent    string
+	IndicatorText      string
+	SyntheticToolCalls []SyntheticToolCall
 }
 
 // HookFunc is a function that runs at a hook point.

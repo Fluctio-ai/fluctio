@@ -10,6 +10,7 @@ import (
 	"github.com/fastclaw-ai/fastclaw/internal/bus"
 	"github.com/fastclaw-ai/fastclaw/internal/config"
 	"github.com/fastclaw-ai/fastclaw/internal/embedding"
+	"github.com/fastclaw-ai/fastclaw/internal/kb"
 	"github.com/fastclaw-ai/fastclaw/internal/provider"
 	"github.com/fastclaw-ai/fastclaw/internal/scope"
 	"github.com/fastclaw-ai/fastclaw/internal/session"
@@ -275,6 +276,63 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					rr := mem.Reranker
 					ag.registry.SetReranker(embedding.NewJinaReranker(rr.APIBase, rr.APIKey, rr.Model))
 				}
+			}
+		}
+		// KB auto-query hook + knowledgebase_* tools: when the agent's
+		// file config enables KB, register a BeforeModelCall hook that
+		// searches the KB and injects results (augment) or short-circuits
+		// the LLM (strict), plus the knowledgebase_search/add/list/delete
+		// tools so the model can query the KB explicitly. Loop-side
+		// consumption of the hook's outputs (SkipLLM/PrebuiltContent/
+		// Messages rewrite) lands in slice 4b-2; until then the hook
+		// populates HookContext fields the loop doesn't yet read.
+		if rc.KB != nil && rc.KB.Enabled {
+			var kbStore *kb.KBStore
+			if dbs, ok := m.opts.dataStore.(*store.DBStore); ok {
+				kbStore = kb.NewKBStore(dbs.DB(), dbs.Dialect())
+			}
+			kbCfg := rc.KB
+			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
+				showIndicator := true
+				if kbCfg.ShowIndicator != nil {
+					showIndicator = *kbCfg.ShowIndicator
+				}
+				return kb.AutoQueryCfg{
+					Enabled:           kbCfg.Enabled,
+					AutoMode:          kbCfg.AutoMode,
+					Keywords:          kbCfg.Keywords,
+					MaxResults:        kbCfg.MaxResults,
+					SearchMode:        kbCfg.SearchMode,
+					EmptyAction:       kbCfg.EmptyAction,
+					ShowIndicator:     showIndicator,
+					IndicatorFound:    kbCfg.IndicatorFound,
+					IndicatorNotFound: kbCfg.IndicatorNotFound,
+				}
+			})
+			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {
+				kbHC := &kb.HookContext{
+					Messages: hc.Messages,
+					Source:   hc.Source,
+				}
+				hookFn(ctx, kbHC)
+				if kbHC.SkipLLM {
+					hc.SkipLLM = true
+					hc.PrebuiltContent = kbHC.PrebuiltContent
+				}
+				hc.IndicatorText = kbHC.IndicatorText
+				hc.Messages = kbHC.Messages
+				for _, stc := range kbHC.SyntheticToolCalls {
+					hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
+						Name:   stc.Name,
+						Args:   stc.Args,
+						Result: stc.Result,
+					})
+				}
+			})
+			// Register KB tools so the agent can search/add/list/delete
+			// knowledge-base entries during chat turns.
+			if kbStore != nil {
+				kb.RegisterKBTools(ag.registry, kbStore, rc.ID)
 			}
 		}
 		// Date line in the chatter's timezone — needs dataStore for the

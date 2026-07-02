@@ -601,6 +601,9 @@ type AgentFileConfig struct {
 	// AutoPersist mirrors AgentEntry.AutoPersist. Nil = inherit;
 	// non-nil = authoritative for this agent.
 	AutoPersist *bool `json:"autoPersist,omitempty"`
+	// KB auto-query config. Stored as a sub-object in the agent's
+	// file-config blob and mapped to kb.AutoQueryCfg at hook wiring time.
+	KB *AgentKBCfg `json:"kb,omitempty"`
 	// Admins gates write-mode slash commands (/new /reset /undo /retry /compact
 	// /model /personality) in IM channels. Keyed by channel name ("discord",
 	// "telegram", "slack", ...), each value is the platform-side user IDs
@@ -611,6 +614,21 @@ type AgentFileConfig struct {
 	// regardless of this field, since those channels carry the FastClaw
 	// identity directly and don't need a per-platform allowlist.
 	Admins map[string][]string `json:"admins,omitempty"`
+}
+
+// AgentKBCfg is the per-agent knowledge-base auto-query configuration.
+// Stored as the agent's "kb" config sub-object and mapped to kb.AutoQueryCfg
+// at BeforeModelCall hook wiring time.
+type AgentKBCfg struct {
+	Enabled           bool     `json:"enabled"`
+	AutoMode          string   `json:"autoMode,omitempty"`
+	Keywords          []string `json:"keywords,omitempty"`
+	MaxResults        int      `json:"maxResults,omitempty"`
+	SearchMode        string   `json:"searchMode,omitempty"`
+	EmptyAction       string   `json:"emptyAction,omitempty"`
+	ShowIndicator     *bool    `json:"showIndicator,omitempty"`
+	IndicatorFound    string   `json:"indicatorFound,omitempty"`
+	IndicatorNotFound string   `json:"indicatorNotFound,omitempty"`
 }
 
 type SkillsConfig struct {
@@ -681,6 +699,11 @@ type ResolvedAgent struct {
 	// runPostTurn hook fires AutoPersistMemory (the LLM-driven distill-
 	// to-USER.md/MEMORY.md pass) every N turns.
 	AutoPersist *bool
+	// KB auto-query config forwarded from AgentFileConfig.KB. When
+	// non-nil + Enabled, the agent's BeforeModelCall hook runs a KB
+	// search and injects results (augment) or short-circuits the LLM
+	// (strict). See AgentKBCfg for field semantics.
+	KB *AgentKBCfg
 }
 
 type TeamEntry struct {
@@ -845,6 +868,7 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 	}
 
 	if fileCfg, ok := AgentFileConfigLoader(entry.ID, home); ok {
+		resolved.KB = fileCfg.KB
 		if fileCfg.Model != "" {
 			resolved.Model = fileCfg.Model
 		}
