@@ -179,6 +179,74 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateConversationSummariesSegments(ctx); err != nil {
 		return fmt.Errorf("migrate conversation_summaries segments column: %w", err)
 	}
+	if err := d.migrateKBWiki(ctx); err != nil {
+		return fmt.Errorf("migrate kb/wiki tables: %w", err)
+	}
+	return nil
+}
+
+// migrateKBWiki creates the knowledge-base + wiki tables: kb_sources /
+// kb_entries (raw chunk store; LIKE search — the source codebase never
+// created the kb_entries_fts virtual table, so KBStore.searchFTS always
+// errors and Search falls back to searchLike) and wiki_pages / wiki_links
+// (generated wiki). Idempotent — every stmt is CREATE ... IF NOT EXISTS,
+// safe on every boot. agent_id scopes every row to its owning agent.
+func (d *DBStore) migrateKBWiki(ctx context.Context) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS kb_sources (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			source_type TEXT NOT NULL,
+			source_ref TEXT NOT NULL,
+			entry_count INTEGER NOT NULL DEFAULT 0,
+			total_chars INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			wiki_generated_at TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_sources_agent ON kb_sources (agent_id)`,
+		`CREATE TABLE IF NOT EXISTS kb_entries (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			uuid TEXT,
+			source_id TEXT NOT NULL,
+			chunk_index INTEGER NOT NULL DEFAULT 0,
+			content TEXT NOT NULL,
+			agent_id TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_entries_source ON kb_entries (source_id, chunk_index)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_entries_agent ON kb_entries (agent_id)`,
+		`CREATE TABLE IF NOT EXISTS wiki_pages (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			page_type TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			title TEXT NOT NULL,
+			body TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			source_ids TEXT NOT NULL,
+			tags TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			revision INTEGER NOT NULL DEFAULT 1
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_pages_agent ON wiki_pages (agent_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_pages_type ON wiki_pages (agent_id, page_type)`,
+		`CREATE TABLE IF NOT EXISTS wiki_links (
+			src_page_id TEXT NOT NULL,
+			dst_page_id TEXT NOT NULL,
+			relation TEXT NOT NULL,
+			weight REAL NOT NULL DEFAULT 0.5,
+			PRIMARY KEY (src_page_id, dst_page_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_links_src ON wiki_links (src_page_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_links_dst ON wiki_links (dst_page_id)`,
+	}
+	for _, s := range stmts {
+		if _, err := d.db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("kb/wiki migration: %w", err)
+		}
+	}
 	return nil
 }
 

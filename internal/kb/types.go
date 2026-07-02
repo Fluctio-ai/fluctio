@@ -1,0 +1,50 @@
+package kb
+
+import "time"
+
+type KBSource struct {
+	ID              string     `json:"id"`
+	AgentID         string     `json:"agent_id"`
+	Title           string     `json:"title"`
+	SourceType      string     `json:"source_type"` // "text", "url", "file"
+	SourceRef       string     `json:"source_ref"`  // URL or filename
+	EntryCount      int        `json:"entry_count"`
+	TotalChars      int        `json:"total_chars"`
+	WikiGeneratedAt *time.Time `json:"wiki_generated_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+type KBEntry struct {
+	ID         int    `json:"id"`
+	SourceID   string `json:"source_id"`
+	ChunkIndex int    `json:"chunk_index"`
+	Content    string `json:"content"`
+}
+
+type KBResult struct {
+	SourceID   string  `json:"source_id"`
+	SourceTitle string `json:"source_title"`
+	ChunkIndex int     `json:"chunk_index"`
+	Content    string  `json:"content"`
+	Snippet    string  `json:"snippet"`
+	Rank       float64 `json:"rank"`
+}
+
+type KBStats struct {
+	SourceCount int `json:"source_count"`
+	EntryCount  int `json:"entry_count"`
+	TotalChars  int `json:"total_chars"`
+}
+
+type KBCfg struct {
+	Enabled           bool     `json:"enabled"`
+	AutoMode          string   `json:"autoMode,omitempty"`    // "always", "keyword", "disabled"
+	Keywords          []string `json:"keywords,omitempty"`    // trigger words for keyword mode
+	MaxResults        int      `json:"maxResults,omitempty"`  // default 5
+	SearchMode        string   `json:"searchMode,omitempty"`  // "augment" (default), "strict"
+	EmptyAction       string   `json:"emptyAction,omitempty"` // "llm" (default), "stop"
+	ShowIndicator     *bool    `json:"showIndicator,omitempty"`
+	IndicatorFound    string   `json:"indicatorFound,omitempty"`
+	IndicatorNotFound string   `json:"indicatorNotFound,omitempty"`
+}
