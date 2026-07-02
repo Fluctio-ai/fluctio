@@ -19,9 +19,11 @@ import { NavProjectsList } from "@/components/nav-projects-list";
 import { NavUser } from "@/components/nav-user";
 import { AgentSettingsDialog } from "@/components/agent-settings-dialog";
 import {
+  BookOpenIcon,
   BotIcon,
   BrainIcon,
   CoinsIcon,
+  DatabaseIcon,
   KeyRoundIcon,
   LayoutDashboardIcon,
   MessagesSquareIcon,
@@ -51,7 +53,7 @@ import { useT } from "@/lib/i18n";
 // the sidebar showing the platform nav for /agents/<id>/project/...
 function extractAgentId(pathname: string): string | null {
   const match = pathname.match(
-    /^\/agents\/([^/]+)\/(chat|customize|skills|models|sessions|channels|chats|scheduler|project)/,
+    /^\/agents\/([^/]+)\/(chat|customize|skills|models|sessions|channels|chats|scheduler|project|wiki|knowledge|memory|regex-hooks)/,
   );
   return match ? match[1] : null;
 }
@@ -86,6 +88,15 @@ const AGENT_NAV = (
     },
   ];
 };
+
+// AGENT_KNOWLEDGE_NAV renders agent-scoped links to Wiki (generated from
+// KB content), Knowledge Base (ingest/manage sources), and Memory
+// (embedding/reranker config). Separate pages, plain URL navigation.
+const AGENT_KNOWLEDGE_NAV = (agentId: string, t: (k: string) => string): NavItem[] => [
+  { title: t("nav.wiki"), url: `/agents/${agentId}/wiki/`, icon: BookOpenIcon },
+  { title: t("nav.knowledgeBase"), url: `/agents/${agentId}/knowledge/`, icon: DatabaseIcon },
+  { title: t("nav.memory"), url: `/agents/${agentId}/memory/`, icon: BrainIcon },
+];
 
 // "New chat" is active iff we're parked on the bare /chat/ page with
 // no session open. A session can be encoded two ways:
@@ -244,10 +255,16 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         {activeAgentId ? (
-          <NavMain
-            label={t("nav.group.agent")}
-            items={AGENT_NAV(activeAgentId, pathname, hasOpenSession, t)}
-          />
+          <>
+            <NavMain
+              label={t("nav.group.agent")}
+              items={AGENT_NAV(activeAgentId, pathname, hasOpenSession, t)}
+            />
+            <NavMain
+              label={t("nav.group.knowledge")}
+              items={AGENT_KNOWLEDGE_NAV(activeAgentId, t)}
+            />
+          </>
         ) : (
           <>
             <NavMain items={[{ title: t("nav.overview"), url: "/overview/", icon: LayoutDashboardIcon }]} />
