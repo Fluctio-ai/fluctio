@@ -1337,6 +1337,84 @@ export interface AgentFileConfig {
   skills?: AgentSkillsConfig;
   providers?: Record<string, ProviderData>;
   mcpServers?: Record<string, MCPServerConfig>;
+  kb?: AgentKBCfg;
+}
+
+// AgentKBCfg mirrors config.AgentKBCfg (slice 4b-1) — per-agent KB
+// auto-query config. The web Knowledge page reads/writes it via
+// getAgentConfig/updateAgent, bypassing the agentcli CLI whitelist gap.
+export interface AgentKBCfg {
+  enabled?: boolean;
+  autoMode?: string;
+  keywords?: string[];
+  maxResults?: number;
+  searchMode?: string;
+  emptyAction?: string;
+  showIndicator?: boolean;
+  indicatorFound?: string;
+  indicatorNotFound?: string;
+}
+
+// --- Knowledge base types + API (slice 4a REST handlers) ---
+export interface KBSource {
+  id: string;
+  agent_id: string;
+  title: string;
+  source_type: string;
+  source_ref: string;
+  entry_count: number;
+  total_chars: number;
+  wiki_generated_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+export interface KBStats { source_count: number; entry_count: number; total_chars: number; }
+export interface KBEntry { id: number; source_id: string; chunk_index: number; content: string; }
+
+export async function listKBSources(agentId: string): Promise<KBSource[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/sources`);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+export async function getKBStats(agentId: string): Promise<KBStats> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/stats`);
+  return res.json().catch(() => ({ source_count: 0, entry_count: 0, total_chars: 0 }));
+}
+export async function listKBEntries(agentId: string, sourceId: string): Promise<KBEntry[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/sources/${sourceId}/entries`);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+export async function kbIngestText(agentId: string, title: string, content: string): Promise<{ source_id?: string; chars?: number; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/ingest/text`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, content }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function kbIngestURL(agentId: string, url: string, title?: string): Promise<{ source_id?: string; chars?: number; title?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/ingest/url`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, title }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function deleteKBSource(agentId: string, sourceId: string): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/sources/${sourceId}`, { method: "DELETE" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function generateWiki(agentId: string, sourceIds: string[], force?: boolean): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/generate`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_ids: sourceIds, force }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
 }
 
 // Fetch the raw agent.json for one agent (per-agent overrides only — not
