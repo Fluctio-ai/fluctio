@@ -1008,7 +1008,8 @@ export interface ChatStreamEvent {
     | "steer"
     | "error"
     | "done"
-    | "subagent_progress";
+    | "subagent_progress"
+    | "auth_prompt";
   // Per-session monotonic sequence assigned by chat_events. Lets the
   // chat page dedupe events arriving on both the active POST stream
   // and the parallel /api/chat/subscribe SSE connection. -1 means
@@ -1035,6 +1036,11 @@ export interface ChatStreamEvent {
     max?: number;
     phase?: "thinking" | "running" | "final-delivery" | "done";
     tools?: string[];
+    // auth_prompt payload — only populated when type === "auth_prompt".
+    // Web front-end renders this as the authorization prompt bubble; IM
+    // channels get a plain-text content event fallback (see loop_auth.go).
+    description?: string;
+    options?: { cmd: string; label_zh: string; label_en: string }[];
   };
 }
 

@@ -894,6 +894,30 @@ export function ChatScreen() {
             ]);
             break;
           }
+          case "auth_prompt": {
+            // ask-mode outside-workspace/dangerous call was parked on
+            // the session; surface the authorization request to the user
+            // as an agent bubble so they can reply /yes /no /auto /yolo.
+            // (Minimal render — button UI is a follow-up; handleSend is
+            // already wired to send the slash on click.) NOTE: the catch-up
+            // stream can't actually carry auth_prompt (seq=-1, not persisted
+            // to chat_events) — kept for shape parity with the live switch.
+            const desc = ""; // catch-up never carries auth_prompt (seq=-1, not persisted)
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `auth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                role: "agent" as const,
+                content:
+                  `⚠️ 需要授权：${desc}\n` +
+                  `/yes 授权执行 · /no 取消 · /auto 自动拒绝 · /yolo 全放行\n` +
+                  `Authorization required: ${desc}\n` +
+                  `/yes approve · /no cancel · /auto auto-deny · /yolo allow all`,
+                timestamp: Date.now(),
+              },
+            ]);
+            break;
+          }
           case "subagent_progress": {
             claim();
             if (data.data?.phase === "done") {
@@ -1597,6 +1621,28 @@ export function ChatScreen() {
               updated[idx] = { ...updated[idx], toolCalls: calls };
               return updated;
             });
+            break;
+          }
+          case "auth_prompt": {
+            // ask-mode outside-workspace/dangerous call was parked on
+            // the session; surface the authorization request to the user
+            // as an agent bubble so they can reply /yes /no /auto /yolo.
+            // (Minimal render — button UI is a follow-up; handleSend is
+            // already wired to send the slash on click.)
+            const desc = evt.data?.description || "";
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `auth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                role: "agent" as const,
+                content:
+                  `⚠️ 需要授权：${desc}\n` +
+                  `/yes 授权执行 · /no 取消 · /auto 自动拒绝 · /yolo 全放行\n` +
+                  `Authorization required: ${desc}\n` +
+                  `/yes approve · /no cancel · /auto auto-deny · /yolo allow all`,
+                timestamp: Date.now(),
+              },
+            ]);
             break;
           }
           case "subagent_progress": {
