@@ -335,6 +335,26 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/agents/{id}/channels/{type}/{accountId}", auth(s.handleDisconnectAgentChannel))
 	mux.HandleFunc("PATCH /api/agents/{id}/channels/{type}/{accountId}", auth(s.handleUpdateAgentChannel))
 
+	// Knowledge base: per-agent corpus of chunked text sources used for
+	// retrieval (knowledgebase_search tool + wiki generation pipeline).
+	mux.HandleFunc("GET /api/agents/{id}/kb/sources", auth(s.handleListKBSources))
+	mux.HandleFunc("POST /api/agents/{id}/kb/ingest/text", auth(s.handleKBIngestText))
+	mux.HandleFunc("POST /api/agents/{id}/kb/ingest/url", auth(s.handleKBIngestURL))
+	mux.HandleFunc("DELETE /api/agents/{id}/kb/sources/{sourceId}", auth(s.handleDeleteKBSource))
+	mux.HandleFunc("GET /api/agents/{id}/kb/sources/{sourceId}/entries", auth(s.handleListKBEntries))
+	mux.HandleFunc("GET /api/agents/{id}/kb/stats", auth(s.handleGetKBStats))
+	mux.HandleFunc("POST /api/agents/{id}/kb/search", auth(s.handleKBSearch))
+	mux.HandleFunc("POST /api/agents/{id}/kb/mcp", auth(s.handleKBMCP))
+
+	// Wiki: LLM-generated structured pages derived from KB sources.
+	mux.HandleFunc("GET /api/agents/{id}/wiki/stats", auth(s.handleWikiStats))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/pages", auth(s.handleWikiListPages))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/pages/{pageId}", auth(s.handleWikiGetPage))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/graph", auth(s.handleWikiGraph))
+	mux.HandleFunc("DELETE /api/agents/{id}/wiki/pages/{pageId}", auth(s.handleWikiDeletePage))
+	mux.HandleFunc("POST /api/agents/{id}/wiki/generate", auth(s.handleWikiGenerate))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/progress", auth(s.handleWikiProgress))
+
 	// Feishu (飞书) event webhook. UNAUTHENTICATED — Feishu posts here
 	// without a fastclaw bearer token. Per-event security comes from
 	// the verification_token validated inside the adapter against the
