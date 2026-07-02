@@ -1,0 +1,328 @@
+package kb
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	"github.com/fastclaw-ai/fastclaw/internal/provider"
+)
+
+// HookContext is a subset of the agent's HookContext that KB needs.
+type HookContext struct {
+	Messages           []provider.Message
+	Source             string
+	SkipLLM            bool
+	PrebuiltContent    string
+	IndicatorText      string
+	SyntheticToolCalls []SyntheticToolCall
+}
+
+// SyntheticToolCall mirrors agent.SyntheticToolCall without importing agent.
+type SyntheticToolCall struct {
+	Name   string
+	Args   string
+	Result string
+}
+
+// AutoQueryCfg is the config the auto-query hook reads. Mirrors the
+// fields from config.KBCfg to avoid importing the config package.
+type AutoQueryCfg struct {
+	Enabled       bool
+	AutoMode      string
+	Keywords      []string
+	MaxResults    int
+	SearchMode    string // "augment" (default), "strict"
+	EmptyAction   string // "llm" (default), "stop"
+	ShowIndicator bool   // default true
+	// Custom indicator texts. {count} and {query} are replaced.
+	IndicatorFound    string
+	IndicatorNotFound string
+}
+
+// AutoQueryHook returns a function suitable for use as a BeforeModelCall
+// hook. The cfgFn callback reads the agent's current KB config on each
+// call so changes take effect without restart.
+//
+// The returned closure holds a per-agent cache of the last query it ran
+// for. Within a ReAct loop the same user message drives every iteration,
+// so without this cache the hook would re-search the FTS index, re-emit
+// a synthetic knowledgebase_search tool_call/result pair, and re-inject
+// a [KB] context message on every model call — once per loop iteration,
+// even though the previous iteration's results are already in the
+// session. The cache short-circuits repeat iterations so the work runs
+// exactly once per distinct user query.
+//
+// Staleness tradeoff: the cache is keyed by query string only. If the
+// agent calls a knowledgebase_ingest_* tool mid-loop with the same user
+// query, auto-query will NOT pick up the new content until the user
+// sends a different message. The LLM still sees the ingest result in
+// its tool-result stream and can call knowledgebase_search explicitly
+// to refresh — auto-query is a convenience layer, not the only path.
+func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) func(context.Context, *HookContext) {
+	var lastQuery string
+	return func(ctx context.Context, hc *HookContext) {
+		cfg := cfgFn()
+		slog.Debug("kb auto-query hook", "agent", agentID, "enabled", cfg.Enabled, "mode", cfg.AutoMode, "store_nil", store == nil, "source", hc.Source)
+		if !cfg.Enabled || cfg.AutoMode == "disabled" || store == nil {
+			return
+		}
+		if hc.Source != "" {
+			return
+		}
+
+		query := extractLastUserMessage(hc.Messages)
+		if query == "" {
+			return
+		}
+
+		switch cfg.AutoMode {
+		case "keyword":
+			if !containsAnyKeyword(query, cfg.Keywords) {
+				return
+			}
+		case "always":
+		default:
+			return
+		}
+
+		// Cache hit: same query already processed AND the [KB]
+		// injection it produced is still in hc.Messages. The second
+		// condition matters because the cache is per-agent-lifetime
+		// (the hook closure outlives any one session): if the user
+		// starts a brand-new chat with the same query, the new
+		// session's messages won't carry the old [KB] injection, so
+		// we must re-search to give the LLM its KB context.
+		//
+		// Within a single ReAct loop the prior injection is always
+		// present (iter 1 put it there, iter 2+ reads it back), so
+		// this hits and skips duplicate search + synth emission.
+		// Across turns in the SAME session, the injection is still
+		// in session_messages, so this also hits — and the LLM
+		// keeps operating on the same KB context.
+		if lastQuery == query && messagesContainKBContext(hc.Messages) {
+			return
+		}
+
+		maxResults := cfg.MaxResults
+		if maxResults <= 0 {
+			maxResults = 5
+		}
+		if cfg.SearchMode == "" {
+			cfg.SearchMode = "augment"
+		}
+		if cfg.EmptyAction == "" {
+			cfg.EmptyAction = "llm"
+		}
+
+		results, err := store.Search(ctx, agentID, query, maxResults, 0)
+		slog.Info("kb auto-query search", "agent", agentID, "query", query, "results", len(results), "err", err)
+
+		if err != nil {
+			slog.Debug("kb auto-query failed", "agent", agentID, "error", err)
+			return
+		}
+
+		// Mark the query as cached BEFORE branching on results so a
+		// search that returned 0 hits is also memoized — otherwise
+		// an empty-result query in "always" mode would re-search on
+		// every iteration.
+		lastQuery = query
+
+		if len(results) > 0 {
+			// Results found — apply searchMode.
+			hc.IndicatorText = formatIndicatorFoundV2(cfg, results, query)
+			hc.SyntheticToolCalls = []SyntheticToolCall{{
+				Name:   "knowledgebase_search",
+				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, query, maxResults),
+				Result: hc.IndicatorText + "\n\n" + buildToolResultSummary(results),
+			}}
+			switch cfg.SearchMode {
+			case "strict":
+				content := buildKBAnswer(results, query, cfg)
+				hc.PrebuiltContent = content
+				hc.SkipLLM = true
+				return
+			default: // augment
+				injectKBContext(hc, results, cfg)
+				return
+			}
+		}
+
+		// No results — apply emptyAction.
+		if cfg.EmptyAction == "stop" {
+			hc.IndicatorText = formatIndicatorNotFound(cfg)
+			content := indicatorNotFoundMsg(cfg)
+			hc.PrebuiltContent = content
+			hc.SkipLLM = true
+		}
+	}
+}
+
+func buildToolResultSummary(results []KBResult) string {
+	var sb strings.Builder
+	for i, r := range results {
+		fmt.Fprintf(&sb, "%d. **[%s]**", i+1, r.SourceTitle)
+		if len(r.Content) > 200 {
+			sb.WriteString("\n" + r.Content[:200] + "...")
+		} else {
+			sb.WriteString("\n" + r.Content)
+		}
+		sb.WriteString("\n\n")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func isWikiSourceID(id string) bool {
+	return strings.Contains(id, ":")
+}
+
+func countSources(results []KBResult) (kbCount int, wikiCount int) {
+	for _, r := range results {
+		if isWikiSourceID(r.SourceID) {
+			wikiCount++
+		} else {
+			kbCount++
+		}
+	}
+	return
+}
+
+func formatIndicatorFoundV2(cfg AutoQueryCfg, results []KBResult, query string) string {
+	if !cfg.ShowIndicator {
+		return ""
+	}
+	kbCount, wikiCount := countSources(results)
+	total := len(results)
+	indicator := cfg.IndicatorFound
+	if indicator == "" {
+		indicator = "[KB] 已引用 {kbCount} 条知识库, {wikiCount} 条百科"
+	}
+	indicator = strings.ReplaceAll(indicator, "{count}", fmt.Sprintf("%d", total))
+	indicator = strings.ReplaceAll(indicator, "{kbCount}", fmt.Sprintf("%d", kbCount))
+	indicator = strings.ReplaceAll(indicator, "{wikiCount}", fmt.Sprintf("%d", wikiCount))
+	indicator = strings.ReplaceAll(indicator, "{query}", query)
+	return indicator
+}
+
+func formatIndicatorNotFound(cfg AutoQueryCfg) string {
+	if !cfg.ShowIndicator {
+		return ""
+	}
+	if cfg.IndicatorNotFound != "" {
+		return cfg.IndicatorNotFound
+	}
+	return "[KB] 知识库中未找到相关信息"
+}
+
+func extractLastUserMessage(msgs []provider.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Content
+		}
+	}
+	return ""
+}
+
+// messagesContainKBContext reports whether any message in msgs carries
+// an injected KB context block. injectKBContext prefixes every injection
+// with "[KB]" (or the custom IndicatorFound text), so a simple prefix
+// scan is enough. Used by the cache-hit check to confirm the previously
+// cached injection is still in scope for the current conversation.
+func messagesContainKBContext(msgs []provider.Message) bool {
+	for _, m := range msgs {
+		if strings.HasPrefix(m.Content, "[KB]") {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnyKeyword(text string, keywords []string) bool {
+	lower := strings.ToLower(text)
+	for _, kw := range keywords {
+		if kw != "" && strings.Contains(lower, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildKBAnswer(results []KBResult, query string, cfg AutoQueryCfg) string {
+	var sb strings.Builder
+	if cfg.ShowIndicator {
+		indicator := cfg.IndicatorFound
+		if indicator == "" {
+			indicator = "[KB] Found {count} result(s) for: {query}"
+		}
+		indicator = strings.ReplaceAll(indicator, "{count}", fmt.Sprintf("%d", len(results)))
+		indicator = strings.ReplaceAll(indicator, "{query}", query)
+		sb.WriteString(indicator)
+		sb.WriteString("\n\n")
+	}
+	for i, r := range results {
+		fmt.Fprintf(&sb, "--- Source: %s (chunk %d) ---\n", r.SourceTitle, r.ChunkIndex)
+		sb.WriteString(r.Content)
+		if i < len(results)-1 {
+			sb.WriteString("\n\n")
+		}
+	}
+	return sb.String()
+}
+
+func injectKBContext(hc *HookContext, results []KBResult, cfg AutoQueryCfg) {
+	var sb strings.Builder
+	if cfg.ShowIndicator {
+		indicator := cfg.IndicatorFound
+		if indicator == "" {
+			indicator = "[KB] Retrieved {count} relevant knowledge item(s)"
+		}
+		indicator = strings.ReplaceAll(indicator, "{count}", fmt.Sprintf("%d", len(results)))
+		sb.WriteString(indicator)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("The following information was retrieved from the knowledge base and may be relevant to the user's question. Use it to enhance your response if relevant.\n\n")
+	for _, r := range results {
+		fmt.Fprintf(&sb, "--- Source: %s (chunk %d) ---\n", r.SourceTitle, r.ChunkIndex)
+		content := r.Content
+		if len(content) > 500 {
+			content = content[:500] + "..."
+		}
+		sb.WriteString(content)
+		sb.WriteString("\n\n")
+	}
+
+	kbMsg := provider.Message{
+		Role:    "user",
+		Content: sb.String(),
+	}
+
+	insertAt := 0
+	if len(hc.Messages) > 0 && hc.Messages[0].Role == "system" {
+		insertAt = 1
+	}
+
+	// Remove any previous KB context messages to avoid stacking across ReAct iterations.
+	var filtered []provider.Message
+	filtered = append(filtered, hc.Messages[:insertAt]...)
+	for _, m := range hc.Messages[insertAt:] {
+		if !strings.HasPrefix(m.Content, "[KB]") {
+			filtered = append(filtered, m)
+		}
+	}
+	tail := make([]provider.Message, len(filtered)-insertAt)
+	copy(tail, filtered[insertAt:])
+	hc.Messages = append(filtered[:insertAt:insertAt], kbMsg)
+	hc.Messages = append(hc.Messages, tail...)
+}
+
+func indicatorNotFoundMsg(cfg AutoQueryCfg) string {
+	if cfg.ShowIndicator {
+		if cfg.IndicatorNotFound != "" {
+			return cfg.IndicatorNotFound
+		}
+		return "[Knowledge Base]\nNo matching information found in the knowledge base for your query."
+	}
+	return "I couldn't find any relevant information in the knowledge base."
+}
