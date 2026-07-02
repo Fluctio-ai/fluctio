@@ -1483,6 +1483,36 @@ export async function setAgentMemory(agentId: string, memory: AgentMemory): Prom
   return res.json().catch(() => ({ ok: true }));
 }
 
+// --- Memory config types (agent memory settings page) ---
+export interface MemoryEmbeddingConfig {
+  enabled: boolean;
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+  apiBase?: string;
+  dim?: number;
+  dimEnabled?: boolean;
+}
+export interface MemoryRerankerConfig {
+  enabled: boolean;
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+  apiBase?: string;
+}
+export interface MemoryConfig {
+  embedding?: MemoryEmbeddingConfig;
+  reranker?: MemoryRerankerConfig;
+  settings?: { enabled?: boolean };
+  summaryModel?: string;
+  [k: string]: any;
+}
+export async function reindexAgentMemory(agentId: string): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/memory/reindex`, { method: "POST" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+
 // Fetch the raw agent.json for one agent (per-agent overrides only — not
 // the merged/resolved config). Used by the per-agent Models and Skills
 // admin pages.
