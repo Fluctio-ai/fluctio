@@ -151,6 +151,13 @@ interface ChatMessage {
   // either the live content event's `metadata` payload or the
   // ChatHistoryMessage.metadata on a refresh.
   metadata?: ToolResultMetadata;
+  // Authorization prompt payload (from auth_prompt SSE event). When set,
+  // the agent bubble renders tappable buttons for each option instead of
+  // asking the user to type the slash. handleSend(opt.cmd) dispatches.
+  authOptions?: {
+    description: string;
+    options: { cmd: string; label_zh: string; label_en: string }[];
+  };
   // IM-bridge sender identity, surfaced from session_messages metadata
   // (set by the agent loop for Discord/Telegram/... routed turns).
   // Present means: render an avatar + nickname header instead of an
@@ -1625,22 +1632,19 @@ export function ChatScreen() {
           }
           case "auth_prompt": {
             // ask-mode outside-workspace/dangerous call was parked on
-            // the session; surface the authorization request to the user
-            // as an agent bubble so they can reply /yes /no /auto /yolo.
-            // (Minimal render — button UI is a follow-up; handleSend is
-            // already wired to send the slash on click.)
+            // the session; surface it as an agent bubble carrying
+            // authOptions so the chat panel renders tappable buttons.
+            // handleSend(opt.cmd) dispatches the slash reply on click.
             const desc = evt.data?.description || "";
+            const options = evt.data?.options || [];
             setMessages((prev) => [
               ...prev,
               {
                 id: `auth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 role: "agent" as const,
-                content:
-                  `⚠️ 需要授权：${desc}\n` +
-                  `/yes 授权执行 · /no 取消 · /auto 自动拒绝 · /yolo 全放行\n` +
-                  `Authorization required: ${desc}\n` +
-                  `/yes approve · /no cancel · /auto auto-deny · /yolo allow all`,
+                content: desc,
                 timestamp: Date.now(),
+                authOptions: { description: desc, options },
               },
             ]);
             break;
@@ -2262,6 +2266,23 @@ export function ChatScreen() {
                           <span className="opacity-80">
                             Tools were disabled for this turn. Reply with &quot;go&quot; (or edits) to run it.
                           </span>
+                        </div>
+                      )}
+                      {msg.role === "agent" && msg.authOptions && msg.authOptions.options.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {msg.authOptions.options.map((opt) => (
+                            <Button
+                              key={opt.cmd}
+                              size="sm"
+                              variant={opt.cmd === "/yes" ? "default" : "outline"}
+                              onClick={() => handleSend(opt.cmd)}
+                              disabled={sending}
+                              className="h-8"
+                            >
+                              <span>{opt.label_zh}</span>
+                              <span className="opacity-60 ml-1 text-[10px]">{opt.label_en}</span>
+                            </Button>
+                          ))}
                         </div>
                       )}
                       {msg.role === "agent" && msg.id === pendingPlanId && (
