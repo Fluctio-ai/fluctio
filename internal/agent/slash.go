@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fastclaw-ai/fastclaw/internal/provider"
 	"github.com/fastclaw-ai/fastclaw/internal/usage"
 )
 
@@ -23,6 +24,12 @@ type slashResult struct {
 	handled            bool
 	reply              string
 	continuationQueued bool
+	// continueToLoop: when true, the slash still enters the agent loop
+	// after its reply (rather than short-circuiting). Used by /yes (and
+	// /auto / /yolo when they approve pending calls) so drainApprovedPending
+	// runs and the authorized calls execute immediately, then the LLM
+	// continues the task with their results.
+	continueToLoop bool
 }
 
 // handleSlashCommand checks if the message is a slash command and handles it.
@@ -96,17 +103,12 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 	case "/compact":
 		return a.slashCompact(msg)
 
-	case "/yolo":
-		a.authMode = AuthModeYolo
-		return slashResult{handled: true, reply: "🔓 YOLO mode: all tool calls auto-approved (hardline commands still blocked)."}
-
-	case "/auto":
-		a.authMode = AuthModeAuto
-		return slashResult{handled: true, reply: "🛑 Auto-deny mode: outside-workspace / dangerous calls denied without prompt."}
-
-	case "/ask":
-		a.authMode = AuthModeAsk
-		return slashResult{handled: true, reply: "❓ Ask mode: outside-workspace / dangerous calls return a denial — re-issue after /yolo if intended."}
+	case "/yes":
+		return a.slashAuthReply(msg, true)
+	case "/no":
+		return a.slashAuthReply(msg, false)
+	case "/yolo", "/auto", "/ask":
+		return a.slashSetAuthMode(msg, strings.TrimPrefix(cmd, "/"))
 
 	case "/status":
 		return a.slashStatus(msg)
@@ -157,6 +159,70 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 	}
 }
 
+// slashAuthReply handles /yes and /no. /yes pops the waiting calls and
+// marks them approved — the agent loop executes them at the top of THIS
+// turn (the /yes message itself drives the continuation via continueToLoop)
+// and feeds results back to the LLM. /no clears them. A stray /yes with
+// nothing pending tells the user there's nothing to confirm, so it
+// doesn't look like it silently did nothing.
+func (a *Agent) slashAuthReply(msg bus.InboundMessage, approved bool) slashResult {
+	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
+	if sess == nil {
+		return slashResult{handled: true, reply: "⚠️ 找不到当前会话。\nNo active session found."}
+	}
+	pending := sess.PopPendingCalls()
+	if len(pending) == 0 {
+		if approved {
+			return slashResult{handled: true, reply: "⚠️ 当前没有等待授权的操作。\nNo operation is awaiting authorization."}
+		}
+		return slashResult{handled: true, reply: "🚫 已拒绝，当前没有待执行的操作。\nDenied — no operation was waiting, but your refusal is noted."}
+	}
+	if approved {
+		sess.SetApprovedPending(pending)
+		return slashResult{handled: true, continueToLoop: true, reply: fmt.Sprintf("✅ 已授权 %d 个操作，立即执行…\nApproved %d operation(s), executing now.", len(pending), len(pending))}
+	}
+	return slashResult{handled: true, reply: fmt.Sprintf("🚫 已拒绝 %d 个操作。\nDenied %d operation(s).", len(pending), len(pending))}
+}
+
+// slashSetAuthMode switches the authorization mode (ask/auto/yolo) and
+// re-judges any pending calls under it: the ones the new mode allows get
+// approved (executed immediately via drainApprovedPending on this
+// continuation turn), the rest are dropped. /yes semantics for survivors
+// still apply.
+func (a *Agent) slashSetAuthMode(msg bus.InboundMessage, mode string) slashResult {
+	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
+	if sess == nil {
+		return slashResult{handled: true, reply: "⚠️ 找不到当前会话。\nNo active session found."}
+	}
+	a.authMode = mode
+	desc := map[string][2]string{
+		AuthModeAsk:  {"workspace 外写操作会先问你（/yes 授权，/no 拒绝）", "outside-workspace writes will prompt you (/yes to approve, /no to deny)"},
+		AuthModeAuto: {"workspace 外写操作自动拒绝（不询问）", "outside-workspace writes are auto-denied (no prompt)"},
+		AuthModeYolo: {"全部放行（注意风险）", "everything is allowed (use with caution)"},
+	}[mode]
+	// Re-judge pending calls under the new mode (yolo→all, auto→none,
+	// ask→re-prompt on next attempt). Newly-allowed ones execute
+	// immediately via drainApprovedPending on this continuation turn.
+	var approved []provider.ToolCall
+	if a.authGate != nil {
+		pending := sess.PopPendingCalls()
+		for _, tc := range pending {
+			dec := a.authGate.evaluateCall(tc.Function.Name, tc.Function.Arguments, mode)
+			if dec.action == authAllow {
+				approved = append(approved, tc)
+			}
+		}
+		if len(approved) > 0 {
+			sess.SetApprovedPending(approved)
+		}
+	}
+	reply := fmt.Sprintf("🔧 授权模式已切到 `%s`。\n%s", mode, desc[0])
+	if desc[1] != "" {
+		reply += "\nAuth mode set to `" + mode + "`.\n" + desc[1]
+	}
+	return slashResult{handled: true, continueToLoop: len(approved) > 0, reply: reply}
+}
+
 // writeSlashCommands are the slash commands that mutate the agent's runtime
 // state or session history and therefore need the owner/admin gate. Anything
 // not in this set is treated as read-only and runs unrestricted.
@@ -168,6 +234,9 @@ var writeSlashCommands = map[string]bool{
 	"/compact":     true,
 	"/yolo":        true,
 	"/auto":        true,
+	"/ask":         true,
+	"/yes":         true,
+	"/no":          true,
 	"/model":       true,
 	"/personality": true,
 }

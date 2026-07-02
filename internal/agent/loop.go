@@ -1882,12 +1882,19 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		if result.reply != "" {
 			emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": result.reply}})
 		}
-		if result.continuationQueued {
+		if result.continueToLoop {
+			// /yes (or /yolo with approved pending): fall through to the
+			// ReAct loop so drainApprovedPending executes the authorized
+			// calls and the LLM continues. Don't emit done — the loop
+			// owns the turn end.
+		} else if result.continuationQueued {
 			emitEvent(ctx, ChatEvent{Type: "turn_pending"})
 		} else {
 			emitEvent(ctx, ChatEvent{Type: "done"})
 		}
-		return result.reply
+		if !result.continueToLoop {
+			return result.reply
+		}
 	}
 
 	// Quota gate: reject the turn early when the agent owner has
@@ -2083,6 +2090,10 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// splits on it (AllowSplit=true) or collapses to newlines otherwise.
 	var replyParts []string
 
+	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop
+	// so their results are in `messages` when the LLM picks up the turn.
+	totalToolCalls += a.drainApprovedPending(ctx, sess, &messages)
+
 	// ReAct loop
 	for i := 0; i < a.maxToolIterations; i++ {
 		slog.Info("agent loop iteration",
@@ -2259,36 +2270,29 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// (Brave free tier 1RPS, etc.) set it to 1 / 2 to force
 		// strict serial / lightly-parallel execution.
 		executeCalls := resp.ToolCalls
-		// Auth gate: evaluate each call against the three-tier policy
-		// (hardline block, dangerous/outside-workspace follow mode).
-		// Blocked/prompted calls are dropped from execution and folded
-		// back as deny tool_results so the LLM sees the refusal paired
-		// to the tool_use id (no orphan 400 on the next request).
+		// Auth gate (stage 3): split executeCalls into allowed vs.
+		// blocked/prompted before running anything. Blocked calls get a
+		// synthetic tool_result so every tool_use id stays paired;
+		// prompted calls are parked on the session for /yes to drain.
 		var authBlocked []toolCallResult
 		if a.authGate != nil {
-			mode := a.authMode
-			if mode == "" {
-				mode = AuthModeAsk
+			var blockedMap map[string]toolCallResult
+			var promptDesc string
+			executeCalls, blockedMap, promptDesc = a.filterAuthorizedCalls(sess, executeCalls)
+			if promptDesc != "" {
+				a.emitAuthPrompt(ctx, promptDesc, msg.Channel)
 			}
-			var allowed []provider.ToolCall
-			for _, tc := range executeCalls {
-				dec := a.authGate.evaluateCall(tc.Function.Name, tc.Function.Arguments, mode)
-				if dec.action == authAllow {
-					allowed = append(allowed, tc)
-				} else {
-					authBlocked = append(authBlocked, toolCallResult{
-						toolCallID: tc.ID,
-						toolName:   tc.Function.Name,
-						result:     denyMessageBypass(dec.reason),
-					})
-				}
+			for _, br := range blockedMap {
+				authBlocked = append(authBlocked, br)
 			}
-			executeCalls = allowed
 		}
+		// Apply the per-round parallel cap on the post-auth set so the cap
+		// can't resurrect calls the gate just refused (the previous code
+		// re-sliced resp.ToolCalls and overrode the gate's filtering).
 		var deferredCalls []provider.ToolCall
-		if a.maxParallelToolCalls > 0 && len(resp.ToolCalls) > a.maxParallelToolCalls {
-			executeCalls = resp.ToolCalls[:a.maxParallelToolCalls]
-			deferredCalls = resp.ToolCalls[a.maxParallelToolCalls:]
+		if a.maxParallelToolCalls > 0 && len(executeCalls) > a.maxParallelToolCalls {
+			deferredCalls = executeCalls[a.maxParallelToolCalls:]
+			executeCalls = executeCalls[:a.maxParallelToolCalls]
 			slog.Info("deferring tool calls beyond parallel cap",
 				"agent", a.name,
 				"cap", a.maxParallelToolCalls,
@@ -2734,12 +2738,22 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// but silent" — see the HandleMessage twin. Still emit a Done
 	// chunk so callers waiting on the stream don't hang.
 	if result := a.handleSlashCommand(msg); result.handled {
-		ch := make(chan provider.StreamChunk, 2)
-		go func() {
-			ch <- provider.StreamChunk{Content: result.reply, Done: true}
-			close(ch)
-		}()
-		return provider.NewStreamReader(ch)
+		if result.continueToLoop {
+			// /yes (or /yolo with approved pending): emit the reply via
+			// SSE so the user sees the "✅ authorized" ack, then fall
+			// through to the streaming ReAct loop so drainApprovedPending
+			// runs and the LLM continues with the authorized results.
+			if result.reply != "" {
+				emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": result.reply}})
+			}
+		} else {
+			ch := make(chan provider.StreamChunk, 2)
+			go func() {
+				ch <- provider.StreamChunk{Content: result.reply, Done: true}
+				close(ch)
+			}()
+			return provider.NewStreamReader(ch)
+		}
 	}
 
 	// Quota gate — mirrors the check in HandleMessage.
@@ -2830,6 +2844,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	var lastSig toolCallSig
 	consecutiveCount := 0
 	totalToolCalls := 0
+
+	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop.
+	totalToolCalls += a.drainApprovedPending(ctx, sess, &messages)
 
 	// ReAct loop - use Chat for tool iterations
 	for i := 0; i < a.maxToolIterations; i++ {
@@ -2981,29 +2998,21 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeToolCall, ToolName: tc.Function.Name, ToolArgs: tc.Function.Arguments, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID})
 		}
 
-		// Auth gate: evaluate each call against the three-tier policy.
-		// Blocked/prompted calls are dropped + folded back as deny results.
+		// Auth gate: split into allowed vs. blocked/prompted. Blocked
+		// calls get a synthetic tool_result; prompted calls park on the
+		// session for /yes to drain next turn.
 		streamCalls := resp.ToolCalls
 		var authBlocked []toolCallResult
 		if a.authGate != nil {
-			mode := a.authMode
-			if mode == "" {
-				mode = AuthModeAsk
+			var blockedMap map[string]toolCallResult
+			var promptDesc string
+			streamCalls, blockedMap, promptDesc = a.filterAuthorizedCalls(sess, streamCalls)
+			if promptDesc != "" {
+				a.emitAuthPrompt(ctx, promptDesc, msg.Channel)
 			}
-			var allowed []provider.ToolCall
-			for _, tc := range streamCalls {
-				dec := a.authGate.evaluateCall(tc.Function.Name, tc.Function.Arguments, mode)
-				if dec.action == authAllow {
-					allowed = append(allowed, tc)
-				} else {
-					authBlocked = append(authBlocked, toolCallResult{
-						toolCallID: tc.ID,
-						toolName:   tc.Function.Name,
-						result:     denyMessageBypass(dec.reason),
-					})
-				}
+			for _, br := range blockedMap {
+				authBlocked = append(authBlocked, br)
 			}
-			streamCalls = allowed
 		}
 		// Execute tools concurrently via SDK engine
 		results := a.engine.executeToolsConcurrently(ctx, a.registry, streamCalls, a.workspacePath)

@@ -63,6 +63,15 @@ type Session struct {
 	// pending steer.
 	turnDepth int
 	steerBuf  []provider.Message
+
+	// Authorization pending: tool_calls parked awaiting the user's /yes
+	// (ask mode intercepted them as outside-workspace/dangerous), plus
+	// the user-approved batch drainApprovedPending runs at the top of the
+	// next turn. Per-session — each conversation thread authorizes
+	// independently. Guarded by mu alongside the other transient fields.
+	pendingCalls    []provider.ToolCall
+	approvedPending []provider.ToolCall
+	pendingDesc     string
 }
 
 // SessionKey returns the opaque session_key this Session is bound to.
@@ -70,6 +79,61 @@ type Session struct {
 // goal-scoped tools) can address the right row without re-resolving
 // the (channel, account, chat) quadruple every time.
 func (s *Session) SessionKey() string { return s.sessionKey }
+
+// PushPendingCalls parks intercepted tool_calls awaiting user /yes.
+// A round's waiting calls are a batch; one /yes executes them all. desc
+// is the human-readable reason surfaced in the authorization prompt.
+func (s *Session) PushPendingCalls(calls []provider.ToolCall, desc string) {
+	s.mu.Lock()
+	s.pendingCalls = append(s.pendingCalls, calls...)
+	if desc != "" {
+		s.pendingDesc = desc
+	}
+	s.mu.Unlock()
+}
+
+// PopPendingCalls returns and clears the waiting tool_calls + desc.
+func (s *Session) PopPendingCalls() []provider.ToolCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	calls := s.pendingCalls
+	s.pendingCalls = nil
+	s.pendingDesc = ""
+	return calls
+}
+
+// PendingDesc returns the reason for the current pending authorization
+// request (empty when nothing is pending).
+func (s *Session) PendingDesc() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pendingDesc
+}
+
+// SetApprovedPending marks the given calls as user-authorized; the agent
+// loop drains them at the top of the next turn and executes immediately.
+func (s *Session) SetApprovedPending(calls []provider.ToolCall) {
+	s.mu.Lock()
+	s.approvedPending = calls
+	s.mu.Unlock()
+}
+
+// DrainApprovedPending returns and clears the user-authorized calls.
+func (s *Session) DrainApprovedPending() []provider.ToolCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.approvedPending
+	s.approvedPending = nil
+	return c
+}
+
+// ClearPendingCalls drops any waiting authorization (used on /no).
+func (s *Session) ClearPendingCalls() {
+	s.mu.Lock()
+	s.pendingCalls = nil
+	s.pendingDesc = ""
+	s.mu.Unlock()
+}
 
 // ctx returns a context tagged with this Session's user so the store layer
 // can scope SQL by user_id. Falls back to context.Background() when no
