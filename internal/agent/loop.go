@@ -2089,6 +2089,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// channels.SplitMessageMarker at return time; manager.dispatchOutbound
 	// splits on it (AllowSplit=true) or collapses to newlines otherwise.
 	var replyParts []string
+	var kbIndicator string
 
 	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop
 	// so their results are in `messages` when the LLM picks up the turn.
@@ -2104,8 +2105,33 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		)
 
 		// Hook: BeforeModelCall
-		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID}
+		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Source: msg.Source, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID}
 		a.hooks.Run(ctx, hcBefore)
+
+		// KB auto-query hook outputs: collect the indicator line once,
+		// record synthetic knowledgebase_search tool_call/result pairs
+		// into the transcript, honor strict-mode SkipLLM (emit the
+		// prebuilt answer and end the turn), and adopt the hook's
+		// rewritten messages (augment mode injects a [KB] context block).
+		if hcBefore.IndicatorText != "" && kbIndicator == "" {
+			kbIndicator = hcBefore.IndicatorText
+		}
+		for _, stc := range hcBefore.SyntheticToolCalls {
+			tcID := "synth-" + stc.Name
+			emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": tcID, "name": stc.Name, "arguments": stc.Args}})
+			emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": tcID, "name": stc.Name, "result": stc.Result}})
+			asstMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: tcID, Type: "function", Function: provider.FunctionCall{Name: stc.Name, Arguments: stc.Args}}}, Timestamp: time.Now().UnixMilli()}
+			sess.Append(asstMsg)
+			toolMsg := provider.Message{Role: "tool", ToolCallID: tcID, Content: stc.Result}
+			sess.Append(toolMsg)
+		}
+		if hcBefore.SkipLLM {
+			content := hcBefore.PrebuiltContent
+			emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": content}})
+			emitEvent(ctx, ChatEvent{Type: "done"})
+			return content
+		}
+		messages = hcBefore.Messages
 
 		// PII scrubbing: redact sensitive data before sending to LLM
 		llmMessages := messages
@@ -2187,7 +2213,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			}
 			emitEvent(ctx, ChatEvent{Type: "done"})
 			a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
-			return joinReplyParts(replyParts)
+			return joinReplyPartsWithIndicator(kbIndicator, replyParts)
 		}
 
 		// Emit assistant content before tool calls if present
@@ -2486,7 +2512,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	}
 	emitEvent(ctx, ChatEvent{Type: "done"})
 	a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
-	return joinReplyParts(replyParts)
+	return joinReplyPartsWithIndicator(kbIndicator, replyParts)
 }
 
 // joinReplyParts joins accumulated assistant text segments with
@@ -2495,6 +2521,18 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 // without AllowSplit collapse the marker to a newline at dispatch
 // time, so users still see every segment in one message instead of
 // dropping all but the last.
+// joinReplyPartsWithIndicator prepends the KB auto-query indicator line
+// (e.g. "[KB] 已引用 3 条知识库") to the first reply part, matching the
+// source's replyParts[0] = kbIndicator + "\n\n" + replyParts[0] shape so
+// the indicator rides on the same OutboundMessage as the first answer
+// segment instead of becoming its own bubble. No-op when empty/no parts.
+func joinReplyPartsWithIndicator(kbIndicator string, parts []string) string {
+	if kbIndicator != "" && len(parts) > 0 {
+		parts[0] = kbIndicator + "\n\n" + parts[0]
+	}
+	return joinReplyParts(parts)
+}
+
 func joinReplyParts(parts []string) string {
 	out := parts[:0:0]
 	for _, p := range parts {
@@ -2850,8 +2888,19 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 
 	// ReAct loop - use Chat for tool iterations
 	for i := 0; i < a.maxToolIterations; i++ {
-		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID}
+		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Source: msg.Source, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID}
 		a.hooks.Run(ctx, hcBefore)
+
+		// KB auto-query hook: strict-mode SkipLLM short-circuit (stream
+		// the prebuilt answer) + adopt rewritten messages (augment mode).
+		if hcBefore.SkipLLM {
+			ch := make(chan provider.StreamChunk, 2)
+			ch <- provider.StreamChunk{Content: hcBefore.PrebuiltContent}
+			ch <- provider.StreamChunk{Done: true}
+			close(ch)
+			return provider.NewStreamReader(ch)
+		}
+		messages = hcBefore.Messages
 
 		dumpLLMRequest(a.name, a.model, messages, toolDefs)
 		resp, err := llmRetry(ctx, a.name, func(ctx context.Context) (*provider.Response, error) {
