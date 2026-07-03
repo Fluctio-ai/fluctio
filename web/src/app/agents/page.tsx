@@ -36,6 +36,7 @@ import {
   deleteAgent,
   type AgentDetail,
 } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 interface OtherAgent {
   id: string;
@@ -83,6 +84,7 @@ function AgentAvatar({
 }
 
 export default function AgentsPage() {
+  const t = useT();
   const [agents, setAgents] = useState<AgentDetail[]>([]);
   const [otherAgents, setOtherAgents] = useState<OtherAgent[]>([]);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -248,14 +250,14 @@ export default function AgentsPage() {
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Agents</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("agentsPage.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Manage your AI agents and their configurations
+            {t("agentsPage.subtitle")}
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          New Agent
+          {t("agentsPage.newAgent")}
         </Button>
       </div>
 
@@ -271,13 +273,13 @@ export default function AgentsPage() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 mb-4">
               <Bot className="h-7 w-7 text-primary" />
             </div>
-            <p className="text-sm text-muted-foreground">No agents configured yet</p>
+            <p className="text-sm text-muted-foreground">{t("agentsPage.noAgents")}</p>
             <Button
               onClick={() => setCreateOpen(true)}
               variant="outline"
               className="mt-4"
             >
-              Create your first agent
+              {t("agentsPage.createFirst")}
             </Button>
           </div>
         </div>
@@ -293,7 +295,7 @@ export default function AgentsPage() {
                   : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
-              Your agents
+              {t("agentsPage.yourAgents")}
               <span className="ml-1.5 text-xs text-muted-foreground/70">
                 {ownedAgents.length}
               </span>
@@ -306,7 +308,7 @@ export default function AgentsPage() {
                   : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
-              Others&apos; agents
+              {t("agentsPage.othersAgents")}
               <span className="ml-1.5 text-xs text-muted-foreground/70">
                 {otherAgents.length}
               </span>
@@ -324,7 +326,7 @@ export default function AgentsPage() {
               <div className="flex items-start justify-between mb-4">
                 <AgentAvatar agent={agent} bust={avatarBust[agent.id]} size={48} />
                 <Badge variant="outline" className="bg-muted/60 text-muted-foreground">
-                  Private
+                  {t("agentsPage.private")}
                 </Badge>
               </div>
               <p className="text-base font-medium mb-1 truncate">{agent.name || agent.id}</p>
@@ -354,7 +356,7 @@ export default function AgentsPage() {
                   }}
                 >
                   <Pencil className="h-3 w-3 mr-1.5" />
-                  Edit
+                  {t("common.edit")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -366,7 +368,7 @@ export default function AgentsPage() {
                   }}
                 >
                   <Trash2 className="h-3 w-3 mr-1.5" />
-                  Remove
+                  {t("agentsPage.remove")}
                 </Button>
               </div>
             </div>
@@ -393,7 +395,7 @@ export default function AgentsPage() {
                       className="max-w-[60%] bg-muted/40 text-muted-foreground"
                     >
                       <span className="truncate">
-                        Owner: {agent.ownerDisplayName || agent.ownerUsername || agent.userId}
+                        {t("agentsPage.ownerPrefix", { owner: agent.ownerDisplayName || agent.ownerUsername || agent.userId })}
                       </span>
                     </Badge>
                   </div>
@@ -414,7 +416,7 @@ export default function AgentsPage() {
                   )}
                   <div className="mt-auto pt-3 border-t border-border">
                     <p className="text-xs text-muted-foreground">
-                      Click to chat — only the owner can edit or remove this agent.
+                      {t("agentsPage.clickToChatHint")}
                     </p>
                   </div>
                 </div>
@@ -434,11 +436,9 @@ export default function AgentsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create New Agent</DialogTitle>
+            <DialogTitle>{t("agentsPage.create.title")}</DialogTitle>
             <DialogDescription>
-              The system generates a globally unique id (e.g.{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">agt_a1b2c3…</code>);
-              everything below is for display.
+              {t("agentsPage.create.desc", { code: "agt_a1b2c3…" })}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -447,7 +447,7 @@ export default function AgentsPage() {
                 type="button"
                 onClick={() => createAvatarInput.current?.click()}
                 className="group relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-dashed bg-muted/40 transition hover:bg-muted"
-                aria-label="Upload avatar"
+                aria-label={t("agentsPage.uploadAvatar")}
               >
                 {newAvatarPreview ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -469,7 +469,7 @@ export default function AgentsPage() {
                 />
               </button>
               <div className="flex-1 space-y-2">
-                <Label htmlFor="agent-name">Name</Label>
+                <Label htmlFor="agent-name">{t("common.name")}</Label>
                 <Input
                   id="agent-name"
                   value={newName}
@@ -477,18 +477,18 @@ export default function AgentsPage() {
                     setNewName(e.target.value);
                     setCreateError(null);
                   }}
-                  placeholder="My Helper"
+                  placeholder={t("agentsPage.namePlaceholder")}
                   autoFocus
                 />
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="agent-desc">Description (optional)</Label>
+              <Label htmlFor="agent-desc">{t("agentsPage.descOptional")}</Label>
               <Textarea
                 id="agent-desc"
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
-                placeholder="What's this agent for? Shown in the agent list and on its profile."
+                placeholder={t("agentsPage.descPlaceholderCreate")}
                 rows={3}
               />
             </div>
@@ -498,10 +498,10 @@ export default function AgentsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button onClick={handleCreate} disabled={!newName.trim() || saving}>
-              {saving ? "Creating..." : "Create Agent"}
+              {saving ? t("common.creating") : t("common.create")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -519,9 +519,9 @@ export default function AgentsPage() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Agent</DialogTitle>
+            <DialogTitle>{t("agentsPage.edit.title")}</DialogTitle>
             <DialogDescription>
-              ID is locked —{" "}
+              {t("agentsPage.edit.idLocked")}{" "}
               <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
                 {editTarget?.id}
               </code>
@@ -533,7 +533,7 @@ export default function AgentsPage() {
                 type="button"
                 onClick={() => editAvatarInput.current?.click()}
                 className="group relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-dashed bg-muted/40 transition hover:bg-muted"
-                aria-label="Upload avatar"
+                aria-label={t("agentsPage.uploadAvatar")}
               >
                 {editAvatarPreview ? (
                   // eslint-disable-next-line @next/next/no-img-element
@@ -555,7 +555,7 @@ export default function AgentsPage() {
                 />
               </button>
               <div className="flex-1 space-y-2">
-                <Label htmlFor="agent-edit-name">Name</Label>
+                <Label htmlFor="agent-edit-name">{t("common.name")}</Label>
                 <Input
                   id="agent-edit-name"
                   value={editName}
@@ -563,17 +563,17 @@ export default function AgentsPage() {
                     setEditName(e.target.value);
                     setEditError(null);
                   }}
-                  placeholder="My Helper"
+                  placeholder={t("agentsPage.namePlaceholder")}
                 />
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="agent-edit-desc">Description</Label>
+              <Label htmlFor="agent-edit-desc">{t("common.description")}</Label>
               <Textarea
                 id="agent-edit-desc"
                 value={editDescription}
                 onChange={(e) => setEditDescription(e.target.value)}
-                placeholder="What's this agent for?"
+                placeholder={t("agentsPage.descPlaceholderEdit")}
                 rows={3}
               />
             </div>
@@ -585,10 +585,10 @@ export default function AgentsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTarget(null)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button onClick={handleEdit} disabled={!editName.trim() || saving}>
-              {saving ? "Saving..." : "Save"}
+              {saving ? t("common.saving") : t("common.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -606,17 +606,16 @@ export default function AgentsPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Agent</AlertDialogTitle>
+            <AlertDialogTitle>{t("agentsPage.delete.title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete <strong>{deleteId}</strong>?
-              This action cannot be undone.
+              {t("agentsPage.delete.desc", { id: deleteId ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteError && (
             <p className="text-sm text-destructive">{deleteError}</p>
           )}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
@@ -625,7 +624,7 @@ export default function AgentsPage() {
               disabled={deleting}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {deleting ? "Deleting..." : "Delete"}
+              {deleting ? t("common.deleting") : t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

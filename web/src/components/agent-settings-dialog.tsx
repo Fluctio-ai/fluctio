@@ -23,6 +23,7 @@ import {
 
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 
 import AgentProfilePanel from "@/components/agent-profile-panel";
 import AgentCustomizePage from "@/app/agents/[id]/customize/page";
@@ -65,31 +66,31 @@ export type AgentSettingsTab =
 type TabIcon = React.ComponentType<{ className?: string }>;
 
 const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> = [
-  { id: "profile", label: "Profile", icon: IdCardIcon },
-  { id: "customize", label: "Customize", icon: Wand2Icon },
-  { id: "models", label: "Models", icon: BrainIcon },
-  { id: "context", label: "Context", icon: LayersIcon },
-  { id: "skills", label: "Skills", icon: SparklesIcon },
-  { id: "mcp", label: "MCP", icon: ServerIcon },
-  { id: "plugins", label: "Plugins", icon: Plug },
-  { id: "channels", label: "Channels", icon: RadioIcon },
-  { id: "scheduler", label: "Scheduler", icon: ClockIcon },
-  { id: "regex-hooks", label: "Regex Hooks", icon: Regex },
-  { id: "knowledge", label: "Knowledge", icon: BookOpenIcon },
-  { id: "wiki", label: "Wiki", icon: BookMarkedIcon },
-  { id: "memory", label: "Memory", icon: DatabaseIcon },
-  { id: "usage", label: "Token Usage", icon: CoinsIcon },
+  { id: "profile", label: "settings.profile", icon: IdCardIcon },
+  { id: "customize", label: "settings.customize", icon: Wand2Icon },
+  { id: "models", label: "settings.models", icon: BrainIcon },
+  { id: "context", label: "settings.context", icon: LayersIcon },
+  { id: "skills", label: "settings.skills", icon: SparklesIcon },
+  { id: "mcp", label: "settings.mcp", icon: ServerIcon },
+  { id: "plugins", label: "settings.plugins", icon: Plug },
+  { id: "channels", label: "settings.channels", icon: RadioIcon },
+  { id: "scheduler", label: "settings.scheduler", icon: ClockIcon },
+  { id: "regex-hooks", label: "settings.regexHooks", icon: Regex },
+  { id: "knowledge", label: "settings.knowledge", icon: BookOpenIcon },
+  { id: "wiki", label: "settings.wiki", icon: BookMarkedIcon },
+  { id: "memory", label: "settings.memory", icon: DatabaseIcon },
+  { id: "usage", label: "settings.usage", icon: CoinsIcon },
 ];
 
 // Runtime intentionally lives only on the standalone /settings/runtime
 // page (super_admin-gated) — it's a deployment-wide knob, not the kind
 // of thing the average chatter wants in their per-agent dialog.
 const USER_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> = [
-  { id: "account", label: "Account", icon: UserCog },
-  { id: "general", label: "General", icon: Palette },
+  { id: "account", label: "settings.account", icon: UserCog },
+  { id: "general", label: "settings.general", icon: Palette },
   // About surfaces the gateway version + upgrade hint — only useful
   // to operators (super_admin), filtered out below for regular users.
-  { id: "about", label: "About", icon: InfoIcon },
+  { id: "about", label: "settings.about", icon: InfoIcon },
 ];
 
 // Tabbed configuration panel. Hosts both the per-agent pages
@@ -127,6 +128,7 @@ export function AgentSettingsDialog({
   // gateway version + upgrade hint is operator info, not end-user info).
   isAdmin?: boolean;
 }) {
+  const tt = useT();
   const agentTabs = userOnly
     ? []
     : role === "viewer"
@@ -159,7 +161,7 @@ export function AgentSettingsDialog({
         <aside className="flex flex-col gap-1 border-r bg-muted/40 p-3 overflow-y-auto">
           {agentTabs.length > 0 && (
             <>
-              <SectionLabel>Agent</SectionLabel>
+              <SectionLabel>{tt("dialog.agentSection")}</SectionLabel>
               {agentTabs.map((t) => (
                 <TabButton
                   key={t.id}
@@ -171,7 +173,7 @@ export function AgentSettingsDialog({
             </>
           )}
           <SectionLabel className={agentTabs.length > 0 ? "mt-3" : undefined}>
-            User
+            {tt("dialog.userSection")}
           </SectionLabel>
           {userTabs.map((t) => (
             <TabButton
@@ -248,6 +250,7 @@ function TabButton({
   onSelect: (id: AgentSettingsTab) => void;
 }) {
   const Icon = tab.icon;
+  const t = useT();
   return (
     <button
       type="button"
@@ -260,7 +263,7 @@ function TabButton({
       )}
     >
       <Icon className="size-4 shrink-0" />
-      <span>{tab.label}</span>
+      <span>{t(tab.label)}</span>
     </button>
   );
 }

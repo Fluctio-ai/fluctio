@@ -5,19 +5,20 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Save, Check, Loader2, RotateCcw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 
 const CUSTOMIZE_FILES = [
-  { name: "SOUL.md", label: "Soul" },
-  { name: "IDENTITY.md", label: "Identity" },
-  { name: "USER.md", label: "User" },
-  { name: "TOOLS.md", label: "Tools" },
-  { name: "BOOTSTRAP.md", label: "Bootstrap" },
-  { name: "HEARTBEAT.md", label: "Heartbeat" },
-  { name: "MEMORY.md", label: "Memory" },
-  { name: "AGENTS.md", label: "Agents" },
+  { name: "SOUL.md", label: "customize.tab.soul" },
+  { name: "IDENTITY.md", label: "customize.tab.identity" },
+  { name: "USER.md", label: "customize.tab.user" },
+  { name: "TOOLS.md", label: "customize.tab.tools" },
+  { name: "BOOTSTRAP.md", label: "customize.tab.bootstrap" },
+  { name: "HEARTBEAT.md", label: "customize.tab.heartbeat" },
+  { name: "MEMORY.md", label: "customize.tab.memory" },
+  { name: "AGENTS.md", label: "customize.tab.agents" },
 ];
 
 // FileState mirrors the backend's GET response: `content` is what's
@@ -38,6 +39,7 @@ type FileState = { content: string; source: FileSource; baseContent?: string };
 export default function AgentCustomizePage() {
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
+  const t = useT();
   const [activeTab, setActiveTab] = useState("SOUL.md");
   const [files, setFiles] = useState<Record<string, FileState>>({});
   const [loading, setLoading] = useState(true);
@@ -95,7 +97,7 @@ export default function AgentCustomizePage() {
   // AND a baseContent exists (otherwise the tab just becomes empty).
   const handleRevert = async () => {
     if (!active || active.source !== "db") return;
-    if (!confirm(`Revert ${activeTab} to the repo base? Your edits will be discarded.`)) return;
+    if (!confirm(t("customize.revertConfirm", { file: activeTab }))) return;
     setSaving(true);
     try {
       await apiFetch(`/api/agents/${agentId}/system-files/${activeTab}`, {
@@ -119,14 +121,14 @@ export default function AgentCustomizePage() {
     if (source === "db") {
       return (
         <span className="text-xs px-2 py-0.5 rounded-md border border-amber-500/30 text-amber-600">
-          Edited
+          {t("customize.edited")}
         </span>
       );
     }
     if (source === "fs") {
       return (
         <span className="text-xs px-2 py-0.5 rounded-md border border-emerald-500/30 text-emerald-600">
-          From repo
+          {t("customize.fromRepo")}
         </span>
       );
     }
@@ -137,9 +139,9 @@ export default function AgentCustomizePage() {
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Customize</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("customize.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Personality, memory, and behavior files for <strong>{agentName}</strong>
+            {t("customize.subtitle", { name: agentName })}
           </p>
         </div>
         <div className="flex gap-2">
@@ -150,11 +152,11 @@ export default function AgentCustomizePage() {
               variant="outline"
               title={
                 active.baseContent
-                  ? "Discard your edits and revert to the file shipped in the repo"
-                  : "Discard your edits (no repo base for this file — tab will become empty)"
+                  ? t("customize.revertTitle")
+                  : t("customize.revertTitleNoBase")
               }
             >
-              <RotateCcw className="h-4 w-4 mr-2" /> Revert
+              <RotateCcw className="h-4 w-4 mr-2" /> {t("customize.revert")}
             </Button>
           )}
           <Button
@@ -164,11 +166,11 @@ export default function AgentCustomizePage() {
             className={saved ? "border-emerald-500/30 text-emerald-600" : ""}
           >
             {saved ? (
-              <><Check className="h-4 w-4 mr-2" /> Saved</>
+              <><Check className="h-4 w-4 mr-2" /> {t("common.saved")}</>
             ) : saving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</>
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {t("common.saving")}</>
             ) : (
-              <><Save className="h-4 w-4 mr-2" /> Save</>
+              <><Save className="h-4 w-4 mr-2" /> {t("common.save")}</>
             )}
           </Button>
         </div>
@@ -186,7 +188,7 @@ export default function AgentCustomizePage() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {f.label}
+            {t(f.label)}
             {files[f.name]?.source === "db" && (
               <span className="size-1.5 rounded-full bg-amber-500" />
             )}
@@ -201,10 +203,10 @@ export default function AgentCustomizePage() {
         <div className="flex items-center gap-2 mb-2 text-xs text-muted-foreground">
           {sourceBadge(active?.source)}
           {active?.source === "db" && active.baseContent && (
-            <span>Override active — repo base is {active.baseContent.length} chars.</span>
+            <span>{t("customize.overrideActive", { n: active.baseContent.length })}</span>
           )}
           {active?.source === "fs" && (
-            <span>Loaded from <code>{`<agent home>/${activeTab}`}</code>. Editing creates a per-agent override.</span>
+            <span>{t("customize.loadedFromRepo", { code: `<agent home>/${activeTab}` })}</span>
           )}
         </div>
       )}
@@ -227,7 +229,7 @@ export default function AgentCustomizePage() {
         // page usable too: still grows on tall screens, but stops
         // short of "fills the viewport".
         style={{ height: "min(55vh, 480px)", minHeight: 280 }}
-        placeholder={`# ${activeTab}\n\nWrite your content here...`}
+        placeholder={`# ${activeTab}\n\n${t("customize.placeholder")}`}
       />
     </div>
   );

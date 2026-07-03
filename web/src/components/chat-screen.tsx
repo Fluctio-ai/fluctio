@@ -91,6 +91,7 @@ function renderContentWithDataImages(
 import { usePageHeader } from "@/components/sidebar";
 import { useSidebarOptional } from "@/components/ui/sidebar";
 import { channelLabel } from "@/components/channel-icon";
+import { useT } from "@/lib/i18n";
 
 interface ProducedFile {
   path: string; // path relative to workspace
@@ -470,6 +471,7 @@ function parseAgentRoute(pathname: string): {
 }
 
 export function ChatScreen() {
+  const t = useT();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1110,7 +1112,7 @@ export function ChatScreen() {
       <div className="flex flex-1 items-center justify-between gap-2 min-w-0">
         <ChatHeaderTitle
           title={sessionTitle}
-          fallback={`Chat with ${agentName || selectedAgent}`}
+          fallback={t("chat.chatWith", { name: agentName || selectedAgent })}
           onSave={handleRenameTitle}
         />
         <button
@@ -1121,15 +1123,15 @@ export function ChatScreen() {
               ? "bg-muted text-foreground"
               : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
           }`}
-          title={filesSheetOpen ? "Hide workspace" : "Show workspace"}
+          title={filesSheetOpen ? t("chat.hideWorkspace") : t("chat.showWorkspace")}
           aria-pressed={filesSheetOpen}
         >
           <FolderOpen className="h-4 w-4" />
-          <span className="sr-only">Toggle workspace</span>
+          <span className="sr-only">{t("chat.toggleWorkspace")}</span>
         </button>
       </div>
     ),
-    [sessionTitle, agentName, selectedAgent, handleRenameTitle, filesSheetOpen],
+    [sessionTitle, agentName, selectedAgent, handleRenameTitle, filesSheetOpen, t],
   );
   usePageHeader(headerSlot, [headerSlot]);
 
@@ -2001,7 +2003,7 @@ export function ChatScreen() {
   // render a small info card UNDER the hero (folder + name + meta)
   // instead of taking over the headline, so users always know which
   // agent they're chatting with first.
-  const heroTitle = "What can I do for you?";
+  const heroTitle = t("chat.heroTitle");
 
   return (
     <div className="flex h-[calc(100vh-3rem)] flex-row">
@@ -2531,12 +2533,12 @@ export function ChatScreen() {
                     onBlur={() => setTimeout(() => setSlashOpen(false), 120)}
                     placeholder={
                       isActAsView
-                        ? "Read-only — viewing another user's chat"
+                        ? t("chat.readOnlyPlaceholder")
                         : isReadOnlyChannel
-                          ? `Slash commands only — reply from ${channelLabel(currentChannel)}`
+                          ? t("chat.slashOnlyPlaceholder", { channel: channelLabel(currentChannel) })
                           : selectedAgent
-                            ? `Message ${agentName || selectedAgent}... ("/" to pick a skill)`
-                            : "Select an agent first"
+                            ? t("chat.messagePlaceholder", { name: agentName || selectedAgent })
+                            : t("chat.selectAgentFirst")
                     }
                     disabled={!canUseComposer}
                     rows={3}
@@ -2551,7 +2553,7 @@ export function ChatScreen() {
                             ? "opacity-50 cursor-not-allowed"
                             : "hover:bg-muted hover:text-foreground cursor-pointer"
                         }`}
-                        aria-label="Attach files"
+                        aria-label={t("chat.attachFiles")}
                       >
                         <Paperclip className="h-4 w-4" />
                         <input
@@ -2580,7 +2582,7 @@ export function ChatScreen() {
                         onClick={handleStop}
                         size="icon"
                         className="h-9 w-9 shrink-0 rounded-full"
-                        aria-label="Stop generating"
+                        aria-label={t("chat.stopGenerating")}
                       >
                         <Square className="h-3.5 w-3.5 fill-current" />
                       </Button>
@@ -2593,7 +2595,7 @@ export function ChatScreen() {
                         disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                         size="icon"
                         className="h-9 w-9 shrink-0 rounded-full"
-                        aria-label="Send message"
+                        aria-label={t("chat.sendMessage")}
                       >
                         <Send className="h-4 w-4" />
                       </Button>
@@ -2608,7 +2610,7 @@ export function ChatScreen() {
                         ? "opacity-50 cursor-not-allowed"
                         : "hover:bg-muted hover:text-foreground cursor-pointer"
                     }`}
-                    aria-label="Attach files"
+                    aria-label={t("chat.attachFiles")}
                   >
                     <Paperclip className="h-4 w-4" />
                     <input
@@ -2628,12 +2630,12 @@ export function ChatScreen() {
                     onBlur={() => setTimeout(() => setSlashOpen(false), 120)}
                     placeholder={
                       isActAsView
-                        ? "Read-only — viewing another user's chat"
+                        ? t("chat.readOnlyPlaceholder")
                         : isReadOnlyChannel
-                          ? `Slash commands only — reply from ${channelLabel(currentChannel)}`
+                          ? t("chat.slashOnlyPlaceholder", { channel: channelLabel(currentChannel) })
                           : selectedAgent
-                            ? `Message ${agentName || selectedAgent}... ("/" to pick a skill)`
-                            : "Select an agent first"
+                            ? t("chat.messagePlaceholder", { name: agentName || selectedAgent })
+                            : t("chat.selectAgentFirst")
                     }
                     disabled={!canUseComposer}
                     rows={1}
@@ -2645,7 +2647,7 @@ export function ChatScreen() {
                       onClick={handleStop}
                       size="icon"
                       className="h-8 w-8 shrink-0 rounded-lg"
-                      aria-label="Stop generating"
+                      aria-label={t("chat.stopGenerating")}
                     >
                       <Square className="h-3.5 w-3.5 fill-current" />
                     </Button>
@@ -2658,7 +2660,7 @@ export function ChatScreen() {
                       disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                       size="icon"
                       className="h-8 w-8 shrink-0 rounded-lg"
-                      aria-label="Send message"
+                      aria-label={t("chat.sendMessage")}
                     >
                       <Send className="h-4 w-4" />
                     </Button>

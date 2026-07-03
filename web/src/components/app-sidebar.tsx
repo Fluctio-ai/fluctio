@@ -19,11 +19,9 @@ import { NavProjectsList } from "@/components/nav-projects-list";
 import { NavUser } from "@/components/nav-user";
 import { AgentSettingsDialog } from "@/components/agent-settings-dialog";
 import {
-  BookOpenIcon,
   BotIcon,
   BrainIcon,
   CoinsIcon,
-  DatabaseIcon,
   KeyRoundIcon,
   LayoutDashboardIcon,
   MessagesSquareIcon,
@@ -88,15 +86,6 @@ const AGENT_NAV = (
     },
   ];
 };
-
-// AGENT_KNOWLEDGE_NAV renders agent-scoped links to Wiki (generated from
-// KB content), Knowledge Base (ingest/manage sources), and Memory
-// (embedding/reranker config). Separate pages, plain URL navigation.
-const AGENT_KNOWLEDGE_NAV = (agentId: string, t: (k: string) => string): NavItem[] => [
-  { title: t("nav.wiki"), url: `/agents/${agentId}/wiki/`, icon: BookOpenIcon },
-  { title: t("nav.knowledgeBase"), url: `/agents/${agentId}/knowledge/`, icon: DatabaseIcon },
-  { title: t("nav.memory"), url: `/agents/${agentId}/memory/`, icon: BrainIcon },
-];
 
 // "New chat" is active iff we're parked on the bare /chat/ page with
 // no session open. A session can be encoded two ways:
@@ -260,10 +249,6 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
               label={t("nav.group.agent")}
               items={AGENT_NAV(activeAgentId, pathname, hasOpenSession, t)}
             />
-            <NavMain
-              label={t("nav.group.knowledge")}
-              items={AGENT_KNOWLEDGE_NAV(activeAgentId, t)}
-            />
           </>
         ) : (
           <>
@@ -314,14 +299,14 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              tooltip="Settings"
+              tooltip={t("sidebar.settings")}
               onClick={() => {
                 setSettingsUserOnly(!activeAgentId);
                 setSettingsOpen(true);
               }}
             >
               <SettingsIcon />
-              <span>Settings</span>
+              <span>{t("sidebar.settings")}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

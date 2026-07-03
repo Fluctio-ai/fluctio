@@ -48,10 +48,12 @@ import {
 import { ConfigureSkillDialog, type SkillEntryView } from "@/components/configure-skill-dialog";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
+import { useT } from "@/lib/i18n";
 
 export default function AgentSkillsPage() {
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
+  const t = useT();
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -121,7 +123,7 @@ export default function AgentSkillsPage() {
         // Backend rejects zips that don't contain SKILL.md at the
         // skill root — surface the message inside the dialog so the
         // user can fix the zip and retry without re-opening it.
-        setUploadError(resp.error || "upload failed");
+        setUploadError(resp.error || t("skills.uploadFailed"));
         return;
       }
       // Success — close, reset, refresh the grid.
@@ -129,7 +131,7 @@ export default function AgentSkillsPage() {
       setUploadFile(null);
       fetchSkills();
     } catch (e) {
-      setUploadError(e instanceof Error ? e.message : "upload failed");
+      setUploadError(e instanceof Error ? e.message : t("skills.uploadFailed"));
     } finally {
       setUploading(false);
       if (uploadInputRef.current) uploadInputRef.current.value = "";
@@ -154,12 +156,12 @@ export default function AgentSkillsPage() {
   const acceptDroppedFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     if (files.length > 1) {
-      setUploadError("Please drop only one .zip file at a time.");
+      setUploadError(t("skills.dropOne"));
       return;
     }
     const f = files[0];
     if (!/\.zip$/i.test(f.name)) {
-      setUploadError("File must be a .zip archive.");
+      setUploadError(t("skills.mustBeZip"));
       return;
     }
     setUploadFile(f);
@@ -170,20 +172,19 @@ export default function AgentSkillsPage() {
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Skills</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("skills.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Skills scoped to <strong>{agentName}</strong> — only this
-            agent sees them
+            {t("skills.agentSubtitle")} <strong>{agentName || t("skills.thisAgent")}</strong> {t("skills.agentSubtitleSuffix")}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={() => setUploadOpen(true)}>
             <Upload className="h-4 w-4 mr-2" />
-            Upload Skills
+            {t("skills.uploadSkills")}
           </Button>
           <Button variant="outline" onClick={() => setInstallOpen(true)}>
             <Download className="h-4 w-4 mr-2" />
-            Install Skill
+            {t("skills.installSkill")}
           </Button>
         </div>
       </div>
@@ -201,15 +202,14 @@ export default function AgentSkillsPage() {
               <Sparkles className="h-7 w-7 text-primary" />
             </div>
             <p className="text-sm text-muted-foreground mb-1">
-              No agent-scoped skills yet
+              {t("skills.noAgentSkills")}
             </p>
             <p className="text-xs text-muted-foreground/60 mb-4 max-w-sm text-center">
-              Install a skill below — it lands in this agent's own skills
-              directory and only this agent sees it.
+              {t("skills.noAgentSkillsDesc")}
             </p>
             <Button variant="outline" size="sm" onClick={() => setInstallOpen(true)}>
               <Download className="h-4 w-4 mr-2" />
-              Install Skill
+              {t("skills.installSkill")}
             </Button>
           </div>
         </div>
@@ -228,7 +228,7 @@ export default function AgentSkillsPage() {
                   <div>
                     <p className="text-sm font-medium">{skill.name}</p>
                     <Badge variant="outline" className="mt-1 text-[10px]">
-                      {skill.type || "skill"}
+                      {skill.type || t("skills.typeBadge")}
                     </Badge>
                   </div>
                 </div>
@@ -238,7 +238,7 @@ export default function AgentSkillsPage() {
                     size="icon"
                     className="h-7 w-7 text-muted-foreground hover:text-foreground"
                     onClick={() => setConfigureTarget(skill)}
-                    title="Configure env / API keys"
+                    title={t("skills.configure")}
                   >
                     <Settings className="h-3.5 w-3.5" />
                   </Button>
@@ -253,13 +253,13 @@ export default function AgentSkillsPage() {
                 </div>
               </div>
               <p className="text-sm text-muted-foreground line-clamp-2">
-                {skill.description || "No description"}
+                {skill.description || t("skills.noDescription")}
               </p>
               {(skillEntries[skill.name]?.apiKey ||
                 Object.keys(skillEntries[skill.name]?.env || {}).length > 0) && (
                 <div className="mt-2 inline-flex items-center gap-1 text-[10px] text-emerald-500">
                   <Check className="h-3 w-3" />
-                  configured
+                  {t("skills.configured")}
                 </div>
               )}
             </div>
@@ -270,7 +270,7 @@ export default function AgentSkillsPage() {
       <Dialog open={uploadOpen} onOpenChange={handleUploadOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Upload skill</DialogTitle>
+            <DialogTitle>{t("skills.uploadSkill")}</DialogTitle>
           </DialogHeader>
 
           {/* Hidden input — both the drop zone click and the "click to upload"
@@ -315,32 +315,26 @@ export default function AgentSkillsPage() {
               <div className="space-y-1">
                 <p className="text-sm font-medium break-all">{uploadFile.name}</p>
                 <p className="text-xs text-muted-foreground">
-                  {(uploadFile.size / 1024).toFixed(1)} KB · click to choose a different file
+                  {(uploadFile.size / 1024).toFixed(1)} {t("skills.fileSizeClick")}
                 </p>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Drag and drop or click to upload
+                {t("skills.dragDropUpload")}
               </p>
             )}
           </button>
 
           <div className="space-y-2">
-            <p className="text-sm font-medium">File requirements</p>
+            <p className="text-sm font-medium">{t("skills.fileRequirements")}</p>
             <ul className="space-y-1.5 text-sm text-muted-foreground">
               <li className="flex gap-2">
                 <span className="text-muted-foreground/60">•</span>
-                <span>
-                  <code className="text-foreground">.zip</code> file that includes a{" "}
-                  <code className="text-foreground">SKILL.md</code> at the root level
-                </span>
+                <span>{t("skills.zipReqFull")}</span>
               </li>
               <li className="flex gap-2">
                 <span className="text-muted-foreground/60">•</span>
-                <span>
-                  <code className="text-foreground">SKILL.md</code> contains a skill name
-                  and description formatted in YAML
-                </span>
+                <span>{t("skills.skillMdReqFull")}</span>
               </li>
             </ul>
           </div>
@@ -353,7 +347,7 @@ export default function AgentSkillsPage() {
               rel="noreferrer"
               className="underline hover:text-foreground"
             >
-              Read more about creating skills
+              {t("skills.readMoreSkills")}
             </a>
           </div>
 
@@ -369,7 +363,7 @@ export default function AgentSkillsPage() {
               onClick={() => handleUploadOpenChange(false)}
               disabled={uploading}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               onClick={handleUploadConfirm}
@@ -378,10 +372,10 @@ export default function AgentSkillsPage() {
               {uploading ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Uploading…
+                  {t("skills.uploading")}
                 </>
               ) : (
-                "Upload"
+                t("skills.uploadBtn")
               )}
             </Button>
           </div>
@@ -391,20 +385,18 @@ export default function AgentSkillsPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove Skill</AlertDialogTitle>
+            <AlertDialogTitle>{t("skills.removeSkill")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Remove <strong>{deleteTarget}</strong> from{" "}
-              <strong>{agentName}</strong>? Other agents are
-              unaffected.
+              {t("skills.removeBody", { skill: deleteTarget || "", agent: agentName || t("skills.thisAgent") })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Remove
+              {t("skills.removeBtn")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -451,6 +443,7 @@ function InstallSkillDialog({
   onInstalled: () => void;
   installedNames: Set<string>;
 }) {
+  const t = useT();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -499,12 +492,12 @@ function InstallSkillDialog({
         agent: agentId,
       });
       if (!resp.ok) {
-        setInstallError(resp.error || "install failed");
+        setInstallError(resp.error || t("skills.installFailed"));
         return;
       }
       onInstalled();
     } catch (e) {
-      setInstallError(e instanceof Error ? e.message : "install failed");
+      setInstallError(e instanceof Error ? e.message : t("skills.installFailed"));
     } finally {
       setInstallingId(null);
     }
@@ -514,13 +507,13 @@ function InstallSkillDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Install Skill for {agentName}</DialogTitle>
+          <DialogTitle>{t("skills.installFor", { name: agentName || t("skills.thisAgent") })}</DialogTitle>
           <DialogDescription>
-            Search skills.sh and install into{" "}
+            {t("skills.installDescPrefix")}{" "}
             <code className="font-mono text-xs">
               ~/.fastclaw/agents/{agentId}/skills/
             </code>
-            . Only this agent will see the new skill.
+            . {t("skills.searchDesc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -528,7 +521,7 @@ function InstallSkillDialog({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/70" />
           <Input
             autoFocus
-            placeholder="pdf, translation, web scraping…"
+            placeholder={t("skills.searchPlaceholder")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="pl-9"
@@ -540,7 +533,7 @@ function InstallSkillDialog({
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Sparkles className="h-8 w-8 text-muted-foreground/40 mb-3" />
               <p className="text-sm text-muted-foreground">
-                Start typing to search skills.sh
+                {t("skills.startTyping")}
               </p>
             </div>
           ) : searching ? (
@@ -552,14 +545,14 @@ function InstallSkillDialog({
           ) : visible.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <p className="text-sm text-muted-foreground mb-1">
-                No skills found for{" "}
+                {t("skills.noSkillsFound")}{" "}
                 <strong className="text-foreground">{query}</strong>
               </p>
             </div>
           ) : (
             <>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 px-1">
-                Results from skills.sh
+                {t("skills.resultsFromSkillsh")}
               </p>
               <div className="space-y-1.5 py-1">
                 {visible.map((r) => {
@@ -578,7 +571,7 @@ function InstallSkillDialog({
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium truncate">{r.skillId}</p>
                           <span className="text-[10px] text-muted-foreground">
-                            {r.installs.toLocaleString()} installs
+                            {r.installs.toLocaleString()} {t("skills.installs")}
                           </span>
                         </div>
                         <a
@@ -600,14 +593,14 @@ function InstallSkillDialog({
                       >
                         {already ? (
                           <>
-                            <Check className="h-3.5 w-3.5 mr-1.5" /> Installed
+                            <Check className="h-3.5 w-3.5 mr-1.5" /> {t("skills.installed")}
                           </>
                         ) : busy ? (
                           <>
-                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Installing…
+                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> {t("skills.installing")}
                           </>
                         ) : (
-                          "Install"
+                          t("skills.installBtn")
                         )}
                       </Button>
                     </div>

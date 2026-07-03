@@ -21,6 +21,7 @@ import {
   type TokenUsageRange,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
+import { useT } from "@/lib/i18n";
 
 const RANGES: { value: TokenUsageRange; label: string }[] = [
   { value: "24h", label: "24h" },
@@ -41,6 +42,7 @@ function fmt(n: number): string {
 
 export default function AgentUsagePage() {
   const agentId = useAgentIdFromURL();
+  const t = useT();
   const [range, setRange] = useState<TokenUsageRange>("7d");
   const [data, setData] = useState<AgentTokenUsage | null>(null);
   const [sessions, setSessions] = useState<ChatSessionEntry[]>([]);
@@ -84,7 +86,7 @@ export default function AgentUsagePage() {
       const d = await getAgentTokenUsage(agentId, r, 50);
       setData(d);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load usage");
+      setError(e instanceof Error ? e.message : t("usage.failedLoad"));
     } finally {
       setLoading(false);
     }
@@ -96,9 +98,9 @@ export default function AgentUsagePage() {
   }, [agentId, range]);
 
   function renderSessionLabel(key: string): string {
-    if (!key) return "(untracked)";
-    const t = sessionTitles[key];
-    if (t) return t;
+    if (!key) return t("usage.untracked");
+    const title = sessionTitles[key];
+    if (title) return title;
     // Keys are opaque hashes — truncate so the row stays readable.
     return key.length > 14 ? key.slice(0, 14) + "…" : key;
   }
@@ -109,9 +111,9 @@ export default function AgentUsagePage() {
     <div className="p-6 space-y-6 max-w-3xl">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Token Usage</h2>
+          <h2 className="text-xl font-semibold tracking-tight">{t("usage.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Token consumption per chat session for this agent.
+            {t("usage.subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -144,19 +146,19 @@ export default function AgentUsagePage() {
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <Coins className="h-8 w-8 text-muted-foreground mb-3" />
               <p className="text-sm text-muted-foreground">
-                No token usage recorded in this window yet.
+                {t("usage.empty")}
               </p>
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Session</TableHead>
-                  <TableHead className="text-right">Input</TableHead>
-                  <TableHead className="text-right">Output</TableHead>
-                  <TableHead className="text-right">Cache</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead className="text-right">Requests</TableHead>
+                  <TableHead>{t("usage.col.session")}</TableHead>
+                  <TableHead className="text-right">{t("usage.col.input")}</TableHead>
+                  <TableHead className="text-right">{t("usage.col.output")}</TableHead>
+                  <TableHead className="text-right">{t("usage.col.cache")}</TableHead>
+                  <TableHead className="text-right">{t("usage.col.total")}</TableHead>
+                  <TableHead className="text-right">{t("usage.col.requests")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

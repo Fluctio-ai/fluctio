@@ -13,6 +13,7 @@ import { ChevronRightIcon, MoreHorizontal } from "lucide-react";
 import { moveChatSessionToProject } from "@/lib/api";
 import { ChannelIcon, channelLabel } from "@/components/channel-icon";
 import { ChatRowActions } from "@/components/chat-row-actions";
+import { useT } from "@/lib/i18n";
 
 // MIME type carried in dataTransfer for chat-session drags. Custom
 // type so we don't react to unrelated drops (text dragged in from
@@ -57,6 +58,7 @@ export function NavSessions({
   // self-evident). Hook must run before the early-return below to
   // keep call order stable across renders.
   const [chatsDropActive, setChatsDropActive] = React.useState(false);
+  const t = useT();
   // Whole-section collapse: clicking the "Chats" header hides the list.
   const [sectionCollapsed, setSectionCollapsed] = React.useState(false);
 
@@ -141,7 +143,7 @@ export function NavSessions({
               (sectionCollapsed ? "rotate-0" : "rotate-90")
             }
           />
-          Chats
+          {t("nav.group.chats")}
         </SidebarGroupLabel>
         {!sectionCollapsed && (
         <SidebarMenu
@@ -186,7 +188,7 @@ export function NavSessions({
           {sessions.length === 0 && (
             <SidebarMenuItem>
               <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                No chats yet
+                {t("sidebar.noChats")}
               </div>
             </SidebarMenuItem>
           )}

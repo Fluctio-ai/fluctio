@@ -49,6 +49,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
+import { useT } from "@/lib/i18n";
 
 // Channels page: per-agent IM bot bindings. One card per channel type
 // in the catalog — connected types show bot info + Disconnect, others
@@ -99,6 +100,7 @@ const CATALOG: { type: string; label: string; description: string; available: bo
 export default function AgentChannelsPage() {
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
+  const t = useT();
 
   const [channels, setChannels] = useState<AgentChannel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,9 +119,9 @@ export default function AgentChannelsPage() {
     setLoading(true);
     listAgentChannels(agentId)
       .then((list) => setChannels(list))
-      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load channels"))
+      .catch((e) => setError(e instanceof Error ? e.message : t("channels.failedToLoad")))
       .finally(() => setLoading(false));
-  }, [agentId]);
+  }, [agentId, t]);
 
   useEffect(() => {
     refresh();
@@ -151,11 +153,11 @@ export default function AgentChannelsPage() {
         <div>
           <div className="flex items-center gap-2">
             <Radio className="size-5 text-muted-foreground" />
-            <h2 className="text-2xl font-semibold tracking-tight">Channels</h2>
+            <h2 className="text-2xl font-semibold tracking-tight">{t("channels.channelsTitle")}</h2>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Connect IM platforms to <strong>{agentName || "this agent"}</strong>{" "}
-            so people can chat with it on Telegram, Discord, and more.
+            {t("channels.channelsSubtitle")} <strong>{agentName || t("channels.thisAgent")}</strong>{" "}
+            {t("channels.channelsSubtitleSuffix")}
           </p>
         </div>
       </div>
@@ -249,23 +251,22 @@ export default function AgentChannelsPage() {
       <AlertDialog open={!!deleteTarget} onOpenChange={(v) => !v && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Disconnect channel</AlertDialogTitle>
+            <AlertDialogTitle>{t("channels.disconnectTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Disconnect{" "}
+              {t("channels.disconnectNamePrefix")}{" "}
               <strong>
                 {deleteTarget?.botUsername || deleteTarget?.accountId || deleteTarget?.type}
               </strong>
-              ? Existing chat history is preserved, but the bot will stop
-              forwarding new messages to this agent.
+              ? {t("channels.disconnectDesc")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Disconnect
+              {t("channels.disconnectBtn")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -287,6 +288,7 @@ function CatalogCard({
   available: boolean;
   onConnect: () => void;
 }) {
+  const t = useT();
   return (
     <div className="rounded-lg border border-border bg-card p-4 flex flex-col gap-3">
       <div className="flex items-center gap-2">
@@ -302,7 +304,7 @@ function CatalogCard({
         className="w-full"
       >
         <Plus className="h-3.5 w-3.5 mr-1.5" />
-        {available ? "Connect" : "Coming soon"}
+        {available ? t("channels.connectBtn") : t("channels.comingSoon")}
       </Button>
     </div>
   );
@@ -317,6 +319,7 @@ function ConnectedCard({
   channel: AgentChannel;
   onDelete: () => void;
 }) {
+  const t = useT();
   // Telegram is the only provider with a public profile URL pattern
   // (t.me/<username>); Discord/Slack don't expose one from a bot
   // username alone, so we render plain text for those.
@@ -335,7 +338,7 @@ function ConnectedCard({
         {channel.enabled && (
           <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
             <CheckCircle2 className="h-3 w-3" />
-            Connected
+            {t("channels.connected")}
           </span>
         )}
       </div>
@@ -370,7 +373,7 @@ function ConnectedCard({
         className="w-full text-destructive hover:text-destructive hover:bg-destructive/5"
       >
         <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-        Disconnect
+        {t("channels.disconnectBtn")}
       </Button>
     </div>
   );
@@ -421,6 +424,7 @@ function ConnectTelegramDialog({
   const [token, setToken] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const t = useT();
   const [connected, setConnected] = useState<{ botUsername: string } | null>(null);
 
   useEffect(() => {
@@ -452,7 +456,7 @@ function ConnectTelegramDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <img src="/channels/telegram.svg" alt="Telegram" className="h-5 w-5 object-contain" />
-            Connect Telegram bot
+            {t("channels.connectTelegramBot")}
           </DialogTitle>
           <DialogDescription>
             Talk to{" "}
@@ -474,7 +478,7 @@ function ConnectTelegramDialog({
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              <span className="text-sm font-medium">Connected</span>
+              <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
               Bot is live as{" "}
@@ -493,7 +497,7 @@ function ConnectTelegramDialog({
         ) : (
           <div className="space-y-3 py-2">
             <div className="space-y-1.5">
-              <Label htmlFor="bot-token">Bot token</Label>
+              <Label htmlFor="bot-token">{t("channels.botToken")}</Label>
               <Input
                 id="bot-token"
                 value={token}
@@ -511,7 +515,7 @@ function ConnectTelegramDialog({
 
         <DialogFooter>
           {connected ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
+            <Button onClick={() => onOpenChange(false)}>{t("channels.doneBtn")}</Button>
           ) : (
             <>
               <Button
@@ -519,10 +523,10 @@ function ConnectTelegramDialog({
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button onClick={submit} disabled={submitting || !token.trim()}>
-                {submitting ? "Connecting…" : "Connect"}
+                {submitting ? t("channels.connecting") : t("channels.connectBtn")}
               </Button>
             </>
           )}
@@ -546,6 +550,7 @@ function ConnectDiscordDialog({
   const [token, setToken] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const t = useT();
   const [connected, setConnected] = useState<{ botUsername: string } | null>(null);
 
   useEffect(() => {
@@ -577,7 +582,7 @@ function ConnectDiscordDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <img src="/channels/discord.svg" alt="Discord" className="h-5 w-5 object-contain" />
-            Connect Discord bot
+            {t("channels.connectDiscordBot")}
           </DialogTitle>
           <DialogDescription>
             Open the{" "}
@@ -600,7 +605,7 @@ function ConnectDiscordDialog({
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              <span className="text-sm font-medium">Connected</span>
+              <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
               Bot is live as{" "}
@@ -612,7 +617,7 @@ function ConnectDiscordDialog({
         ) : (
           <div className="space-y-3 py-2">
             <div className="space-y-1.5">
-              <Label htmlFor="discord-bot-token">Bot Token</Label>
+              <Label htmlFor="discord-bot-token">{t("channels.botToken")}</Label>
               <Input
                 id="discord-bot-token"
                 value={token}
@@ -628,7 +633,7 @@ function ConnectDiscordDialog({
 
         <DialogFooter>
           {connected ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
+            <Button onClick={() => onOpenChange(false)}>{t("channels.doneBtn")}</Button>
           ) : (
             <>
               <Button
@@ -636,10 +641,10 @@ function ConnectDiscordDialog({
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button onClick={submit} disabled={submitting || !token.trim()}>
-                {submitting ? "Connecting…" : "Connect"}
+                {submitting ? t("channels.connecting") : t("channels.connectBtn")}
               </Button>
             </>
           )}
@@ -660,6 +665,7 @@ function ConnectSlackDialog({
   agentId: string;
   onConnected: () => void;
 }) {
+  const t = useT();
   const [botToken, setBotToken] = useState("");
   const [appToken, setAppToken] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -696,7 +702,7 @@ function ConnectSlackDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <img src="/channels/slack.svg" alt="Slack" className="h-5 w-5 object-contain" />
-            Connect Slack app
+            {t("channels.connectSlackApp")}
           </DialogTitle>
           <DialogDescription>
             Create a Slack app at{" "}
@@ -725,7 +731,7 @@ function ConnectSlackDialog({
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              <span className="text-sm font-medium">Connected</span>
+              <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
               Bot is live in workspace{" "}
@@ -762,7 +768,7 @@ function ConnectSlackDialog({
 
         <DialogFooter>
           {connected ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
+            <Button onClick={() => onOpenChange(false)}>{t("channels.doneBtn")}</Button>
           ) : (
             <>
               <Button
@@ -770,13 +776,13 @@ function ConnectSlackDialog({
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 onClick={submit}
                 disabled={submitting || !botToken.trim() || !appToken.trim()}
               >
-                {submitting ? "Connecting…" : "Connect"}
+                {submitting ? t("channels.connecting") : t("channels.connectBtn")}
               </Button>
             </>
           )}
@@ -803,6 +809,7 @@ function ConnectLINEDialog({
   agentId: string;
   onConnected: () => void;
 }) {
+  const t = useT();
   const [channelToken, setChannelToken] = useState("");
   const [channelSecret, setChannelSecret] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -847,7 +854,7 @@ function ConnectLINEDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <img src="/channels/line.png" alt="LINE" className="h-5 w-5 object-contain" />
-            Connect LINE channel
+            {t("channels.connectLineChannel")}
           </DialogTitle>
           <DialogDescription>
             Create a Messaging API channel at{" "}
@@ -871,7 +878,7 @@ function ConnectLINEDialog({
             <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                <span className="text-sm font-medium">Credentials valid</span>
+                <span className="text-sm font-medium">{t("channels.credentialsValid")}</span>
               </div>
               <p className="text-sm">
                 Bot identified as{" "}
@@ -904,7 +911,7 @@ function ConnectLINEDialog({
         ) : (
           <div className="space-y-3 py-2">
             <div className="space-y-1.5">
-              <Label htmlFor="line-channel-token">Channel access token</Label>
+              <Label htmlFor="line-channel-token">{t("channels.channelAccessToken")}</Label>
               <Input
                 id="line-channel-token"
                 value={channelToken}
@@ -916,7 +923,7 @@ function ConnectLINEDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="line-channel-secret">Channel secret</Label>
+              <Label htmlFor="line-channel-secret">{t("channels.channelSecret")}</Label>
               <Input
                 id="line-channel-secret"
                 value={channelSecret}
@@ -935,7 +942,7 @@ function ConnectLINEDialog({
 
         <DialogFooter>
           {connected ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
+            <Button onClick={() => onOpenChange(false)}>{t("channels.doneBtn")}</Button>
           ) : (
             <>
               <Button
@@ -943,13 +950,13 @@ function ConnectLINEDialog({
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 onClick={submit}
                 disabled={submitting || !channelToken.trim()}
               >
-                {submitting ? "Validating…" : "Connect"}
+                {submitting ? t("channels.validating") : t("channels.connectBtn")}
               </Button>
             </>
           )}
@@ -976,6 +983,7 @@ function ConnectWeChatDialog({
   onConnected: () => void;
 }) {
   type WechatStatus = "wait" | "scaned" | "confirmed" | "expired" | "";
+  const t = useT();
   const [qrPayload, setQrPayload] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [status, setStatus] = useState<WechatStatus>("");
@@ -1016,7 +1024,7 @@ function ConnectWeChatDialog({
     const res = await startAgentWeChatLogin(agentId);
     setLoading(false);
     if (res.error || !res.sessionId || !res.qrCodeImg) {
-      setError(res.error || "Failed to fetch QR code");
+      setError(res.error || t("channels.failedToFetchQR"));
       return;
     }
     setSessionId(res.sessionId);
@@ -1042,7 +1050,7 @@ function ConnectWeChatDialog({
         stopPolling();
       }
     }, 3000);
-  }, [agentId, onConnected, stopPolling]);
+  }, [agentId, onConnected, stopPolling, t]);
 
   // Auto-fetch a QR as soon as the dialog opens (no separate "name"
   // step — fastclaw doesn't surface per-account names, accountID is
@@ -1061,7 +1069,7 @@ function ConnectWeChatDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <img src="/channels/wechat.svg" alt="WeChat" className="h-5 w-5 object-contain scale-150" />
-            Connect WeChat
+            {t("channels.connectWechat")}
           </DialogTitle>
           <DialogDescription>
             Scan the QR code with the WeChat phone app to bind a personal
@@ -1075,7 +1083,7 @@ function ConnectWeChatDialog({
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              <span className="text-sm font-medium">Connected</span>
+              <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
               Bot is live as <code className="font-mono text-xs">{accountId}</code>.
@@ -1099,21 +1107,21 @@ function ConnectWeChatDialog({
             )}
 
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              {status === "wait" && <>Waiting for scan…</>}
+              {status === "wait" && <>{t("channels.waitingForScan")}</>}
               {status === "scaned" && (
                 <>
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  Scanned — confirm on your phone.
+                  {t("channels.scannedConfirm")}
                 </>
               )}
               {status === "confirmed" && (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Connecting…
+                  {t("channels.connecting")}
                 </>
               )}
               {status === "expired" && (
-                <span className="text-destructive">QR code expired.</span>
+                <span className="text-destructive">{t("channels.qrExpired")}</span>
               )}
             </div>
 
@@ -1123,16 +1131,16 @@ function ConnectWeChatDialog({
 
         <DialogFooter>
           {connected ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
+            <Button onClick={() => onOpenChange(false)}>{t("channels.doneBtn")}</Button>
           ) : (
             <>
               {status === "expired" && (
                 <Button onClick={startLogin} disabled={loading}>
-                  {loading ? "Refreshing…" : "Refresh QR"}
+                  {loading ? t("channels.refreshing") : t("channels.refreshQR")}
                 </Button>
               )}
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </>
           )}
@@ -1160,6 +1168,7 @@ function ConnectFeishuDialog({
   agentId: string;
   onConnected: () => void;
 }) {
+  const t = useT();
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [verificationToken, setVerificationToken] = useState("");
@@ -1217,7 +1226,7 @@ function ConnectFeishuDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <img src="/channels/feishu.png" alt="Feishu" className="h-5 w-5 object-contain" />
-            Connect Feishu app
+            {t("channels.connectFeishuApp")}
           </DialogTitle>
           <DialogDescription>
             Create a custom app at{" "}
@@ -1244,7 +1253,7 @@ function ConnectFeishuDialog({
             <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                <span className="text-sm font-medium">Credentials valid</span>
+                <span className="text-sm font-medium">{t("channels.credentialsValid")}</span>
               </div>
               <p className="text-sm">
                 Bot identified as{" "}
@@ -1291,11 +1300,10 @@ function ConnectFeishuDialog({
             <div className="flex items-start justify-between gap-3 rounded-lg border bg-muted/30 p-3">
               <div className="space-y-0.5">
                 <Label htmlFor="feishu-long-conn" className="text-sm">
-                  Long-connection mode
+                  {t("channels.longConnectionMode")}
                 </Label>
                 <p className="text-xs text-muted-foreground">
-                  fastclaw opens a WebSocket to Feishu — no public URL
-                  required. Turn off to use the classic webhook flow.
+                  {t("channels.longConnDesc")}
                 </p>
               </div>
               <Switch
@@ -1316,7 +1324,7 @@ function ConnectFeishuDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="feishu-app-secret">App Secret</Label>
+              <Label htmlFor="feishu-app-secret">{t("channels.appSecret")}</Label>
               <Input
                 id="feishu-app-secret"
                 value={appSecret}
@@ -1329,7 +1337,7 @@ function ConnectFeishuDialog({
             {!useLongConn && (
               <>
             <div className="space-y-1.5">
-              <Label htmlFor="feishu-verification-token">Verification Token</Label>
+              <Label htmlFor="feishu-verification-token">{t("channels.verificationToken")}</Label>
               <Input
                 id="feishu-verification-token"
                 value={verificationToken}
@@ -1343,7 +1351,7 @@ function ConnectFeishuDialog({
               </p>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="feishu-encrypt-key">Encrypt Key</Label>
+              <Label htmlFor="feishu-encrypt-key">{t("channels.encryptKey")}</Label>
               <Input
                 id="feishu-encrypt-key"
                 value={encryptKey}
@@ -1366,7 +1374,7 @@ function ConnectFeishuDialog({
 
         <DialogFooter>
           {connected ? (
-            <Button onClick={() => onOpenChange(false)}>Done</Button>
+            <Button onClick={() => onOpenChange(false)}>{t("channels.doneBtn")}</Button>
           ) : (
             <>
               <Button
@@ -1374,13 +1382,13 @@ function ConnectFeishuDialog({
                 onClick={() => onOpenChange(false)}
                 disabled={submitting}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 onClick={submit}
                 disabled={submitting || !appId.trim() || !appSecret.trim()}
               >
-                {submitting ? "Validating…" : "Connect"}
+                {submitting ? t("channels.validating") : t("channels.connectBtn")}
               </Button>
             </>
           )}

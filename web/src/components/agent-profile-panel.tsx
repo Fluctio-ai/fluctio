@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch, getAgent, updateAgent, type AgentDetail } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
+import { useT } from "@/lib/i18n";
 
 // AgentProfilePanel is the "Profile" tab inside the Settings dialog —
 // the same fields the admin Edit Agent dialog at /agents/page.tsx
@@ -20,6 +21,7 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 
 export default function AgentProfilePanel() {
   const agentId = useAgentIdFromURL();
+  const t = useT();
   const [agent, setAgent] = React.useState<AgentDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -89,7 +91,7 @@ export default function AgentProfilePanel() {
   const onSave = async () => {
     if (!agentId || !agent || !isOwner) return;
     if (!name.trim()) {
-      setError("Name is required");
+      setError(t("profile.nameRequired"));
       return;
     }
     setSaving(true);
@@ -100,7 +102,7 @@ export default function AgentProfilePanel() {
         description: description.trim(),
       });
       if (resp && (resp.ok === false || resp.error)) {
-        setError(resp.error || "Failed to update agent");
+        setError(resp.error || t("profile.updateFailed"));
         return;
       }
       if (avatar) {
@@ -138,7 +140,7 @@ export default function AgentProfilePanel() {
   if (!agent) {
     return (
       <div className="p-6 max-w-3xl">
-        <p className="text-sm text-muted-foreground">Agent not found.</p>
+        <p className="text-sm text-muted-foreground">{t("profile.notFound")}</p>
       </div>
     );
   }
@@ -154,11 +156,11 @@ export default function AgentProfilePanel() {
     <div className="p-6 max-w-3xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Profile</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("profile.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
             {isOwner
-              ? "Update your agent's name, description, and avatar."
-              : "Read-only — only the agent owner can edit these fields."}
+              ? t("profile.ownerDesc")
+              : t("profile.viewerDesc")}
           </p>
         </div>
         {isOwner && (
@@ -169,11 +171,11 @@ export default function AgentProfilePanel() {
             className={saved ? "border-emerald-500/30 text-emerald-600" : ""}
           >
             {saved ? (
-              <><Check className="h-4 w-4 mr-2" /> Saved</>
+              <><Check className="h-4 w-4 mr-2" /> {t("profile.saved")}</>
             ) : saving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Saving...</>
+              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {t("profile.saving")}</>
             ) : (
-              <><Save className="h-4 w-4 mr-2" /> Save</>
+              <><Save className="h-4 w-4 mr-2" /> {t("profile.save")}</>
             )}
           </Button>
         )}
@@ -193,7 +195,7 @@ export default function AgentProfilePanel() {
             onClick={() => isOwner && fileInputRef.current?.click()}
             disabled={!isOwner}
             className="group relative flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-dashed bg-muted/40 transition hover:bg-muted disabled:cursor-not-allowed"
-            aria-label="Upload avatar"
+            aria-label={t("profile.uploadAvatar")}
           >
             <AgentAvatarImg src={avatarSrc} />
             <input
@@ -206,7 +208,7 @@ export default function AgentProfilePanel() {
             />
           </button>
           <div className="flex-1 space-y-2">
-            <Label htmlFor="agent-profile-name">Name</Label>
+            <Label htmlFor="agent-profile-name">{t("profile.name")}</Label>
             <Input
               id="agent-profile-name"
               value={name}
@@ -214,11 +216,11 @@ export default function AgentProfilePanel() {
                 setName(e.target.value);
                 setError(null);
               }}
-              placeholder="My Helper"
+              placeholder={t("profile.namePlaceholder")}
               disabled={!isOwner}
             />
             <p className="text-xs text-muted-foreground">
-              ID:{" "}
+              {t("profile.idLabel")}{" "}
               <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
                 {agent.id}
               </code>
@@ -227,12 +229,12 @@ export default function AgentProfilePanel() {
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="agent-profile-desc">Description</Label>
+          <Label htmlFor="agent-profile-desc">{t("profile.description")}</Label>
           <Textarea
             id="agent-profile-desc"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What's this agent for?"
+            placeholder={t("profile.descPlaceholder")}
             rows={3}
             disabled={!isOwner}
           />
@@ -241,9 +243,9 @@ export default function AgentProfilePanel() {
 
       <div className="space-y-3 rounded-lg border border-border bg-card p-5">
         <div className="space-y-1">
-          <Label className="text-sm font-medium">Visibility</Label>
+          <Label className="text-sm font-medium">{t("profile.visibility")}</Label>
           <p className="text-xs text-muted-foreground">
-            Single-user mode — only the owner can use this agent.
+            {t("profile.visibilityDesc")}
           </p>
         </div>
       </div>
