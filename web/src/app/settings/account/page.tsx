@@ -143,7 +143,7 @@ export default function AccountSettingsPage() {
       <div className="rounded-lg border border-border bg-card p-5 space-y-4">
         <div className="flex items-center gap-4">
           <div className="relative size-16 group">
-            <div className="size-16 rounded-full bg-muted overflow-hidden flex items-center justify-center text-lg font-bold text-muted-foreground">
+            <div className="size-16 rounded-lg bg-muted overflow-hidden flex items-center justify-center text-lg font-bold text-muted-foreground">
               {avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={avatarUrl} alt="avatar" className="size-full object-cover" />

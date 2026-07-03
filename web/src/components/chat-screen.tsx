@@ -2180,10 +2180,10 @@ export function ChatScreen() {
                           <img
                             src={msg.sender.avatarUrl}
                             alt={msg.sender.name}
-                            className="h-5 w-5 rounded-full object-cover ring-1 ring-border"
+                            className="h-5 w-5 rounded-lg object-cover ring-1 ring-border"
                           />
                         ) : (
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/20 text-[10px] font-semibold uppercase text-foreground">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-lg bg-primary/20 text-[10px] font-semibold uppercase text-foreground">
                             {msg.sender.name.slice(0, 1)}
                           </span>
                         )}
@@ -2548,7 +2548,7 @@ export function ChatScreen() {
                   <div className="mt-2 flex items-center justify-between">
                     <div className="flex items-center gap-2 min-w-0">
                       <label
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition-colors ${
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors ${
                           !canAttach
                             ? "opacity-50 cursor-not-allowed"
                             : "hover:bg-muted hover:text-foreground cursor-pointer"
@@ -2581,7 +2581,7 @@ export function ChatScreen() {
                       <Button
                         onClick={handleStop}
                         size="icon"
-                        className="h-9 w-9 shrink-0 rounded-full"
+                        className="h-9 w-9 shrink-0 rounded-lg"
                         aria-label={t("chat.stopGenerating")}
                       >
                         <Square className="h-3.5 w-3.5 fill-current" />
@@ -2594,7 +2594,7 @@ export function ChatScreen() {
                         }}
                         disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                         size="icon"
-                        className="h-9 w-9 shrink-0 rounded-full"
+                        className="h-9 w-9 shrink-0 rounded-lg"
                         aria-label={t("chat.sendMessage")}
                       >
                         <Send className="h-4 w-4" />

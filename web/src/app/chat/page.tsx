@@ -374,7 +374,7 @@ export default function ChatPage() {
         {/* Chat header */}
         <div className="flex h-12 items-center justify-between border-b border-border px-4 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/10">
               <Bot className="h-4 w-4 text-primary" />
             </div>
             <span className="text-sm font-semibold">
@@ -418,7 +418,7 @@ export default function ChatPage() {
           <div className="mx-auto max-w-2xl space-y-3">
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center py-24 text-center">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
+                <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-muted mb-4">
                   <Bot className="h-8 w-8 text-muted-foreground" />
                 </div>
                 <p className="text-lg font-medium mb-1">
