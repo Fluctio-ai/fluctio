@@ -95,10 +95,10 @@ export default function ChannelsConfigPage() {
         {draft.type === "slack" && (
           <input type="password" value={draft.appToken} onChange={(e) => setDraft({ ...draft, appToken: e.target.value })} placeholder="App token (Slack Socket Mode)" className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" />
         )}
-        <button type="submit" className="rounded bg-violet-600 px-4 py-2 text-sm">Save</button>
+        <button type="submit" className="rounded bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90">Save</button>
       </form>
 
-      {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
 
       <table className="w-full text-sm">
         <thead className="text-left text-zinc-400">
@@ -127,7 +127,7 @@ export default function ChannelsConfigPage() {
               </td>
               <td className="font-mono text-xs text-zinc-500">{row.credentialKey}</td>
               <td className="text-right">
-                <button onClick={() => handleDelete(row)} className="text-xs text-red-400 hover:underline">delete</button>
+                <button onClick={() => handleDelete(row)} className="text-xs text-destructive hover:underline">delete</button>
               </td>
             </tr>
           ))}

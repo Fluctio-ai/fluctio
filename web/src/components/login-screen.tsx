@@ -38,11 +38,11 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-2">
-          <h1 className="text-2xl font-bold text-zinc-100">{t("login.title")}</h1>
-          <p className="text-sm text-zinc-500">{t("login.subtitle")}</p>
+          <h1 className="text-2xl font-bold text-foreground">{t("login.title")}</h1>
+          <p className="text-sm text-muted-foreground">{t("login.subtitle")}</p>
         </div>
         <form onSubmit={handleSignIn} className="space-y-4">
           <input
@@ -52,7 +52,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
             placeholder={t("login.usernamePlaceholder")}
             autoFocus
             autoComplete="username"
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+            className="w-full rounded-lg border border-input bg-input/30 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring"
           />
           <input
             type="password"
@@ -60,13 +60,13 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("login.passwordPlaceholder")}
             autoComplete="current-password"
-            className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+            className="w-full rounded-lg border border-input bg-input/30 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring"
           />
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <button
             type="submit"
             disabled={loading || !loginField.trim() || !password}
-            className="w-full rounded-lg bg-violet-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? t("login.submitting") : t("login.submit")}
           </button>

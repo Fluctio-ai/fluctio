@@ -537,7 +537,7 @@ export default function AgentModelsPage() {
         </div>
         <div className="flex items-center gap-2">
           {saved && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 mr-2">
+            <span className="inline-flex items-center gap-1.5 text-xs text-success mr-2">
               <Check className="h-3.5 w-3.5" /> {t("common.saved")}
             </span>
           )}
@@ -666,8 +666,8 @@ export default function AgentModelsPage() {
       {providers.length === 0 ? (
         <div className="rounded-lg border border-border bg-card">
           <div className="flex flex-col items-center justify-center py-16">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 mb-4">
-              <Brain className="h-7 w-7 text-amber-500" />
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-warning/10 mb-4">
+              <Brain className="h-7 w-7 text-warning" />
             </div>
             <p className="text-sm text-muted-foreground mb-1">
               {t("models.noProvidersAvail")}
@@ -732,7 +732,7 @@ export default function AgentModelsPage() {
                     {editable ? (
                       <Badge
                         variant="outline"
-                        className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                        className="bg-success/10 text-success border-success/20"
                       >
                         {sourceLabel}
                       </Badge>
@@ -912,7 +912,7 @@ export default function AgentModelsPage() {
                         </Badge>
                       )}
                       {test?.status === "success" && (
-                        <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15 text-[10px]">
+                        <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">
                           <Check className="mr-1 size-3" /> {t("models.connected")}
                         </Badge>
                       )}

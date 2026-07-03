@@ -70,17 +70,17 @@ export default function PluginsPage() {
   };
 
   const statusColor = (status: string) => {
-    if (status === "running") return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+    if (status === "running") return "bg-success/10 text-success border-success/20";
     if (status === "stopped") return "bg-muted text-muted-foreground border-border";
-    return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+    return "bg-warning/10 text-warning border-warning/20";
   };
 
   const typeColor = (type: string) => {
     const colors: Record<string, string> = {
-      channel: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
-      tool: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20",
-      provider: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
-      hook: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/20",
+      channel: "bg-info/10 text-info border-info/20",
+      tool: "bg-accent/10 text-accent border-accent/20",
+      provider: "bg-warning/10 text-warning border-warning/20",
+      hook: "bg-success/10 text-success border-success/20",
     };
     return colors[type] || "bg-muted text-muted-foreground border-border";
   };

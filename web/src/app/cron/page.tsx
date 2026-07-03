@@ -119,9 +119,9 @@ export default function CronPage() {
 
   const typeColor = (type: string) => {
     const colors: Record<string, string> = {
-      cron: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20",
-      interval: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20",
-      exact: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+      cron: "bg-accent/10 text-accent border-accent/20",
+      interval: "bg-info/10 text-info border-info/20",
+      exact: "bg-warning/10 text-warning border-warning/20",
     };
     return colors[type] || "bg-muted text-muted-foreground border-border";
   };

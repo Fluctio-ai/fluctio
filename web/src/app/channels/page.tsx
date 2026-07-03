@@ -23,10 +23,13 @@ const channelIcons: Record<string, React.ElementType> = {
   slack: MessageCircle,
 };
 
+// Channel brand colors as arbitrary values so they survive palette-token
+// sweeps — these are functional recognition cues (users identify the platform
+// at a glance), an intentional exception to the Geist single-accent rule.
 const channelColors: Record<string, string> = {
-  telegram: "from-blue-500 to-blue-600",
-  discord: "from-indigo-500 to-indigo-600",
-  slack: "from-green-500 to-green-600",
+  telegram: "from-[#229ED9] to-[#2AABEE]",
+  discord: "from-[#5865F2] to-[#4752C4]",
+  slack: "from-[#36C5F0] to-[#2EB67D]",
 };
 
 export default function ChannelsPage() {
@@ -64,8 +67,8 @@ export default function ChannelsPage() {
       ) : channels.length === 0 ? (
         <div className="rounded-lg border border-border bg-card">
           <div className="flex flex-col items-center justify-center py-16">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/10 mb-4">
-              <Radio className="h-7 w-7 text-blue-500" />
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted mb-4">
+              <Radio className="h-7 w-7 text-muted-foreground" />
             </div>
             <p className="text-sm text-muted-foreground mb-1">No channels configured</p>
             <p className="text-xs text-muted-foreground/60">
@@ -77,7 +80,7 @@ export default function ChannelsPage() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {channels.map((channel, i) => {
             const Icon = channelIcons[channel.type] || Radio;
-            const gradient = channelColors[channel.type] || "from-zinc-500 to-zinc-600";
+            const gradient = channelColors[channel.type] || "from-muted-foreground/80 to-muted-foreground";
             const isConnected = channel.enabled !== false && channel.status !== "disconnected";
 
             return (
@@ -94,13 +97,13 @@ export default function ChannelsPage() {
                     variant="outline"
                     className={
                       isConnected
-                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                        ? "bg-success/10 text-success border-success/20"
                         : "bg-muted text-muted-foreground border-border"
                     }
                   >
                     <span
                       className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${
-                        isConnected ? "bg-emerald-500" : "bg-muted-foreground"
+                        isConnected ? "bg-success" : "bg-muted-foreground"
                       }`}
                     />
                     {isConnected ? "Connected" : "Disconnected"}

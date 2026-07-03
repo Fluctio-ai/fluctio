@@ -133,7 +133,7 @@ export default function ApikeysPage() {
       </div>
 
       {showToken && (
-        <Card className="border-amber-500/40 bg-amber-500/5">
+        <Card className="border-warning/40 bg-warning/5">
           <CardContent className="space-y-3 pt-6">
             <p className="text-sm font-medium">Token issued — copy it now, you won&apos;t see it again.</p>
             <div className="flex items-center gap-2">

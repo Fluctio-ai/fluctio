@@ -143,7 +143,7 @@ export default function RuntimeSettingsPage() {
           onClick={handleSave}
           disabled={saving}
           variant={saved ? "outline" : "default"}
-          className={saved ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : ""}
+          className={saved ? "border-success/30 text-success dark:text-success" : ""}
         >
           {saved ? (
             <>
@@ -167,7 +167,7 @@ export default function RuntimeSettingsPage() {
       <div className="rounded-lg border border-border bg-card">
         <div className="p-5">
           <div className="flex items-start gap-3">
-            <Clock className="mt-0.5 h-4 w-4 text-sky-500" />
+            <Clock className="mt-0.5 h-4 w-4 text-info" />
             <div className="grid flex-1 gap-4 sm:grid-cols-[1fr_260px] sm:items-start">
               <div>
                 <h3 className="font-medium">Default timezone</h3>
@@ -194,7 +194,7 @@ export default function RuntimeSettingsPage() {
           <div className="flex items-center justify-between">
             <div>
               <div className="flex items-center gap-2 mb-1">
-                <Container className="h-4 w-4 text-purple-500" />
+                <Container className="h-4 w-4 text-accent" />
                 <h3 className="font-medium">Sandbox</h3>
               </div>
               <p className="text-sm text-muted-foreground">

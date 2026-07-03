@@ -13,21 +13,17 @@ const figtreeHeading = localFont({
   weight: "400 900",
 });
 
-const nunitoSans = localFont({
-  src: "./fonts/NunitoSans.woff2",
-  variable: "--font-sans",
-  weight: "200 900",
-});
-
+// Body typeface is Vercel Geist Sans — the font the Geist design system was
+// built around. Bundled locally (./fonts/GeistVF.woff) so no network request.
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
-  variable: "--font-geist-sans",
+  variable: "--font-sans",
   weight: "100 900",
 });
 
 const geistMono = localFont({
   src: "./fonts/GeistMonoVF.woff",
-  variable: "--font-geist-mono",
+  variable: "--font-mono",
   weight: "100 900",
 });
 
@@ -42,7 +38,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className={cn("font-sans", nunitoSans.variable, figtreeHeading.variable)}>
+    <html lang="en" suppressHydrationWarning className={cn("font-sans", geistSans.variable, figtreeHeading.variable, geistMono.variable)}>
       <head>
         <script
           dangerouslySetInnerHTML={{
@@ -50,9 +46,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className="antialiased">
         <ThemeProvider><I18nProvider><AuthGuard><AppShell>{children}</AppShell></AuthGuard></I18nProvider></ThemeProvider>
       </body>
     </html>

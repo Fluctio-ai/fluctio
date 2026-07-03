@@ -385,14 +385,14 @@ function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
             aria-expanded={open}
           >
             {allDone ? (
-              <Check className="size-4 shrink-0 text-emerald-600" />
+              <Check className="size-4 shrink-0 text-success" />
             ) : active ? (
-              <div className="size-4 shrink-0 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+              <div className="size-4 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
             ) : (
               // Paused: agent isn't streaming. Show a static amber ring
               // so the "where we are" cue is visible without implying
               // ongoing work.
-              <div className="size-4 shrink-0 rounded-full border-2 border-amber-500/70" />
+              <div className="size-4 shrink-0 rounded-full border-2 border-warning/70" />
             )}
             <span className="font-medium tabular-nums text-muted-foreground">
               {doneCount}/{total}
@@ -415,16 +415,16 @@ function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
                     key={i}
                     className={
                       "flex items-start gap-2 rounded px-1.5 py-0.5 " +
-                      (isCurrent ? "bg-amber-500/10" : "")
+                      (isCurrent ? "bg-warning/10" : "")
                     }
                   >
                     {it.done ? (
-                      <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600" />
+                      <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
                     ) : isCurrent ? (
                       active ? (
-                        <div className="mt-0.5 size-3.5 shrink-0 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+                        <div className="mt-0.5 size-3.5 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
                       ) : (
-                        <div className="mt-0.5 size-3.5 shrink-0 rounded-full border-2 border-amber-500/70" />
+                        <div className="mt-0.5 size-3.5 shrink-0 rounded-full border-2 border-warning/70" />
                       )
                     ) : (
                       <div className="mt-1 size-2.5 shrink-0 rounded-full border border-muted-foreground/40" />
@@ -2254,7 +2254,7 @@ export function ChatScreen() {
                         )
                       )}
                       {msg.role === "agent" && msg.metadata?.iterationCapReached && (
-                        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-900 dark:text-amber-200">
+                        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">
                           <span className="font-medium">Iteration limit reached</span>
                           <span className="opacity-80">
                             Agent hit the {msg.metadata.iterationCapValue ?? ""} tool-call budget before finishing. The answer above was synthesized from partial results — fields may be marked unknown / partial. Continue the conversation to push further.
@@ -2262,7 +2262,7 @@ export function ChatScreen() {
                         </div>
                       )}
                       {msg.role === "agent" && msg.metadata?.planMode && (
-                        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-900 dark:text-amber-200">
+                        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">
                           <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                           <span className="font-medium">Plan only — review before executing.</span>
                           <span className="opacity-80">
@@ -2343,7 +2343,7 @@ export function ChatScreen() {
                             title="Copy"
                           >
                             {copiedId === msg.id ? (
-                              <Check className="h-3 w-3 text-emerald-500" />
+                              <Check className="h-3 w-3 text-success" />
                             ) : (
                               <Copy className="h-3 w-3" />
                             )}
@@ -2369,7 +2369,7 @@ export function ChatScreen() {
                             title="Copy"
                           >
                             {copiedId === msg.id ? (
-                              <Check className="h-3 w-3 text-emerald-500" />
+                              <Check className="h-3 w-3 text-success" />
                             ) : (
                               <Copy className="h-3 w-3" />
                             )}
@@ -2446,7 +2446,7 @@ export function ChatScreen() {
               // Chats page (?actAs=<uid>). The middleware gates this as
               // read-only for the whole request, so any send would 403
               // — disable the composer and surface why.
-              <div className="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              <div className="mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning dark:text-warning">
                 Read-only — you&apos;re viewing another user&apos;s chat.
                 Sending messages here is disabled.
               </div>
@@ -2836,17 +2836,17 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
             className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className="h-5 w-5 shrink-0 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+              <div className="h-5 w-5 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
             ) : roundIndex !== undefined ? (
               // When this group is a round inside a bundle, the leading
               // glyph carries the round number — gives the bundle's
               // expanded view a built-in step indicator without an
               // extra "ROUND N" label row above each card.
-              <span className="h-5 w-5 shrink-0 inline-flex items-center justify-center rounded-full bg-amber-500/10 text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+              <span className="h-5 w-5 shrink-0 inline-flex items-center justify-center rounded-full bg-warning/10 text-[11px] font-semibold text-warning dark:text-warning">
                 {roundIndex}
               </span>
             ) : (
-              <Wrench className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+              <Wrench className="h-3.5 w-3.5 text-warning shrink-0" />
             )}
             <span className="font-medium text-foreground">
               {allDone
@@ -2872,14 +2872,14 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-colors"
                   >
                     {tc.result === undefined ? (
-                      <div className="h-3 w-3 shrink-0 rounded-full border-2 border-amber-500/60 border-t-transparent animate-spin" />
+                      <div className="h-3 w-3 shrink-0 rounded-full border-2 border-warning/60 border-t-transparent animate-spin" />
                     ) : (
-                      <Check className="h-3 w-3 text-emerald-500 shrink-0" />
+                      <Check className="h-3 w-3 text-success shrink-0" />
                     )}
                     <span className="font-medium text-foreground">{tc.name}</span>
                     {tc.metadata?.sandbox && (
                       <span
-                        className="flex items-center gap-0.5 rounded bg-emerald-500/10 px-1 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                        className="flex items-center gap-0.5 rounded bg-success/10 px-1 py-0.5 text-[10px] font-medium text-success dark:text-success"
                         title="Executed inside a sandboxed container"
                       >
                         <ShieldCheck className="h-2.5 w-2.5" />
@@ -3008,9 +3008,9 @@ function ToolRoundsBundle({
             className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+              <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
             ) : (
-              <Wrench className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+              <Wrench className="h-3.5 w-3.5 text-warning shrink-0" />
             )}
             <span className="font-medium text-foreground">
               {allDone

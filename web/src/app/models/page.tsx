@@ -606,7 +606,7 @@ export default function ModelsPage() {
             onClick={handleSaveAll}
             disabled={saving}
             variant={saved ? "outline" : "default"}
-            className={saved ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : ""}
+            className={saved ? "border-success/30 text-success" : ""}
           >
             {saved ? (
               <>
@@ -730,8 +730,8 @@ export default function ModelsPage() {
       {providers.length === 0 ? (
         <div className="rounded-lg border border-border bg-card">
           <div className="flex flex-col items-center justify-center py-16">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/10 mb-4">
-              <Brain className="h-7 w-7 text-amber-500" />
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-warning/10 mb-4">
+              <Brain className="h-7 w-7 text-warning" />
             </div>
             <p className="text-sm text-muted-foreground mb-1">No providers configured</p>
             <p className="text-xs text-muted-foreground/60 mb-4">
@@ -797,7 +797,7 @@ export default function ModelsPage() {
                     {editable ? (
                       <Badge
                         variant="outline"
-                        className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                        className="bg-success/10 text-success border-success/20"
                       >
                         {sourceLabel}
                       </Badge>
@@ -986,7 +986,7 @@ export default function ModelsPage() {
                         </Badge>
                       )}
                       {t?.status === "success" && (
-                        <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15 text-[10px]">
+                        <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">
                           <Check className="mr-1 size-3" /> connected
                         </Badge>
                       )}

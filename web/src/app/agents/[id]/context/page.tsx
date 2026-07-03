@@ -170,7 +170,7 @@ export default function AgentContextPage() {
         </div>
         <div className="flex items-center gap-2">
           {saved && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+            <span className="inline-flex items-center gap-1.5 text-xs text-success">
               <Check className="h-3.5 w-3.5" /> {t("context.saved")}
             </span>
           )}

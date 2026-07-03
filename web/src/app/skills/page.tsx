@@ -217,7 +217,7 @@ export default function SkillsPage() {
               </p>
               {(skillEntries[skill.name]?.apiKey ||
                 Object.keys(skillEntries[skill.name]?.env || {}).length > 0) && (
-                <div className="mt-2 inline-flex items-center gap-1 text-[10px] text-emerald-500">
+                <div className="mt-2 inline-flex items-center gap-1 text-[10px] text-success">
                   <Check className="h-3 w-3" />
                   configured
                 </div>

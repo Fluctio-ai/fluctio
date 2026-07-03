@@ -114,8 +114,8 @@ export default function AgentMCPPage() {
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       {isHosted && hasStdio && (
-        <div className="flex items-start gap-2 rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-3 text-sm">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-yellow-500" />
+        <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 p-3 text-sm">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-warning" />
           <div>
             <span className="font-medium">{t("mcp.stdioCloudWarnTitle")}</span>{" "}
             {t("mcp.stdioCloudWarnBody")} <strong>http</strong> {t("mcp.stdioCloudWarnSuffix")}

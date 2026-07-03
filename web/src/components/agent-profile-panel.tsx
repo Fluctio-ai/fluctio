@@ -168,7 +168,7 @@ export default function AgentProfilePanel() {
             onClick={onSave}
             disabled={saving || !dirty || !name.trim()}
             variant={saved ? "outline" : "default"}
-            className={saved ? "border-emerald-500/30 text-emerald-600" : ""}
+            className={saved ? "border-success/30 text-success" : ""}
           >
             {saved ? (
               <><Check className="h-4 w-4 mr-2" /> {t("profile.saved")}</>

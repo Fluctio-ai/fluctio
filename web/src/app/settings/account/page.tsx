@@ -206,7 +206,7 @@ export default function AccountSettingsPage() {
             variant={profileSaved ? "outline" : "default"}
             className={
               profileSaved
-                ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                ? "border-success/30 text-success"
                 : ""
             }
           >
@@ -273,7 +273,7 @@ export default function AccountSettingsPage() {
             variant={pwSaved ? "outline" : "default"}
             className={
               pwSaved
-                ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                ? "border-success/30 text-success"
                 : ""
             }
           >

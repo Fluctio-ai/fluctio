@@ -163,7 +163,7 @@ export function ConfigureSkillDialog({
                 <Label className="font-mono text-xs flex items-center gap-2">
                   {spec.name}
                   {spec.required && (
-                    <span className="text-[9px] uppercase tracking-wider text-amber-500">
+                    <span className="text-[9px] uppercase tracking-wider text-warning">
                       required
                     </span>
                   )}

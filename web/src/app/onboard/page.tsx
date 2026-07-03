@@ -723,7 +723,7 @@ function ProviderStep(props: {
             )}
           </Button>
           {props.testStatus === "ok" && (
-            <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15">
+            <Badge className="bg-success/15 text-success hover:bg-success/15">
               <Check className="mr-1 size-3" /> connected
             </Badge>
           )}
@@ -924,7 +924,7 @@ function DoneStep({ onContinue }: { onContinue: () => void }) {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <PartyPopper className="size-5 text-emerald-500" />
+          <PartyPopper className="size-5 text-success" />
           You&apos;re in!
         </CardTitle>
         <CardDescription>

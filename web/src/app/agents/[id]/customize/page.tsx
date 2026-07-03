@@ -120,14 +120,14 @@ export default function AgentCustomizePage() {
   const sourceBadge = (source: FileSource | undefined) => {
     if (source === "db") {
       return (
-        <span className="text-xs px-2 py-0.5 rounded-md border border-amber-500/30 text-amber-600">
+        <span className="text-xs px-2 py-0.5 rounded-md border border-warning/30 text-warning">
           {t("customize.edited")}
         </span>
       );
     }
     if (source === "fs") {
       return (
-        <span className="text-xs px-2 py-0.5 rounded-md border border-emerald-500/30 text-emerald-600">
+        <span className="text-xs px-2 py-0.5 rounded-md border border-success/30 text-success">
           {t("customize.fromRepo")}
         </span>
       );
@@ -163,7 +163,7 @@ export default function AgentCustomizePage() {
             onClick={handleSave}
             disabled={saving}
             variant={saved ? "outline" : "default"}
-            className={saved ? "border-emerald-500/30 text-emerald-600" : ""}
+            className={saved ? "border-success/30 text-success" : ""}
           >
             {saved ? (
               <><Check className="h-4 w-4 mr-2" /> {t("common.saved")}</>
@@ -190,7 +190,7 @@ export default function AgentCustomizePage() {
           >
             {t(f.label)}
             {files[f.name]?.source === "db" && (
-              <span className="size-1.5 rounded-full bg-amber-500" />
+              <span className="size-1.5 rounded-full bg-warning" />
             )}
           </button>
         ))}

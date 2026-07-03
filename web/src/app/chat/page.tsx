@@ -469,7 +469,7 @@ export default function ChatPage() {
                           title="Copy"
                         >
                           {copiedId === msg.id ? (
-                            <Check className="h-3 w-3 text-emerald-500" />
+                            <Check className="h-3 w-3 text-success" />
                           ) : (
                             <Copy className="h-3 w-3" />
                           )}
@@ -563,9 +563,9 @@ function ToolCallGroup({ msg }: { msg: ChatMessage }) {
             className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+              <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
             ) : (
-              <Wrench className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+              <Wrench className="h-3.5 w-3.5 text-warning shrink-0" />
             )}
             <span className="font-medium text-foreground">
               {allDone
@@ -591,9 +591,9 @@ function ToolCallGroup({ msg }: { msg: ChatMessage }) {
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-colors"
                   >
                     {tc.result === undefined ? (
-                      <div className="h-3 w-3 shrink-0 rounded-full border-2 border-amber-500/60 border-t-transparent animate-spin" />
+                      <div className="h-3 w-3 shrink-0 rounded-full border-2 border-warning/60 border-t-transparent animate-spin" />
                     ) : (
-                      <Check className="h-3 w-3 text-emerald-500 shrink-0" />
+                      <Check className="h-3 w-3 text-success shrink-0" />
                     )}
                     <span className="font-medium text-foreground">{tc.name}</span>
                     <span className="text-muted-foreground/50 font-mono truncate flex-1 text-left text-[11px]">

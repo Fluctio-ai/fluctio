@@ -336,7 +336,7 @@ function ConnectedCard({
           <span className="font-medium truncate">{label}</span>
         </div>
         {channel.enabled && (
-          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+          <span className="inline-flex items-center gap-1 text-xs text-success">
             <CheckCircle2 className="h-3 w-3" />
             {t("channels.connected")}
           </span>
@@ -475,9 +475,9 @@ function ConnectTelegramDialog({
         </DialogHeader>
 
         {connected ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
+          <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
@@ -486,7 +486,7 @@ function ConnectTelegramDialog({
                 href={`https://t.me/${connected.botUsername}`}
                 target="_blank"
                 rel="noreferrer"
-                className="font-mono text-sky-600 dark:text-sky-400 hover:underline inline-flex items-center gap-1"
+                className="font-mono text-info hover:underline inline-flex items-center gap-1"
               >
                 @{connected.botUsername}
                 <ExternalLink className="h-3 w-3" />
@@ -602,9 +602,9 @@ function ConnectDiscordDialog({
         </DialogHeader>
 
         {connected ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
+          <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
@@ -728,9 +728,9 @@ function ConnectSlackDialog({
         </DialogHeader>
 
         {connected ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
+          <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
@@ -875,9 +875,9 @@ function ConnectLINEDialog({
 
         {connected ? (
           <div className="space-y-3 py-2">
-            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
+            <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <CheckCircle2 className="h-4 w-4 text-success" />
                 <span className="text-sm font-medium">{t("channels.credentialsValid")}</span>
               </div>
               <p className="text-sm">
@@ -1080,9 +1080,9 @@ function ConnectWeChatDialog({
         </DialogHeader>
 
         {connected ? (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
+          <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
@@ -1110,7 +1110,7 @@ function ConnectWeChatDialog({
               {status === "wait" && <>{t("channels.waitingForScan")}</>}
               {status === "scaned" && (
                 <>
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                  <CheckCircle2 className="h-4 w-4 text-success" />
                   {t("channels.scannedConfirm")}
                 </>
               )}
@@ -1250,9 +1250,9 @@ function ConnectFeishuDialog({
 
         {connected ? (
           <div className="space-y-3 py-2">
-            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-2">
+            <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
               <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                <CheckCircle2 className="h-4 w-4 text-success" />
                 <span className="text-sm font-medium">{t("channels.credentialsValid")}</span>
               </div>
               <p className="text-sm">

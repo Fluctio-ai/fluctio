@@ -134,7 +134,7 @@ export default function AgentMemoryPage() {
         </div>
         <div className="flex items-center gap-2">
           <Button onClick={handleSave} disabled={saving} variant={saved ? "outline" : "default"}
-            className={saved ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : ""}>
+            className={saved ? "border-success/30 text-success" : ""}>
             {saved ? (<><Check className="h-4 w-4 mr-2" />{t("common.saved")}</>)
               : saving ? (<><Loader2 className="h-4 w-4 mr-2 animate-spin" />{t("common.saving")}</>)
               : t("common.save")}
@@ -178,7 +178,7 @@ export default function AgentMemoryPage() {
               <div className="flex items-center gap-2">
                 <h3 className="font-medium">{t("memory.embedding") || "Embedding"}</h3>
                 {embedding.enabled ? (
-                  <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15 text-[10px]">{t("memory.configured") || "configured"}</Badge>
+                  <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">{t("memory.configured") || "configured"}</Badge>
                 ) : (
                   <Badge variant="outline" className="text-muted-foreground text-[10px]">{t("memory.notConfigured") || "not configured"}</Badge>
                 )}
@@ -238,7 +238,7 @@ export default function AgentMemoryPage() {
               <div className="flex items-center gap-2">
                 <h3 className="font-medium">{t("memory.reranker") || "Reranker"}</h3>
                 {reranker.enabled ? (
-                  <Badge className="bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/15 text-[10px]">{t("memory.configured") || "configured"}</Badge>
+                  <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">{t("memory.configured") || "configured"}</Badge>
                 ) : (
                   <Badge variant="outline" className="text-muted-foreground text-[10px]">{t("memory.notConfigured") || "not configured"}</Badge>
                 )}
