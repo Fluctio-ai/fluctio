@@ -71,3 +71,6 @@ env.toml
 web/node_modules/
 web/pnpm-lock.yaml
 fastclaw-patched
+
+# Playwright MCP tooling artifacts (local only)
+.playwright-mcp/
