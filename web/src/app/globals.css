@@ -23,7 +23,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-mono: var(--font-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -43,6 +43,7 @@
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
+  --color-brand: var(--brand);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -53,85 +54,146 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  /* Semantic colors — single source of truth for status indicators, replacing
+     scattered emerald/amber/blue/cyan Tailwind palette classes. */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  /* Radii pinned to Geist's three families (design.md §Shapes): 6px controls,
+     12px cards/menus/modals, 16px fullscreen — mapped to how shadcn assigns
+     rounded-md (controls) and rounded-lg (cards/modals). One family per view. */
+  --radius-sm: 0.25rem;                    /* 4px */
+  --radius-md: 0.375rem;                   /* 6px — controls, Geist sm */
+  --radius-lg: 0.75rem;                    /* 12px — cards/menus/modals, Geist md */
+  --radius-xl: 1rem;                       /* 16px — fullscreen, Geist lg */
+  --radius-2xl: calc(var(--radius) * 1.5); /* 18px */
+  --radius-3xl: calc(var(--radius) * 2);   /* 24px */
+  --radius-4xl: calc(var(--radius) * 2.5); /* 30px */
   --font-heading: var(--font-heading);
 }
 
-/* Light theme */
+/* Light theme — Geist-inspired: pure neutral grayscale (chroma≈0) with a
+   single orange brand accent. Primary action color uses foreground-inversion
+   (near-black bg + near-white fg) rather than a colored brand fill, matching
+   Vercel Geist's core inversion technique. */
 :root {
+  --background: oklch(1 0 0);              /* #ffffff pure white */
+  --foreground: oklch(0.145 0 0);          /* #171717 — aligns with Geist primary */
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0.008 326);
+  --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0.008 326);
-  --primary: oklch(0.553 0.195 38.402);
-  --primary-foreground: oklch(0.98 0.016 73.684);
-  --secondary: oklch(0.967 0.001 286.375);
-  --secondary-foreground: oklch(0.21 0.006 285.885);
-  --muted: oklch(0.96 0.003 325.6);
-  --muted-foreground: oklch(0.542 0.034 322.5);
-  --accent: oklch(0.96 0.003 325.6);
-  --accent-foreground: oklch(0.212 0.019 322.12);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0.005 325.62);
-  --input: oklch(0.922 0.005 325.62);
-  --ring: oklch(0.711 0.019 323.02);
-  --chart-1: oklch(0.879 0.169 91.605);
-  --chart-2: oklch(0.769 0.188 70.08);
-  --chart-3: oklch(0.666 0.179 58.318);
-  --chart-4: oklch(0.555 0.163 48.998);
-  --chart-5: oklch(0.473 0.137 46.201);
-  --radius: 0.625rem;
+  --popover-foreground: oklch(0.145 0 0);
+
+  /* Primary action = foreground inversion (black button / white text) */
+  --primary: oklch(0.145 0 0);             /* near-black fill */
+  --primary-foreground: oklch(0.985 0 0);  /* near-white text */
+
+  /* Neutral surface tiers (pure gray, no purple tint) */
+  --secondary: oklch(0.97 0 0);            /* #f5f5f5 */
+  --secondary-foreground: oklch(0.205 0 0);/* #333333 */
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);    /* #757575 — Geist secondary gray */
+
+  /* Accent = neutral gray for selection/emphasis (Geist: accent is not a brand color).
+     Hover/selected fills step up the gray scale, not toward a hue. */
+  --accent: oklch(0.97 0 0);               /* gray-100 — selection/hover base */
+  --accent-foreground: oklch(0.205 0 0);   /* near-black text on light-gray fill */
+
+  /* Brand orange — decorative only (logo, onboarding, marketing). NOT a focus or
+     state color; using it for rings/icons would collide with the amber warning scale. */
+  --brand: oklch(0.65 0.18 38);            /* #e8703a FastClaw orange */
+
+  --destructive: oklch(0.577 0.245 27.325);/* keep vivid red for errors */
+  --border: oklch(0.922 0 0);              /* #eaeaea — pure gray hairline */
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.5796 0.2508 258.23);     /* focus ring = Geist blue-700 #006bff */
+
+  /* Chart palette — Geist categorical (blue/green/teal/purple/pink). Avoids amber
+     so a data series never reads as the warning state. */
+  --chart-1: oklch(0.5796 0.2508 258.23);  /* blue */
+  --chart-2: oklch(0.6458 0.1746 147.27);  /* green */
+  --chart-3: oklch(0.6492 0.1572 181.95);  /* teal */
+  --chart-4: oklch(0.5550 0.3008 306.12);  /* purple */
+  --chart-5: oklch(0.6352 0.2380 1.01);    /* pink */
+
+  --radius: 0.75rem;                       /* 12px base — Geist md; anchors 2xl+ tiers */
+
+  /* Sidebar — slightly off-white, same neutral axis */
   --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0.008 326);
-  --sidebar-primary: oklch(0.646 0.222 41.116);
-  --sidebar-primary-foreground: oklch(0.98 0.016 73.684);
-  --sidebar-accent: oklch(0.96 0.003 325.6);
-  --sidebar-accent-foreground: oklch(0.212 0.019 322.12);
-  --sidebar-border: oklch(0.922 0.005 325.62);
-  --sidebar-ring: oklch(0.711 0.019 323.02);
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0.008 326);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.145 0 0);     /* sidebar active = inversion too */
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.5796 0.2508 258.23);  /* Geist blue-700 */
+
+  /* Semantic status tokens — replaces scattered emerald/amber/blue/cyan */
+  --success: oklch(0.62 0.17 150);         /* green */
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.75 0.15 75);          /* amber */
+  --warning-foreground: oklch(0.205 0 0);
+  --info: oklch(0.60 0.15 250);            /* blue */
+  --info-foreground: oklch(0.985 0 0);
 }
 
-/* Dark theme */
+/* Dark theme — mirrors the light structure with foreground-inversion primary
+   (white button / black text) and pure neutral surfaces. Background targets
+   Geist's dark neutral (#171717); accents stay single-source orange. */
 .dark {
-  --background: oklch(0.145 0.008 326);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.212 0.019 322.12);
+  --background: oklch(0.145 0 0);          /* #171717 — Geist dark neutral */
+  --foreground: oklch(0.985 0 0);          /* #ededed — Geist dark primary */
+  --card: oklch(0.178 0 0);                /* #212121 — pure gray card */
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.212 0.019 322.12);
+  --popover: oklch(0.178 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.47 0.157 37.304);
-  --primary-foreground: oklch(0.98 0.016 73.684);
-  --secondary: oklch(0.274 0.006 286.033);
+
+  /* Primary action = foreground inversion (white button / black text) */
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.145 0 0);
+
+  /* Neutral surface tiers — pure gray, no purple */
+  --secondary: oklch(0.22 0 0);
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.263 0.024 320.12);
-  --muted-foreground: oklch(0.711 0.019 323.02);
-  --accent: oklch(0.263 0.024 320.12);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
+  --muted: oklch(0.22 0 0);
+  --muted-foreground: oklch(0.65 0 0);     /* #a0a0a0 — Geist dark secondary */
+
+  /* Accent — neutral gray selection base (no brand tint) */
+  --accent: oklch(0.22 0 0);
+  --accent-foreground: oklch(0.985 0 0);   /* near-white text on dark-gray fill */
+
+  /* Brand orange — decorative only */
+  --brand: oklch(0.70 0.17 45);
+
+  --destructive: oklch(0.65 0.2 25);
+  --border: oklch(1 0 0 / 10%);            /* Geist-style translucent hairline */
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.542 0.034 322.5);
-  --chart-1: oklch(0.879 0.169 91.605);
-  --chart-2: oklch(0.769 0.188 70.08);
-  --chart-3: oklch(0.666 0.179 58.318);
-  --chart-4: oklch(0.555 0.163 48.998);
-  --chart-5: oklch(0.473 0.137 46.201);
-  --sidebar: oklch(0.212 0.019 322.12);
+  --ring: oklch(0.7170 0.1648 250.79);     /* Geist dark blue-900 #47a8ff */
+
+  --chart-1: oklch(0.7170 0.1648 250.79);  /* blue-900 */
+  --chart-2: oklch(0.7310 0.2158 148.29);  /* green-900 */
+  --chart-3: oklch(0.7456 0.1765 182.8);   /* teal-900 */
+  --chart-4: oklch(0.6987 0.2037 309.51);  /* purple-900 */
+  --chart-5: oklch(0.6936 0.2223 3.91);    /* pink-900 */
+
+  --sidebar: oklch(0.178 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.705 0.213 47.604);
-  --sidebar-primary-foreground: oklch(0.98 0.016 73.684);
-  --sidebar-accent: oklch(0.263 0.024 320.12);
+  --sidebar-primary: oklch(0.985 0 0);
+  --sidebar-primary-foreground: oklch(0.145 0 0);
+  --sidebar-accent: oklch(0.22 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.542 0.034 322.5);
+  --sidebar-ring: oklch(0.7170 0.1648 250.79);  /* Geist dark blue-900 */
+
+  --success: oklch(0.68 0.16 150);
+  --success-foreground: oklch(0.145 0 0);
+  --warning: oklch(0.78 0.15 75);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.68 0.15 250);
+  --info-foreground: oklch(0.145 0 0);
 }
 
 @layer base {
@@ -215,10 +277,10 @@ html.theme-transition *::after {
 
 @keyframes pulse-glow {
   0%, 100% {
-    box-shadow: 0 0 20px rgba(139, 92, 246, 0.1);
+    box-shadow: 0 0 20px oklch(0.65 0.18 38 / 0.1);
   }
   50% {
-    box-shadow: 0 0 40px rgba(139, 92, 246, 0.2);
+    box-shadow: 0 0 40px oklch(0.65 0.18 38 / 0.2);
   }
 }
 
