@@ -1477,7 +1477,7 @@ export async function getAgentMemory(agentId: string): Promise<{ memory?: AgentM
 export async function setAgentMemory(agentId: string, memory: AgentMemory): Promise<{ ok?: boolean; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/memory`, {
     method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(memory),
+    body: JSON.stringify({ memory }),
   });
   if (!res.ok) return { error: `HTTP ${res.status}` };
   return res.json().catch(() => ({ ok: true }));
