@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useT } from "@/lib/i18n";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -105,6 +106,7 @@ export function AgentSwitcher({
 }) {
   const { isMobile } = useSidebar();
   const router = useRouter();
+  const t = useT();
 
   const active = activeAgentId
     ? agents.find((a) => a.id === activeAgentId) ?? null
@@ -163,7 +165,7 @@ export function AgentSwitcher({
               <>
                 <DropdownMenuGroup>
                   <DropdownMenuLabel className="text-xs text-muted-foreground">
-                    Agents
+                    {t("nav.group.agent")}
                   </DropdownMenuLabel>
                   {agents.map((a) => (
                     <DropdownMenuItem
@@ -188,7 +190,7 @@ export function AgentSwitcher({
                   <PlusIcon className="size-4" />
                 </div>
                 <div className="font-medium text-muted-foreground">
-                  Manage agents
+                  {t("nav.manageAgents")}
                 </div>
               </DropdownMenuItem>
             </DropdownMenuGroup>
