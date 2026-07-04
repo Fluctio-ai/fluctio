@@ -89,7 +89,6 @@ function renderContentWithDataImages(
 }
 
 import { usePageHeader } from "@/components/sidebar";
-import { useSidebarOptional } from "@/components/ui/sidebar";
 import { channelLabel } from "@/components/channel-icon";
 import { useT } from "@/lib/i18n";
 
@@ -527,15 +526,9 @@ export function ChatScreen() {
   }>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [filesSheetOpen, setFilesSheetOpen] = useState(false);
-  // Opening the workspace/preview panel collapses the platform sidebar to
-  // free horizontal room (null when there's no provider, e.g. act-as view).
-  const sidebar = useSidebarOptional();
-  useEffect(() => {
-    if (filesSheetOpen) sidebar?.setOpen(false);
-    // Intentionally keyed only on filesSheetOpen: collapse once when the
-    // panel opens; don't fight the user if they re-expand while it's open.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filesSheetOpen]);
+  // The workspace/preview panel opens to the right of chat. The platform
+  // sidebar is left in whatever state the user put it — opening a file in
+  // the conversation no longer collapses it.
   const [sessionTitle, setSessionTitle] = useState<string>("");
   const [attachments, setAttachments] = useState<File[]>([]);
   // Lightbox for clicking either an attachment thumbnail (compose box)
