@@ -2109,11 +2109,11 @@ func (d *DBStore) DeleteUser(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	// Drop every config row owned by this user — both their own
-	// ('user_id=X, agent_id="') and any per-agent overrides they
-	// authored on someone else's agent ('user_id=X, agent_id=Y').
+	// Drop this user's scoped config rows. configs has no user_id column —
+	// user-scoped rows carry the user id in scope_id. (agent-scoped rows
+	// use scope_id=agent_id, which can't collide with a user id.)
 	if _, err := tx.ExecContext(ctx,
-		fmt.Sprintf("DELETE FROM configs WHERE user_id = %s", d.ph(1)), id); err != nil {
+		fmt.Sprintf("DELETE FROM configs WHERE scope_id = %s", d.ph(1)), id); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -2127,6 +2127,53 @@ func (d *DBStore) CountUsers(ctx context.Context) (int, error) {
 	var n int
 	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
 	return n, err
+}
+
+// ReassignUserData repoints every owner-scoped row from fromID to toID. Used
+// by single-owner enforcement at boot to merge a surplus super-admin into
+// the configured owner before deleting the surplus row. Only owner-dimension
+// columns move: user_id on owner-scoped tables, owner_user_id on agent_goals
+// (agent owner) and users (chatter→owner pointer). chatter_user_id /
+// platform_user_id are end-user identities and are deliberately left alone.
+//
+// Wrapped in one transaction so a mid-way failure rolls back cleanly instead
+// of leaving half-migrated ownership.
+func (d *DBStore) ReassignUserData(ctx context.Context, fromID, toID string) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, t := range []string{
+		"web_sessions", "push_devices", "apikeys", "agents",
+		"sessions", "session_messages", "session_events",
+		"agent_files", "cron_jobs", "projects", "project_runtimes",
+		"token_usage_daily", "quotas", "token_usage_log",
+		"channels", "conversation_summaries",
+	} {
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf("UPDATE %s SET user_id = %s WHERE user_id = %s", t, d.ph(1), d.ph(2)),
+			toID, fromID); err != nil {
+			return err
+		}
+	}
+	// configs has no user_id column; user-scoped rows carry the user id in
+	// scope_id. (agent-scoped rows use scope_id=agent_id, which never
+	// collides with a user id thanks to the u_/agt_ prefix split, so this
+	// UPDATE only touches the user-scoped rows we want to move.)
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf("UPDATE configs SET scope_id = %s WHERE scope_id = %s", d.ph(1), d.ph(2)),
+		toID, fromID); err != nil {
+		return err
+	}
+	for _, t := range []string{"agent_goals", "users"} {
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf("UPDATE %s SET owner_user_id = %s WHERE owner_user_id = %s", t, d.ph(1), d.ph(2)),
+			toID, fromID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // --- Web sessions ---

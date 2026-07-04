@@ -28,6 +28,7 @@ import (
 	"github.com/fastclaw-ai/fastclaw/internal/channels"
 	"github.com/fastclaw-ai/fastclaw/internal/config"
 	"github.com/fastclaw-ai/fastclaw/internal/cron"
+	"github.com/fastclaw-ai/fastclaw/internal/users"
 	"github.com/fastclaw-ai/fastclaw/internal/plugin"
 	"github.com/fastclaw-ai/fastclaw/internal/rediscoord"
 	coderuntime "github.com/fastclaw-ai/fastclaw/internal/runtime"
@@ -42,7 +43,6 @@ import (
 	"github.com/fastclaw-ai/fastclaw/internal/toolproviders/webfetch"
 	"github.com/fastclaw-ai/fastclaw/internal/toolproviders/websearch"
 	"github.com/fastclaw-ai/fastclaw/internal/usage"
-	"github.com/fastclaw-ai/fastclaw/internal/users"
 	"github.com/fastclaw-ai/fastclaw/internal/webhook"
 	"github.com/fastclaw-ai/fastclaw/internal/workspace"
 	"github.com/redis/go-redis/v9"
@@ -288,6 +288,25 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 	}, homeDir)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
+	}
+
+	// Single-user enforcement: when <home>/owner.json exists, ensure the
+	// configured owner is the only super-admin account — upsert the owner
+	// (password/email from config), merge any surplus account's data into
+	// it, then delete the surplus. No-op when the file is absent, so this
+	// stays opt-in and existing deployments are unaffected.
+	if ownerCfg, oerr := config.LoadOwnerFile(homeDir); oerr != nil {
+		return nil, fmt.Errorf("load owner file: %w", oerr)
+	} else if ownerCfg != nil {
+		if err := users.EnsureSingleOwner(context.Background(), st, users.OwnerSpec{
+			Username:    ownerCfg.Username,
+			Email:       ownerCfg.Email,
+			Password:    ownerCfg.Password,
+			DisplayName: ownerCfg.DisplayName,
+		}); err != nil {
+			return nil, fmt.Errorf("ensure single owner: %w", err)
+		}
+		slog.Info("single-user owner ensured", "username", ownerCfg.Username)
 	}
 
 	// Wire layer-3 agent config (per-agent overrides) to read from the DB.

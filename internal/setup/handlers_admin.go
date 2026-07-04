@@ -259,6 +259,15 @@ func (s *Server) handleOnboard(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "store not ready"})
 		return
 	}
+	// Single-user mode: when owner.json defines the owner, onboarding is
+	// disabled — EnsureSingleOwner at gateway boot owns account
+	// provisioning, so the dashboard wizard must not mint a second admin.
+	if home, _ := config.HomeDir(); home != "" {
+		if owner, _ := config.LoadOwnerFile(home); owner != nil {
+			jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "single-user mode: owner defined in owner.json; onboarding disabled"})
+			return
+		}
+	}
 	count, err := s.accounts.Count(r.Context())
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})

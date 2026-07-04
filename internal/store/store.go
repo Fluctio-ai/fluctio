@@ -33,6 +33,10 @@ type Store interface {
 	ListUsers(ctx context.Context) ([]UserRecord, error)
 	UpdateUser(ctx context.Context, u *UserRecord) error
 	DeleteUser(ctx context.Context, id string) error
+	// ReassignUserData repoints every owner-scoped row from fromID to toID
+	// (agents, sessions, apikeys, configs, token usage, …) so a surplus
+	// user can be merged into the single owner without losing its data.
+	ReassignUserData(ctx context.Context, fromID, toID string) error
 	CountUsers(ctx context.Context) (int, error)
 
 	// --- Web sessions (login cookies) ---
