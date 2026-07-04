@@ -71,7 +71,20 @@ export function NavMain({
           const handleClick = item.onClick
             ? item.onClick
             : item.url
-              ? () => router.push(item.url!)
+              ? () => {
+                  const before = window.location.pathname;
+                  router.push(item.url!);
+                  // Static export occasionally drops client-side nav
+                  // silently — the URL doesn't change and no error
+                  // surfaces (seen on /admin/* targets). Fall back to a
+                  // full page load when the soft nav didn't take within
+                  // one frame.
+                  requestAnimationFrame(() => {
+                    if (window.location.pathname === before) {
+                      window.location.href = item.url!;
+                    }
+                  });
+                }
               : undefined;
           return (
             <SidebarMenuItem key={item.url ?? item.title}>

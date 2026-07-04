@@ -85,7 +85,13 @@ export default function AgentMemoryPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await setAgentMemory(agentId, { embedding, reranker, settings, summaryModel } as any);
+      // Spread the existing memory first so we don't clobber sibling
+      // fields this page doesn't edit (wikiAutoGen, autoPersist, …) —
+      // writing only {embedding,reranker,settings,summaryModel} previously
+      // wiped wiki auto-gen settings every time the Memory page was saved.
+      const cur = await getAgentMemory(agentId).catch(() => null);
+      const base = (cur?.memory || {}) as MemoryConfig;
+      await setAgentMemory(agentId, { ...base, embedding, reranker, settings, summaryModel } as any);
       flashSaved();
       await refresh();
     } finally {
