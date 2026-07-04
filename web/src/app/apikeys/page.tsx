@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useT } from "@/lib/i18n";
 import {
   listApikeys,
   createApikey,
@@ -10,8 +11,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -49,6 +48,7 @@ interface ApiKey {
 }
 
 export default function ApikeysPage() {
+  const t = useT();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [error, setError] = useState("");
   const [createName, setCreateName] = useState("");
@@ -121,42 +121,38 @@ export default function ApikeysPage() {
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">API Keys</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("apikeys.page.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Issue programmatic credentials. Each key is scoped to a subset of your agents.
+            {t("apikeys.page.subtitle")}
           </p>
         </div>
         <Button onClick={openCreateDialog}>
           <Plus className="h-4 w-4 mr-2" />
-          Add API Key
+          {t("apikeys.page.add")}
         </Button>
       </div>
 
       {showToken && (
-        <Card className="border-warning/40 bg-warning/5">
-          <CardContent className="space-y-3 pt-6">
-            <p className="text-sm font-medium">Token issued — copy it now, you won&apos;t see it again.</p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 break-all rounded border bg-background px-3 py-2 font-mono text-xs">
-                {showToken.token}
-              </code>
-              <Button size="sm" variant="outline" onClick={copyToken}>
-                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-              </Button>
-            </div>
-            <Button size="sm" variant="ghost" onClick={() => setShowToken(null)}>
-              Got it
+        <div className="rounded-lg border border-warning/40 bg-warning/5 p-4 space-y-3">
+          <p className="text-sm font-medium">{t("apikeys.page.tokenIssued")}</p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 break-all rounded border bg-background px-3 py-2 font-mono text-xs">
+              {showToken.token}
+            </code>
+            <Button size="sm" variant="outline" onClick={copyToken}>
+              {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => setShowToken(null)}>
+            {t("apikeys.page.gotIt")}
+          </Button>
+        </div>
       )}
 
       {error && (
-        <Card className="border-destructive/40 bg-destructive/5">
-          <CardContent className="pt-6">
-            <p className="text-sm text-destructive">{error}</p>
-          </CardContent>
-        </Card>
+        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+          <p className="text-sm text-destructive">{error}</p>
+        </div>
       )}
 
       {keys.length === 0 ? (
@@ -165,13 +161,13 @@ export default function ApikeysPage() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 mb-4">
               <KeyRound className="h-7 w-7 text-primary" />
             </div>
-            <p className="text-sm text-muted-foreground mb-1">No API keys yet</p>
+            <p className="text-sm text-muted-foreground mb-1">{t("apikeys.page.empty")}</p>
             <p className="text-xs text-muted-foreground/60 mb-4">
-              Issue one to let an external client call your agents
+              {t("apikeys.page.emptyDesc")}
             </p>
             <Button variant="outline" size="sm" onClick={openCreateDialog}>
               <Plus className="h-4 w-4 mr-2" />
-              Add API Key
+              {t("apikeys.page.add")}
             </Button>
           </div>
         </div>
@@ -180,11 +176,11 @@ export default function ApikeysPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Key</TableHead>
-                <TableHead>Access</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{t("apikeys.page.col.name")}</TableHead>
+                <TableHead>{t("apikeys.page.col.key")}</TableHead>
+                <TableHead>{t("apikeys.page.col.access")}</TableHead>
+                <TableHead>{t("apikeys.page.col.created")}</TableHead>
+                <TableHead className="text-right">{t("apikeys.page.col.actions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -195,14 +191,14 @@ export default function ApikeysPage() {
                     <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{k.key}</code>
                   </TableCell>
                   <TableCell>
-                    <span className="text-xs text-muted-foreground">All agents (owner-level)</span>
+                    <span className="text-xs text-muted-foreground">{t("apikeys.page.accessOwner")}</span>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {new Date(k.createdAt).toLocaleString()}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1">
-                      <Button size="icon" variant="ghost" onClick={() => setRotateTarget(k)} title="Rotate">
+                      <Button size="icon" variant="ghost" onClick={() => setRotateTarget(k)} title={t("apikeys.page.rotate")}>
                         <RotateCw className="size-4" />
                       </Button>
                       <Button
@@ -210,7 +206,7 @@ export default function ApikeysPage() {
                         variant="ghost"
                         className="text-destructive hover:text-destructive"
                         onClick={() => setDeleteTarget(k)}
-                        title="Delete"
+                        title={t("common.delete")}
                       >
                         <Trash2 className="size-4" />
                       </Button>
@@ -226,28 +222,28 @@ export default function ApikeysPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add API Key</DialogTitle>
+            <DialogTitle>{t("apikeys.page.add")}</DialogTitle>
             <DialogDescription>
-              Issue a new bearer token scoped to a subset of your agents.
+              {t("apikeys.page.createDesc")}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleCreate} className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label htmlFor="key-name">Name</Label>
+              <Label htmlFor="key-name">{t("apikeys.page.col.name")}</Label>
               <Input
                 id="key-name"
                 value={createName}
                 onChange={(e) => setCreateName(e.target.value)}
-                placeholder="e.g. thinkany-web"
+                placeholder={t("apikeys.page.namePlaceholder")}
                 autoFocus
               />
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit" disabled={!createName.trim()}>
-                Create key
+                {t("apikeys.page.create")}
               </Button>
             </DialogFooter>
           </form>
@@ -257,15 +253,16 @@ export default function ApikeysPage() {
       <AlertDialog open={deleteTarget !== null} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete API key?</AlertDialogTitle>
+            <AlertDialogTitle>{t("apikeys.page.deleteTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{deleteTarget?.name || deleteTarget?.id}</code>{" "}
-              will stop working immediately for any client using it.
+              {t("apikeys.page.deleteDesc", { name: deleteTarget?.name || deleteTarget?.id || "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => deleteTarget && handleDelete(deleteTarget)}>Delete</AlertDialogAction>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => deleteTarget && handleDelete(deleteTarget)}>
+              {t("common.delete")}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -273,17 +270,15 @@ export default function ApikeysPage() {
       <AlertDialog open={rotateTarget !== null} onOpenChange={(o) => !o && setRotateTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Rotate API key?</AlertDialogTitle>
+            <AlertDialogTitle>{t("apikeys.page.rotateTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              The current token for{" "}
-              <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{rotateTarget?.name || rotateTarget?.id}</code>{" "}
-              will stop working immediately. A new token will be issued and shown once.
+              {t("apikeys.page.rotateDesc", { name: rotateTarget?.name || rotateTarget?.id || "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => rotateTarget && handleRotate(rotateTarget.id)}>
-              Rotate
+              {t("apikeys.page.rotate")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
