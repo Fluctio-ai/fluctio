@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Sidebar,
   SidebarContent,
@@ -100,6 +100,7 @@ const AGENT_NAV = (
 // so the sidebar nav itself just exposes "New chat" regardless of role.
 export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const activeAgentId = extractAgentId(pathname);
   const hasOpenSession = !!searchParams?.get("session");
@@ -115,9 +116,10 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const [projects, setProjects] = React.useState<ProjectEntry[]>([]);
   // Single dialog state covers both entry points: the agent-scoped
   // footer button (full Agent + User tabs) and the platform-nav
-  // Settings entry (User tabs only). `settingsUserOnly` picks the mode.
+  // Settings entry. With an active agent, opens the agent-scope dialog;
+  // platform-wide Settings lives at /settings (opened directly when no
+  // agent is active).
   const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [settingsUserOnly, setSettingsUserOnly] = React.useState(false);
 
   // Keep status polling so the online dot / admin flag stay fresh.
   React.useEffect(() => {
@@ -301,8 +303,11 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
             <SidebarMenuButton
               tooltip={t("sidebar.settings")}
               onClick={() => {
-                setSettingsUserOnly(!activeAgentId);
-                setSettingsOpen(true);
+                if (!activeAgentId) {
+                  router.push("/settings/");
+                } else {
+                  setSettingsOpen(true);
+                }
               }}
             >
               <SettingsIcon />
@@ -323,13 +328,11 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       <AgentSettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        userOnly={settingsUserOnly}
         role={
           activeAgentId && agentRoles[activeAgentId] === "viewer"
             ? "viewer"
             : "owner"
         }
-        isAdmin={isAdmin}
       />
     </Sidebar>
   );
