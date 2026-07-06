@@ -107,10 +107,15 @@ func executeCLI(ctx context.Context, agentID, cmdString, text string) (string, e
 	defer cancel()
 
 	resolved := cmdString
-	if strings.HasPrefix(cmdString, "hooks/") || strings.HasPrefix(cmdString, "hooks\\") {
+	// Normalize backslashes so a Windows "hooks\foo.bat" prefix resolves
+	// the same as "hooks/foo.bat". Without this, TrimPrefix only strips the
+	// forward-slash form and filepath.Join produces .../hooks/hooks/foo.bat,
+	// so a backslash-style hook path can't find its script.
+	normalized := strings.ReplaceAll(cmdString, "\\", "/")
+	if strings.HasPrefix(normalized, "hooks/") {
 		dir, err := hooksDir(agentID)
 		if err == nil {
-			resolved = filepath.Join(dir, strings.TrimPrefix(cmdString, "hooks/"))
+			resolved = filepath.Join(dir, strings.TrimPrefix(normalized, "hooks/"))
 		}
 	}
 
