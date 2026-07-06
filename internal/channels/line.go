@@ -197,13 +197,18 @@ type LINEMessage struct {
 // caller to write back. LINE expects 200 with any body to ack;
 // non-2xx triggers up to ~5 retries.
 func (l *LINE) HandleWebhook(body []byte, signature string) (responseBody []byte, status int, err error) {
-	if l.channelSecret != "" {
-		mac := hmac.New(sha256.New, []byte(l.channelSecret))
-		mac.Write(body)
-		expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
-		if !hmac.Equal([]byte(expected), []byte(signature)) {
-			return nil, http.StatusUnauthorized, errors.New("line signature mismatch")
-		}
+	// Fail closed when no channel secret is configured. The webhook URL
+	// is public; without the HMAC secret to verify the signature, anybody
+	// who knows the accountId can post fabricated events. Mirrors Feishu's
+	// fail-closed posture on an unset verification token.
+	if l.channelSecret == "" {
+		return nil, http.StatusUnauthorized, errors.New("line webhook rejected: no channel secret configured — set it in the LINE console and fastclaw connect dialog")
+	}
+	mac := hmac.New(sha256.New, []byte(l.channelSecret))
+	mac.Write(body)
+	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(expected), []byte(signature)) {
+		return nil, http.StatusUnauthorized, errors.New("line signature mismatch")
 	}
 	var env LINEEventEnvelope
 	if err := json.Unmarshal(body, &env); err != nil {
