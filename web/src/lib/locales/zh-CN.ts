@@ -723,6 +723,14 @@ const zhCN: Record<string, string> = {
   "wiki.autoGenInterval": "扫描间隔",
   "wiki.autoGenHours": "小时",
   "wiki.autoGenHint": "后台每小时检查，为新增的知识库源自动生成 Wiki。",
+  "wiki.autoGenLastRun": "上次运行",
+  "wiki.autoGenNever": "从未",
+  "wiki.autoGenPending": "{n} 个源待处理",
+  "wiki.autoGenStatus.ok": "上次运行成功",
+  "wiki.autoGenStatus.error": "上次运行失败",
+  "wiki.autoGenStatus.partial": "上次运行部分失败",
+  "wiki.autoGenStatus.no_provider": "此 Agent 未配置 LLM provider/model",
+  "wiki.autoGenStatus.no_sources": "暂无新源需处理",
 
   // Admin
   "admin.loadChatsFailed": "加载对话失败",

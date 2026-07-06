@@ -57,8 +57,10 @@ import {
   listKBSources,
   type KBSource,
   type WikiAutoGenCfg,
+  type WikiAutogenStatus,
   getAgentMemory,
   setAgentMemory,
+  getWikiAutogenStatus,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
@@ -97,6 +99,7 @@ export default function WikiPage() {
   const [wikiCfg, setWikiCfg] = useState<WikiAutoGenCfg>({ enabled: false });
   const [wikiSaving, setWikiSaving] = useState(false);
   const wikiSavingRef = useRef(false);
+  const [autogenStatus, setAutogenStatus] = useState<WikiAutogenStatus | null>(null);
 
   const loadData = useCallback(async () => {
     if (!agentId) return;
@@ -129,6 +132,27 @@ export default function WikiPage() {
       .then((m) => setWikiCfg(m.memory?.wikiAutoGen || { enabled: false }))
       .catch(() => {});
   }, [agentId]);
+
+  // Poll auto-gen status while enabled so the status line reflects the last sweep.
+  useEffect(() => {
+    if (!agentId || !wikiCfg.enabled) {
+      setAutogenStatus(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchStatus = () =>
+      getWikiAutogenStatus(agentId)
+        .then((s) => {
+          if (!cancelled) setAutogenStatus(s);
+        })
+        .catch(() => {});
+    fetchStatus();
+    const id = setInterval(fetchStatus, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [agentId, wikiCfg.enabled]);
 
   const saveWikiCfg = async (next: WikiAutoGenCfg) => {
     if (wikiSavingRef.current) return;
@@ -381,6 +405,28 @@ export default function WikiPage() {
                 </div>
               </div>
               <p className="text-[11px] leading-tight text-muted-foreground">{t("wiki.autoGenHint")}</p>
+              {autogenStatus && (
+                <div className="text-[11px] leading-tight text-muted-foreground space-y-0.5 pt-1">
+                  <div>
+                    {t("wiki.autoGenLastRun")}:{" "}
+                    {autogenStatus.last_run
+                      ? new Date(autogenStatus.last_run).toLocaleString()
+                      : t("wiki.autoGenNever")}
+                  </div>
+                  {autogenStatus.last_status &&
+                    autogenStatus.last_status !== "ok" &&
+                    autogenStatus.last_status !== "no_sources" && (
+                      <div className="text-warning">
+                        {t(`wiki.autoGenStatus.${autogenStatus.last_status}`)}
+                        {autogenStatus.last_error ? ` — ${autogenStatus.last_error}` : ""}
+                      </div>
+                    )}
+                  {typeof autogenStatus.pending === "number" &&
+                    autogenStatus.pending > 0 && (
+                      <div>{t("wiki.autoGenPending", { n: autogenStatus.pending })}</div>
+                    )}
+                </div>
+              )}
             </>
           )}
         </div>

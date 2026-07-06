@@ -70,6 +70,13 @@ type Store interface {
 	GetWikiAutoGenLastRun(ctx context.Context, agentID string) (time.Time, error)
 	// SetWikiAutoGenLastRun UPSERTs the agent's last wiki-generation run.
 	SetWikiAutoGenLastRun(ctx context.Context, agentID string, t time.Time) error
+	// GetWikiAutoGenStatus returns the agent's last sweep outcome (timestamp +
+	// status/error/pending); zero-valued WikiAutoGenStatus when never run.
+	GetWikiAutoGenStatus(ctx context.Context, agentID string) (*WikiAutoGenStatus, error)
+	// SetWikiAutoGenResult UPSERTs the agent's last sweep outcome + timestamp.
+	SetWikiAutoGenResult(ctx context.Context, agentID string, t time.Time, status, errMsg string, pending int) error
+	// CountPendingKBSources returns KB sources whose wiki_generated_at is NULL.
+	CountPendingKBSources(ctx context.Context, agentID string) (int, error)
 
 	// --- Sessions (per user, per agent — chat history is private) ---
 	GetSession(ctx context.Context, userID, agentID, sessionKey string) (*SessionRecord, error)

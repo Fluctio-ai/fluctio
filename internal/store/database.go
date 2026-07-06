@@ -199,11 +199,33 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 // (Source Lununda reuses skill_evolution_state.wiki_last_run_at; FastClaw
 // has no skill_evolution_state table, so this is a dedicated table instead.)
 func (d *DBStore) migrateWikiAutoGenLastRun(ctx context.Context) error {
-	_, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS wiki_autogen_last_run (
-		agent_id    TEXT PRIMARY KEY,
-		last_run_at TEXT NOT NULL
-	)`)
-	return err
+	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS wiki_autogen_last_run (
+		agent_id      TEXT PRIMARY KEY,
+		last_run_at   TEXT NOT NULL,
+		last_status   TEXT NOT NULL DEFAULT '',
+		last_error    TEXT NOT NULL DEFAULT '',
+		pending_after INTEGER NOT NULL DEFAULT 0
+	)`); err != nil {
+		return err
+	}
+	// Older DBs created the table without the status columns — add them idempotently.
+	for _, c := range []struct{ name, decl string }{
+		{"last_status", "TEXT NOT NULL DEFAULT ''"},
+		{"last_error", "TEXT NOT NULL DEFAULT ''"},
+		{"pending_after", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		has, err := d.tableHasColumn(ctx, "wiki_autogen_last_run", c.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE wiki_autogen_last_run ADD COLUMN %s %s`, c.name, c.decl)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetWikiAutoGenLastRun returns the agent's last background wiki-generation
@@ -231,6 +253,63 @@ func (d *DBStore) SetWikiAutoGenLastRun(ctx context.Context, agentID string, t t
 		 ON CONFLICT (agent_id) DO UPDATE SET last_run_at = excluded.last_run_at`,
 		d.ph(1), d.ph(2)), agentID, t.Format(time.RFC3339))
 	return err
+}
+
+// WikiAutoGenStatus is the last background sweep outcome for one agent.
+// Zero LastRunAt means the sweep has never run.
+type WikiAutoGenStatus struct {
+	LastRunAt    time.Time
+	LastStatus   string // "" | "ok" | "partial" | "error" | "no_provider" | "no_sources"
+	LastError    string
+	PendingAfter int
+}
+
+// GetWikiAutoGenStatus returns the agent's last sweep outcome.
+func (d *DBStore) GetWikiAutoGenStatus(ctx context.Context, agentID string) (*WikiAutoGenStatus, error) {
+	var lastRun, status, lastErr string
+	var pending int
+	err := d.db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT last_run_at, last_status, last_error, pending_after
+		 FROM wiki_autogen_last_run WHERE agent_id = %s`, d.ph(1)),
+		agentID).Scan(&lastRun, &status, &lastErr, &pending)
+	if err == sql.ErrNoRows {
+		return &WikiAutoGenStatus{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	st := &WikiAutoGenStatus{LastStatus: status, LastError: lastErr, PendingAfter: pending}
+	if lastRun != "" {
+		if t, perr := time.Parse(time.RFC3339, lastRun); perr == nil {
+			st.LastRunAt = t
+		}
+	}
+	return st, nil
+}
+
+// SetWikiAutoGenResult UPSERTs the agent's last sweep outcome + timestamp.
+func (d *DBStore) SetWikiAutoGenResult(ctx context.Context, agentID string, t time.Time, status, errMsg string, pending int) error {
+	_, err := d.db.ExecContext(ctx, fmt.Sprintf(
+		`INSERT INTO wiki_autogen_last_run (agent_id, last_run_at, last_status, last_error, pending_after)
+		 VALUES (%s, %s, %s, %s, %s)
+		 ON CONFLICT (agent_id) DO UPDATE SET
+		   last_run_at = excluded.last_run_at, last_status = excluded.last_status,
+		   last_error = excluded.last_error, pending_after = excluded.pending_after`,
+		d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5)),
+		agentID, t.Format(time.RFC3339), status, errMsg, pending)
+	return err
+}
+
+// CountPendingKBSources returns KB sources for the agent whose wiki_generated_at is NULL.
+func (d *DBStore) CountPendingKBSources(ctx context.Context, agentID string) (int, error) {
+	var n int
+	err := d.db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT COUNT(*) FROM kb_sources WHERE agent_id = %s AND wiki_generated_at IS NULL`, d.ph(1)),
+		agentID).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func (d *DBStore) migrateKBWiki(ctx context.Context) error {

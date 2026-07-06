@@ -35,6 +35,8 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	prov, model := resolveWikiProvider(st, agentID, cfg.Model)
 	if prov == nil {
 		slog.Warn("wiki autogen: no provider/model resolvable, skipping", "agent", agentID)
+		pending, _ := st.CountPendingKBSources(ctx, agentID)
+		_ = st.SetWikiAutoGenResult(ctx, agentID, time.Now(), "no_provider", "", pending)
 		return
 	}
 
@@ -44,6 +46,7 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	sources, err := kbs.ListSources(ctx, agentID, 500, 0)
 	if err != nil {
 		slog.Warn("wiki autogen: list sources failed", "agent", agentID, "error", err)
+		_ = st.SetWikiAutoGenResult(ctx, agentID, time.Now(), "error", err.Error(), 0)
 		return
 	}
 
@@ -55,6 +58,7 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	}
 	if len(toProcess) == 0 {
 		slog.Debug("wiki autogen: no unprocessed sources", "agent", agentID)
+		_ = st.SetWikiAutoGenResult(ctx, agentID, time.Now(), "no_sources", "", 0)
 		return
 	}
 
@@ -68,10 +72,14 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 
 	gen := wiki.NewGenerator(ws, kbs, invoker)
 	created, failed := 0, 0
+	var firstErr string
 	for _, s := range toProcess {
 		r := gen.Generate(ctx, agentID, s.ID)
 		if r.Error != "" {
 			slog.Warn("wiki autogen: generate failed", "agent", agentID, "source", s.ID, "error", r.Error)
+			if firstErr == "" {
+				firstErr = r.Error
+			}
 			failed++
 			continue
 		}
@@ -83,6 +91,14 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 			"agent", agentID, "source", s.ID,
 			"pages_created", r.PagesCreated, "pages_updated", r.PagesUpdated, "edges", r.EdgesAdded)
 	}
+	status := "ok"
+	if created == 0 && failed > 0 {
+		status = "error"
+	} else if failed > 0 {
+		status = "partial"
+	}
+	pending, _ := st.CountPendingKBSources(ctx, agentID)
+	_ = st.SetWikiAutoGenResult(ctx, agentID, time.Now(), status, firstErr, pending)
 	slog.Info("wiki autogen sweep done", "agent", agentID, "processed", created, "failed", failed, "elapsed_sources", len(toProcess))
 }
 
@@ -93,6 +109,9 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 func (g *Gateway) wikiAutoGenTicker(ctx context.Context) {
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
+	// Run once at boot so a freshly-enabled agent doesn't wait up to an
+	// hour for the first tick — mirrors idleSummaryTicker's boot sweep.
+	g.runWikiAutoGenCycle(ctx)
 	for {
 		select {
 		case <-ctx.Done():

@@ -1465,6 +1465,19 @@ export async function getWikiProgress(agentId: string): Promise<{ total?: number
   return res.json().catch(() => ({ status: "idle" }));
 }
 
+export interface WikiAutogenStatus {
+  enabled: boolean;
+  last_run?: string;      // RFC3339, omitted when never run
+  last_status?: string;   // "" | "ok" | "partial" | "error" | "no_provider" | "no_sources"
+  last_error?: string;
+  pending?: number;       // KB sources whose wiki_generated_at is NULL
+}
+export async function getWikiAutogenStatus(agentId: string): Promise<WikiAutogenStatus> {
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/autogen-status`);
+  if (!res.ok) return { enabled: false };
+  return res.json().catch(() => ({ enabled: false }));
+}
+
 // --- Agent memory (wiki auto-gen config). Backend GET/PUT /api/agents/{id}/memory
 // lands in slice 4c (MemoryCfg.WikiAutoGen); until then these return {}
 // on the 404 and the wiki page's auto-gen toggle stays at its default. ---

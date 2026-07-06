@@ -723,6 +723,14 @@ const en: Record<string, string> = {
   "wiki.autoGenInterval": "Scan every",
   "wiki.autoGenHours": "hours",
   "wiki.autoGenHint": "Background sweep each hour auto-generates Wiki pages for new KB sources.",
+  "wiki.autoGenLastRun": "Last run",
+  "wiki.autoGenNever": "never",
+  "wiki.autoGenPending": "{n} sources pending",
+  "wiki.autoGenStatus.ok": "Last run OK",
+  "wiki.autoGenStatus.error": "Last run failed",
+  "wiki.autoGenStatus.partial": "Last run partially failed",
+  "wiki.autoGenStatus.no_provider": "No LLM provider/model configured for this agent",
+  "wiki.autoGenStatus.no_sources": "No new sources to process",
 
   // Admin
   "admin.loadChatsFailed": "Failed to load chats",

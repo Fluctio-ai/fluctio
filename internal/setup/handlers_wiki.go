@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fastclaw-ai/fastclaw/internal/config"
 	"github.com/fastclaw-ai/fastclaw/internal/kb"
 	"github.com/fastclaw-ai/fastclaw/internal/provider"
 	"github.com/fastclaw-ai/fastclaw/internal/scope"
@@ -173,6 +174,43 @@ func (s *Server) handleWikiProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "idle"})
+}
+
+// handleWikiAutogenStatus returns the auto-generation config + last sweep
+// outcome for the Wiki panel's status line: enabled flag from the memory
+// setting, last_run/status/error from wiki_autogen_last_run, and a live count
+// of KB sources whose wiki_generated_at is NULL.
+func (s *Server) handleWikiAutogenStatus(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	ctx := r.Context()
+
+	enabled := false
+	if s.dataStore != nil {
+		var mem config.MemoryCfg
+		_ = scope.SettingInto(ctx, s.dataStore, "memory", "", agentID, &mem)
+		enabled = mem.WikiAutoGen.Enabled
+	}
+
+	resp := map[string]any{
+		"enabled": enabled,
+	}
+	if dbs, ok := s.dataStore.(*store.DBStore); ok {
+		if st, err := dbs.GetWikiAutoGenStatus(ctx, agentID); err == nil && st != nil {
+			if !st.LastRunAt.IsZero() {
+				resp["last_run"] = st.LastRunAt.Format(time.RFC3339)
+			}
+			if st.LastStatus != "" {
+				resp["last_status"] = st.LastStatus
+			}
+			if st.LastError != "" {
+				resp["last_error"] = st.LastError
+			}
+		}
+		if pending, err := dbs.CountPendingKBSources(ctx, agentID); err == nil {
+			resp["pending"] = pending
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force bool) {
