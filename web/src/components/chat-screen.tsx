@@ -694,6 +694,13 @@ export function ChatScreen() {
     return { start: caret - match[2].length - 1, query: match[2] };
   };
 
+  // Translated built-in commands. BUILTIN_COMMANDS is module-scoped (used
+  // by the name-only checks above) so we translate descriptions here.
+  const builtinCommands = useMemo<SlashCommand[]>(
+    () => BUILTIN_COMMANDS.map((c) => ({ ...c, description: t(`chatScreen.cmd.${c.name}`) })),
+    [t],
+  );
+
   // Merged command + skill list for the slash menu. Commands first so
   // built-ins are easy to find; query matches both name and description.
   // Cap at 8 to keep the popover from outgrowing the composer.
@@ -702,7 +709,7 @@ export function ChatScreen() {
         const q = slashQuery.toLowerCase();
         const match = (name: string, desc: string) =>
           !q || name.toLowerCase().includes(q) || desc.toLowerCase().includes(q);
-        const cmds: SlashItem[] = BUILTIN_COMMANDS
+        const cmds: SlashItem[] = builtinCommands
           .filter((c) => match(c.name, c.description))
           .map((c) => ({ kind: "command", ...c }));
         const sks: SlashItem[] = skills
@@ -2450,6 +2457,7 @@ export function ChatScreen() {
                 activeIndex={slashIndex}
                 onHover={setSlashIndex}
                 onSelect={selectItem}
+                agentId={selectedAgent}
               />
             )}
             <div
@@ -4000,12 +4008,16 @@ function SlashMenu({
   activeIndex,
   onHover,
   onSelect,
+  agentId,
 }: {
   items: SlashItem[];
   activeIndex: number;
   onHover: (i: number) => void;
   onSelect: (s: SlashItem) => void;
+  agentId?: string;
 }) {
+  const t = useT();
+  const manageHref = agentId ? `/agents/${agentId}/skills/` : "/skills/";
   return (
     <div className="absolute bottom-full left-0 right-0 mb-2 rounded-xl border border-border bg-popover shadow-lg overflow-hidden z-20">
       <div className="max-h-[320px] overflow-y-auto py-1">
@@ -4047,11 +4059,11 @@ function SlashMenu({
         })}
       </div>
       <Link
-        href="/skills/"
+        href={manageHref}
         className="flex items-center gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors"
       >
         <SlidersHorizontal className="h-3.5 w-3.5" />
-        Manage Skills
+        {t("chatScreen.manageSkills")}
       </Link>
     </div>
   );
