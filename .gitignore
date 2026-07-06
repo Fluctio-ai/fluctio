@@ -74,3 +74,9 @@ fastclaw-patched
 
 # Playwright MCP tooling artifacts (local only)
 .playwright-mcp/
+
+# Local gateway run logs (stdout/stderr captures)
+run.log
+run.log.*
+run.err
+run.err.*
