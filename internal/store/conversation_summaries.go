@@ -146,10 +146,11 @@ func nilIfEmpty(s string) any {
 	return s
 }
 
-// SearchConversationSummariesFTS returns ranked hits scoped to
-// (chatter_user_id, agent_id). The chatter scoping is load-bearing
-// for multi-tenant isolation: summaries from one chatter must never
-// surface for another.
+// SearchConversationSummariesFTS returns ranked hits scoped to agent_id.
+// FastClaw is single-user: an agent's memory is shared across all of its
+// chatters (owner web / IM / cron), so chatter_user_id is NOT a search
+// dimension here — it's still written on each row as a provenance marker,
+// just not filtered on.
 //
 // Pipeline: SQL LIKE pre-filter → bigram token overlap scoring
 // (keywords×3, summary×2) × recency decay → top-K.
@@ -160,7 +161,7 @@ func nilIfEmpty(s string) any {
 // dialects; vector recall (MVP-2) will replace this entirely.
 func (d *DBStore) SearchConversationSummariesFTS(
 	ctx context.Context,
-	chatterUserID, agentID, query string,
+	agentID, query string,
 	limit int,
 ) ([]ConversationSummary, error) {
 	if limit <= 0 {
@@ -183,8 +184,8 @@ func (d *DBStore) SearchConversationSummariesFTS(
 
 	clauses := make([]string, 0, len(terms))
 	args := make([]any, 0, len(terms)+4)
-	args = append(args, chatterUserID, agentID)
-	placeholder := 3 // 1-based for pg
+	args = append(args, agentID)
+	placeholder := 2 // 1-based for pg
 	if d.dialect == "postgres" {
 		for _, t := range terms {
 			clauses = append(clauses,
@@ -197,7 +198,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 			SELECT id, user_id, agent_id, session_key, chatter_user_id,
 			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
 			FROM conversation_summaries
-			WHERE chatter_user_id = $1 AND agent_id = $2
+			WHERE agent_id = $1
 			  AND (`+strings.Join(clauses, " OR ")+`)
 			ORDER BY created_at DESC
 			LIMIT $`+fmt.Sprint(placeholder), args...)
@@ -224,7 +225,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 		SELECT id, user_id, agent_id, session_key, chatter_user_id,
 		       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
 		FROM conversation_summaries
-		WHERE chatter_user_id = ? AND agent_id = ?
+		WHERE agent_id = ?
 		  AND (`+strings.Join(clauses, " OR ")+`)
 		ORDER BY created_at DESC
 		LIMIT ?`, args...)

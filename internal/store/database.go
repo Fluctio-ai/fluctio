@@ -4481,7 +4481,7 @@ func (d *DBStore) ReorderRegexHooks(ctx context.Context, agentID string, hookIDs
 // the supplied [start,end] ranges (inclusive), ordered by seq. Used by
 // the fetch_messages tool to retrieve the verbatim messages of a topic,
 // which may span several disjoint ranges in an interleaved conversation.
-func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey, chatterUserID string, ranges [][2]int) ([]SessionMessage, error) {
+func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey string, ranges [][2]int) ([]SessionMessage, error) {
 	if len(ranges) == 0 {
 		return nil, nil
 	}
@@ -4497,15 +4497,13 @@ func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID,
 		args = append(args, rg[0], rg[1])
 		ph += 2
 	}
-	args = append(args, chatterUserID)
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
 			FROM session_messages
 			WHERE user_id = %s AND agent_id = %s AND session_key = %s
 			  AND (%s)
-			  AND (chatter_user_id = %s OR chatter_user_id = '')
 			ORDER BY seq ASC`,
-			d.ph(1), d.ph(2), d.ph(3), strings.Join(orClauses, " OR "), d.ph(ph)),
+			d.ph(1), d.ph(2), d.ph(3), strings.Join(orClauses, " OR ")),
 		args...)
 	if err != nil {
 		return nil, err

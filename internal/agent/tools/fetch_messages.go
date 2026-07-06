@@ -14,11 +14,11 @@ import (
 // MessageFetcher is the subset of *store.DBStore fetch_messages needs.
 type MessageFetcher interface {
 	// ListSessionMessagesBySeq returns messages whose seq falls in any of
-	// the supplied [start,end] ranges for one (owner, agent, session,
-	// chatter), ascending by seq. The chatter filter is tolerant of
-	// legacy rows with empty chatter_user_id — those are already scoped
-	// by session_key (unique per chatter). Empty slice when no rows match.
-	ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey, chatterUserID string, ranges [][2]int) ([]store.SessionMessage, error)
+	// the supplied [start,end] ranges for one (owner, agent, session),
+	// ascending by seq. FastClaw is single-user: an agent's memory is
+	// shared across its chatters, so chatter_user_id is not a filter here.
+	// Empty slice when no rows match.
+	ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey string, ranges [][2]int) ([]store.SessionMessage, error)
 }
 
 // fetchMessagesArgs is the JSON schema for fetch_messages.
@@ -92,15 +92,14 @@ func makeFetchMessages(r *Registry) ToolFunc {
 			return "", fmt.Errorf("segments (or seq_start/seq_end) are required")
 		}
 
-		// Scope by owner (user_id = agent owner) + effective chatter. The
-		// pointer came from a chatter-scoped memory_search hit, and
-		// session_key is already per-chatter, but filtering chatter_user_id
-		// explicitly keeps fetch_messages consistent with memory_search's
-		// isolation (defense in depth against a leaked pointer).
+		// Scope by owner (user_id = agent owner) + agent + session.
+		// FastClaw is single-user: an agent's memory is shared across all
+		// its chatters, so fetch_messages and memory_search both scope by
+		// agent only — a summary surfaced for one chatter must be fetchable
+		// regardless of which chatter originally produced it.
 		ownerID := r.userID
-		chatterID := r.ChatterUserID()
 		agentID := r.agentID
-		if ownerID == "" || chatterID == "" || agentID == "" {
+		if ownerID == "" || agentID == "" {
 			return "", fmt.Errorf("fetch_messages requires a chat context")
 		}
 
@@ -108,7 +107,7 @@ func makeFetchMessages(r *Registry) ToolFunc {
 			return "", fmt.Errorf("fetch_messages not available: store not wired")
 		}
 
-		msgs, err := r.msgFetcher.ListSessionMessagesBySeq(ctx, ownerID, agentID, args.SessionKey, chatterID, ranges)
+		msgs, err := r.msgFetcher.ListSessionMessagesBySeq(ctx, ownerID, agentID, args.SessionKey, ranges)
 		if err != nil {
 			return "", fmt.Errorf("fetch messages: %w", err)
 		}

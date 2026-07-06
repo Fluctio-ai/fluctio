@@ -50,7 +50,7 @@ type searchResult struct {
 type SummarySearcher interface {
 	SearchConversationSummariesFTS(
 		ctx context.Context,
-		chatterUserID, agentID, query string,
+		agentID, query string,
 		limit int,
 	) ([]store.ConversationSummary, error)
 	// IncrementConversationSummaryAccess is the reinforcement signal —
@@ -114,16 +114,12 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 		//   A3. Cross-encoder reranker (if configured)
 		// A1+A2 merge into a pool; A3 re-ranks to top-K.
 		if r != nil && r.summaryDB != nil {
-			chatter := r.chatterUserID
-			if chatter == "" {
-				chatter = r.userID
-			}
-			if chatter != "" && r.agentID != "" {
+			if r.agentID != "" {
 				poolSize := limit * 3
 				if poolSize < 30 {
 					poolSize = 30
 				}
-				hits, err := r.summaryDB.SearchConversationSummariesFTS(ctx, chatter, r.agentID, args.Query, poolSize)
+				hits, err := r.summaryDB.SearchConversationSummariesFTS(ctx, r.agentID, args.Query, poolSize)
 				if err != nil {
 					goto fallback
 				}
@@ -131,8 +127,7 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 				// Vector recall: embed query → KNN → fetch by ID → merge.
 				// SearchConversationSummariesVector is a GLOBAL KNN (vec0
 				// can't filter by metadata), so the fetched rows MUST be
-				// re-scoped to (chatter, agent) here — otherwise one
-				// participant's semantic match leaks another's summary.
+				// re-scoped to agent here — keep only this agent's summaries.
 				if r.vecDB != nil && r.embedder != nil && r.embedder.Available() {
 					vecs, embErr := r.embedder.Embed(ctx, []string{args.Query})
 					if embErr == nil && len(vecs) == 1 {
@@ -142,7 +137,7 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 							if fetchErr == nil {
 								scoped := make([]store.ConversationSummary, 0, len(vecHits))
 								for _, h := range vecHits {
-									if h.ChatterUserID == chatter && h.AgentID == r.agentID {
+									if h.AgentID == r.agentID {
 										scoped = append(scoped, h)
 									}
 								}

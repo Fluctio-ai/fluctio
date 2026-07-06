@@ -183,7 +183,9 @@ type Store interface {
 	// ListSessionMessagesBySeq returns messages whose seq falls in any of
 	// the supplied [start,end] ranges (inclusive), ordered by seq. Used by
 	// the fetch_messages tool to retrieve the verbatim messages of a topic.
-	ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey, chatterUserID string, ranges [][2]int) ([]SessionMessage, error)
+	// Scoped by (owner, agent, session) — single-user: an agent's memory is
+	// shared across its chatters, so chatter_user_id is not a filter here.
+	ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey string, ranges [][2]int) ([]SessionMessage, error)
 	// CountChatterUserMessages returns how many role='user' rows this
 	// chatter has accumulated under the agent — across all sessions,
 	// all channels. Used by the autoPersist gate as a *durable* "every
