@@ -1,11 +1,11 @@
 #!/bin/sh
-# FastClaw Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/fastclaw-ai/fastclaw/main/install.sh | sh
-# Or:    FASTCLAW_INSTALL_DIR=~/bin curl -fsSL ... | sh
+# Fluctio Installer
+# Usage: curl -fsSL https://raw.githubusercontent.com/fluctio-ai/fluctio/main/install.sh | sh
+# Or:    FLUCTIO_INSTALL_DIR=~/bin curl -fsSL ... | sh
 set -e
 
-REPO="fastclaw-ai/fastclaw"
-BINARY="fastclaw"
+REPO="fluctio-ai/fluctio"
+BINARY="fluctio"
 
 # Colors (only if terminal supports it)
 if [ -t 1 ]; then
@@ -47,8 +47,8 @@ detect_platform() {
 
 # ── Decide install dir (no sudo, no password) ───────────────────────────────
 choose_install_dir() {
-  if [ -n "${FASTCLAW_INSTALL_DIR:-}" ]; then
-    INSTALL_DIR="$FASTCLAW_INSTALL_DIR"
+  if [ -n "${FLUCTIO_INSTALL_DIR:-}" ]; then
+    INSTALL_DIR="$FLUCTIO_INSTALL_DIR"
   else
     INSTALL_DIR="$HOME/.local/bin"
   fi
@@ -79,9 +79,9 @@ ensure_path() {
   # Write PATH export
   if [ "$_shell" = "fish" ]; then
     mkdir -p "$(dirname "$RC")"
-    printf '\n# FastClaw\nfish_add_path "%s"\n' "$INSTALL_DIR" >> "$RC"
+    printf '\n# Fluctio\nfish_add_path "%s"\n' "$INSTALL_DIR" >> "$RC"
   else
-    printf '\n# FastClaw\nexport PATH="%s:$PATH"\n' "$INSTALL_DIR" >> "$RC"
+    printf '\n# Fluctio\nexport PATH="%s:$PATH"\n' "$INSTALL_DIR" >> "$RC"
   fi
 
   NEEDS_SOURCE=1
@@ -136,7 +136,7 @@ install_binary() {
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 main() {
-  printf "\n${BOLD}  ⚡ FastClaw Installer${NC}\n"
+  printf "\n${BOLD}  ⚡ Fluctio Installer${NC}\n"
   printf "  ─────────────────────\n\n"
 
   detect_platform
@@ -152,15 +152,15 @@ main() {
   ensure_path
 
   printf "\n"
-  success "FastClaw ${VERSION} installed → ${INSTALL_DIR}/${BINARY}"
+  success "Fluctio ${VERSION} installed → ${INSTALL_DIR}/${BINARY}"
   printf "\n"
 
   if [ "${NEEDS_SOURCE:-0}" = "1" ]; then
     printf "  ${YELLOW}Run this to activate:${NC}\n"
     printf "    source %s\n\n" "$SHELL_RC"
-    printf "  Or open a new terminal, then run: ${BOLD}fastclaw${NC}\n"
+    printf "  Or open a new terminal, then run: ${BOLD}fluctio${NC}\n"
   else
-    printf "  Run: ${BOLD}fastclaw${NC}\n"
+    printf "  Run: ${BOLD}fluctio${NC}\n"
     printf "  Opens the setup wizard in your browser.\n"
   fi
   printf "\n"

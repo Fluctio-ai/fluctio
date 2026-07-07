@@ -1,11 +1,11 @@
 version: 2
 
-project_name: fastclaw
+project_name: fluctio
 
 builds:
-  - id: fastclaw
-    main: ./cmd/fastclaw
-    binary: fastclaw
+  - id: fluctio
+    main: ./cmd/fluctio
+    binary: fluctio
     env:
       - CGO_ENABLED=0
     goos:
@@ -31,8 +31,8 @@ checksum:
 
 release:
   github:
-    owner: fastclaw-ai
-    name: fastclaw
+    owner: fluctio-ai
+    name: fluctio
 
 changelog:
   sort: asc
