@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 // fakeExecutor counts Exec calls so tests can prove the sandbox was actually

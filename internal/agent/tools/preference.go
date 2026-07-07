@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/fastclaw-ai/fastclaw/internal/scope"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 type setPreferenceArgs struct {

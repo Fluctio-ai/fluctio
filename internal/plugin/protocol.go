@@ -54,7 +54,7 @@ const (
 	MethodHookRegister   = "hook.register"
 	MethodHookFire       = "hook.fire"
 	MethodMessageInbound = "message.inbound"
-	// MethodChatSend: plugin → fastclaw notification that delivers a
+	// MethodChatSend: plugin → fluctio notification that delivers a
 	// new outbound message to a specific chat. Used by hook plugins
 	// (post-turn TTS, translation, etc.) to add follow-up content to
 	// the same chat the agent just replied to. Unlike message.inbound
@@ -112,7 +112,7 @@ type ProviderListResult struct {
 
 // ProviderExecuteParams carries the per-call args and the resolved tenant
 // config (API key, endpoint, extra options, model id). The plugin process
-// must not cache credentials — FastClaw re-sends them every call so any
+// must not cache credentials — Fluctio re-sends them every call so any
 // tenant can use the same plugin process safely.
 type ProviderExecuteParams struct {
 	Category string                 `json:"category"`
@@ -176,7 +176,7 @@ type HookFireParams struct {
 	ToolResult string             `json:"toolResult,omitempty"`
 }
 
-// ChatSendParams: plugin → fastclaw push of an outbound message to a
+// ChatSendParams: plugin → fluctio push of an outbound message to a
 // specific chat. The plugin manager constructs a bus.OutboundMessage
 // from these fields and pushes it onto bus.Outbound — same path a
 // channel adapter or the agent loop would use. Distinct from

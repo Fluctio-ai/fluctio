@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
 // OpenAI generates via POST /v1/images/generations. Model (the suffix in

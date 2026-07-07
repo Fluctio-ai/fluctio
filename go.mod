@@ -1,4 +1,4 @@
-module github.com/fastclaw-ai/fastclaw
+module github.com/fluctio-ai/fluctio
 
 go 1.25.0
 

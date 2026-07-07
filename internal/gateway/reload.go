@@ -5,9 +5,9 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/fastclaw-ai/fastclaw/internal/channels"
-	"github.com/fastclaw-ai/fastclaw/internal/sandbox"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/channels"
+	"github.com/fluctio-ai/fluctio/internal/sandbox"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // InvalidateUser drops a user's cached UserSpace so the next access reloads

@@ -15,20 +15,20 @@ func (fakeExecutor) ListDir(context.Context, string) (string, error)            
 func (fakeExecutor) Backend() string                                             { return "test" }
 func (fakeExecutor) Close() error                                                { return nil }
 
-func TestFastClawInternalPathsIncludeRootAndEnvHome(t *testing.T) {
-	t.Setenv("FASTCLAW_HOME", "/srv/fastclaw")
+func TestFluctioInternalPathsIncludeRootAndEnvHome(t *testing.T) {
+	t.Setenv("FLUCTIO_HOME", "/srv/fluctio")
 
 	cases := []string{
-		"~/.fastclaw",
-		"~/.fastclaw/workspaces",
-		"/root/.fastclaw",
-		"/root/.fastclaw/workspaces",
-		"/srv/fastclaw",
-		"/srv/fastclaw/workspaces",
+		"~/.fluctio",
+		"~/.fluctio/workspaces",
+		"/root/.fluctio",
+		"/root/.fluctio/workspaces",
+		"/srv/fluctio",
+		"/srv/fluctio/workspaces",
 	}
 	for _, path := range cases {
-		if !isFastClawInternalPath(path) {
-			t.Fatalf("isFastClawInternalPath(%q) = false, want true", path)
+		if !isFluctioInternalPath(path) {
+			t.Fatalf("isFluctioInternalPath(%q) = false, want true", path)
 		}
 		if got, ok := hostHomePath(path); ok || got != "" {
 			t.Fatalf("hostHomePath(%q) = (%q, %v), want denied", path, got, ok)
@@ -36,11 +36,11 @@ func TestFastClawInternalPathsIncludeRootAndEnvHome(t *testing.T) {
 	}
 }
 
-func TestRouteForDoesNotExposeFastClawInternalsViaHostFS(t *testing.T) {
+func TestRouteForDoesNotExposeFluctioInternalsViaHostFS(t *testing.T) {
 	r := &Registry{executor: fakeExecutor{}}
 
-	if got := r.routeFor("/root/.fastclaw/workspaces", OpList); got != RouteSandbox {
-		t.Fatalf("routeFor FastClaw internal path = %v, want RouteSandbox", got)
+	if got := r.routeFor("/root/.fluctio/workspaces", OpList); got != RouteSandbox {
+		t.Fatalf("routeFor Fluctio internal path = %v, want RouteSandbox", got)
 	}
 	if got := r.routeFor("/Users/maxwell/Documents/report.txt", OpRead); got != RouteHostFS {
 		t.Fatalf("routeFor explicit host document = %v, want RouteHostFS", got)

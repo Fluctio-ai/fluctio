@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/gateway"
-	"github.com/fastclaw-ai/fastclaw/internal/scope"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/gateway"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 type toolsConfigFile struct {

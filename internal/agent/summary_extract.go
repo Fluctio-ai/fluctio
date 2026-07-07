@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/embedding"
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
-	"github.com/fastclaw-ai/fastclaw/internal/session"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/embedding"
+	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/session"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // seqSegment is one [start,end] seq range a topic covers. Mirrors the

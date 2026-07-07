@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/usage"
 )
 
 // slashResult holds the result of a slash command.
@@ -145,7 +145,7 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 		return slashResult{handled: true, reply: a.slashHelp()}
 
 	case "/version":
-		return slashResult{handled: true, reply: fmt.Sprintf("⚡ FastClaw\nAgent: %s\nModel: %s", a.name, a.model)}
+		return slashResult{handled: true, reply: fmt.Sprintf("⚡ Fluctio\nAgent: %s\nModel: %s", a.name, a.model)}
 
 	case "/whoami":
 		return slashResult{
@@ -257,27 +257,27 @@ func slashRequiresAdmin(cmd string, msg bus.InboundMessage) bool {
 // isAdminChatter decides whether the chatter is allowed to run a write-mode
 // slash command on this channel.
 //
-// Web / api: the chatter's UserID is the FastClaw user UUID — owner is
+// Web / api: the chatter's UserID is the Fluctio user UUID — owner is
 // identified by direct equality with the agent's ownerUserID. No
 // per-platform allowlist needed.
 //
 // IM channels (discord, telegram, slack, ...): UserID is the platform's
 // own user ID (Discord snowflake, Telegram numeric ID, ...), which has
-// no inherent link to the agent's FastClaw owner. The owner registers
+// no inherent link to the agent's Fluctio owner. The owner registers
 // platform IDs in agent.json's `admins[channel]` to grant access — and,
 // to keep single-user dev installs from being locked out of their own
 // agent, an empty/absent allowlist for the channel falls through to
 // "anyone can run it" (the legacy behavior). Operators who care about
 // group-chat protection populate the list to lock it down.
 func (a *Agent) isAdminChatter(msg bus.InboundMessage) bool {
-	// Web / api carry FastClaw UUIDs directly; owner check is sufficient.
+	// Web / api carry Fluctio UUIDs directly; owner check is sufficient.
 	if msg.Channel == "web" || msg.Channel == "api" {
 		return msg.UserID != "" && msg.UserID == a.ownerUserID
 	}
 	list, ok := a.admins[msg.Channel]
 	if !ok || len(list) == 0 {
 		// No allowlist configured for this channel. Fall back to
-		// ownership check: if the IM chatter's resolved FastClaw
+		// ownership check: if the IM chatter's resolved Fluctio
 		// user_id matches the agent owner, they're admin. Otherwise
 		// deny — an unconfigured allowlist should NOT grant admin
 		// to every anonymous chatter on a public-facing IM channel.
@@ -387,7 +387,7 @@ func (a *Agent) slashStatus(msg bus.InboundMessage) slashResult {
 
 	soul := a.loadSoulName()
 
-	status := fmt.Sprintf("⚡ FastClaw Status\n"+
+	status := fmt.Sprintf("⚡ Fluctio Status\n"+
 		"─────────────────\n"+
 		"Agent:       %s\n"+
 		"Model:       %s\n"+
@@ -631,7 +631,7 @@ func (a *Agent) loadSoulName() string {
 }
 
 func (a *Agent) slashHelp() string {
-	return `⚡ FastClaw Commands
+	return `⚡ Fluctio Commands
 
 Conversation
   /new, /reset    — Clear session history

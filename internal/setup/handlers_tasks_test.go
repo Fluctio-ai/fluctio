@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/users"
+	"github.com/fluctio-ai/fluctio/internal/users"
 )
 
 var setupRouteTestHTTPClient = &http.Client{Timeout: 2 * time.Second}

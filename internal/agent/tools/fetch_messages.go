@@ -8,14 +8,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // MessageFetcher is the subset of *store.DBStore fetch_messages needs.
 type MessageFetcher interface {
 	// ListSessionMessagesBySeq returns messages whose seq falls in any of
 	// the supplied [start,end] ranges for one (owner, agent, session),
-	// ascending by seq. FastClaw is single-user: an agent's memory is
+	// ascending by seq. Fluctio is single-user: an agent's memory is
 	// shared across its chatters, so chatter_user_id is not a filter here.
 	// Empty slice when no rows match.
 	ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey string, ranges [][2]int) ([]store.SessionMessage, error)
@@ -93,7 +93,7 @@ func makeFetchMessages(r *Registry) ToolFunc {
 		}
 
 		// Scope by owner (user_id = agent owner) + agent + session.
-		// FastClaw is single-user: an agent's memory is shared across all
+		// Fluctio is single-user: an agent's memory is shared across all
 		// its chatters, so fetch_messages and memory_search both scope by
 		// agent only — a summary surfaced for one chatter must be fetchable
 		// regardless of which chatter originally produced it.

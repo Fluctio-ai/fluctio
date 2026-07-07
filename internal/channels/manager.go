@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 // Manager manages all channel instances and routes outbound messages.

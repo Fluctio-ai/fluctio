@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // Session holds the message history for one conversation thread within

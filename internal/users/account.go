@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -24,7 +24,7 @@ import (
 // user can only touch their own resources. app_user is provisioned by an
 // api_key on behalf of a downstream application — these accounts have no
 // password and cannot log in via dashboard or password endpoints; they
-// exist purely to give external end-users a stable fastclaw user_id so
+// exist purely to give external end-users a stable fluctio user_id so
 // sessions / agent_files / scope=user configs partition cleanly per
 // end-user. There is intentionally no fine-grained scheme — anything
 // more complex lives in the apikey ACL layer.
@@ -89,7 +89,7 @@ func (a *Accounts) Count(ctx context.Context) (int, error) {
 // auditable back to the provisioning key. Set ExternalID to the calling
 // app's own user identifier; the partial UNIQUE index on (apikey_id,
 // external_id) — see migrateUsersAppUserCols — means the same pair
-// always resolves to the same fastclaw user_id, so retries are safe.
+// always resolves to the same fluctio user_id, so retries are safe.
 //
 // AvatarURL must be empty or a `data:image/*` URL ≤256KB; the handler
 // caller is responsible for that validation.
@@ -312,7 +312,7 @@ func (a *Accounts) SetPassword(ctx context.Context, id, newPassword string) erro
 	return a.store.UpdateUser(ctx, rec)
 }
 
-// EnsureChatter returns the fastclaw user representing an IM channel
+// EnsureChatter returns the fluctio user representing an IM channel
 // end-user under (ownerUserID, externalID), creating one with
 // role=chatter the first time it's seen. Idempotent.
 //

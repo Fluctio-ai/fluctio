@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fastclaw-ai/fastclaw/internal/buildinfo"
+	"github.com/fluctio-ai/fluctio/internal/buildinfo"
 )
 
 // RouteTarget identifies which backend should handle a file/exec call.
@@ -98,10 +98,10 @@ func (r *Registry) routeFor(path string, op Operation) RouteTarget {
 	// Rule 2: local with sandbox configured → sandbox-first. Host disk is
 	// reachable only via explicit host-scope paths (the operator's
 	// Documents, an absolute /Users/<u>/... that's clearly NOT
-	// sandbox-internal). FastClaw internals must not be exposed through
+	// sandbox-internal). Fluctio internals must not be exposed through
 	// chat-facing file tools; operator maintenance should use host_exec.
 	if sandboxOK {
-		if isFastClawInternalPath(path) {
+		if isFluctioInternalPath(path) {
 			return RouteSandbox
 		}
 		if isExplicitHostScope(path) {
@@ -126,7 +126,7 @@ func (r *Registry) routeFor(path string, op Operation) RouteTarget {
 //
 // Today the heuristic is path-prefix based:
 //   - ~/Documents, ~/Downloads, ~/Desktop, ~/projects, ~/code, ~/work
-//   - /Users/<u>/... and /home/<u>/... that aren't fastclaw-internal
+//   - /Users/<u>/... and /home/<u>/... that aren't fluctio-internal
 //     and aren't sandbox-only
 //
 // Bare ~/ (without a recognised user-content subdir) is NOT host-scope:
@@ -134,7 +134,7 @@ func (r *Registry) routeFor(path string, op Operation) RouteTarget {
 // home dir. If the operator wants a path under their actual home, they
 // can spell it out (~/Documents/foo, /Users/mike/code/foo).
 func isExplicitHostScope(path string) bool {
-	if isFastClawInternalPath(path) || isSandboxOnlyPath(path) {
+	if isFluctioInternalPath(path) || isSandboxOnlyPath(path) {
 		return false
 	}
 	if strings.HasPrefix(path, "~/") {
@@ -165,16 +165,16 @@ var hostHomeContentDirs = []string{
 	"projects", "code", "work", "src",
 }
 
-// isFastClawInternalPath reports whether path falls under FastClaw's
-// runtime-managed dirs (~/.fastclaw/...). These have dedicated routing
+// isFluctioInternalPath reports whether path falls under Fluctio's
+// runtime-managed dirs (~/.fluctio/...). These have dedicated routing
 // (workspaceStore, identity store, …) and tools must not write to them
 // through the chat-facing host path or they'd corrupt internal state.
-func isFastClawInternalPath(path string) bool {
-	if strings.HasPrefix(path, "~/.fastclaw") {
+func isFluctioInternalPath(path string) bool {
+	if strings.HasPrefix(path, "~/.fluctio") {
 		return true
 	}
 	if filepath.IsAbs(path) {
-		for _, root := range fastClawInternalRoots() {
+		for _, root := range fluctioInternalRoots() {
 			if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
 				return true
 			}
@@ -183,14 +183,14 @@ func isFastClawInternalPath(path string) bool {
 	return false
 }
 
-func fastClawInternalRoots() []string {
+func fluctioInternalRoots() []string {
 	roots := []string{}
-	if h := os.Getenv("FASTCLAW_HOME"); h != "" {
+	if h := os.Getenv("FLUCTIO_HOME"); h != "" {
 		roots = append(roots, filepath.Clean(h))
 	}
-	roots = append(roots, filepath.Clean("/root/.fastclaw"))
+	roots = append(roots, filepath.Clean("/root/.fluctio"))
 	if home, err := os.UserHomeDir(); err == nil {
-		roots = append(roots, filepath.Join(home, ".fastclaw"))
+		roots = append(roots, filepath.Join(home, ".fluctio"))
 	}
 	return roots
 }
@@ -200,7 +200,7 @@ func fastClawInternalRoots() []string {
 // a different location, so naive host expansion would always 404.
 //
 //   - ~/.agents/...    : npx skills' install dir (bind-mounted from
-//     ~/.fastclaw/users/<uid>/skills/)
+//     ~/.fluctio/users/<uid>/skills/)
 //   - /root/.agents/.. : same, via the sandbox-resolved absolute path
 func isSandboxOnlyPath(path string) bool {
 	if strings.HasPrefix(path, "~/.agents") || strings.HasPrefix(path, "/root/.agents") {

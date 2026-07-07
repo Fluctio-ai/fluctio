@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/config"
 )
 
 // regexHookResult holds the output of a single matched hook.
@@ -101,7 +101,7 @@ func (a *Agent) matchRegexHooks(ctx context.Context, text string) (string, strin
 
 // executeCLI runs cmdString with text piped via stdin. Returns stdout.
 // If cmdString starts with "hooks/", the prefix is resolved to the
-// agent's hooks directory (~/.fastclaw/agents/<agentID>/hooks/).
+// agent's hooks directory (~/.fluctio/agents/<agentID>/hooks/).
 func executeCLI(ctx context.Context, agentID, cmdString, text string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()

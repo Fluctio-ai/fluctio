@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agentcli"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/agentcli"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 func channelsCmd() *cobra.Command {

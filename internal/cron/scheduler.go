@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 // JobType defines the type of cron schedule.
@@ -33,7 +33,7 @@ type Job struct {
 	AccountID   string  `json:"accountId,omitempty"`   // account/bot within the channel
 	ChatID      string  `json:"chatId"`                // chat to send results to
 	Message     string  `json:"message"`               // message to send to the agent
-	OwnerUserID string  `json:"ownerUserId,omitempty"` // fastclaw user that owns this job
+	OwnerUserID string  `json:"ownerUserId,omitempty"` // fluctio user that owns this job
 }
 
 // CronConfig holds cron job configuration.

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
-	"github.com/fastclaw-ai/fastclaw/internal/session"
+	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/session"
 )
 
 // filterAuthorizedCalls runs the auth gate over a batch of tool calls and

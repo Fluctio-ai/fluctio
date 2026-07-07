@@ -10,7 +10,7 @@ import (
 	"text/template"
 )
 
-// Install installs FastClaw as an OS service.
+// Install installs Fluctio as an OS service.
 func Install() error {
 	switch runtime.GOOS {
 	case "darwin":
@@ -23,7 +23,7 @@ func Install() error {
 	}
 }
 
-// Uninstall removes the FastClaw OS service.
+// Uninstall removes the Fluctio OS service.
 func Uninstall() error {
 	switch runtime.GOOS {
 	case "darwin":
@@ -38,7 +38,7 @@ func Uninstall() error {
 
 // --- macOS launchd ---
 
-const launchdLabel = "ai.fastclaw.gateway"
+const launchdLabel = "ai.fluctio.gateway"
 
 var launchdPlistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -85,7 +85,7 @@ func installLaunchd() error {
 		return err
 	}
 
-	logDir := filepath.Join(home, ".fastclaw", "logs")
+	logDir := filepath.Join(home, ".fluctio", "logs")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
 	}
@@ -128,7 +128,7 @@ func installLaunchd() error {
 	}
 
 	fmt.Printf("Service installed: %s\n", plistPath)
-	fmt.Println("FastClaw gateway will start automatically on login.")
+	fmt.Println("Fluctio gateway will start automatically on login.")
 	return nil
 }
 
@@ -159,10 +159,10 @@ func uninstallLaunchd() error {
 
 // --- Linux systemd ---
 
-const systemdUnit = "fastclaw-gateway.service"
+const systemdUnit = "fluctio-gateway.service"
 
 var systemdUnitTemplate = template.Must(template.New("unit").Parse(`[Unit]
-Description=FastClaw AI Agent Gateway
+Description=Fluctio AI Agent Gateway
 After=network.target
 
 [Service]
@@ -199,7 +199,7 @@ func installSystemd() error {
 		return err
 	}
 
-	logDir := filepath.Join(home, ".fastclaw", "logs")
+	logDir := filepath.Join(home, ".fluctio", "logs")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
 	}
@@ -247,7 +247,7 @@ func installSystemd() error {
 	}
 
 	fmt.Printf("Service installed: %s\n", unitPath)
-	fmt.Println("FastClaw gateway is running and will start on boot.")
+	fmt.Println("Fluctio gateway is running and will start on boot.")
 	return nil
 }
 
@@ -289,10 +289,10 @@ func printWindowsInstructions() {
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  1. Use NSSM (Non-Sucking Service Manager):")
-	fmt.Println("     nssm install FastClaw <path-to-fastclaw.exe> gateway")
+	fmt.Println("     nssm install Fluctio <path-to-fluctio.exe> gateway")
 	fmt.Println()
 	fmt.Println("  2. Use Task Scheduler:")
 	fmt.Println("     - Open Task Scheduler")
-	fmt.Println("     - Create a new task that runs 'fastclaw.exe gateway'")
+	fmt.Println("     - Create a new task that runs 'fluctio.exe gateway'")
 	fmt.Println("     - Set it to run at startup")
 }

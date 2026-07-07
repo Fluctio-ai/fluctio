@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
 // HookContext is a subset of the agent's HookContext that KB needs.

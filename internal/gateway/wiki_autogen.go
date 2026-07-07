@@ -6,12 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/kb"
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
-	"github.com/fastclaw-ai/fastclaw/internal/scope"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
-	"github.com/fastclaw-ai/fastclaw/internal/wiki"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/wiki"
 )
 
 // wikiAutoGenDefaultInterval is the cadence used when WikiAutoGen.Interval

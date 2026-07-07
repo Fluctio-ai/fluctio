@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/kb"
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
 // LLMInvoker is a function that calls the LLM with messages and returns the response.

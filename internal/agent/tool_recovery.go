@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
 // maybeRecoverToolCalls runs recoverToolCallsFromContent on the

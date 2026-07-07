@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 func TestCreateCronJobPersistsMessageAccountID(t *testing.T) {

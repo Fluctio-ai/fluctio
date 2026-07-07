@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent"
-	"github.com/fastclaw-ai/fastclaw/internal/agent/tools"
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/agent"
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // chatKey is the per-conversation serialization key used by the task
@@ -75,7 +75,7 @@ func (g *Gateway) processInbound(ctx context.Context) {
 				msg.UserID = ownerID
 				msg.SharedIdentity = true
 			} else if chatterID := g.resolveChatter(ctx, ownerID, msg); chatterID != "" {
-				// Normalize msg.UserID into a fastclaw `u_xxx` id. IM
+				// Normalize msg.UserID into a fluctio `u_xxx` id. IM
 				// channels emit the raw platform-side identifier; without
 				// translation the agent ends up with an empty chatter
 				// profile every turn.
@@ -158,7 +158,7 @@ func (g *Gateway) resolveChannelOwner(ctx context.Context, msg bus.InboundMessag
 	return channelOwnerInfo{}
 }
 
-// resolveChatter normalizes msg.UserID into a fastclaw `u_xxx` id. IM
+// resolveChatter normalizes msg.UserID into a fluctio `u_xxx` id. IM
 // channels deliver the platform-side identifier (wechat openid, telegram
 // numeric id, …) and the agent loop then keys per-chatter files (USER.md,
 // MEMORY.md, per-user skills) under that raw string — which never matches

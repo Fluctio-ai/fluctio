@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 // DockerExecutor wraps DockerSandbox to implement Executor. The container
@@ -202,7 +202,7 @@ type DockerExecutorPool struct {
 	executors map[string]*DockerExecutor // key = poolKey(agentID, sessionID)
 	image     string
 	policy    *Policy
-	// workspaceRoot is FASTCLAW_HOME — each session gets a private mount
+	// workspaceRoot is FLUCTIO_HOME — each session gets a private mount
 	// rooted at workspaceRoot/workspaces/<agentID>/sessions/<sessionID>/.
 	workspaceRoot string
 }
@@ -236,7 +236,7 @@ func (p *DockerExecutorPool) Backend() string { return "docker" }
 // NewDockerExecutorPool creates a pool of Docker-backed executors.
 func NewDockerExecutorPool(image, workspaceRoot string, policy *Policy) *DockerExecutorPool {
 	if image == "" {
-		image = "thinkany/fastclaw-sandbox:latest"
+		image = "thinkany/fluctio-sandbox:latest"
 	}
 	return &DockerExecutorPool{
 		executors:     make(map[string]*DockerExecutor),
@@ -305,10 +305,10 @@ func (p *DockerExecutorPool) Get(ctx context.Context, agentID, projectID, sessio
 	// (set by HandleMessage / HandleMessageStream); empty just skips
 	// the mount, which is the right fallback for non-chat callers.
 	if uid := UserIDFromContext(ctx); uid != "" {
-		base := os.Getenv("FASTCLAW_HOME")
+		base := os.Getenv("FLUCTIO_HOME")
 		if base == "" {
 			if h, err := os.UserHomeDir(); err == nil {
-				base = filepath.Join(h, ".fastclaw")
+				base = filepath.Join(h, ".fluctio")
 			}
 		}
 		if base != "" {

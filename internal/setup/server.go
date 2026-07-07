@@ -10,21 +10,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent"
-	"github.com/fastclaw-ai/fastclaw/internal/agent/tools"
-	"github.com/fastclaw-ai/fastclaw/internal/api"
-	"github.com/fastclaw-ai/fastclaw/internal/auth"
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
-	"github.com/fastclaw-ai/fastclaw/internal/channels"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/push"
-	"github.com/fastclaw-ai/fastclaw/internal/runtime"
-	"github.com/fastclaw-ai/fastclaw/internal/session"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
-	"github.com/fastclaw-ai/fastclaw/internal/taskqueue"
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
-	"github.com/fastclaw-ai/fastclaw/internal/users"
-	"github.com/fastclaw-ai/fastclaw/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/agent"
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/api"
+	"github.com/fluctio-ai/fluctio/internal/auth"
+	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/channels"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/push"
+	"github.com/fluctio-ai/fluctio/internal/runtime"
+	"github.com/fluctio-ai/fluctio/internal/session"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/taskqueue"
+	"github.com/fluctio-ai/fluctio/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/users"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 // AgentHandle is the surface the web UI uses to talk to a running agent.
@@ -357,13 +357,13 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/wiki/autogen-status", auth(s.handleWikiAutogenStatus))
 
 	// Feishu (飞书) event webhook. UNAUTHENTICATED — Feishu posts here
-	// without a fastclaw bearer token. Per-event security comes from
+	// without a fluctio bearer token. Per-event security comes from
 	// the verification_token validated inside the adapter against the
 	// payload's header.token. The {appId} path segment scopes the
 	// receive to one registered channel.
 	mux.HandleFunc("POST /api/feishu/webhook/{appId}", s.handleFeishuWebhook)
 
-	// LINE Messaging API event webhook. UNAUTHENTICATED at the fastclaw
+	// LINE Messaging API event webhook. UNAUTHENTICATED at the fluctio
 	// layer — per-event security is HMAC-SHA256(channel_secret, body)
 	// validated by the adapter against the `x-line-signature` header.
 	// The {accountId} path segment is the bot's userId, scoping the

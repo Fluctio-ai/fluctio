@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
 // Category is the tool category these providers plug into.

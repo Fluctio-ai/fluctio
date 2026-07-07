@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/privacy"
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/privacy"
+	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
 // MemoryStore is an optional interface for DB-backed memory persistence.

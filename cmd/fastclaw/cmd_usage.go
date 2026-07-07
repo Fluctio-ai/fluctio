@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/fastclaw-ai/fastclaw/internal/store"
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/usage"
 )
 
 func usageCmd() *cobra.Command {

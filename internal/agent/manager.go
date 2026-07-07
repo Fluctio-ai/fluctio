@@ -7,17 +7,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent/tools"
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/embedding"
-	"github.com/fastclaw-ai/fastclaw/internal/kb"
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
-	"github.com/fastclaw-ai/fastclaw/internal/scope"
-	"github.com/fastclaw-ai/fastclaw/internal/session"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
-	"github.com/fastclaw-ai/fastclaw/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/embedding"
+	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/session"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 // providerForAgent picks an LLM provider for a single agent. Resolution:
@@ -180,7 +180,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 	ag := NewAgentWithSkillsCfg(rc, providerForAgent(rc, prov), mb, homeDir, m.opts.globalSkillsCfg)
 	ag.SetOwnerUserID(m.uid)
 	// Per-user skills bucket: chat-time `skills/...` writes route to
-	// ~/.fastclaw/users/<uid>/, where SkillsLoader's "personal" layer
+	// ~/.fluctio/users/<uid>/, where SkillsLoader's "personal" layer
 	// also scans (see SkillsLoader.WithUserID). Set userID on the
 	// registry up front (the systemFileStore branch below also sets
 	// it, but only when memoryStore is wired — without this hoist a

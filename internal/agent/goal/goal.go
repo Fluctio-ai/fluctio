@@ -8,7 +8,7 @@
 // goals.rs). See docs/design/goal.md for the rationale.
 package goal
 
-import "github.com/fastclaw-ai/fastclaw/internal/store"
+import "github.com/fluctio-ai/fluctio/internal/store"
 
 // Goal is the persisted record of an active or finished goal. One goal
 // per (agent, session) — enforced by a UNIQUE index on the underlying

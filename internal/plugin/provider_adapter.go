@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
 // pluginProvider wraps a {plugin, category, name} triple as a

@@ -17,10 +17,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/embedding"
-	"github.com/fastclaw-ai/fastclaw/internal/scope"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/embedding"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // Result counts a single reindex pass.

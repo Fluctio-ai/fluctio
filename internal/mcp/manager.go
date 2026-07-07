@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/config"
 )
 
 // Manager manages connections to multiple MCP servers.

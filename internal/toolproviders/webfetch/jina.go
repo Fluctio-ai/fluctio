@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
 // Jina calls r.jina.ai, which proxies an arbitrary URL and returns

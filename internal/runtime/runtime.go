@@ -36,8 +36,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/sandbox"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/sandbox"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // Runtime status values, mirrored in store.ProjectRuntimeRecord.Status.
@@ -54,7 +54,7 @@ const (
 // container, so Logs() can tail it without attaching to the process. The
 // scaffold (pnpm install) also streams here first (scaffoldToLog), so the
 // preview panel shows live build progress, then the dev server APPENDS.
-const devLogPath = "/workspace/.fastclaw-dev.log"
+const devLogPath = "/workspace/.fluctio-dev.log"
 
 // scaffoldToLog wraps a scaffold command so its combined stdout/stderr
 // streams to the dev log AS IT RUNS — a concurrent Logs() tail surfaces the
@@ -72,7 +72,7 @@ func scaffoldToLog(cmd string) string {
 // every later install across any chat/project skips re-downloading. Named
 // volumes live in the Docker VM — fast on macOS, unlike bind mounts.
 const (
-	pnpmStoreVolume = "fastclaw-pnpm-store"
+	pnpmStoreVolume = "fluctio-pnpm-store"
 	pnpmStorePath   = "/pnpm-store"
 )
 
@@ -125,7 +125,7 @@ type TemplateSpec struct {
 // Manager owns every project runtime. Safe for concurrent use.
 type Manager struct {
 	store         store.Store
-	workspaceRoot string // FASTCLAW_HOME (workspaces/ lives under it)
+	workspaceRoot string // FLUCTIO_HOME (workspaces/ lives under it)
 	image         string
 	policy        *sandbox.Policy
 	// previewBase templates the user-facing preview URL. Two shapes:
@@ -164,7 +164,7 @@ type Manager struct {
 // agent's pooled executor; otherwise the docker container path is used.
 func NewManager(st store.Store, workspaceRoot, image string, policy *sandbox.Policy, previewBase, backend string, pool sandbox.ExecutorPool) *Manager {
 	if image == "" {
-		image = "thinkany/fastclaw-sandbox:latest"
+		image = "thinkany/fluctio-sandbox:latest"
 	}
 	return &Manager{
 		store:         st,
@@ -254,7 +254,7 @@ func nmVolumeName(scopeID string) string {
 		}
 		return '-'
 	}, scopeID)
-	return "fastclaw-nm-" + safe
+	return "fluctio-nm-" + safe
 }
 
 // removeVolume best-effort deletes a Docker named volume (the per-scope

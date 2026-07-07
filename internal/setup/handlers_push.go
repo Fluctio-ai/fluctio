@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/auth"
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
-	"github.com/fastclaw-ai/fastclaw/internal/push"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/auth"
+	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/push"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 type savePushDeviceReq struct {
@@ -110,7 +110,7 @@ func (s *Server) handleWebPushOutbound(msg bus.OutboundMessage) {
 		return
 	}
 
-	title := "FastClaw"
+	title := "Fluctio"
 	if rec, err := s.dataStore.GetAgent(ctx, msg.AgentID); err == nil && rec != nil && strings.TrimSpace(rec.Name) != "" {
 		title = strings.TrimSpace(rec.Name)
 	}

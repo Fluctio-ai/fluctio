@@ -8,9 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/skills"
+	"github.com/fluctio-ai/fluctio/internal/agent"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/skills"
 )
 
 // skillCmd handles skill management subcommands.

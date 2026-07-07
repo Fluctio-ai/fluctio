@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
 // OpenAI posts to /v1/audio/speech. Model (e.g. "openai/tts-1") defaults to

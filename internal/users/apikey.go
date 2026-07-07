@@ -8,7 +8,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // APIKeyTypeAdmin is the sole key tier in single-user mode — every key

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 func TestFeishuWebhookPreservesMentions(t *testing.T) {

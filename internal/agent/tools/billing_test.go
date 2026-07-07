@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/usage"
 )
 
 func TestGetBillingUsageWithQuota(t *testing.T) {

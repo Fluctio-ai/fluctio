@@ -175,7 +175,7 @@ func handleInitialize(req jsonRPCRequest) jsonRPCResponse {
 			"tools": map[string]interface{}{},
 		},
 		"serverInfo": map[string]interface{}{
-			"name":    "fastclaw-kb",
+			"name":    "fluctio-kb",
 			"version": "1.0.0",
 		},
 	})

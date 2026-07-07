@@ -14,7 +14,7 @@ const (
 var PageTypes = []string{PageTypeOverview, PageTypeEntity, PageTypeConcept, PageTypeSource, PageTypeQuery}
 
 type WikiPage struct {
-	ID         string    `json:"id"`          // "<type>:<slug>" e.g. "entity:fastclaw"
+	ID         string    `json:"id"`          // "<type>:<slug>" e.g. "entity:fluctio"
 	AgentID    string    `json:"agent_id"`
 	PageType   string    `json:"page_type"`
 	Slug       string    `json:"slug"`

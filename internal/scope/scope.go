@@ -23,8 +23,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // HTTP-layer scope identifiers. The storage layer keys configs by

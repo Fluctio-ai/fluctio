@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent/tools"
-	"github.com/fastclaw-ai/fastclaw/internal/httpclient"
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 )
 
 func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string) {
@@ -234,7 +234,7 @@ func FetchURLContent(ctx context.Context, rawURL string) (title, body string, er
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("User-Agent", "FastClaw Agent/1.0 (KB Fetcher)")
+	req.Header.Set("User-Agent", "Fluctio Agent/1.0 (KB Fetcher)")
 
 	resp, err := kbFetchClient.Do(req)
 	if err != nil {

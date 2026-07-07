@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
 func TestWithMessageTimestampsUsesExplicitChatterTimezone(t *testing.T) {

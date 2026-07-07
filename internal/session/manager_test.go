@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
 type noopSessionStore struct{}

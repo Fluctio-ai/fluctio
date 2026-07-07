@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
 // Direct is the no-key built-in fetcher: net/http GET, strip HTML, truncate.
@@ -22,7 +22,7 @@ func (Direct) CredentialFree() bool { return true }
 
 const (
 	directTimeout   = 30 * time.Second
-	directUserAgent = "FastClaw/1.0 (AI Agent Web Fetcher)"
+	directUserAgent = "Fluctio/1.0 (AI Agent Web Fetcher)"
 )
 
 func (d *Direct) Execute(ctx context.Context, req toolproviders.Request) (toolproviders.Response, error) {

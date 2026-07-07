@@ -147,7 +147,7 @@ func nilIfEmpty(s string) any {
 }
 
 // SearchConversationSummariesFTS returns ranked hits scoped to agent_id.
-// FastClaw is single-user: an agent's memory is shared across all of its
+// Fluctio is single-user: an agent's memory is shared across all of its
 // chatters (owner web / IM / cron), so chatter_user_id is NOT a search
 // dimension here — it's still written on each row as a provenance marker,
 // just not filtered on.

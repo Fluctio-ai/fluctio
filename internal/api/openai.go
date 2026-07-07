@@ -8,30 +8,30 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent"
-	"github.com/fastclaw-ai/fastclaw/internal/auth"
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/agent"
+	"github.com/fluctio-ai/fluctio/internal/auth"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 // chatCompletionRequest mirrors the OpenAI chat completion request.
 //
 // User is OpenAI's standard "end-user identifier" field. When the
 // request authenticates with an api_key, a non-empty value triggers
-// rebinding the request identity to a fastclaw app_user keyed on
+// rebinding the request identity to a fluctio app_user keyed on
 // (apikey_id, user) so sessions and agent_files partition per
 // end-user. Clients that prefer a header-only contract can use
-// X-Fastclaw-End-User instead — both arrive at the same code path.
+// X-Fluctio-End-User instead — both arrive at the same code path.
 type chatCompletionRequest struct {
 	Model    string        `json:"model"`
 	Messages []chatMessage `json:"messages"`
 	Stream   *bool         `json:"stream,omitempty"`
 	User     string        `json:"user,omitempty"`
-	// AgentID is a fastclaw extension: lets the caller pick the agent
+	// AgentID is a fluctio extension: lets the caller pick the agent
 	// in the request body instead of (or in addition to) the
-	// `x-fastclaw-agent-id` header. Body wins when both are set —
+	// `x-fluctio-agent-id` header. Body wins when both are set —
 	// matches the pattern used for `user`. Optional.
 	AgentID string `json:"agent_id,omitempty"`
-	// Params is a fastclaw extension: a freeform structured-parameter
+	// Params is a fluctio extension: a freeform structured-parameter
 	// blob the calling app submits alongside the chat. Rendered into
 	// a per-turn system message so the agent's LLM can honor it when
 	// calling tools (e.g. a third-party app's "model selector" +
@@ -40,7 +40,7 @@ type chatCompletionRequest struct {
 	// per-request — params don't persist across turns. OpenAI clients
 	// that don't know about this field are unaffected (omitempty).
 	Params map[string]any `json:"params,omitempty"`
-	// Images is a fastclaw extension: image attachments for the
+	// Images is a fluctio extension: image attachments for the
 	// current turn. Each entry is one of:
 	//   - HTTPS URL: "https://example.com/photo.jpg" (must be
 	//     reachable from the LLM provider; not validated here)
@@ -49,7 +49,7 @@ type chatCompletionRequest struct {
 	// Accepted MIME types depend on the LLM model. Anthropic / OpenAI
 	// vision models all support png, jpeg, webp; gif is hit-or-miss.
 	// Per-image and total-request size limits are also model-side
-	// (Anthropic ~5MB/image, OpenAI ~20MB) — fastclaw does not enforce
+	// (Anthropic ~5MB/image, OpenAI ~20MB) — fluctio does not enforce
 	// its own ceiling, the upstream provider returns the rejection.
 	Images []string `json:"images,omitempty"`
 	// ImageURLs is an accepted alias for Images. The web-facing chat
@@ -189,7 +189,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	// Body field beats header — same precedence as `user`. Lets app
 	// callers send everything in one JSON without juggling headers.
-	agentID := r.Header.Get("x-fastclaw-agent-id")
+	agentID := r.Header.Get("x-fluctio-agent-id")
 	if req.AgentID != "" {
 		agentID = req.AgentID
 	}
@@ -203,7 +203,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Apikey ACL gate. UserSpaceFor loads every agent the owner has,
 	// regardless of which subset this particular apikey is scoped to.
 	// Without this check a type=agent apikey scoped to one agent
-	// could pass `x-fastclaw-agent-id: <sibling>` (or omit it and
+	// could pass `x-fluctio-agent-id: <sibling>` (or omit it and
 	// fall back to default / all[0]) and talk to any of the owner's
 	// agents. The /v1/agents listing already filters by
 	// CanAccessAgent — mirror that here so apikey scope is enforced
@@ -218,7 +218,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build session key from header
-	sessionKey := r.Header.Get("x-fastclaw-session-key")
+	sessionKey := r.Header.Get("x-fluctio-session-key")
 	if sessionKey == "" {
 		sessionKey = "api-" + fmt.Sprintf("%d", time.Now().UnixNano())
 	}
@@ -263,10 +263,10 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build inbound message.
-	// X-Fastclaw-Channel lets callers override the reply channel so
+	// X-Fluctio-Channel lets callers override the reply channel so
 	// cron jobs created during this turn route through the right
 	// adapter (e.g. "pinclaw" → plugin channel.send → Cloud API).
-	channel := r.Header.Get("x-fastclaw-channel")
+	channel := r.Header.Get("x-fluctio-channel")
 	if channel == "" {
 		channel = "api"
 	}
@@ -387,7 +387,7 @@ func (s *Server) fullResponse(w http.ResponseWriter, reply, chatID, model string
 }
 
 // resolveAgent picks an agent out of the caller's user space, preferring an
-// explicit agent ID from the x-fastclaw-agent-id header and falling back to
+// explicit agent ID from the x-fluctio-agent-id header and falling back to
 // the default / first agent.
 func resolveAgent(space *UserSpaceView, agentID string) *agent.Agent {
 	mgr := space.Agents

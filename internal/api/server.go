@@ -6,10 +6,10 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent"
-	"github.com/fastclaw-ai/fastclaw/internal/auth"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/agent"
+	"github.com/fluctio-ai/fluctio/internal/auth"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/usage"
 )
 
 // UserResolver looks up a user space by user ID.
@@ -105,7 +105,7 @@ func (s *Server) RegisterAdminRoutes(mux *http.ServeMux) {}
 func (s *Server) handleCORS(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-fastclaw-agent-id, x-fastclaw-session-key")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, x-fluctio-agent-id, x-fluctio-session-key")
 	w.Header().Set("Access-Control-Max-Age", "86400")
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/usage"
 )
 
 // RegisterBillingTools exposes a read-only billing/usage lookup to the

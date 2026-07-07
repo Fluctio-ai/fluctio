@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // OwnerSpec is the owner identity enforced at boot. Copied from
@@ -58,7 +58,7 @@ func EnsureSingleOwner(ctx context.Context, st store.Store, owner OwnerSpec) err
 	} else if errors.Is(err, store.ErrNotFound) {
 		email := owner.Email
 		if email == "" {
-			email = owner.Username + "@local.fastclaw"
+			email = owner.Username + "@local.fluctio"
 		}
 		acct, err := accts.Create(ctx, CreateInput{
 			Username:    owner.Username,

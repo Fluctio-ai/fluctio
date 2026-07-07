@@ -44,7 +44,7 @@ type InboundMessage struct {
 	// projects/<id>/ instead of sessions/<chat>/.
 	ProjectID   string
 	UserID      string // user identifier
-	OwnerUserID string // fastclaw user that owns the agent (for multi-user routing)
+	OwnerUserID string // fluctio user that owns the agent (for multi-user routing)
 	// AgentID is an *explicit* agent target. Non-empty when the source
 	// of the message already knows which agent should handle it (cron
 	// jobs, web chat, sub-agent spawns) — bypasses binding lookup +
@@ -145,7 +145,7 @@ type OutboundMessage struct {
 // MessageBus is an async message queue. By default it is backed by Go
 // channels. When constructed with Redis, producers still write to Inbound /
 // Outbound, but non-local traffic is bridged through Redis Streams so multiple
-// FastClaw replicas share one delivery center.
+// Fluctio replicas share one delivery center.
 type MessageBus struct {
 	Inbound  chan InboundMessage
 	Outbound chan OutboundMessage
@@ -184,11 +184,11 @@ func NewRedis(cfg RedisConfig) *MessageBus {
 	outboundConsume := make(chan OutboundMessage, 100)
 	prefix := strings.Trim(cfg.Prefix, ":")
 	if prefix == "" {
-		prefix = "fastclaw"
+		prefix = "fluctio"
 	}
 	group := cfg.Group
 	if group == "" {
-		group = "fastclaw"
+		group = "fluctio"
 	}
 	consumer := cfg.Consumer
 	if consumer == "" {

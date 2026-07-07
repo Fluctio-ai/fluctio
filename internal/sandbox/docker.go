@@ -50,7 +50,7 @@ type DockerSandbox struct {
 	// for ordinary sandboxes.
 	templateMount string
 	// extraVolumes are raw `-v` specs appended verbatim to docker create
-	// (e.g. "fastclaw-pnpm-store:/pnpm-store" to share a pnpm content store
+	// (e.g. "fluctio-pnpm-store:/pnpm-store" to share a pnpm content store
 	// across runtimes so installs skip re-downloading). Named volumes live
 	// in the Docker VM (fast on macOS, unlike bind mounts) and persist
 	// across container recreation.
@@ -78,7 +78,7 @@ type DockerSandbox struct {
 // explicit policy with NetMode: "none".
 func NewDockerSandbox(image, workspace string, policy *Policy) *DockerSandbox {
 	if image == "" {
-		image = "thinkany/fastclaw-sandbox:latest"
+		image = "thinkany/fluctio-sandbox:latest"
 	}
 	if policy == nil {
 		policy = &Policy{}
@@ -133,7 +133,7 @@ func (s *DockerSandbox) SetTemplateMount(hostDir string) {
 }
 
 // SetExtraVolumes appends raw `docker -v` specs (e.g.
-// "fastclaw-pnpm-store:/pnpm-store"). Must be called before Create().
+// "fluctio-pnpm-store:/pnpm-store"). Must be called before Create().
 func (s *DockerSandbox) SetExtraVolumes(specs []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -206,12 +206,12 @@ func (s *DockerSandbox) Create() error {
 	args := []string{
 		"create",
 		"--interactive",
-		"--label", "fastclaw=sandbox",
+		"--label", "fluctio=sandbox",
 	}
 
 	// Inherit the host's HTTP(S)_PROXY config so curl / pip / npm / git
 	// inside the sandbox can reach blocked origins through whatever
-	// proxy fastclaw itself uses. Without this, in restricted networks
+	// proxy fluctio itself uses. Without this, in restricted networks
 	// (GFW etc.) DNS for the target domain resolves to a sinkhole and
 	// the container sees TLS resets surfaced as NS_ERROR_NET_INTERRUPT
 	// in Camoufox / Playwright. Localhost-bound proxy URLs are rewritten
@@ -263,15 +263,15 @@ func (s *DockerSandbox) Create() error {
 	// Mount each skill dir read-only at /skills/<basename>/. The LLM
 	// is told to invoke skills via `python /skills/<name>/main.py`,
 	// so without these mounts the script files don't exist in the
-	// container. Auto-default to FASTCLAW_HOME/skills/ when no dirs
+	// container. Auto-default to FLUCTIO_HOME/skills/ when no dirs
 	// are explicitly set, so a freshly-installed product agent works
 	// without operators having to wire SetSkillDirs themselves.
 	dirs := s.skillDirs
 	if len(dirs) == 0 {
-		if h := os.Getenv("FASTCLAW_HOME"); h != "" {
+		if h := os.Getenv("FLUCTIO_HOME"); h != "" {
 			dirs = []string{filepath.Join(h, "skills")}
 		} else if home, err := os.UserHomeDir(); err == nil {
-			dirs = []string{filepath.Join(home, ".fastclaw", "skills")}
+			dirs = []string{filepath.Join(home, ".fluctio", "skills")}
 		}
 	}
 	mounted := make(map[string]bool)

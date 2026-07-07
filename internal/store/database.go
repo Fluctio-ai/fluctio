@@ -196,7 +196,7 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 // safe on every boot. agent_id scopes every row to its owning agent.
 // migrateWikiAutoGenLastRun creates the wiki_autogen_last_run table that
 // records each agent's last background wiki-generation sweep timestamp.
-// (Source Lununda reuses skill_evolution_state.wiki_last_run_at; FastClaw
+// (Source Lununda reuses skill_evolution_state.wiki_last_run_at; Fluctio
 // has no skill_evolution_state table, so this is a dedicated table instead.)
 func (d *DBStore) migrateWikiAutoGenLastRun(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS wiki_autogen_last_run (
@@ -1575,7 +1575,7 @@ func (d *DBStore) migrationSQL() []string {
 		// identify "which calling app, which of its end-users", and
 		// the partial UNIQUE makes provisioning idempotent on that
 		// pair so the same external user always resolves to the same
-		// fastclaw user_id.
+		// fluctio user_id.
 		`CREATE TABLE IF NOT EXISTS users (
 			id TEXT PRIMARY KEY,
 			username TEXT NOT NULL UNIQUE,

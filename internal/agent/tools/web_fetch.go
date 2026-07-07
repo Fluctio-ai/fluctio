@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
-	webfetchprovider "github.com/fastclaw-ai/fastclaw/internal/toolproviders/webfetch"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
+	webfetchprovider "github.com/fluctio-ai/fluctio/internal/toolproviders/webfetch"
 )
 
 type webFetchArgs struct {
@@ -23,7 +23,7 @@ type webFetchArgs struct {
 const (
 	defaultMaxLen  = 10000
 	fetchTimeout   = 30 * time.Second
-	fetchUserAgent = "FastClaw/1.0 (AI Agent Web Fetcher)"
+	fetchUserAgent = "Fluctio/1.0 (AI Agent Web Fetcher)"
 )
 
 // safeFetchClient is an http.Client whose dialer rejects private,

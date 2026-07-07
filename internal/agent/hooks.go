@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
 // HookPoint identifies where in the agent loop a hook fires.

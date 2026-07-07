@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/config"
 )
 
 // fakeMemoryStore is a deterministic in-memory MemoryStore for the

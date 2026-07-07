@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/buildinfo"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/buildinfo"
+	"github.com/fluctio-ai/fluctio/internal/config"
 )
 
 // ──────────────────────────────────────────────────────────────────
@@ -224,16 +224,16 @@ func modAgentIntro(p *promptCtx) string {
 		homeDesc = p.cb.home
 	}
 
-	var fastclawLine string
+	var fluctioLine string
 	if buildinfo.IsHostedDeploy() {
-		fastclawLine = "FastClaw: hosted deployment. The chatter does NOT operate this runtime — if they ask about the version, upgrades, or installing/changing skills at the platform level, tell them those are administrator-controlled and offer to help with what's actually in your reach (config, skills you can author, files in the workspace)."
+		fluctioLine = "Fluctio: hosted deployment. The chatter does NOT operate this runtime — if they ask about the version, upgrades, or installing/changing skills at the platform level, tell them those are administrator-controlled and offer to help with what's actually in your reach (config, skills you can author, files in the workspace)."
 	} else {
-		fastclawLine = fmt.Sprintf("FastClaw: %s (commit %s, built %s). Self-hosted install — the chatter is the operator. If they ask about upgrading, tell them: run %sfastclaw upgrade%s in a terminal (and %sfastclaw version%s to verify). Don't try to run those yourself unless the chatter explicitly asks you to and you have host shell access (no sandbox).",
+		fluctioLine = fmt.Sprintf("Fluctio: %s (commit %s, built %s). Self-hosted install — the chatter is the operator. If they ask about upgrading, tell them: run %sfluctio upgrade%s in a terminal (and %sfluctio version%s to verify). Don't try to run those yourself unless the chatter explicitly asks you to and you have host shell access (no sandbox).",
 			buildinfo.Version, buildinfo.Commit, buildinfo.Date,
 			"`", "`", "`", "`")
 	}
 
-	return fmt.Sprintf(`You run on the FastClaw runtime. Your identity (name, role, personality)
+	return fmt.Sprintf(`You run on the Fluctio runtime. Your identity (name, role, personality)
 is fully defined by IDENTITY.md and SOUL.md below — adopt that persona completely.
 If those files are empty, follow BOOTSTRAP.md before answering the user.
 
@@ -279,7 +279,7 @@ existing file — it's cheaper, can't accidentally drop unrelated content,
 and validates the replacement landed. Reserve write_file for creating
 new files or full rewrites. This matters most for MEMORY.md / SOUL.md /
 USER.md, which grow over time and would lose context if rewritten in full.`,
-		p.dateLine, fastclawLine,
+		p.dateLine, fluctioLine,
 		runtime.GOOS, runtime.GOARCH, workdir, homeDesc)
 }
 

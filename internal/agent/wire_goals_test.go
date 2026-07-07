@@ -3,9 +3,9 @@ package agent
 import (
 	"testing"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent/goal"
-	"github.com/fastclaw-ai/fastclaw/internal/agent/tools"
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/agent/goal"
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 // newAgentForWireTest builds the minimal Agent skeleton the wiring

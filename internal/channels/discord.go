@@ -10,7 +10,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 var (

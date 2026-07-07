@@ -84,7 +84,7 @@ type loadSkillFrontmatter struct {
 }
 
 type loadSkillMetadata struct {
-	FastClaw *loadSkillOpenClawMeta `json:"fastclaw"`
+	Fluctio *loadSkillOpenClawMeta `json:"fluctio"`
 	OpenClaw *loadSkillOpenClawMeta `json:"openclaw"`
 }
 
@@ -113,7 +113,7 @@ func unavailableReason(data []byte) string {
 	if err := json.Unmarshal(blob, &meta); err != nil {
 		return ""
 	}
-	oc := meta.FastClaw
+	oc := meta.Fluctio
 	if oc == nil {
 		oc = meta.OpenClaw
 	}

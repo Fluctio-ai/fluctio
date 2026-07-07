@@ -20,7 +20,7 @@ type Leaser struct {
 func NewLeaser(client *redis.Client, prefix string) *Leaser {
 	prefix = strings.Trim(prefix, ":")
 	if prefix == "" {
-		prefix = "fastclaw"
+		prefix = "fluctio"
 	}
 	return &Leaser{client: client, prefix: prefix}
 }

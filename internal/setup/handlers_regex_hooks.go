@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 func (s *Server) handleListRegexHooks(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +138,7 @@ func (s *Server) handleReorderRegexHooks(w http.ResponseWriter, r *http.Request)
 // --- Hook Scripts (upload/list/delete for CLI scripts) ---
 
 // hooksDir returns the agent's hooks script directory:
-// ~/.fastclaw/agents/<agentID>/hooks/
+// ~/.fluctio/agents/<agentID>/hooks/
 func hooksDir(agentID string) (string, error) {
 	home, err := config.HomeDir()
 	if err != nil {

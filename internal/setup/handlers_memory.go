@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/embedding"
-	"github.com/fastclaw-ai/fastclaw/internal/memoryindex"
-	"github.com/fastclaw-ai/fastclaw/internal/scope"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/embedding"
+	"github.com/fluctio-ai/fluctio/internal/memoryindex"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // --- /api/agents/{id}/memory (GET/PUT) ---

@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 func TestSlashRequiresAdmin(t *testing.T) {

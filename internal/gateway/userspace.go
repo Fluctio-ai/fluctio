@@ -11,19 +11,19 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent"
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/plugin"
-	"github.com/fastclaw-ai/fastclaw/internal/provider"
-	coderuntime "github.com/fastclaw-ai/fastclaw/internal/runtime"
-	"github.com/fastclaw-ai/fastclaw/internal/sandbox"
-	"github.com/fastclaw-ai/fastclaw/internal/scope"
-	"github.com/fastclaw-ai/fastclaw/internal/session"
-	"github.com/fastclaw-ai/fastclaw/internal/skills"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
-	"github.com/fastclaw-ai/fastclaw/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/agent"
+	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/plugin"
+	"github.com/fluctio-ai/fluctio/internal/provider"
+	coderuntime "github.com/fluctio-ai/fluctio/internal/runtime"
+	"github.com/fluctio-ai/fluctio/internal/sandbox"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/session"
+	"github.com/fluctio-ai/fluctio/internal/skills"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 // loadAgentSkillEntries collects every agent-scope skills.entries row
@@ -69,7 +69,7 @@ func ensureAgentHome(rc config.ResolvedAgent) {
 	}
 }
 
-// globalSkillsDirPath returns ~/.fastclaw/skills.
+// globalSkillsDirPath returns ~/.fluctio/skills.
 func globalSkillsDirPath() (string, error) {
 	home, err := config.HomeDir()
 	if err != nil {

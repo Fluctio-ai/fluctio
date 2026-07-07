@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
 // Exa calls api.exa.ai. The x-api-key header authenticates; the request body

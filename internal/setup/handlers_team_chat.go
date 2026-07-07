@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent"
+	"github.com/fluctio-ai/fluctio/internal/agent"
 )
 
 type teamChatRequest struct {

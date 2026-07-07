@@ -8,15 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fastclaw-ai/fastclaw/internal/auth"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
-	"github.com/fastclaw-ai/fastclaw/internal/users"
+	"github.com/fluctio-ai/fluctio/internal/auth"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/users"
 )
 
 func TestListSkillsRequiresAuth(t *testing.T) {
 	ctx := context.Background()
 	s, resolver, adminUser, regularUser := newAuthTestServer(t, ctx)
-	t.Setenv("FASTCLAW_HOME", t.TempDir())
+	t.Setenv("FLUCTIO_HOME", t.TempDir())
 
 	handler := s.authMiddleware(s.handleListSkills)
 
@@ -54,7 +54,7 @@ func TestListSkillsRequiresAuth(t *testing.T) {
 func newAuthTestServer(t *testing.T, ctx context.Context) (*Server, *auth.Resolver, *users.Account, *users.Account) {
 	t.Helper()
 
-	dbPath := filepath.Join(t.TempDir(), "fastclaw.db")
+	dbPath := filepath.Join(t.TempDir(), "fluctio.db")
 	st, err := store.NewDBStore("sqlite", "file:"+dbPath+"?cache=shared")
 	if err != nil {
 		t.Fatalf("NewDBStore: %v", err)

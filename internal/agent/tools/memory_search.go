@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/embedding"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/embedding"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // FTSSearcher is the interface for FTS5-based memory search.

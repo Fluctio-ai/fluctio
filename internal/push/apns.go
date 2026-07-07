@@ -96,7 +96,7 @@ func (c *APNSClient) Send(ctx context.Context, n Notification) error {
 	}
 	title := strings.TrimSpace(n.Title)
 	if title == "" {
-		title = "FastClaw"
+		title = "Fluctio"
 	}
 	payload := map[string]any{
 		"aps": map[string]any{

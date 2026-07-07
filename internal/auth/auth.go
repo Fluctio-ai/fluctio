@@ -1,6 +1,6 @@
 // Package auth resolves an HTTP request to a user identity. It supports
 // two credential types:
-//   - cookie session ("fastclaw_session"): set by /api/login, validated
+//   - cookie session ("fluctio_session"): set by /api/login, validated
 //     against the web_sessions table; used by the web UI
 //   - Bearer apikey: validated against the apikeys table; used by API
 //     consumers and CLI clients
@@ -19,13 +19,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
-	"github.com/fastclaw-ai/fastclaw/internal/users"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/users"
 )
 
 // SessionCookieName is the cookie that backs the web UI's login state.
-const SessionCookieName = "fastclaw_session"
+const SessionCookieName = "fluctio_session"
 
 // SessionTTL is how long a freshly-issued login cookie is valid.
 const SessionTTL = 30 * 24 * time.Hour

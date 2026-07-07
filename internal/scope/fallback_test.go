@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // Verifies the agent → user → system precedence the dashboard promises

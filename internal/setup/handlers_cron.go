@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // --- Per-agent cron jobs (DB-backed) ---
 //
 // The legacy /api/cron set below reads jobs out of the user's flat
-// fastclaw.json (cfg.CronJobs) — that's the install-time, statically-
+// fluctio.json (cfg.CronJobs) — that's the install-time, statically-
 // configured catalog. Agents that schedule work at runtime via the
 // create_cron_job tool persist into the cron_jobs DB table instead, and
 // the cron.Scheduler (which actually fires them) only watches the DB.

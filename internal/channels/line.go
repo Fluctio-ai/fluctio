@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 // LINE Messaging API adapter. Webhook-driven inbound + REST outbound,
@@ -202,7 +202,7 @@ func (l *LINE) HandleWebhook(body []byte, signature string) (responseBody []byte
 	// who knows the accountId can post fabricated events. Mirrors Feishu's
 	// fail-closed posture on an unset verification token.
 	if l.channelSecret == "" {
-		return nil, http.StatusUnauthorized, errors.New("line webhook rejected: no channel secret configured — set it in the LINE console and fastclaw connect dialog")
+		return nil, http.StatusUnauthorized, errors.New("line webhook rejected: no channel secret configured — set it in the LINE console and fluctio connect dialog")
 	}
 	mac := hmac.New(sha256.New, []byte(l.channelSecret))
 	mac.Write(body)
@@ -272,9 +272,9 @@ func (l *LINE) dispatchEvent(ev LINEEvent) {
 }
 
 // lineChatKey picks the most-specific chat identifier from a source
-// block and returns it alongside fastclaw's peerKind tag. LINE has
+// block and returns it alongside fluctio's peerKind tag. LINE has
 // three chat scopes: 1:1 with a user, multi-person room, and group.
-// We collapse room/group → "group" since fastclaw doesn't distinguish
+// We collapse room/group → "group" since fluctio doesn't distinguish
 // the two further down the pipeline.
 func lineChatKey(s LINESource) (chatID, peerKind string) {
 	switch s.Type {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/config"
 )
 
 // GroupContext holds information about the group chat environment for system prompt injection.

@@ -1,6 +1,6 @@
 // Package httpclient brands every outbound HTTP request this process
-// makes with a FastClaw Agent User-Agent, so external APIs see
-// "fastclaw-agent/<version>" instead of Go's default
+// makes with a Fluctio Agent User-Agent, so external APIs see
+// "fluctio-agent/<version>" instead of Go's default
 // "Go-http-client/1.1".
 //
 // Coverage strategy:
@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/buildinfo"
+	"github.com/fluctio-ai/fluctio/internal/buildinfo"
 )
 
 // userAgent is built once. buildinfo.Version/Commit are package vars the
@@ -26,7 +26,7 @@ import (
 var userAgent atomic.Value
 
 func init() {
-	ua := "fastclaw-agent/" + buildinfo.Version
+	ua := "fluctio-agent/" + buildinfo.Version
 	if buildinfo.Commit != "" && buildinfo.Commit != "unknown" {
 		ua += " (" + buildinfo.Commit + ")"
 	}
@@ -34,7 +34,7 @@ func init() {
 }
 
 // UserAgent returns the branded UA string, e.g.
-// "fastclaw-agent/v0.4.2 (a1b2c3d)".
+// "fluctio-agent/v0.4.2 (a1b2c3d)".
 func UserAgent() string {
 	return userAgent.Load().(string)
 }

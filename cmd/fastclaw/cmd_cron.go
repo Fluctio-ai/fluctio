@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agentcli"
-	"github.com/fastclaw-ai/fastclaw/internal/cron"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/agentcli"
+	"github.com/fluctio-ai/fluctio/internal/cron"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 func cronCmd() *cobra.Command {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // PrefsNamespace is the kind=setting namespace for per-chatter

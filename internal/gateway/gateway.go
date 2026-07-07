@@ -23,28 +23,28 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/fastclaw-ai/fastclaw/internal/agent"
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
-	"github.com/fastclaw-ai/fastclaw/internal/channels"
-	"github.com/fastclaw-ai/fastclaw/internal/config"
-	"github.com/fastclaw-ai/fastclaw/internal/cron"
-	"github.com/fastclaw-ai/fastclaw/internal/users"
-	"github.com/fastclaw-ai/fastclaw/internal/plugin"
-	"github.com/fastclaw-ai/fastclaw/internal/rediscoord"
-	coderuntime "github.com/fastclaw-ai/fastclaw/internal/runtime"
-	"github.com/fastclaw-ai/fastclaw/internal/sandbox"
-	"github.com/fastclaw-ai/fastclaw/internal/memoryindex"
-	"github.com/fastclaw-ai/fastclaw/internal/scope"
-	"github.com/fastclaw-ai/fastclaw/internal/store"
-	"github.com/fastclaw-ai/fastclaw/internal/taskqueue"
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders"
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders/imagegen"
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders/tts"
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders/webfetch"
-	"github.com/fastclaw-ai/fastclaw/internal/toolproviders/websearch"
-	"github.com/fastclaw-ai/fastclaw/internal/usage"
-	"github.com/fastclaw-ai/fastclaw/internal/webhook"
-	"github.com/fastclaw-ai/fastclaw/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/agent"
+	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/channels"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/cron"
+	"github.com/fluctio-ai/fluctio/internal/users"
+	"github.com/fluctio-ai/fluctio/internal/plugin"
+	"github.com/fluctio-ai/fluctio/internal/rediscoord"
+	coderuntime "github.com/fluctio-ai/fluctio/internal/runtime"
+	"github.com/fluctio-ai/fluctio/internal/sandbox"
+	"github.com/fluctio-ai/fluctio/internal/memoryindex"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/taskqueue"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders/imagegen"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders/tts"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders/webfetch"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders/websearch"
+	"github.com/fluctio-ai/fluctio/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/webhook"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -65,12 +65,12 @@ func ToolProviderRegistry() *toolproviders.Registry { return toolProviderRegistr
 // the given agents using their merged config view (system + user + agent
 // scopes overlaid by the resolver).
 func registerAgentToolChains(cfg *config.Config, agents []*agent.Agent) {
-	envSearxNG := strings.TrimSpace(os.Getenv("FASTCLAW_SEARXNG_ENDPOINT"))
+	envSearxNG := strings.TrimSpace(os.Getenv("FLUCTIO_SEARXNG_ENDPOINT"))
 	for _, ag := range agents {
 		resolved := cfg.MergedAgentConfig(config.AgentEntry{ID: ag.Name()})
 		chain := buildToolChainFromResolved(resolved, "web_search")
 		// Fallback: if no web_search chain is configured AND
-		// FASTCLAW_SEARXNG_ENDPOINT is set in the environment,
+		// FLUCTIO_SEARXNG_ENDPOINT is set in the environment,
 		// synthesize a one-provider chain pointing at that endpoint.
 		// One-line setup ("docker run searxng …" + an env var) is the
 		// difference between an agent that can find the right URL on
@@ -101,7 +101,7 @@ func registerAgentToolChains(cfg *config.Config, agents []*agent.Agent) {
 }
 
 // synthesizeSearxNGChain builds an ad-hoc web_search chain backed
-// solely by the SearxNG provider, configured from FASTCLAW_SEARXNG_ENDPOINT.
+// solely by the SearxNG provider, configured from FLUCTIO_SEARXNG_ENDPOINT.
 // Lets a fresh install enable search without going through the
 // dashboard's tool-providers config — the most common reason a user
 // in the wild never sees web_search is that they didn't realize they
@@ -243,7 +243,7 @@ func (g *Gateway) SandboxPool() sandbox.ExecutorPool { return g.sandboxPool }
 // TaskQueue returns the gateway's task queue.
 func (g *Gateway) TaskQueue() *taskqueue.Queue { return g.taskQueue }
 
-// EnvConfig returns the bootstrap config (FASTCLAW_* env vars).
+// EnvConfig returns the bootstrap config (FLUCTIO_* env vars).
 func (g *Gateway) EnvConfig() *config.EnvConfig { return g.envCfg }
 
 // New creates a Gateway. Storage + workspace + plugin manager + channel
@@ -275,7 +275,7 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 		mb = bus.NewRedis(bus.RedisConfig{
 			Client:   redisClient,
 			Prefix:   redisPrefix(env.Redis.Prefix),
-			Group:    "fastclaw-gateway",
+			Group:    "fluctio-gateway",
 			Consumer: holderID,
 		})
 	}
@@ -313,7 +313,7 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 	config.AgentFileConfigLoader = makeStoreFirstAgentFileLoader(st)
 
 	// Object store for agent-produced artifacts. Object store config lives
-	// in system_settings for runtime-edited fields and FASTCLAW_OBJECT_STORE_*
+	// in system_settings for runtime-edited fields and FLUCTIO_OBJECT_STORE_*
 	// env vars for ops-managed overrides.
 	osCfg := readObjectStoreCfg(st)
 	wsInner, err := workspace.Factory{
@@ -366,7 +366,7 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 	chanMgr.Register(webChan)
 
 	// Cron scheduler reads jobs directly from the DB on each tick — no
-	// in-memory job list, no fastclaw.json copy. Each fired job carries
+	// in-memory job list, no fluctio.json copy. Each fired job carries
 	// its OwnerUserID so processInbound can route into the right space.
 	scheduler := cron.NewSchedulerFromStore(&cronStoreAdapter{st: st}, mb)
 	// Pre-flight delivery check: when the configured destination
@@ -422,7 +422,7 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 
 	// Accounts service is used by the inbound routing loop to lazy-mint
 	// per-(channel, IM-sender) app_user rows so each chatter on an IM
-	// channel ends up with their own stable fastclaw u_xxx id (and thus
+	// channel ends up with their own stable fluctio u_xxx id (and thus
 	// their own per-chatter USER.md / MEMORY.md).
 	accts, err := users.NewAccounts(st)
 	if err != nil {
@@ -772,13 +772,13 @@ func defaultStr(v, fallback string) string {
 func redisPrefix(v string) string {
 	v = strings.Trim(v, ":")
 	if v == "" {
-		return "fastclaw"
+		return "fluctio"
 	}
 	return v
 }
 
 // readObjectStoreCfg pulls the "objectstore" setting namespace, then
-// layers FASTCLAW_OBJECT_STORE_* env vars on top.
+// layers FLUCTIO_OBJECT_STORE_* env vars on top.
 func readObjectStoreCfg(st store.Store) config.ObjectStoreCfg {
 	cfg := &config.Config{}
 	if st != nil {
@@ -813,7 +813,7 @@ func readSystemTaskQueue(st store.Store) config.TaskQueueCfg {
 }
 
 // readSystemSandboxCfg reads the system-scope sandbox setting and
-// merges FASTCLAW_SANDBOX_* env vars on top. Source of truth for the
+// merges FLUCTIO_SANDBOX_* env vars on top. Source of truth for the
 // gateway-wide sandbox pool.
 func readSystemSandboxCfg(st store.Store) config.SandboxCfg {
 	cfg := &config.Config{}
