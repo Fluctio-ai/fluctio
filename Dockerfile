@@ -24,7 +24,7 @@ COPY --from=web-builder /src/web/out internal/setup/web
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
-# Stamp BOTH symbol sets — `main.*` for the legacy `fastclaw version` CLI
+# Stamp BOTH symbol sets — `main.*` for the legacy `fluctio version` CLI
 # consumer and `internal/buildinfo.*` for the agent runtime + the About
 # page in the web UI. Mirrors the Makefile / scripts/release.sh ldflags
 # so a docker-built image identifies itself the same way the released
@@ -33,26 +33,26 @@ ARG DATE=unknown
 RUN CGO_ENABLED=0 go build \
     -ldflags "-s -w \
       -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} \
-      -X github.com/fastclaw-ai/fastclaw/internal/buildinfo.Version=${VERSION} \
-      -X github.com/fastclaw-ai/fastclaw/internal/buildinfo.Commit=${COMMIT} \
-      -X github.com/fastclaw-ai/fastclaw/internal/buildinfo.Date=${DATE}" \
-    -o /fastclaw ./cmd/fastclaw
+      -X github.com/fluctio-ai/fluctio/internal/buildinfo.Version=${VERSION} \
+      -X github.com/fluctio-ai/fluctio/internal/buildinfo.Commit=${COMMIT} \
+      -X github.com/fluctio-ai/fluctio/internal/buildinfo.Date=${DATE}" \
+    -o /fluctio ./cmd/fluctio
 
 # --- Stage 3: Runtime ---
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
-COPY --from=go-builder /fastclaw /usr/local/bin/fastclaw
+COPY --from=go-builder /fluctio /usr/local/bin/fluctio
 
-# Default data directory. Override at runtime with FASTCLAW_HOME, but the
-# default value here lets `docker run fastclaw/fastclaw` work with no env.
-ENV FASTCLAW_HOME=/data/.fastclaw \
+# Default data directory. Override at runtime with FLUCTIO_HOME, but the
+# default value here lets `docker run fluctio/fluctio` work with no env.
+ENV FLUCTIO_HOME=/data/.fluctio \
     HOME=/data
-RUN mkdir -p /data/.fastclaw /data/.fastclaw/skills
-VOLUME /data/.fastclaw
+RUN mkdir -p /data/.fluctio /data/.fluctio/skills
+VOLUME /data/.fluctio
 
 # Bundle built-in skills
-COPY skills/ /data/.fastclaw/skills/
+COPY skills/ /data/.fluctio/skills/
 
 EXPOSE 18953
-ENTRYPOINT ["fastclaw"]
+ENTRYPOINT ["fluctio"]
 CMD ["gateway"]

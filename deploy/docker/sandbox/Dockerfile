@@ -1,4 +1,4 @@
-# fastclaw-sandbox — runtime image for the agent's exec sandbox.
+# fluctio-sandbox — runtime image for the agent's exec sandbox.
 #
 # Why this exists: the default `python:3.12-slim` image only has Python.
 # Bundled skills (like camoufox-cli) drive a real browser, so we need

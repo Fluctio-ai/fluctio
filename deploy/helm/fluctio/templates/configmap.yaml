@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fluctio.fullname" . }}-config
+  labels:
+    {{- include "fluctio.labels" . | nindent 4 }}
+data:
+  FLUCTIO_PORT: {{ .Values.gateway.port | quote }}
+  FLUCTIO_BIND: "all"
+  FLUCTIO_STORAGE_TYPE: "postgres"
+  FLUCTIO_STORAGE_AUTO_MIGRATE: "true"
+  {{- with .Values.timezone }}
+  ## Server default timezone — last fallback after chatter / agent /
+  ## system prefs.
+  TZ: {{ . | quote }}
+  {{- end }}
+
+  ## Object store
+  FLUCTIO_OBJECT_STORE_TYPE: {{ .Values.objectStore.type | quote }}
+  {{- with .Values.objectStore.bucket }}
+  FLUCTIO_OBJECT_STORE_BUCKET: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.objectStore.region }}
+  FLUCTIO_OBJECT_STORE_REGION: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.objectStore.endpoint }}
+  FLUCTIO_OBJECT_STORE_ENDPOINT: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.objectStore.accountId }}
+  FLUCTIO_OBJECT_STORE_ACCOUNTID: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.objectStore.prefix }}
+  FLUCTIO_OBJECT_STORE_PREFIX: {{ . | quote }}
+  {{- end }}
+  FLUCTIO_OBJECT_STORE_USESSL: {{ .Values.objectStore.useSSL | quote }}
+  {{- if .Values.objectStore.aliyunInternal }}
+  FLUCTIO_OBJECT_STORE_ALIYUN_INTERNAL: "true"
+  {{- end }}
+
+  ## Sandbox
+  {{- if .Values.sandbox.enabled }}
+  FLUCTIO_SANDBOX_BACKEND: {{ .Values.sandbox.backend | quote }}
+  {{- with .Values.sandbox.image }}
+  FLUCTIO_SANDBOX_IMAGE: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+
+  {{- with .Values.extraEnv }}
+  {{- range $k, $v := . }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- end }}

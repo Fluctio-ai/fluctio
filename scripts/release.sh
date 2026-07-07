@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# FastClaw Release Script
+# Fluctio Release Script
 # Usage: ./scripts/release.sh v0.1.0
 
 VERSION="${1:-}"
@@ -13,11 +13,11 @@ fi
 
 # Strip 'v' prefix for directory names
 VER="${VERSION#v}"
-BINARY="fastclaw"
+BINARY="fluctio"
 DIST_DIR="dist"
-MODULE="github.com/fastclaw-ai/fastclaw"
+MODULE="github.com/fluctio-ai/fluctio"
 
-echo "⚡ Building FastClaw ${VERSION}"
+echo "⚡ Building Fluctio ${VERSION}"
 echo ""
 
 # Clean
@@ -63,8 +63,8 @@ for platform in "${PLATFORMS[@]}"; do
         -o "${DIST_DIR}/${output}" \
         "./cmd/${BINARY}"
 
-    # Asset name is intentionally version-less (e.g. fastclaw_linux_amd64.tar.gz)
-    # so the in-binary `fastclaw upgrade` command (cmd_version.go) can find
+    # Asset name is intentionally version-less (e.g. fluctio_linux_amd64.tar.gz)
+    # so the in-binary `fluctio upgrade` command (cmd_version.go) can find
     # it via a stable suffix without parsing release tags.
     pkg_name="${BINARY}_${os}_${arch}"
     pkg_dir="${DIST_DIR}/${pkg_name}"
@@ -104,4 +104,4 @@ echo "  2. git push origin ${VERSION}"
 echo "  3. Create GitHub release and upload ${DIST_DIR}/* files"
 echo ""
 echo "Or use gh CLI:"
-echo "  gh release create ${VERSION} ${DIST_DIR}/*.tar.gz ${DIST_DIR}/*.zip ${DIST_DIR}/checksums.txt --title \"FastClaw ${VERSION}\" --generate-notes"
+echo "  gh release create ${VERSION} ${DIST_DIR}/*.tar.gz ${DIST_DIR}/*.zip ${DIST_DIR}/checksums.txt --title \"Fluctio ${VERSION}\" --generate-notes"

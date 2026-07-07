@@ -1,5 +1,5 @@
 # Binaries
-/fastclaw
+/fluctio
 *.exe
 *.exe~
 *.dll
@@ -41,7 +41,7 @@ node_modules/
 
 # Config with secrets (users create their own)
 config.json
-fastclaw.json
+fluctio.json
 
 # Debug
 debug/
@@ -70,7 +70,7 @@ env.toml
 # Local data
 web/node_modules/
 web/pnpm-lock.yaml
-fastclaw-patched
+fluctio-patched
 
 # Playwright MCP tooling artifacts (local only)
 .playwright-mcp/
