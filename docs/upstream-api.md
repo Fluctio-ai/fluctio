@@ -1,15 +1,15 @@
-# FastClaw API
+# Fluctio API
 
-FastClaw is a **single-user, multi-agent** runtime: one owner who owns every
+Fluctio is a **single-user, multi-agent** runtime: one owner who owns every
 agent. This document describes the HTTP API an external client (script, bot,
 automation, or the dashboard itself) uses to drive agents.
 
 > Multi-tenant features that previously lived here — `POST /v1/users`
-> end-user provisioning, `X-Fastclaw-End-User` / chat `user` lazy mint,
+> end-user provisioning, `X-Fluctio-End-User` / chat `user` lazy mint,
 > API-key tiers (`admin`/`user`/`agent`), the `apikey_agents` ACL, and
 > link-sharing via `agents.is_public` — have been **removed**. There is no
 > longer a path to create additional user accounts; the platform only ever
-> holds the one owner created via onboarding or `fastclaw admin create-user`.
+> holds the one owner created via onboarding or `fluctio admin create-user`.
 
 ## Authentication
 
@@ -22,18 +22,18 @@ Authorization: Bearer fcak_...
 Issue keys from the dashboard (**API Keys**) or the CLI:
 
 ```bash
-fastclaw apikey create --name "my-key"
+fluctio apikey create --name "my-key"
 ```
 
-The token is shown once. Keys may be rotated (`fastclaw apikey rotate`) or
-revoked. Do not expose keys in browsers/mobile clients — call FastClaw
+The token is shown once. Keys may be rotated (`fluctio apikey rotate`) or
+revoked. Do not expose keys in browsers/mobile clients — call Fluctio
 server-side.
 
 ## Chat
 
 ### `POST /v1/chat/completions`
 
-OpenAI-compatible, streaming-capable, with FastClaw extensions.
+OpenAI-compatible, streaming-capable, with Fluctio extensions.
 
 Required:
 
@@ -41,19 +41,19 @@ Required:
 
 Agent selection:
 
-- Body field `agent_id` (preferred), or `X-Fastclaw-Agent-ID` header
-- If omitted, FastClaw resolves the default agent
+- Body field `agent_id` (preferred), or `X-Fluctio-Agent-ID` header
+- If omitted, Fluctio resolves the default agent
 
 Session selection:
 
-- `X-Fastclaw-Session-Key` header
-- If omitted, FastClaw creates a session key for that turn
+- `X-Fluctio-Session-Key` header
+- If omitted, Fluctio creates a session key for that turn
 
 ```http
 POST /v1/chat/completions
 Authorization: Bearer fcak_...
 Content-Type: application/json
-X-Fastclaw-Session-Key: my-bot:default
+X-Fluctio-Session-Key: my-bot:default
 
 {
   "agent_id": "agt_...",
@@ -69,7 +69,7 @@ X-Fastclaw-Session-Key: my-bot:default
 }
 ```
 
-FastClaw extensions:
+Fluctio extensions:
 
 | Field | Type | Purpose |
 |---|---|---|
@@ -107,7 +107,7 @@ Authorization: Bearer fcak_...
 ```
 
 For creating agents, cloning templates, installing skills, or configuring
-providers, use the dashboard (`/api/*`) or the `fastclaw` CLI — those are
+providers, use the dashboard (`/api/*`) or the `fluctio` CLI — those are
 operator workflows, not the chat API.
 
 ## Usage And Quotas

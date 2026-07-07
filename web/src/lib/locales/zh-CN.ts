@@ -126,7 +126,7 @@ const zhCN: Record<string, string> = {
   "general.languageDesc": "选择界面语言。",
 
   // Login / Signup
-  "login.title": "FastClaw Agent",
+  "login.title": "Fluctio Agent",
   "login.subtitle": "使用用户名或邮箱登录",
   "login.usernamePlaceholder": "用户名或邮箱",
   "login.passwordPlaceholder": "密码",
@@ -138,7 +138,7 @@ const zhCN: Record<string, string> = {
   "login.cannotReach": "无法连接服务器",
 
   "signup.title": "创建账户",
-  "signup.subtitle": "注册以开始使用 FastClaw Agent",
+  "signup.subtitle": "注册以开始使用 Fluctio Agent",
   "signup.usernamePlaceholder": "用户名",
   "signup.username": "用户名",
   "signup.emailPlaceholder": "邮箱",
@@ -878,7 +878,7 @@ const zhCN: Record<string, string> = {
   "onboard.steps.agentStep": "智能体",
   "onboard.steps.sandbox": "沙箱",
   "onboard.steps.launch": "启动",
-  "onboard.welcome.title": "欢迎使用 FastClaw Agent",
+  "onboard.welcome.title": "欢迎使用 Fluctio Agent",
   "onboard.welcome.desc": "几个简单的步骤即可设置你的平台——管理员账户、第一个 LLM 提供商和第一个智能体。大约需要一分钟。",
   "onboard.welcome.youWillBeAdmin": "设置完成后你将成为超级管理员——之后可以在管理面板中添加更多用户。",
   "onboard.welcome.everythingInDB": "所有用户相关的配置（提供商、通道、智能体、设置）都存储在数据库中，可以随时在界面中修改。",
@@ -1255,14 +1255,14 @@ const zhCN: Record<string, string> = {
   "channels.botLiveAs": "机器人已上线：",
   "channels.oneLastStep": "最后一步",
   "channels.longConnectionMode": "长连接模式",
-  "channels.longConnDesc": "fastclaw 通过 WebSocket 连接飞书——无需公网 URL。关闭以使用传统 webhook 方式。",
+  "channels.longConnDesc": "fluctio 通过 WebSocket 连接飞书——无需公网 URL。关闭以使用传统 webhook 方式。",
   "channels.waitingForScan": "等待扫码…",
   "channels.scannedConfirm": "已扫码——请在手机上确认。",
   "channels.qrExpired": "二维码已过期。",
   "channels.refreshQR": "刷新二维码",
   "channels.refreshing": "刷新中…",
   "channels.sendToTest": "发送消息测试集成。",
-  "channels.optionalButRecommended": "可选但强烈推荐——fastclaw 使用此密钥通过 HMAC-SHA256 验证入站 webhook 负载。",
+  "channels.optionalButRecommended": "可选但强烈推荐——fluctio 使用此密钥通过 HMAC-SHA256 验证入站 webhook 负载。",
   "channels.disconnectNamePrefix": "断开",
   "channels.thisAgent": "此智能体",
   "channels.failedToFetchQR": "获取二维码失败",
@@ -1291,9 +1291,9 @@ const zhCN: Record<string, string> = {
   "slash.claim_usage": "用法：`/claim <验证码>` —— 6 位验证码从 agent owner 的 web 控制台获取。",
   "slash.claim_wrong_channel": "`/claim` 用于 IM 渠道（Discord/Telegram 等）。Web/API 无需认领。",
   "slash.intro": "👋 你好！我是 {name}，你的 AI 助手。\n\n直接发消息就能和我聊天。输入 /help 查看可用命令。",
-  "slash.version": "⚡ FastClaw Agent\nAgent: {name}\nModel: {model}",
+  "slash.version": "⚡ Fluctio Agent\nAgent: {name}\nModel: {model}",
   "slash.whoami": "频道: `{channel}`\n你的用户 ID: `{user_id}`",
-  "slash.help": `⚡ FastClaw Agent 命令
+  "slash.help": `⚡ Fluctio Agent 命令
 
 对话
   /new, /reset    — 清除会话历史
@@ -1324,7 +1324,7 @@ const zhCN: Record<string, string> = {
 信息
   /help           — 显示本帮助
   /version        — 显示版本`,
-  "slash.status": "⚡ FastClaw Agent 状态\n─────────────────\nAgent:       {name}\nModel:       {model}\nPersonality: {soul}\nMax Tokens:  {max_tokens}\nTemperature: {temperature}\nMax Iter:    {max_iter}\nSession Msgs:{session_msgs}\nMemory:      {mem_lines} lines\nWorkspace:   {workspace}",
+  "slash.status": "⚡ Fluctio Agent 状态\n─────────────────\nAgent:       {name}\nModel:       {model}\nPersonality: {soul}\nMax Tokens:  {max_tokens}\nTemperature: {temperature}\nMax Iter:    {max_iter}\nSession Msgs:{session_msgs}\nMemory:      {mem_lines} lines\nWorkspace:   {workspace}",
   "slash.usage": "📊 会话用量\n用户轮次:      {user_turns}\n助手轮次:    {asst_turns}\n工具调用:    {tool_turns}\n总消息数:    {total_msgs}{cost}",
   "slash.cost_line": "\n─────────────────\n费用:            {cost}\n输入 Token:    {input_tokens}\n输出 Token:   {output_tokens}\nAPI 耗时:     {api_duration}\n工具耗时:     {tool_duration}",
   "slash.insights": "🔍 活动洞察（最近 {days} 天）\n─────────────────────────\n日志文件:     {total_files} 个总计, {recent_files} 个近期\n记忆文件:     {memory_file}\n工作区:       {workspace}\n\n提示: 使用 /status 查看会话信息, /usage 查看 Token 统计。",

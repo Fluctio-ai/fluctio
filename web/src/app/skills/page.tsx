@@ -317,7 +317,7 @@ function InstallSkillDialog({
         <DialogHeader>
           <DialogTitle>{tt("skills.installSkill")}</DialogTitle>
           <DialogDescription>
-            {tt("skills.installGlobalDesc")} <code className="font-mono text-xs">~/.fastclaw/skills/</code> {tt("skills.installGlobalDescSuffix")}
+            {tt("skills.installGlobalDesc")} <code className="font-mono text-xs">~/.fluctio/skills/</code> {tt("skills.installGlobalDescSuffix")}
           </DialogDescription>
         </DialogHeader>
 

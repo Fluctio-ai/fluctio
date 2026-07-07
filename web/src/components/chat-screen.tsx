@@ -977,7 +977,7 @@ export function ChatScreen() {
             // produced an updated session title.
             if (typeof window !== "undefined") {
               window.dispatchEvent(
-                new CustomEvent("fastclaw:sessions-changed", {
+                new CustomEvent("fluctio:sessions-changed", {
                   detail: { agentId: selectedAgent },
                 }),
               );
@@ -1092,7 +1092,7 @@ export function ChatScreen() {
         // happen on rename.
         if (typeof window !== "undefined") {
           window.dispatchEvent(
-            new CustomEvent("fastclaw:sessions-changed", {
+            new CustomEvent("fluctio:sessions-changed", {
               detail: { agentId: selectedAgent },
             }),
           );
@@ -1742,7 +1742,7 @@ export function ChatScreen() {
       // up without a full page reload.
       if (typeof window !== "undefined") {
         window.dispatchEvent(
-          new CustomEvent("fastclaw:sessions-changed", {
+          new CustomEvent("fluctio:sessions-changed", {
             detail: { agentId: selectedAgent },
           }),
         );

@@ -485,7 +485,7 @@ function InstallSkillDialog({
     setInstallError(null);
     setInstallingId(r.id);
     try {
-      // agent: agentId → backend installs into ~/.fastclaw/agents/<id>/skills
+      // agent: agentId → backend installs into ~/.fluctio/agents/<id>/skills
       const resp = await installSkill({
         source: "skillssh",
         name: r.skillId,
@@ -511,7 +511,7 @@ function InstallSkillDialog({
           <DialogDescription>
             {t("skills.installDescPrefix")}{" "}
             <code className="font-mono text-xs">
-              ~/.fastclaw/agents/{agentId}/skills/
+              ~/.fluctio/agents/{agentId}/skills/
             </code>
             . {t("skills.searchDesc")}
           </DialogDescription>

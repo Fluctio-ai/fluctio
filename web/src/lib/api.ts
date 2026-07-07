@@ -242,15 +242,15 @@ let authToken = "";
 export function setAuthToken(token: string) {
   authToken = token;
   if (token) {
-    localStorage.setItem("fastclaw_token", token);
+    localStorage.setItem("fluctio_token", token);
   } else {
-    localStorage.removeItem("fastclaw_token");
+    localStorage.removeItem("fluctio_token");
   }
 }
 
 export function getAuthToken(): string {
   if (!authToken) {
-    authToken = localStorage.getItem("fastclaw_token") || "";
+    authToken = localStorage.getItem("fluctio_token") || "";
   }
   return authToken;
 }
@@ -297,7 +297,7 @@ export interface MeResponse {
   };
   authMethod?: string;
   readOnly?: boolean;
-  // 'self-hosted' (default) or 'hosted' — driven by FASTCLAW_DEPLOY
+  // 'self-hosted' (default) or 'hosted' — driven by FLUCTIO_DEPLOY
   // env var on the daemon. Frontend uses this to gate local-only
   // conveniences (open-in-Finder, future $EDITOR hooks).
   deployMode?: "self-hosted" | "hosted";

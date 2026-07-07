@@ -1,6 +1,6 @@
 <div align="center">
 
-# FastClaw
+# Fluctio
 
 A lightweight AI Agent runtime written in Go.
 
@@ -15,24 +15,24 @@ A lightweight AI Agent runtime written in Go.
 ---
 
 <p align="center">
-  <img src="previews/admin.png" alt="FastClaw admin dashboard" width="900">
+  <img src="previews/admin.png" alt="Fluctio admin dashboard" width="900">
   <br>
   <em>Platform admin: agents, models, skills, users, API keys</em>
 </p>
 
 <p align="center">
-  <img src="previews/agent.png" alt="FastClaw agent management" width="900">
+  <img src="previews/agent.png" alt="Fluctio agent management" width="900">
   <br>
   <em>Per-agent management: chat, customize, scoped models / skills / channels / scheduler</em>
 </p>
 
-## What is FastClaw?
+## What is Fluctio?
 
-FastClaw is an **Agent Factory** — it creates, manages, and runs AI agents. Each agent has its own personality (SOUL.md), memory, skills, and tools. FastClaw handles the LLM communication, tool execution, sandbox isolation, and session management.
+Fluctio is an **Agent Factory** — it creates, manages, and runs AI agents. Each agent has its own personality (SOUL.md), memory, skills, and tools. Fluctio handles the LLM communication, tool execution, sandbox isolation, and session management.
 
 ```bash
 # Install (drops the binary into ~/.local/bin and adds it to PATH)
-curl -fsSL https://raw.githubusercontent.com/fastclaw-ai/fastclaw/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/fluctio-ai/fluctio/main/install.sh | bash
 ```
 
 ## Quick Start
@@ -40,10 +40,10 @@ curl -fsSL https://raw.githubusercontent.com/fastclaw-ai/fastclaw/main/install.s
 ### 1. First Run
 
 ```bash
-fastclaw
+fluctio
 # Opens setup wizard → configure LLM provider → creates default agent.
-# Foreground mode; ^C to stop. Use `fastclaw daemon start` to run in
-# the background, or `fastclaw daemon install` to register a
+# Foreground mode; ^C to stop. Use `fluctio daemon start` to run in
+# the background, or `fluctio daemon install` to register a
 # launchd / systemd service.
 ```
 
@@ -59,7 +59,7 @@ Open `http://localhost:18953` and login with your admin token.
 
 > Single-user mode: the dashboard serves one owner. There is no
 > self-registration and no multi-user management — the owner account is
-> created via onboarding or `fastclaw admin create-user`.
+> created via onboarding or `fluctio admin create-user`.
 
 ### 3. Agent Management
 
@@ -76,8 +76,8 @@ Click an agent to enter its management panel:
 ## Architecture
 
 ```
-~/.fastclaw/
-  fastclaw.db                # SQLite default — users, agents, sessions,
+~/.fluctio/
+  fluctio.db                # SQLite default — users, agents, sessions,
                              # apikeys, configs, agent_files all live here
   skills/                    # Shared skills (bundled + installed)
   agents/
@@ -85,15 +85,15 @@ Click an agent to enter its management panel:
 ```
 
 The database is the source of truth for everything except skill folders
-on disk. SQLite is the default; point `FASTCLAW_STORAGE_DSN` at Postgres
+on disk. SQLite is the default; point `FLUCTIO_STORAGE_DSN` at Postgres
 for multi-pod deployments.
 
-**There is no `fastclaw.json`.** Bootstrap settings (port, bind, storage
-DSN, sandbox backend) come from `FASTCLAW_*` env vars; everything user-
+**There is no `fluctio.json`.** Bootstrap settings (port, bind, storage
+DSN, sandbox backend) come from `FLUCTIO_*` env vars; everything user-
 facing (providers, channels, settings, defaults) lives in the `configs`
-table and is edited through the dashboard or `fastclaw agents config`.
+table and is edited through the dashboard or `fluctio agents config`.
 
-### What FastClaw Stores
+### What Fluctio Stores
 
 | Data | Belongs to | Backing store |
 |------|-----------|---------------|
@@ -148,87 +148,87 @@ table and is edited through the dashboard or `fastclaw agents config`.
 
 Bootstrap is **env-only**. Everything that needs to change at runtime
 (providers, models, channels, defaults, sandbox toggle) lives in the
-database and is edited through the dashboard or `fastclaw agents config`.
+database and is edited through the dashboard or `fluctio agents config`.
 
 | Env var | Default | What it does |
 |---|---|---|
-| `FASTCLAW_HOME` | `~/.fastclaw` | Where the SQLite DB and skill folders live. |
-| `FASTCLAW_PORT` | `18953` | Gateway HTTP port. |
-| `FASTCLAW_BIND` | `loopback` | `loopback` (127.0.0.1) or `all` (0.0.0.0). |
-| `FASTCLAW_STORAGE_TYPE` | `sqlite` | `sqlite` or `postgres`. |
-| `FASTCLAW_STORAGE_DSN` | empty | Postgres DSN, e.g. `postgres://u:p@host:5432/db?sslmode=disable`. Empty = sqlite at `$FASTCLAW_HOME/fastclaw.db`. |
-| `FASTCLAW_STORAGE_AUTO_MIGRATE` | `true` | Apply schema migrations on boot. |
-| `FASTCLAW_REDIS_ENABLED` | `false` | Enable Redis-backed channel leases and Redis Stream message bus. Setting `FASTCLAW_REDIS_ADDR` also enables it. |
-| `FASTCLAW_REDIS_ADDR` | `127.0.0.1:6379` when enabled | Redis address used by multi-replica channel locks and shared inbound/outbound delivery streams. |
-| `FASTCLAW_REDIS_USERNAME` | empty | Redis ACL username, if required. |
-| `FASTCLAW_REDIS_PASSWORD` | empty | Redis password, if required. |
-| `FASTCLAW_REDIS_DB` | `0` | Redis logical database number. |
-| `FASTCLAW_REDIS_PREFIX` | `fastclaw` | Prefix for Redis stream and lease keys. |
-| `FASTCLAW_SANDBOX_ENABLED` | dashboard | Override the Settings → Runtime toggle. |
-| `FASTCLAW_SANDBOX_BACKEND` | dashboard | `docker` or `e2b`. |
-| `FASTCLAW_SANDBOX_IMAGE` | dashboard | Docker image (Docker backend) or template id (E2B). |
-| `FASTCLAW_OBJECT_STORE_*` | unset | S3-compatible blob store for distributed deploys (multi-pod skill / file hydration). |
-| `FASTCLAW_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
+| `FLUCTIO_HOME` | `~/.fluctio` | Where the SQLite DB and skill folders live. |
+| `FLUCTIO_PORT` | `18953` | Gateway HTTP port. |
+| `FLUCTIO_BIND` | `loopback` | `loopback` (127.0.0.1) or `all` (0.0.0.0). |
+| `FLUCTIO_STORAGE_TYPE` | `sqlite` | `sqlite` or `postgres`. |
+| `FLUCTIO_STORAGE_DSN` | empty | Postgres DSN, e.g. `postgres://u:p@host:5432/db?sslmode=disable`. Empty = sqlite at `$FLUCTIO_HOME/fluctio.db`. |
+| `FLUCTIO_STORAGE_AUTO_MIGRATE` | `true` | Apply schema migrations on boot. |
+| `FLUCTIO_REDIS_ENABLED` | `false` | Enable Redis-backed channel leases and Redis Stream message bus. Setting `FLUCTIO_REDIS_ADDR` also enables it. |
+| `FLUCTIO_REDIS_ADDR` | `127.0.0.1:6379` when enabled | Redis address used by multi-replica channel locks and shared inbound/outbound delivery streams. |
+| `FLUCTIO_REDIS_USERNAME` | empty | Redis ACL username, if required. |
+| `FLUCTIO_REDIS_PASSWORD` | empty | Redis password, if required. |
+| `FLUCTIO_REDIS_DB` | `0` | Redis logical database number. |
+| `FLUCTIO_REDIS_PREFIX` | `fluctio` | Prefix for Redis stream and lease keys. |
+| `FLUCTIO_SANDBOX_ENABLED` | dashboard | Override the Settings → Runtime toggle. |
+| `FLUCTIO_SANDBOX_BACKEND` | dashboard | `docker` or `e2b`. |
+| `FLUCTIO_SANDBOX_IMAGE` | dashboard | Docker image (Docker backend) or template id (E2B). |
+| `FLUCTIO_OBJECT_STORE_*` | unset | S3-compatible blob store for distributed deploys (multi-pod skill / file hydration). |
+| `FLUCTIO_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
 
 Anything not on this list — providers, models, default model, skill
 catalog, channels, plugin config, scheduler — is configured at runtime
-through the web UI (`http://localhost:18953`) or the CLI (`fastclaw
-agents config`, `fastclaw provider`, `fastclaw skill`).
+through the web UI (`http://localhost:18953`) or the CLI (`fluctio
+agents config`, `fluctio provider`, `fluctio skill`).
 
 ## Deployment
 
 ### Local
 
 ```bash
-fastclaw                    # foreground (^C to stop)
-fastclaw daemon start       # background (logs at ~/.fastclaw/daemon.log)
-fastclaw daemon status
-fastclaw daemon stop
-fastclaw daemon install     # register as a launchd / systemd service
+fluctio                    # foreground (^C to stop)
+fluctio daemon start       # background (logs at ~/.fluctio/daemon.log)
+fluctio daemon status
+fluctio daemon stop
+fluctio daemon install     # register as a launchd / systemd service
 ```
 
-### Manage agents from the CLI (`fastclaw agents …`)
+### Manage agents from the CLI (`fluctio agents …`)
 
-The `fastclaw agents` subcommand is a thin convenience wrapper around the
+The `fluctio agents` subcommand is a thin convenience wrapper around the
 same store the dashboard uses. Agents you create here show up in the web
-UI and vice-versa — there's only ever one fastclaw deployment per
-`FASTCLAW_HOME`.
+UI and vice-versa — there's only ever one fluctio deployment per
+`FLUCTIO_HOME`.
 
 ```bash
 # Zero to a chattable agent in one command. On a fresh install this
 # creates an `admin` user (random password printed once) and starts
 # the gateway daemon if it isn't already running.
-fastclaw agents init alpha \
+fluctio agents init alpha \
   --provider openai \
   --model openai/gpt-4o-mini \
   --api-key-env OPENAI_API_KEY
 
 # Set per-agent overrides (model, temperature, sandbox, …).
-fastclaw agents config alpha set temperature 0.7
-fastclaw agents config alpha set sandbox.enabled true
+fluctio agents config alpha set temperature 0.7
+fluctio agents config alpha set sandbox.enabled true
 
 # Upload the agent's identity files.
-fastclaw agents files put alpha SOUL.md ./SOUL.md
-fastclaw agents files put alpha IDENTITY.md ./IDENTITY.md
+fluctio agents files put alpha SOUL.md ./SOUL.md
+fluctio agents files put alpha IDENTITY.md ./IDENTITY.md
 
 # Inspect.
-fastclaw agents ls
-fastclaw agents config alpha get
-fastclaw agents files ls alpha
+fluctio agents ls
+fluctio agents config alpha get
+fluctio agents files ls alpha
 
 # Tear down.
-fastclaw agents rm alpha
+fluctio agents rm alpha
 ```
 
 The CLI opens the operator's store directly (sqlite at
-`~/.fastclaw/fastclaw.db`, or whatever `FASTCLAW_STORAGE_DSN` points at)
+`~/.fluctio/fluctio.db`, or whatever `FLUCTIO_STORAGE_DSN` points at)
 and writes through the same code paths the gateway uses. It does not
 require the gateway to be running — but `agents init` will spin one up
 in the background so a fresh agent is immediately reachable at
 `http://localhost:18953`. Subsequent CLI writes (`config set`,
 `files put`, `rm`, `init` re-runs) send `SIGHUP` to the running gateway
 so it hot-reloads without restart. Windows lacks `SIGHUP` delivery, so
-the CLI falls back to a hint asking you to run `fastclaw daemon restart`.
+the CLI falls back to a hint asking you to run `fluctio daemon restart`.
 
 The default owner is the `admin` user. On an empty database
 `agents init` creates that account with a generated password (printed
@@ -239,8 +239,8 @@ once); on a populated database it expects `admin` to exist or
 
 CLI commands accept either a display name or an `agt_…` id:
 
-- `fastclaw agents config alpha get` — by display name (must be unique)
-- `fastclaw agents config agt_d3c4a5… get` — by id
+- `fluctio agents config alpha get` — by display name (must be unique)
+- `fluctio agents config agt_d3c4a5… get` — by id
 
 If the same text matches one agent's id and a different agent's display
 name, the CLI reports an ambiguity instead of guessing.
@@ -250,7 +250,7 @@ display name and the id is auto-generated. To update an agent that was
 created via the dashboard, pass its id explicitly:
 
 ```bash
-fastclaw agents init "Cool Agent" --id agt_d3c4a5...
+fluctio agents init "Cool Agent" --id agt_d3c4a5...
 ```
 
 #### Configuration keys
@@ -271,10 +271,10 @@ Provider configs live in `scope=system` and are addressed as
 `provider.<name>.<field>`:
 
 ```bash
-fastclaw agents config alpha set provider.openai.apiKeyEnv OPENAI_API_KEY
-fastclaw agents config alpha set provider.openrouter.apiBase https://openrouter.ai/api/v1
-fastclaw agents config alpha set provider.openai.model gpt-4o      # adds; idempotent
-fastclaw agents config alpha set provider.openai.models '[]'        # explicit clear
+fluctio agents config alpha set provider.openai.apiKeyEnv OPENAI_API_KEY
+fluctio agents config alpha set provider.openrouter.apiBase https://openrouter.ai/api/v1
+fluctio agents config alpha set provider.openai.model gpt-4o      # adds; idempotent
+fluctio agents config alpha set provider.openai.models '[]'        # explicit clear
 ```
 
 Provider presets ship for `openai`, `openrouter`, `anthropic`, `ollama`,
@@ -296,7 +296,7 @@ file editor uses. Allowlisted filenames: `SOUL.md`, `IDENTITY.md`,
 | `agents files ls\|put\|get <name>` | Read / write the agent's system files |
 | `agents rm <name>` | Delete the agent record and its system files |
 
-### Manage API keys from the CLI (`fastclaw apikey …`)
+### Manage API keys from the CLI (`fluctio apikey …`)
 
 Issue and manage programmatic owner-level credentials for external
 integrations. Every key has full owner scope — single-user mode has no
@@ -304,16 +304,16 @@ key tiers and no per-agent ACL.
 
 ```bash
 # Create a key (token shown once — save immediately)
-fastclaw apikey create --name "my-key" [--owner <user-id>]
+fluctio apikey create --name "my-key" [--owner <user-id>]
 
 # List keys for a user (defaults to first super_admin)
-fastclaw apikey list [--owner <user-id>]
+fluctio apikey list [--owner <user-id>]
 
 # Delete a key
-fastclaw apikey delete --id <apikey-id>
+fluctio apikey delete --id <apikey-id>
 
 # Rotate a key (old token invalidated, new token shown once)
-fastclaw apikey rotate --id <apikey-id>
+fluctio apikey rotate --id <apikey-id>
 ```
 
 **Flags:**
@@ -329,19 +329,19 @@ cd deploy/docker && ./start.sh
 
 ```yaml
 env:
-  - name: FASTCLAW_BIND
+  - name: FLUCTIO_BIND
     value: "all"
-  - name: FASTCLAW_STORAGE_TYPE
+  - name: FLUCTIO_STORAGE_TYPE
     value: "postgres"
-  - name: FASTCLAW_STORAGE_DSN
+  - name: FLUCTIO_STORAGE_DSN
     valueFrom:
       secretKeyRef:
-        name: fastclaw-db
+        name: fluctio-db
         key: dsn
-  - name: FASTCLAW_OBJECT_STORE_ENDPOINT
+  - name: FLUCTIO_OBJECT_STORE_ENDPOINT
     value: "s3.amazonaws.com"
-  - name: FASTCLAW_OBJECT_STORE_BUCKET
-    value: "fastclaw-skills"
+  - name: FLUCTIO_OBJECT_STORE_BUCKET
+    value: "fluctio-skills"
 ```
 
 No config file is mounted — bootstrap is env-only. See `deploy/k8s/`
@@ -350,7 +350,7 @@ for full manifests.
 ## Building
 
 ```bash
-make build                  # builds the web bundle and the Go binary → bin/fastclaw
+make build                  # builds the web bundle and the Go binary → bin/fluctio
 make install                # installs to $HOME/.local/bin (override with PREFIX=)
 make release-local          # cross-compile darwin / linux / windows into dist/
 ```
@@ -360,15 +360,15 @@ via `-ldflags`. CI uses these targets too — see `.github/workflows/`.
 
 ## License
 
-FastClaw is **source-available** under the [FastClaw Community License](LICENSE),
+Fluctio is **source-available** under the [Fluctio Community License](LICENSE),
 based on Apache License 2.0 with additional conditions.
 
 **TL;DR:**
 - ✅ Use it commercially as a backend for your own product
 - ✅ Internal deployment within your organization
-- ❌ Hosting FastClaw as a multi-tenant SaaS for unrelated organizations
+- ❌ Hosting Fluctio as a multi-tenant SaaS for unrelated organizations
   (without a commercial license)
-- ❌ Removing or modifying the FastClaw branding in the dashboard UI
+- ❌ Removing or modifying the Fluctio branding in the dashboard UI
 
 The full Apache 2.0 text is reproduced inside the [LICENSE](LICENSE) file
 under the addendum. For commercial licensing inquiries: support@thinkany.ai.

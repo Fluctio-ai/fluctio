@@ -126,7 +126,7 @@ const en: Record<string, string> = {
   "general.languageDesc": "Select the interface language.",
 
   // Login / Signup
-  "login.title": "FastClaw Agent",
+  "login.title": "Fluctio Agent",
   "login.subtitle": "Sign in with your username or email",
   "login.usernamePlaceholder": "username or email",
   "login.passwordPlaceholder": "password",
@@ -138,7 +138,7 @@ const en: Record<string, string> = {
   "login.cannotReach": "Cannot reach server",
 
   "signup.title": "Create your account",
-  "signup.subtitle": "Sign up to start using FastClaw Agent",
+  "signup.subtitle": "Sign up to start using Fluctio Agent",
   "signup.usernamePlaceholder": "username",
   "signup.username": "Username",
   "signup.emailPlaceholder": "email",
@@ -878,7 +878,7 @@ const en: Record<string, string> = {
   "onboard.steps.agentStep": "Agent",
   "onboard.steps.sandbox": "Sandbox",
   "onboard.steps.launch": "Launch",
-  "onboard.welcome.title": "Welcome to FastClaw Agent",
+  "onboard.welcome.title": "Welcome to Fluctio Agent",
   "onboard.welcome.desc": "A few quick steps to set up your platform — admin account, first LLM provider, and your first agent. Takes about a minute.",
   "onboard.welcome.youWillBeAdmin": "You'll be the super-admin once setup completes — you can add more users from the admin panel afterwards.",
   "onboard.welcome.everythingInDB": "Everything user-facing (providers, channels, agents, settings) lives in the database and can be changed from the UI later.",
@@ -1255,14 +1255,14 @@ const en: Record<string, string> = {
   "channels.botLiveAs": "Bot is live as",
   "channels.oneLastStep": "One last step",
   "channels.longConnectionMode": "Long-connection mode",
-  "channels.longConnDesc": "fastclaw opens a WebSocket to Feishu — no public URL required. Turn off to use the classic webhook flow.",
+  "channels.longConnDesc": "fluctio opens a WebSocket to Feishu — no public URL required. Turn off to use the classic webhook flow.",
   "channels.waitingForScan": "Waiting for scan…",
   "channels.scannedConfirm": "Scanned — confirm on your phone.",
   "channels.qrExpired": "QR code expired.",
   "channels.refreshQR": "Refresh QR",
   "channels.refreshing": "Refreshing…",
   "channels.sendToTest": "Send it a message to test.",
-  "channels.optionalButRecommended": "Optional but strongly recommended — fastclaw verifies inbound webhook payloads via HMAC-SHA256 against this secret.",
+  "channels.optionalButRecommended": "Optional but strongly recommended — fluctio verifies inbound webhook payloads via HMAC-SHA256 against this secret.",
   "channels.disconnectNamePrefix": "Disconnect",
   "channels.thisAgent": "this agent",
   "channels.failedToFetchQR": "Failed to fetch QR code",
@@ -1291,9 +1291,9 @@ const en: Record<string, string> = {
   "slash.claim_usage": "Usage: `/claim <code>` — get the 6-digit code from the agent owner's web dashboard.",
   "slash.claim_wrong_channel": "`/claim` is for IM channels (Discord/Telegram/…). Web/API already know who you are.",
   "slash.intro": "👋 Hi! I'm {name}, your AI assistant.\n\nJust send me a message to chat. Use /help to see available commands.",
-  "slash.version": "⚡ FastClaw Agent\nAgent: {name}\nModel: {model}",
+  "slash.version": "⚡ Fluctio Agent\nAgent: {name}\nModel: {model}",
   "slash.whoami": "Channel: `{channel}`\nYour user ID: `{user_id}`",
-  "slash.help": `⚡ FastClaw Agent Commands
+  "slash.help": `⚡ Fluctio Agent Commands
 
 Conversation
   /new, /reset    — Clear session history
@@ -1324,7 +1324,7 @@ Plan
 Info
   /help           — Show this help
   /version        — Show version`,
-  "slash.status": "⚡ FastClaw Agent Status\n─────────────────\nAgent:       {name}\nModel:       {model}\nPersonality: {soul}\nMax Tokens:  {max_tokens}\nTemperature: {temperature}\nMax Iter:    {max_iter}\nSession Msgs:{session_msgs}\nMemory:      {mem_lines} lines\nWorkspace:   {workspace}",
+  "slash.status": "⚡ Fluctio Agent Status\n─────────────────\nAgent:       {name}\nModel:       {model}\nPersonality: {soul}\nMax Tokens:  {max_tokens}\nTemperature: {temperature}\nMax Iter:    {max_iter}\nSession Msgs:{session_msgs}\nMemory:      {mem_lines} lines\nWorkspace:   {workspace}",
   "slash.usage": "📊 Session Usage\nUser turns:      {user_turns}\nAssistant turns: {asst_turns}\nTool calls:      {tool_turns}\nTotal messages:  {total_msgs}{cost}",
   "slash.cost_line": "\n─────────────────\nCost:            {cost}\nInput tokens:    {input_tokens}\nOutput tokens:   {output_tokens}\nAPI duration:    {api_duration}\nTool duration:   {tool_duration}",
   "slash.insights": "🔍 Insights (last {days} days)\n─────────────────────────\nLog files:       {total_files} total, {recent_files} recent\nMemory file:     {memory_file}\nWorkspace:       {workspace}\n\nTip: Use /status for session info, /usage for token stats.",

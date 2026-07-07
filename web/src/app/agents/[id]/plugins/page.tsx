@@ -99,7 +99,7 @@ export default function AgentPluginsPage() {
               {t("plugins.noPlugins")}
             </p>
             <p className="text-xs text-muted-foreground/60 max-w-sm text-center">
-              {t("plugins.noPluginsHint", { code1: "~/.fastclaw/plugins/", code2: 'type: "hook"', code3: "plugin.json" })}
+              {t("plugins.noPluginsHint", { code1: "~/.fluctio/plugins/", code2: 'type: "hook"', code3: "plugin.json" })}
             </p>
           </div>
         </div>

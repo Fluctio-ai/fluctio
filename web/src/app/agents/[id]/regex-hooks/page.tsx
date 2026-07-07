@@ -280,7 +280,7 @@ export default function AgentRegexHooksPage() {
           </label>
         </div>
         <p className="text-xs text-muted-foreground mb-3">
-          Upload CLI scripts to <code className="rounded bg-muted px-1 py-0.5 font-mono">~/.fastclaw/agents/{agentId}/hooks/</code>.
+          Upload CLI scripts to <code className="rounded bg-muted px-1 py-0.5 font-mono">~/.fluctio/agents/{agentId}/hooks/</code>.
           Reference them in CLI Command as <code className="rounded bg-muted px-1 py-0.5 font-mono">hooks/script_name</code>.
         </p>
         {scripts.length === 0 ? (

@@ -8,7 +8,7 @@ export const LOCALES: { value: Locale; label: string }[] = [
   { value: "zh-CN", label: "中文" },
 ];
 
-const STORAGE_KEY = "fastclaw-locale";
+const STORAGE_KEY = "fluctio-locale";
 
 import en from "./locales/en";
 import zhCN from "./locales/zh-CN";

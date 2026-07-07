@@ -9,7 +9,7 @@ interface LoginScreenProps {
 }
 
 // LoginScreen: single-user mode — sign-in only. The owner account is
-// created via onboarding (`fastclaw agents init`) or `fastclaw admin
+// created via onboarding (`fluctio agents init`) or `fluctio admin
 // create-user`; there is no public self-registration.
 export function LoginScreen({ onSuccess }: LoginScreenProps) {
   const t = useT();

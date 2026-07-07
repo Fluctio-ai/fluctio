@@ -238,7 +238,7 @@ export default function AgentContextPage() {
           <span>
             {t("context.pluginToolsNote")}{" "}
             <code className="text-[11px]">
-              ~/.fastclaw/plugins/fastclaw-plugin-demo
+              ~/.fluctio/plugins/fluctio-plugin-demo
             </code>{" "}
             {t("context.pluginToolsExample")}
           </span>

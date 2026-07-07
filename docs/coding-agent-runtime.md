@@ -1,7 +1,7 @@
 # Coding-Agent Project Runtime
 
 This document is the integration contract for the **coding-agent runtime**:
-the layer that lets fastclaw scaffold a project from a template, run its
+the layer that lets fluctio scaffold a project from a template, run its
 dev server in a long-lived sandbox, and hand back a live preview URL. The
 upstream SaaS shell drives everything through the HTTP API below — it
 never touches the sandbox, the LLM, or the filesystem directly.
@@ -79,10 +79,10 @@ poll `GET …/runtime` (or `…/preview`) until `status` is `running` or
 5. Further edits: just send more chat turns. HMR reflects them; no re-up needed.
 6. Idle: `POST …/sleep` to free compute; `POST …/wake` when the user returns.
 
-## Using it from fastclaw's own web chat (no SaaS shell)
+## Using it from fluctio's own web chat (no SaaS shell)
 
 The runtime is also wired into the agent loop as two tools, so you can
-dogfood the whole loop in fastclaw's built-in web chat:
+dogfood the whole loop in fluctio's built-in web chat:
 
 - `start_app_preview` — scaffolds the project from the template (first
   call), boots the dev server, returns the preview URL.
@@ -109,17 +109,17 @@ and keep per-chat isolation.
 
 ### Dogfood steps
 
-1. Run fastclaw with the docker sandbox backend and a template source
+1. Run fluctio with the docker sandbox backend and a template source
    (see env vars below). For a local template checkout:
    ```
-   FASTCLAW_SHIPANY_TEMPLATE_DIR=/Users/you/code/shipany-tanstack
+   FLUCTIO_SHIPANY_TEMPLATE_DIR=/Users/you/code/shipany-tanstack
    ```
    The sandbox image still needs node + pnpm.
 2. Open any chat (a project chat for a persistent app, or just a new
    loose chat for a quick demo).
 3. Say e.g. *"用 shipany 模板做个 AI 抠图落地页"*. The agent calls
    `start_app_preview` (scaffold + boot), edits the template's copy/theme,
-   and replies with a preview URL. Leave `FASTCLAW_PREVIEW_BASE` empty and
+   and replies with a preview URL. Leave `FLUCTIO_PREVIEW_BASE` empty and
    it's `http://127.0.0.1:<port>` — open it directly.
 4. Keep chatting to iterate; HMR reflects edits live.
 
@@ -130,18 +130,18 @@ and keep per-chat isolation.
 
 ## Server wiring
 
-`cmd/fastclaw/main.go` constructs the manager and registers the
+`cmd/fluctio/main.go` constructs the manager and registers the
 `shipany-tanstack` template when a home dir resolves. It's active for the
 docker sandbox backend; other backends leave the endpoints at `503`.
 
-Template commands are env-overridable so fastclaw stays template-agnostic:
+Template commands are env-overridable so fluctio stays template-agnostic:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `FASTCLAW_PREVIEW_BASE` | _(empty)_ | Preview URL template. Empty → `http://127.0.0.1:<hostPort>` (local). Set to `https://{project}.preview.example.com` for the wildcard gateway (the `{project}` token is replaced with the project id). |
-| `FASTCLAW_SHIPANY_SCAFFOLD` | `if [ -d /template ]; then cp -a /template/. /workspace/; fi; cd /workspace && (pnpm install \|\| npm install)` | Shell run once in `/workspace` when it's empty. Populates the source tree + installs deps. |
-| `FASTCLAW_SHIPANY_DEV` | `pnpm dev --host 0.0.0.0 --port 3000` | Shell that starts the dev server bound to `0.0.0.0:3000`. |
-| `FASTCLAW_SHIPANY_TEMPLATE_DIR` | _(empty)_ | Host dir bind-mounted read-only at `/template` in the runtime container (option C). Set to a local checkout (e.g. `~/code/shipany-tanstack`) to scaffold from disk — no image bake, no git clone. The default scaffold's `cp -a /template/.` then works. |
+| `FLUCTIO_PREVIEW_BASE` | _(empty)_ | Preview URL template. Empty → `http://127.0.0.1:<hostPort>` (local). Set to `https://{project}.preview.example.com` for the wildcard gateway (the `{project}` token is replaced with the project id). |
+| `FLUCTIO_SHIPANY_SCAFFOLD` | `if [ -d /template ]; then cp -a /template/. /workspace/; fi; cd /workspace && (pnpm install \|\| npm install)` | Shell run once in `/workspace` when it's empty. Populates the source tree + installs deps. |
+| `FLUCTIO_SHIPANY_DEV` | `pnpm dev --host 0.0.0.0 --port 3000` | Shell that starts the dev server bound to `0.0.0.0:3000`. |
+| `FLUCTIO_SHIPANY_TEMPLATE_DIR` | _(empty)_ | Host dir bind-mounted read-only at `/template` in the runtime container (option C). Set to a local checkout (e.g. `~/code/shipany-tanstack`) to scaffold from disk — no image bake, no git clone. The default scaffold's `cp -a /template/.` then works. |
 
 To add another template (e.g. a Next.js starter), call
 `rtMgr.RegisterTemplate("my-template", coderuntime.TemplateSpec{…})` —
@@ -154,7 +154,7 @@ source fetch) — as a worked example of multi-template support.
 
 ## Sandbox backends (docker vs e2b/boxlite)
 
-The preview path depends on `FASTCLAW_SANDBOX_BACKEND`:
+The preview path depends on `FLUCTIO_SANDBOX_BACKEND`:
 
 - **docker (default)** — the runtime owns a dedicated long-lived container
   per project, publishes the dev port to a host port, and the agent's edits
@@ -176,16 +176,16 @@ cloud backend there is no host bind mount, so pick one of:
    for copyweb) **and** the template at `/template` — ideally with a warm
    pnpm store so scaffold installs offline and fast. Rebuild only when deps
    change. Set the e2b template id via the `e2bTemplate` setting (falls back
-   to `FASTCLAW_SANDBOX_IMAGE`).
+   to `FLUCTIO_SANDBOX_IMAGE`).
 2. **Pull source at scaffold time (image stays stable).** Override
-   `FASTCLAW_SHIPANY_SCAFFOLD` to `curl` a pinned tarball from object storage
+   `FLUCTIO_SHIPANY_SCAFFOLD` to `curl` a pinned tarball from object storage
    (R2/S3, via a short-lived presigned URL — no long-lived creds in a sandbox
    that runs LLM code) into `/workspace`, then `pnpm install --offline`
    against a warm store baked in the image. Decouples template content from
    the image; only dep changes need an image rebuild. Prefer this over
    `git clone` for private templates (no token to exfiltrate, pinned snapshot).
-3. **Upload from the fastclaw host.** When `FASTCLAW_SHIPANY_TEMPLATE_DIR`
-   points at a checkout on the fastclaw server, the e2b path uploads it into
+3. **Upload from the fluctio host.** When `FLUCTIO_SHIPANY_TEMPLATE_DIR`
+   points at a checkout on the fluctio server, the e2b path uploads it into
    the sandbox `/template` (`TemplateProvisioner.ProvisionDir`). Convenient
    for local e2b testing; costs a per-cold-sandbox upload.
 
@@ -199,10 +199,10 @@ pool image, so per-template e2b images would need a pool per-project override
 
 ### Sandbox image requirements
 
-The runtime reuses the sandbox image (`FASTCLAW_SANDBOX_IMAGE`). For the
+The runtime reuses the sandbox image (`FLUCTIO_SANDBOX_IMAGE`). For the
 ShipAny template that image must have **node + pnpm** and the template
 source baked at `/template` (so the default scaffold's `cp -a /template/.`
-works). Alternatively override `FASTCLAW_SHIPANY_SCAFFOLD` to `git clone`
+works). Alternatively override `FLUCTIO_SHIPANY_SCAFFOLD` to `git clone`
 the template instead.
 
 ## Preview gateway (deployment-side, NOT in this repo)
@@ -210,7 +210,7 @@ the template instead.
 The runtime publishes the dev port to `127.0.0.1:<hostPort>` on the host —
 deliberately **not** `0.0.0.0`, because the container runs LLM-generated
 code and must never be directly reachable. Turning `hostPort` into a
-shareable URL is a reverse proxy you deploy alongside fastclaw:
+shareable URL is a reverse proxy you deploy alongside fluctio:
 
 ```
 *.preview.example.com
@@ -230,10 +230,10 @@ Gateway responsibilities:
   port* in its HMR config (`server.hmr.clientPort`), since inside the
   container the dev server only knows port 3000.
 
-Set `FASTCLAW_PREVIEW_BASE=https://{project}.preview.example.com` so the
+Set `FLUCTIO_PREVIEW_BASE=https://{project}.preview.example.com` so the
 runtime records gateway-shaped URLs; the gateway does the port mapping.
 
-For local development leave `FASTCLAW_PREVIEW_BASE` empty and hit
+For local development leave `FLUCTIO_PREVIEW_BASE` empty and hit
 `http://127.0.0.1:<hostPort>` directly — no gateway needed.
 
 ## What's intentionally left to the integrator
