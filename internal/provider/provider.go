@@ -43,6 +43,7 @@ func newLLMHTTPClient() *http.Client {
 const (
 	OriginUser        = "" // default — pre-existing producers stay correct without edits
 	OriginGoalContext = "goal_context"
+	OriginCron        = "cron" // scheduled-task trigger — a cron-fired inbound, not a real user turn
 )
 
 // Message represents a chat message.

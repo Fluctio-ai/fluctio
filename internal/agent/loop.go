@@ -927,10 +927,19 @@ func (a *Agent) sessionHasActiveGoal(ctx context.Context, msg bus.InboundMessage
 // and merges PhotoURL (legacy IM single) + PhotoURLs (web multi)
 // into one ContentParts slice. Image-only sends skip a leading
 // empty text part — some upstreams reject content-less wire messages.
+// cronTriggerGuidance is injected as a system message when a scheduled
+// task fires, so the model treats the inbound directive as a task to
+// execute and deliver — not a fresh user request to acknowledge. Pairs
+// with the OriginCron tag on the user message for traceability.
+const cronTriggerGuidance = "Scheduled-task trigger: the user message below is a task directive you previously set for yourself via create_cron_job. Execute it now and deliver the corresponding notification or result to the user directly. Do not acknowledge, confirm, or echo the directive, and do not treat it as a newly-requested task."
+
 func buildUserMessage(msg bus.InboundMessage) provider.Message {
 	origin := provider.OriginUser
-	if msg.Source == bus.SourceGoalContext {
+	switch msg.Source {
+	case bus.SourceGoalContext:
 		origin = provider.OriginGoalContext
+	case bus.SourceCron:
+		origin = provider.OriginCron
 	}
 	// IM DMs are not prefixed with `[SenderName]:` — there's only one
 	// chatter per DM, the sender is already surfaced as a per-turn
@@ -2059,6 +2068,9 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	if reminder := renderChatbotPersistenceReminder(a.promptMode, a.displayName, chatterMem.LoadUserFile(), chatterMem.LoadMemory()); reminder != "" {
 		messages = append(messages, provider.Message{Role: "system", Content: reminder})
 	}
+	if msg.Source == bus.SourceCron {
+		messages = append(messages, provider.Message{Role: "system", Content: cronTriggerGuidance})
+	}
 	messages = append(messages, a.withMessageTimestampsForChatter(sessionMsgs, chatterUID)...)
 
 	toolDefs := a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
@@ -2870,6 +2882,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	}
 	if reminder := renderChatbotPersistenceReminder(a.promptMode, a.displayName, chatterMem.LoadUserFile(), chatterMem.LoadMemory()); reminder != "" {
 		messages = append(messages, provider.Message{Role: "system", Content: reminder})
+	}
+	if msg.Source == bus.SourceCron {
+		messages = append(messages, provider.Message{Role: "system", Content: cronTriggerGuidance})
 	}
 	messages = append(messages, a.withMessageTimestampsForChatter(sessionMsgs, chatterUID)...)
 

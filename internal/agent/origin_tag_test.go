@@ -20,7 +20,7 @@ func TestBuildUserMessageOriginPropagates(t *testing.T) {
 		want   string
 	}{
 		{"user turn", bus.SourceUser, provider.OriginUser},
-		{"cron tick", bus.SourceCron, provider.OriginUser},
+		{"cron tick", bus.SourceCron, provider.OriginCron},
 		{"heartbeat", bus.SourceHeartbeat, provider.OriginUser},
 		{"subagent", bus.SourceSubAgent, provider.OriginUser},
 		{"goal context", bus.SourceGoalContext, provider.OriginGoalContext},
