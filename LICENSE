@@ -1,12 +1,12 @@
-                       FastClaw Community License Agreement
+                       Fluctio Community License Agreement
                               Version 1.0, 2026
 
-   FastClaw is licensed under the FastClaw Community License, based on
+   Fluctio is licensed under the Fluctio Community License, based on
    the Apache License 2.0 with the following additional conditions:
 
    1. Commercial Use
 
-      (a) FastClaw may be utilized commercially, including as a backend
+      (a) Fluctio may be utilized commercially, including as a backend
           service for other applications or as an application development
           platform for enterprises, without modifying the source code.
 
@@ -14,10 +14,10 @@
           of the following conditions apply:
 
           (i) Multi-tenant Service. Unless explicitly authorized by
-              ThinkAny, LLC in writing, You may not use the FastClaw
+              ThinkAny, LLC in writing, You may not use the Fluctio
               source code to operate a multi-tenant service where
               multiple users or organizations share a single deployment
-              for the purpose of providing FastClaw-as-a-Service to
+              for the purpose of providing Fluctio-as-a-Service to
               third parties.
 
               Permitted use cases (no commercial license required):
@@ -25,31 +25,31 @@
               - Internal deployment within a single organization for
                 its employees or teams.
 
-              - Using FastClaw as a backend to power Your own SaaS
+              - Using Fluctio as a backend to power Your own SaaS
                 product, where end users interact with Your product
-                rather than FastClaw directly.
+                rather than Fluctio directly.
 
               Restricted use cases (commercial license required):
 
-              - Hosting FastClaw and selling access to multiple
+              - Hosting Fluctio and selling access to multiple
                 unrelated organizations as a competing Agent platform
                 service.
 
           (ii) Logo and Copyright Information. In the process of using
-               FastClaw's frontend, You may not remove or modify the
-               FastClaw logo, branding, or copyright information in the
-               FastClaw interface.
+               Fluctio's frontend, You may not remove or modify the
+               Fluctio logo, branding, or copyright information in the
+               Fluctio interface.
 
                Frontend Definition. For the purposes of this License,
-               the "frontend" of FastClaw includes all visual interface
+               the "frontend" of Fluctio includes all visual interface
                components delivered to end users, including but not
                limited to those located in the `web/public/` and
-               `web/src/` directories when running FastClaw from the
+               `web/src/` directories when running Fluctio from the
                source code, as well as any compiled or distributed
                frontend artifacts.
 
-               This restriction is inapplicable to uses of FastClaw
-               that do not involve its frontend (e.g., using FastClaw
+               This restriction is inapplicable to uses of Fluctio
+               that do not involve its frontend (e.g., using Fluctio
                purely as an API backend without exposing its UI to end
                users).
 
@@ -69,7 +69,7 @@
 
    3. Trademark
 
-      You may not use the FastClaw name, logo, or trademarks to promote
+      You may not use the Fluctio name, logo, or trademarks to promote
       derivative products or services without prior written consent from
       ThinkAny, LLC.
 

@@ -1,18 +1,18 @@
 # openclaw-proxy
 
-Bridge OpenClaw TypeScript plugins to FastClaw's JSON-RPC protocol.
+Bridge OpenClaw TypeScript plugins to Fluctio's JSON-RPC protocol.
 
 ## How it works
 
 ```
-FastClaw Gateway ←→ JSON-RPC (stdin/stdout) ←→ openclaw-proxy ←→ OpenClaw Plugin (JS/TS)
+Fluctio Gateway ←→ JSON-RPC (stdin/stdout) ←→ openclaw-proxy ←→ OpenClaw Plugin (JS/TS)
 ```
 
-The proxy loads an OpenClaw plugin, captures its `register()` calls (tools, channels, etc.), and exposes them via FastClaw's JSON-RPC protocol.
+The proxy loads an OpenClaw plugin, captures its `register()` calls (tools, channels, etc.), and exposes them via Fluctio's JSON-RPC protocol.
 
 ## Supported capabilities
 
-| OpenClaw API | FastClaw RPC | Status |
+| OpenClaw API | Fluctio RPC | Status |
 |---|---|---|
 | `api.registerTool()` | `tool.list` / `tool.execute` | ✅ |
 | `api.registerChannel()` | `channel.send` / `message.inbound` | ✅ |
@@ -28,12 +28,12 @@ cd tools/openclaw-proxy
 pnpm install && pnpm build
 ```
 
-### 2. Create a FastClaw plugin wrapper
+### 2. Create a Fluctio plugin wrapper
 
 Given an OpenClaw plugin installed at `./node_modules/@openclaw/some-plugin`:
 
 ```
-~/.fastclaw/plugins/some-plugin/
+~/.fluctio/plugins/some-plugin/
 ├── plugin.json
 └── node_modules/@openclaw/some-plugin/   (npm install here)
 ```
@@ -49,7 +49,7 @@ Given an OpenClaw plugin installed at `./node_modules/@openclaw/some-plugin`:
 
 ### 3. That's it
 
-FastClaw will start the proxy as a subprocess, which loads the OpenClaw plugin and bridges all registered tools/channels.
+Fluctio will start the proxy as a subprocess, which loads the OpenClaw plugin and bridges all registered tools/channels.
 
 ## Example
 

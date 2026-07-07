@@ -1,6 +1,6 @@
-Bundled skills ship with the binary and get installed to `~/.fastclaw/skills/`
+Bundled skills ship with the binary and get installed to `~/.fluctio/skills/`
 on every boot via InstallBundledSkills. Products bring their own skills via
-FASTCLAW_HOME/skills/ or per-agent skills/ — anything dropped in here is the
+FLUCTIO_HOME/skills/ or per-agent skills/ — anything dropped in here is the
 runtime's own baseline.
 
 ## Upgrade behavior
