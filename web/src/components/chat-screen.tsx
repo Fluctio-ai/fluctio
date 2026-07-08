@@ -2837,17 +2837,17 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
             className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className="h-5 w-5 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
+              <div className="h-5 w-5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
             ) : roundIndex !== undefined ? (
               // When this group is a round inside a bundle, the leading
               // glyph carries the round number — gives the bundle's
               // expanded view a built-in step indicator without an
               // extra "ROUND N" label row above each card.
-              <span className="h-5 w-5 shrink-0 inline-flex items-center justify-center rounded-full bg-warning/10 text-[11px] font-semibold text-warning dark:text-warning">
+              <span className="h-5 w-5 shrink-0 inline-flex items-center justify-center rounded-full bg-info/10 text-[11px] font-semibold text-info dark:text-info">
                 {roundIndex}
               </span>
             ) : (
-              <Wrench className="h-3.5 w-3.5 text-warning shrink-0" />
+              <Wrench className="h-3.5 w-3.5 text-info shrink-0" />
             )}
             <span className="font-medium text-foreground">
               {allDone
@@ -2873,7 +2873,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-colors"
                   >
                     {tc.result === undefined ? (
-                      <div className="h-3 w-3 shrink-0 rounded-full border-2 border-warning/60 border-t-transparent animate-spin" />
+                      <div className="h-3 w-3 shrink-0 rounded-full border-2 border-info/60 border-t-transparent animate-spin" />
                     ) : (
                       <Check className="h-3 w-3 text-success shrink-0" />
                     )}
@@ -3009,9 +3009,9 @@ function ToolRoundsBundle({
             className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
+              <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
             ) : (
-              <Wrench className="h-3.5 w-3.5 text-warning shrink-0" />
+              <Wrench className="h-3.5 w-3.5 text-info shrink-0" />
             )}
             <span className="font-medium text-foreground">
               {allDone

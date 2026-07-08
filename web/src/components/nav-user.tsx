@@ -51,7 +51,7 @@ export function NavUser({
               />
             }
           >
-            <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-success/20 text-success text-xs font-bold">
+            <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/20 text-primary text-xs font-bold">
               {initials}
             </div>
             <div className="grid flex-1 text-left text-sm leading-tight">
@@ -71,7 +71,7 @@ export function NavUser({
             <DropdownMenuGroup>
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                  <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-success/20 text-success text-xs font-bold">
+                  <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/20 text-primary text-xs font-bold">
                     {initials}
                   </div>
                   <div className="grid flex-1 text-left text-sm leading-tight">

@@ -76,9 +76,8 @@
 }
 
 /* Light theme — Geist-inspired: pure neutral grayscale (chroma≈0) with a
-   single orange brand accent. Primary action color uses foreground-inversion
-   (near-black bg + near-white fg) rather than a colored brand fill, matching
-   Vercel Geist's core inversion technique. */
+   single wave-blue accent axis (#1890FF). Primary, brand, focus ring, and
+   info all share the blue family; surface tiers stay neutral gray. */
 :root {
   --background: oklch(1 0 0);              /* #ffffff pure white */
   --foreground: oklch(0.145 0 0);          /* #171717 — aligns with Geist primary */
@@ -87,8 +86,8 @@
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
 
-  /* Primary action = foreground inversion (black button / white text) */
-  --primary: oklch(0.145 0 0);             /* near-black fill */
+  /* Primary action = wave-blue fill with white text */
+  --primary: #1890ff;             /* wave blue */
   --primary-foreground: oklch(0.985 0 0);  /* near-white text */
 
   /* Neutral surface tiers (pure gray, no purple tint) */
@@ -97,23 +96,22 @@
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);    /* #757575 — Geist secondary gray */
 
-  /* Accent = neutral gray for selection/emphasis (Geist: accent is not a brand color).
-     Hover/selected fills step up the gray scale, not toward a hue. */
-  --accent: oklch(0.97 0 0);               /* gray-100 — selection/hover base */
-  --accent-foreground: oklch(0.205 0 0);   /* near-black text on light-gray fill */
+  /* Accent = light wave-blue tint for selection/emphasis (blue-axis theme). */
+  --accent: #e6f4ff;               /* light blue — selection/hover base */
+  --accent-foreground: #003a8c;   /* deep-blue text on light-blue fill */
 
-  /* Brand orange — decorative only (logo, onboarding, marketing). NOT a focus or
-     state color; using it for rings/icons would collide with the amber warning scale. */
-  --brand: oklch(0.65 0.18 38);            /* #e8703a Fluctio orange */
+  /* Brand wave-blue — the primary hue (logo, onboarding, marketing). Stays
+     distinct from amber warning; rings/info share this blue axis. */
+  --brand: #1890ff;            /* #1890ff Fluctio wave blue */
 
   --destructive: oklch(0.577 0.245 27.325);/* keep vivid red for errors */
   --border: oklch(0.922 0 0);              /* #eaeaea — pure gray hairline */
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.5796 0.2508 258.23);     /* focus ring = Geist blue-700 #006bff */
+  --ring: #1890ff;     /* focus ring = wave blue */
 
   /* Chart palette — Geist categorical (blue/green/teal/purple/pink). Avoids amber
      so a data series never reads as the warning state. */
-  --chart-1: oklch(0.5796 0.2508 258.23);  /* blue */
+  --chart-1: #1890ff;  /* blue */
   --chart-2: oklch(0.6458 0.1746 147.27);  /* green */
   --chart-3: oklch(0.6492 0.1572 181.95);  /* teal */
   --chart-4: oklch(0.5550 0.3008 306.12);  /* purple */
@@ -124,25 +122,25 @@
   /* Sidebar — slightly off-white, same neutral axis */
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.145 0 0);     /* sidebar active = inversion too */
+  --sidebar-primary: #1890ff;     /* sidebar active = wave blue */
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-accent: #e6f4ff;
+  --sidebar-accent-foreground: #003a8c;
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.5796 0.2508 258.23);  /* Geist blue-700 */
+  --sidebar-ring: #1890ff;  /* wave blue */
 
   /* Semantic status tokens — replaces scattered emerald/amber/blue/cyan */
   --success: oklch(0.62 0.17 150);         /* green */
   --success-foreground: oklch(0.985 0 0);
   --warning: oklch(0.75 0.15 75);          /* amber */
   --warning-foreground: oklch(0.205 0 0);
-  --info: oklch(0.60 0.15 250);            /* blue */
+  --info: #1890ff;            /* blue */
   --info-foreground: oklch(0.985 0 0);
 }
 
-/* Dark theme — mirrors the light structure with foreground-inversion primary
-   (white button / black text) and pure neutral surfaces. Background targets
-   Geist's dark neutral (#171717); accents stay single-source orange. */
+/* Dark theme — mirrors the light structure with a wave-blue primary (#40a9ff
+   fill / near-black text) and pure neutral surfaces. Background targets
+   Geist's dark neutral (#171717); blue is lifted one step for contrast. */
 .dark {
   --background: oklch(0.145 0 0);          /* #171717 — Geist dark neutral */
   --foreground: oklch(0.985 0 0);          /* #ededed — Geist dark primary */
@@ -151,8 +149,8 @@
   --popover: oklch(0.178 0 0);
   --popover-foreground: oklch(0.985 0 0);
 
-  /* Primary action = foreground inversion (white button / black text) */
-  --primary: oklch(0.985 0 0);
+  /* Primary action = wave-blue fill (#40a9ff) with near-black text */
+  --primary: #40a9ff;
   --primary-foreground: oklch(0.145 0 0);
 
   /* Neutral surface tiers — pure gray, no purple */
@@ -161,12 +159,12 @@
   --muted: oklch(0.22 0 0);
   --muted-foreground: oklch(0.65 0 0);     /* #a0a0a0 — Geist dark secondary */
 
-  /* Accent — neutral gray selection base (no brand tint) */
-  --accent: oklch(0.22 0 0);
-  --accent-foreground: oklch(0.985 0 0);   /* near-white text on dark-gray fill */
+  /* Accent — deep wave-blue selection base */
+  --accent: #112545;
+  --accent-foreground: #bae0ff;   /* light-blue text on deep-blue fill */
 
-  /* Brand orange — decorative only */
-  --brand: oklch(0.70 0.17 45);
+  /* Brand wave-blue — decorative + primary hue */
+  --brand: #40a9ff;
 
   --destructive: oklch(0.65 0.2 25);
   --border: oklch(1 0 0 / 10%);            /* Geist-style translucent hairline */
@@ -181,10 +179,10 @@
 
   --sidebar: oklch(0.178 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.985 0 0);
+  --sidebar-primary: #40a9ff;
   --sidebar-primary-foreground: oklch(0.145 0 0);
-  --sidebar-accent: oklch(0.22 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-accent: #112545;
+  --sidebar-accent-foreground: #bae0ff;
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.7170 0.1648 250.79);  /* Geist dark blue-900 */
 
@@ -192,7 +190,7 @@
   --success-foreground: oklch(0.145 0 0);
   --warning: oklch(0.78 0.15 75);
   --warning-foreground: oklch(0.145 0 0);
-  --info: oklch(0.68 0.15 250);
+  --info: #40a9ff;
   --info-foreground: oklch(0.145 0 0);
 }
 
@@ -277,10 +275,10 @@ html.theme-transition *::after {
 
 @keyframes pulse-glow {
   0%, 100% {
-    box-shadow: 0 0 20px oklch(0.65 0.18 38 / 0.1);
+    box-shadow: 0 0 20px oklch(0.62 0.19 255 / 0.1);
   }
   50% {
-    box-shadow: 0 0 40px oklch(0.65 0.18 38 / 0.2);
+    box-shadow: 0 0 40px oklch(0.62 0.19 255 / 0.2);
   }
 }
 
