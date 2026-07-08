@@ -134,7 +134,12 @@ export function AgentSettingsDialog({
     : role === "viewer"
       ? AGENT_TABS.filter((t) => t.id === "models" || t.id === "channels")
       : AGENT_TABS;
-  const userTabs = isAdmin ? USER_TABS : USER_TABS.filter((t) => t.id !== "about");
+  // User tabs (Account / General / About) live ONLY on the platform sidebar's
+  // Settings (userOnly) — the per-agent dialog drops them to avoid duplicating
+  // what's already reachable from the post-login global settings.
+  const userTabs = userOnly
+    ? (isAdmin ? USER_TABS : USER_TABS.filter((t) => t.id !== "about"))
+    : [];
   // Pick the landing tab: userOnly opens on General (User section);
   // viewers land on Models (the first Agent tab they have); owners on
   // Profile.
@@ -172,9 +177,11 @@ export function AgentSettingsDialog({
               ))}
             </>
           )}
-          <SectionLabel className={agentTabs.length > 0 ? "mt-3" : undefined}>
-            {tt("dialog.userSection")}
-          </SectionLabel>
+          {userTabs.length > 0 && (
+            <SectionLabel className={agentTabs.length > 0 ? "mt-3" : undefined}>
+              {tt("dialog.userSection")}
+            </SectionLabel>
+          )}
           {userTabs.map((t) => (
             <TabButton
               key={t.id}
