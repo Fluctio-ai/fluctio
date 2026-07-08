@@ -9,12 +9,15 @@ import {
   CoinsIcon,
   DatabaseIcon,
   IdCardIcon,
+  InfoIcon,
   LayersIcon,
+  Palette,
   Plug,
   RadioIcon,
   Regex,
   ServerIcon,
   SparklesIcon,
+  UserCog,
   Wand2Icon,
 } from "lucide-react";
 
@@ -36,7 +39,10 @@ import AgentWikiPage from "@/app/agents/[id]/wiki/page";
 import AgentMemoryPage from "@/app/agents/[id]/memory/page";
 import AgentMCPPage from "@/app/agents/[id]/mcp/page";
 import AgentUsagePage from "@/app/agents/[id]/usage/page";
+import AccountSettingsPage from "@/app/settings/account/page";
+import GeneralSettingsPage from "@/app/settings/general/page";
 import UserModelsPage from "@/app/models/page";
+import AboutSettingsPage from "@/app/settings/about/page";
 
 export type AgentSettingsTab =
   | "profile"
@@ -52,7 +58,10 @@ export type AgentSettingsTab =
   | "knowledge"
   | "wiki"
   | "memory"
-  | "usage";
+  | "usage"
+  | "account"
+  | "general"
+  | "about";
 
 type TabIcon = React.ComponentType<{ className?: string }>;
 
@@ -73,7 +82,18 @@ const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> 
   { id: "usage", label: "settings.usage", icon: CoinsIcon },
 ];
 
-// Tabbed configuration panel. Hosts the per-agent pages
+// Runtime intentionally lives only on the standalone /settings/runtime
+// page (super_admin-gated) — it's a deployment-wide knob, not the kind
+// of thing the average chatter wants in their per-agent dialog.
+const USER_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> = [
+  { id: "account", label: "settings.account", icon: UserCog },
+  { id: "general", label: "settings.general", icon: Palette },
+  // About surfaces the gateway version + upgrade hint — only useful
+  // to operators (super_admin), filtered out below for regular users.
+  { id: "about", label: "settings.about", icon: InfoIcon },
+];
+
+// Tabbed configuration panel. Hosts both the per-agent pages
 // (Customize / Models / Skills / Channels / Scheduler) and the
 // per-user pages (Account / General / Runtime[admin-only]) so a
 // click on the sidebar Settings button covers everything the user
@@ -93,20 +113,34 @@ export function AgentSettingsDialog({
   onOpenChange,
   defaultTab,
   role = "owner",
+  userOnly = false,
+  isAdmin = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultTab?: AgentSettingsTab;
   role?: "owner" | "viewer";
+  // userOnly hides the Agent section entirely. Used by the platform
+  // sidebar's Settings button, which has no agent context — it should
+  // only expose Account + General.
+  userOnly?: boolean;
+  // isAdmin gates super_admin-only tabs (currently just About — the
+  // gateway version + upgrade hint is operator info, not end-user info).
+  isAdmin?: boolean;
 }) {
   const tt = useT();
-  const agentTabs =
-    role === "viewer"
+  const agentTabs = userOnly
+    ? []
+    : role === "viewer"
       ? AGENT_TABS.filter((t) => t.id === "models" || t.id === "channels")
       : AGENT_TABS;
-  // Pick the landing tab: viewers land on Models; owners on Profile.
+  const userTabs = isAdmin ? USER_TABS : USER_TABS.filter((t) => t.id !== "about");
+  // Pick the landing tab: userOnly opens on General (User section);
+  // viewers land on Models (the first Agent tab they have); owners on
+  // Profile.
   const initialTab: AgentSettingsTab =
-    defaultTab ?? (role === "viewer" ? "models" : "profile");
+    defaultTab ??
+    (userOnly ? "general" : role === "viewer" ? "models" : "profile");
   const [tab, setTab] = React.useState<AgentSettingsTab>(initialTab);
 
   // Reset to the requested tab whenever the dialog re-opens, so a fresh
@@ -138,6 +172,17 @@ export function AgentSettingsDialog({
               ))}
             </>
           )}
+          <SectionLabel className={agentTabs.length > 0 ? "mt-3" : undefined}>
+            {tt("dialog.userSection")}
+          </SectionLabel>
+          {userTabs.map((t) => (
+            <TabButton
+              key={t.id}
+              tab={t}
+              active={tab === t.id}
+              onSelect={setTab}
+            />
+          ))}
         </aside>
         <div className="overflow-y-auto">
           {tab === "profile" && <AgentProfilePanel />}
@@ -155,6 +200,21 @@ export function AgentSettingsDialog({
           {tab === "wiki" && <AgentWikiPage />}
           {tab === "memory" && <AgentMemoryPage />}
           {tab === "usage" && <AgentUsagePage />}
+          {tab === "account" && (
+            <div className="p-6 max-w-3xl">
+              <AccountSettingsPage />
+            </div>
+          )}
+          {tab === "general" && (
+            <div className="p-6 max-w-3xl">
+              <GeneralSettingsPage />
+            </div>
+          )}
+          {tab === "about" && (
+            <div className="p-6 max-w-3xl">
+              <AboutSettingsPage />
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
