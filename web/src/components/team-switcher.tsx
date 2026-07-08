@@ -39,7 +39,7 @@ function AgentAvatar({
   if (!agentId) {
     return (
       <img
-        src="/logo.png"
+        src="/logo.svg"
         alt="Fluctio"
         width={size}
         height={size}

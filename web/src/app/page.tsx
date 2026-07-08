@@ -73,7 +73,7 @@ export default function RootPage() {
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="w-full max-w-sm space-y-6 p-6">
           <div className="flex flex-col items-center gap-3">
-            <img src="/logo.png" alt="Fluctio" className="h-12 w-12" />
+            <img src="/logo.svg" alt="Fluctio" className="h-12 w-12" />
             <h1 className="text-xl font-bold">Fluctio</h1>
             <p className="text-sm text-muted-foreground">Sign in to continue</p>
           </div>
