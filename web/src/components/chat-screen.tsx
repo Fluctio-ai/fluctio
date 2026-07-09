@@ -3094,7 +3094,7 @@ function ToolRoundsBundle({
             {!allDone ? (
               <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
             ) : (
-              <Wrench className="h-3.5 w-3.5 text-info shrink-0" />
+              <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             )}
             <span className="font-medium text-foreground">
               {allDone
