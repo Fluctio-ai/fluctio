@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, revealAgentWorkspace, sendChatStream, steerChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
-import { Bot, Send, Copy, Check, Pencil, Wrench, ChevronDown, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown } from "@/components/chat-markdown";
 
@@ -2792,6 +2792,54 @@ function ChatHeaderTitle({ title, fallback, onSave }: ChatHeaderTitleProps) {
   );
 }
 
+// Tool family theming — each tool gets an icon + accent color keyed
+// off its name, so related tools read as one group at a glance: every
+// knowledgebase_* tool is emerald + BookOpen, every web_* is sky +
+// Globe, etc. Matched by name (prefix/exact), so a new
+// knowledgebase_ingest_text inherits the look automatically — add one
+// row here to theme a new family. Unknown names (MCP/dynamic tools)
+// fall back to DEFAULT_FAMILY, which keeps the original info-blue look.
+type ToolFamily = {
+  icon: typeof Wrench;
+  accent: string;        // group header + per-tool family icon color
+  title: string;         // per-tool title text color
+  dot: string;           // per-tool spinner border color
+  check: string;         // per-tool check icon color
+  nonDefault: boolean;   // render the family icon beside per-tool title
+};
+
+const DEFAULT_FAMILY: ToolFamily = {
+  icon: Wrench,
+  accent: "text-info",
+  title: "text-foreground",
+  dot: "border-info/60",
+  check: "text-success",
+  nonDefault: false,
+};
+
+const TOOL_FAMILIES: Array<ToolFamily & { match: (name: string) => boolean }> = [
+  { match: (n) => n.startsWith("memory_"), icon: Brain, accent: "text-purple-500", title: "text-purple-500", dot: "border-purple-500/60", check: "text-purple-500", nonDefault: true },
+  { match: (n) => n.startsWith("knowledgebase_"), icon: BookOpen, accent: "text-emerald-500", title: "text-emerald-500", dot: "border-emerald-500/60", check: "text-emerald-500", nonDefault: true },
+  { match: (n) => n.startsWith("web_"), icon: Globe, accent: "text-sky-500", title: "text-sky-500", dot: "border-sky-500/60", check: "text-sky-500", nonDefault: true },
+  { match: (n) => n === "image_gen", icon: ImageIcon, accent: "text-pink-500", title: "text-pink-500", dot: "border-pink-500/60", check: "text-pink-500", nonDefault: true },
+  { match: (n) => n === "tts", icon: Music, accent: "text-amber-500", title: "text-amber-500", dot: "border-amber-500/60", check: "text-amber-500", nonDefault: true },
+  { match: (n) => ["read_file", "write_file", "list_dir", "edit_file"].includes(n), icon: FileText, accent: "text-indigo-500", title: "text-indigo-500", dot: "border-indigo-500/60", check: "text-indigo-500", nonDefault: true },
+  { match: (n) => n === "apply_patch", icon: FileCode, accent: "text-teal-500", title: "text-teal-500", dot: "border-teal-500/60", check: "text-teal-500", nonDefault: true },
+  { match: (n) => n === "exec" || n === "host_exec" || n === "bash_output" || n === "kill_shell", icon: Terminal, accent: "text-zinc-500", title: "text-zinc-500", dot: "border-zinc-500/60", check: "text-zinc-500", nonDefault: true },
+  { match: (n) => n.endsWith("_cron_job"), icon: Clock, accent: "text-orange-500", title: "text-orange-500", dot: "border-orange-500/60", check: "text-orange-500", nonDefault: true },
+  { match: (n) => n === "load_skill" || n === "search_skills" || n === "install_skill", icon: Puzzle, accent: "text-fuchsia-500", title: "text-fuchsia-500", dot: "border-fuchsia-500/60", check: "text-fuchsia-500", nonDefault: true },
+  { match: (n) => n === "spawn_subagent" || n === "delegate_task", icon: Bot, accent: "text-cyan-600", title: "text-cyan-600", dot: "border-cyan-600/60", check: "text-cyan-600", nonDefault: true },
+  { match: (n) => n === "message" || n === "fetch_messages", icon: Send, accent: "text-rose-500", title: "text-rose-500", dot: "border-rose-500/60", check: "text-rose-500", nonDefault: true },
+  { match: (n) => n.startsWith("set_"), icon: SlidersHorizontal, accent: "text-stone-500", title: "text-stone-500", dot: "border-stone-500/60", check: "text-stone-500", nonDefault: true },
+  { match: (n) => n === "update_goal", icon: Target, accent: "text-red-500", title: "text-red-500", dot: "border-red-500/60", check: "text-red-500", nonDefault: true },
+  { match: (n) => n === "get_billing_usage", icon: CreditCard, accent: "text-green-600", title: "text-green-600", dot: "border-green-600/60", check: "text-green-600", nonDefault: true },
+];
+
+function familyOf(name: string): ToolFamily {
+  for (const f of TOOL_FAMILIES) if (f.match(name)) return f;
+  return DEFAULT_FAMILY;
+}
+
 /** Renders a group of tool calls as a collapsible summary. When
  *  `nested`, the outer flex/max-width wrappers are dropped so a parent
  *  container (ToolRoundsBundle) can stack rounds without each one
@@ -2820,6 +2868,22 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
   const toggleTool = (id: string) =>
     setExpandedTool((prev) => ({ ...prev, [id]: !prev[id] }));
 
+  // Group accent: only when every tool in the round belongs to the same
+  // non-default family — a mixed round (e.g. knowledgebase_search +
+  // write_file) stays generic so a family color isn't misleading.
+  const groupFamily =
+    tools.length > 0 && tools.every((tc) => familyOf(tc.name) === familyOf(tools[0].name))
+      ? familyOf(tools[0].name)
+      : DEFAULT_FAMILY;
+
+  // A round whose every tool is a regex_hook match is themed blue and
+  // relabeled (matched / running, hook name without the "regex_hook: "
+  // prefix) so it reads as a hook firing, not an ordinary tool call.
+  // Detected by name prefix because the backend marks a hook hit by
+  // emitting a synthetic tool call named "regex_hook: <hook>".
+  const isRH =
+    tools.length > 0 && tools.every((tc) => tc.name.startsWith("regex_hook"));
+
   const inner = (
     <>
       {/* Content before tools */}
@@ -2831,13 +2895,13 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
         </div>
       )}
       {/* Collapsed tool group summary */}
-      <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
+      <div className={`rounded-lg border overflow-hidden ${isRH ? "border-blue-500/40 bg-blue-500/5" : "border-border bg-card/50"}`}>
           <button
             onClick={() => setGroupOpen(!groupOpen)}
             className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className="h-5 w-5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
+              <div className={`h-5 w-5 shrink-0 rounded-full border-2 ${isRH ? "border-blue-500" : "border-info"} border-t-transparent animate-spin`} />
             ) : roundIndex !== undefined ? (
               // When this group is a round inside a bundle, the leading
               // glyph carries the round number — gives the bundle's
@@ -2846,16 +2910,23 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
               <span className="h-5 w-5 shrink-0 inline-flex items-center justify-center rounded-full bg-info/10 text-[11px] font-semibold text-info dark:text-info">
                 {roundIndex}
               </span>
+            ) : isRH ? (
+              <Zap className="h-3.5 w-3.5 text-blue-500 shrink-0" />
             ) : (
-              <Wrench className="h-3.5 w-3.5 text-info shrink-0" />
+              (() => {
+                const FamIcon = groupFamily.icon;
+                return <FamIcon className={`h-3.5 w-3.5 ${groupFamily.accent} shrink-0`} />;
+              })()
             )}
             <span className="font-medium text-foreground">
-              {allDone
-                ? `Executed ${tools.length} tool${tools.length > 1 ? "s" : ""}`
-                : `Running tools (${doneCount}/${tools.length})...`}
+              {isRH
+                ? (allDone ? "Regex Hook matched" : "Regex Hook running...")
+                : (allDone
+                  ? `Executed ${tools.length} tool${tools.length > 1 ? "s" : ""}`
+                  : `Running tools (${doneCount}/${tools.length})...`)}
             </span>
             <span className="text-muted-foreground/60 text-[11px] flex-1 text-left truncate">
-              {tools.map((tc) => tc.name).join(", ")}
+              {tools.map((tc) => isRH ? tc.name.replace(/^regex_hook:\s*/, "") : tc.name).join(", ")}
             </span>
             {groupOpen ? (
               <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
@@ -2872,12 +2943,25 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
                     onClick={() => toggleTool(tc.id)}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-colors"
                   >
-                    {tc.result === undefined ? (
-                      <div className="h-3 w-3 shrink-0 rounded-full border-2 border-info/60 border-t-transparent animate-spin" />
-                    ) : (
-                      <Check className="h-3 w-3 text-success shrink-0" />
-                    )}
-                    <span className="font-medium text-foreground">{tc.name}</span>
+                    {(() => {
+                      const fam = familyOf(tc.name);
+                      const FamIcon = !isRH && fam.nonDefault ? fam.icon : null;
+                      const dotBorder = isRH ? "border-blue-500/60" : fam.dot;
+                      const checkCls = isRH ? "text-blue-500" : fam.check;
+                      const titleCls = isRH ? "text-blue-500" : fam.title;
+                      const label = isRH ? tc.name.replace(/^regex_hook:\s*/, "") : tc.name;
+                      return (
+                        <>
+                          {tc.result === undefined ? (
+                            <div className={`h-3 w-3 shrink-0 rounded-full border-2 ${dotBorder} border-t-transparent animate-spin`} />
+                          ) : (
+                            <Check className={`h-3 w-3 ${checkCls} shrink-0`} />
+                          )}
+                          {FamIcon && <FamIcon className={`h-3 w-3 ${fam.accent} shrink-0`} />}
+                          <span className={`font-medium ${titleCls}`}>{label}</span>
+                        </>
+                      );
+                    })()}
                     {tc.metadata?.sandbox && (
                       <span
                         className="flex items-center gap-0.5 rounded bg-success/10 px-1 py-0.5 text-[10px] font-medium text-success dark:text-success"
