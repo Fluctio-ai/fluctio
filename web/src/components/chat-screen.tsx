@@ -2792,13 +2792,13 @@ function ChatHeaderTitle({ title, fallback, onSave }: ChatHeaderTitleProps) {
   );
 }
 
-// Tool family theming — each tool gets an icon + accent color keyed
-// off its name, so related tools read as one group at a glance: every
-// knowledgebase_* tool is emerald + BookOpen, every web_* is sky +
-// Globe, etc. Matched by name (prefix/exact), so a new
-// knowledgebase_ingest_text inherits the look automatically — add one
-// row here to theme a new family. Unknown names (MCP/dynamic tools)
-// fall back to DEFAULT_FAMILY, which keeps the original info-blue look.
+// Tool family theming — every built-in tool gets a distinct icon keyed
+// off its name, so related tools read as one group at a glance (every
+// knowledgebase_* tool is BookOpen, every web_* is Globe, etc.). Color
+// is intentionally uniform across all families: only the icon differs,
+// so a screen full of tool calls stays calm. The spinner (info) and
+// completion check (success) carry status, not category. Unknown names
+// (MCP/dynamic tools) fall back to DEFAULT_FAMILY's Wrench.
 type ToolFamily = {
   icon: typeof Wrench;
   accent: string;        // group header + per-tool family icon color
@@ -2808,35 +2808,37 @@ type ToolFamily = {
   nonDefault: boolean;   // render the family icon beside per-tool title
 };
 
+// Single source of color for every family — identical so hue never
+// implies a category. Only the icon (per family below) varies.
 const DEFAULT_FAMILY: ToolFamily = {
   icon: Wrench,
-  accent: "text-info",
+  accent: "text-muted-foreground",
   title: "text-foreground",
   dot: "border-info/60",
   check: "text-success",
   nonDefault: false,
 };
 
-const TOOL_FAMILIES: Array<ToolFamily & { match: (name: string) => boolean }> = [
-  { match: (n) => n.startsWith("memory_"), icon: Brain, accent: "text-purple-500", title: "text-purple-500", dot: "border-purple-500/60", check: "text-purple-500", nonDefault: true },
-  { match: (n) => n.startsWith("knowledgebase_"), icon: BookOpen, accent: "text-emerald-500", title: "text-emerald-500", dot: "border-emerald-500/60", check: "text-emerald-500", nonDefault: true },
-  { match: (n) => n.startsWith("web_"), icon: Globe, accent: "text-sky-500", title: "text-sky-500", dot: "border-sky-500/60", check: "text-sky-500", nonDefault: true },
-  { match: (n) => n === "image_gen", icon: ImageIcon, accent: "text-pink-500", title: "text-pink-500", dot: "border-pink-500/60", check: "text-pink-500", nonDefault: true },
-  { match: (n) => n === "tts", icon: Music, accent: "text-amber-500", title: "text-amber-500", dot: "border-amber-500/60", check: "text-amber-500", nonDefault: true },
-  { match: (n) => ["read_file", "write_file", "list_dir", "edit_file"].includes(n), icon: FileText, accent: "text-indigo-500", title: "text-indigo-500", dot: "border-indigo-500/60", check: "text-indigo-500", nonDefault: true },
-  { match: (n) => n === "apply_patch", icon: FileCode, accent: "text-teal-500", title: "text-teal-500", dot: "border-teal-500/60", check: "text-teal-500", nonDefault: true },
-  { match: (n) => n === "exec" || n === "host_exec" || n === "bash_output" || n === "kill_shell", icon: Terminal, accent: "text-zinc-500", title: "text-zinc-500", dot: "border-zinc-500/60", check: "text-zinc-500", nonDefault: true },
-  { match: (n) => n.endsWith("_cron_job"), icon: Clock, accent: "text-orange-500", title: "text-orange-500", dot: "border-orange-500/60", check: "text-orange-500", nonDefault: true },
-  { match: (n) => n === "load_skill" || n === "search_skills" || n === "install_skill", icon: Puzzle, accent: "text-fuchsia-500", title: "text-fuchsia-500", dot: "border-fuchsia-500/60", check: "text-fuchsia-500", nonDefault: true },
-  { match: (n) => n === "spawn_subagent" || n === "delegate_task", icon: Bot, accent: "text-cyan-600", title: "text-cyan-600", dot: "border-cyan-600/60", check: "text-cyan-600", nonDefault: true },
-  { match: (n) => n === "message" || n === "fetch_messages", icon: Send, accent: "text-rose-500", title: "text-rose-500", dot: "border-rose-500/60", check: "text-rose-500", nonDefault: true },
-  { match: (n) => n.startsWith("set_"), icon: SlidersHorizontal, accent: "text-stone-500", title: "text-stone-500", dot: "border-stone-500/60", check: "text-stone-500", nonDefault: true },
-  { match: (n) => n === "update_goal", icon: Target, accent: "text-red-500", title: "text-red-500", dot: "border-red-500/60", check: "text-red-500", nonDefault: true },
-  { match: (n) => n === "get_billing_usage", icon: CreditCard, accent: "text-green-600", title: "text-green-600", dot: "border-green-600/60", check: "text-green-600", nonDefault: true },
+const TOOL_FAMILIES: Array<{ match: (name: string) => boolean; icon: typeof Wrench; nonDefault: boolean }> = [
+  { match: (n) => n.startsWith("memory_"), icon: Brain, nonDefault: true },
+  { match: (n) => n.startsWith("knowledgebase_"), icon: BookOpen, nonDefault: true },
+  { match: (n) => n.startsWith("web_"), icon: Globe, nonDefault: true },
+  { match: (n) => n === "image_gen", icon: ImageIcon, nonDefault: true },
+  { match: (n) => n === "tts", icon: Music, nonDefault: true },
+  { match: (n) => ["read_file", "write_file", "list_dir", "edit_file"].includes(n), icon: FileText, nonDefault: true },
+  { match: (n) => n === "apply_patch", icon: FileCode, nonDefault: true },
+  { match: (n) => n === "exec" || n === "host_exec" || n === "bash_output" || n === "kill_shell", icon: Terminal, nonDefault: true },
+  { match: (n) => n.endsWith("_cron_job"), icon: Clock, nonDefault: true },
+  { match: (n) => n === "load_skill" || n === "search_skills" || n === "install_skill", icon: Puzzle, nonDefault: true },
+  { match: (n) => n === "spawn_subagent" || n === "delegate_task", icon: Bot, nonDefault: true },
+  { match: (n) => n === "message" || n === "fetch_messages", icon: Send, nonDefault: true },
+  { match: (n) => n.startsWith("set_"), icon: SlidersHorizontal, nonDefault: true },
+  { match: (n) => n === "update_goal", icon: Target, nonDefault: true },
+  { match: (n) => n === "get_billing_usage", icon: CreditCard, nonDefault: true },
 ];
 
 function familyOf(name: string): ToolFamily {
-  for (const f of TOOL_FAMILIES) if (f.match(name)) return f;
+  for (const f of TOOL_FAMILIES) if (f.match(name)) return { ...DEFAULT_FAMILY, icon: f.icon, nonDefault: f.nonDefault };
   return DEFAULT_FAMILY;
 }
 
@@ -2895,13 +2897,13 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
         </div>
       )}
       {/* Collapsed tool group summary */}
-      <div className={`rounded-lg border overflow-hidden ${isRH ? "border-blue-500/40 bg-blue-500/5" : "border-border bg-card/50"}`}>
+      <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
           <button
             onClick={() => setGroupOpen(!groupOpen)}
             className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className={`h-5 w-5 shrink-0 rounded-full border-2 ${isRH ? "border-blue-500" : "border-info"} border-t-transparent animate-spin`} />
+              <div className="h-5 w-5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
             ) : roundIndex !== undefined ? (
               // When this group is a round inside a bundle, the leading
               // glyph carries the round number — gives the bundle's
@@ -2911,7 +2913,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
                 {roundIndex}
               </span>
             ) : isRH ? (
-              <Zap className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+              <Zap className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             ) : (
               (() => {
                 const FamIcon = groupFamily.icon;
@@ -2945,20 +2947,17 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
                   >
                     {(() => {
                       const fam = familyOf(tc.name);
-                      const FamIcon = !isRH && fam.nonDefault ? fam.icon : null;
-                      const dotBorder = isRH ? "border-blue-500/60" : fam.dot;
-                      const checkCls = isRH ? "text-blue-500" : fam.check;
-                      const titleCls = isRH ? "text-blue-500" : fam.title;
+                      const FamIcon = fam.nonDefault ? fam.icon : null;
                       const label = isRH ? tc.name.replace(/^regex_hook:\s*/, "") : tc.name;
                       return (
                         <>
                           {tc.result === undefined ? (
-                            <div className={`h-3 w-3 shrink-0 rounded-full border-2 ${dotBorder} border-t-transparent animate-spin`} />
+                            <div className={`h-3 w-3 shrink-0 rounded-full border-2 ${fam.dot} border-t-transparent animate-spin`} />
                           ) : (
-                            <Check className={`h-3 w-3 ${checkCls} shrink-0`} />
+                            <Check className={`h-3 w-3 ${fam.check} shrink-0`} />
                           )}
                           {FamIcon && <FamIcon className={`h-3 w-3 ${fam.accent} shrink-0`} />}
-                          <span className={`font-medium ${titleCls}`}>{label}</span>
+                          <span className={`font-medium ${fam.title}`}>{label}</span>
                         </>
                       );
                     })()}
