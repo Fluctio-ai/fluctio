@@ -511,9 +511,11 @@ func reRankSummaries(summaries []ConversationSummary, query string, topK int) []
 		recency := recencyWeightSummary(ref)
 
 		// baseScore + token overlap + importance, scaled by recency and a
-		// reinforcement multiplier from access_count.
+		// reinforcement multiplier from access_count. Saturation (log1p)
+		// caps the gain so a frequently-recalled summary can't dominate
+		// unboundedly — anti-enrichment (scheme A).
 		base := 0.5 + overlap + float64(imp)*importanceWeight
-		reinforcement := 1.0 + float64(s.AccessCount)*accessWeight
+		reinforcement := 1.0 + math.Log1p(float64(s.AccessCount))*accessWeight
 		finalScore := base * recency * reinforcement
 
 		ranked = append(ranked, scored{idx: i, score: finalScore})
