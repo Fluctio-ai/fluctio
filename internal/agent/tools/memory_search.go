@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -59,6 +60,12 @@ type SummarySearcher interface {
 	// bump access_count + last_accessed for surfaced summaries so
 	// frequently-recalled ones score higher on future queries.
 	IncrementConversationSummaryAccess(ctx context.Context, ids []int64) error
+	// GetAgentMMRLambda returns the agent's current best MMR lambda
+	// (bandit-tuned; default 0.6 before any feedback).
+	GetAgentMMRLambda(ctx context.Context, agentID string) (float64, error)
+	// InsertRecallEvent records one recall so stage-2b feedback can be
+	// attributed to the lambda that produced it.
+	InsertRecallEvent(ctx context.Context, ev store.RecallEvent) error
 }
 
 // RegisterMemorySearch registers the memory_search tool.
@@ -171,15 +178,42 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 
 				// MMR diversity rerank: when embeddings are available and
 				// the pool still exceeds limit, pick a diversity-aware
-				// top-K. lambda=0.6 balances query relevance against
-				// redundancy; stage 2 will make it per-agent / bandit-tuned.
-				// Best-effort — any shortfall leaves the prior order intact.
+				// top-K. Lambda is the agent's current bandit-tuned value
+				// (default 0.6); ε-greedy occasionally explores a neighbor
+				// so stage-2b feedback can discover better values. Each
+				// recall is logged (recall_id + lambda + summary ids) for
+				// that feedback linkage. Best-effort throughout.
 				if queryEmb != nil && r.vecDB != nil && len(hits) > limit {
 					embMap, mmrErr := r.vecDB.GetConversationSummaryEmbeddings(ctx, summaryIDs(hits))
 					if mmrErr == nil && len(embMap) >= limit {
-						mmrHits := selectMMR(hits, embMap, queryEmb, 0.6, limit)
+						lambda := store.DefaultMMRLambda
+						if r.summaryDB != nil {
+							if l, lErr := r.summaryDB.GetAgentMMRLambda(ctx, r.agentID); lErr == nil {
+								lambda = l
+							}
+						}
+						explored := false
+						if rand.Float64() < mmrExploreEpsilon {
+							if rand.Intn(2) == 0 {
+								lambda += mmrExploreDelta
+							} else {
+								lambda -= mmrExploreDelta
+							}
+							lambda = clampLambda(lambda)
+							explored = true
+						}
+						mmrHits := selectMMR(hits, embMap, queryEmb, lambda, limit)
 						if len(mmrHits) >= limit {
 							hits = mmrHits
+							if r.summaryDB != nil {
+								_ = r.summaryDB.InsertRecallEvent(ctx, store.RecallEvent{
+									RecallID:   newRecallID(),
+									AgentID:    r.agentID,
+									Lambda:     lambda,
+									Explored:   explored,
+									SummaryIDs: summaryIDs(mmrHits),
+								})
+							}
 						}
 					}
 				}
@@ -523,4 +557,30 @@ func selectMMR(candidates []store.ConversationSummary, emb map[int64][]float32, 
 		chosenVecs = append(chosenVecs, pool[bestIdx].v)
 	}
 	return selected
+}
+
+// mmrExploreEpsilon is the ε-greedy exploration rate: fraction of recalls
+// that try a neighboring lambda instead of the current best, so stage-2b
+// feedback can discover better values. mmrExploreDelta is the step size.
+const (
+	mmrExploreEpsilon = 0.1
+	mmrExploreDelta   = 0.1
+)
+
+// clampLambda constrains MMR lambda to [0, 1].
+func clampLambda(l float64) float64 {
+	if l < 0 {
+		return 0
+	}
+	if l > 1 {
+		return 1
+	}
+	return l
+}
+
+// newRecallID mints a unique-ish id for a recall event. Uniqueness only
+// needs to hold long enough to link a near-term feedback signal; a
+// timestamp + random suffix is plenty.
+func newRecallID() string {
+	return fmt.Sprintf("rc-%d-%06d", time.Now().UnixNano(), rand.Intn(1000000))
 }
