@@ -25,6 +25,7 @@ type FTSSearcher interface {
 type VectorSearcher interface {
 	SearchConversationSummariesVector(ctx context.Context, embedding []float32, limit int) ([]int64, error)
 	GetConversationSummariesByIDs(ctx context.Context, ids []int64) ([]store.ConversationSummary, error)
+	GetConversationSummaryEmbeddings(ctx context.Context, ids []int64) (map[int64][]float32, error)
 }
 
 // Reranker is the local mirror of embedding.Reranker used by memory_search.
@@ -120,6 +121,9 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 				if poolSize < 30 {
 					poolSize = 30
 				}
+				// queryEmb is filled by the vector-recall stage below and
+				// reused by MMR; stays nil when the embedder is off.
+				var queryEmb []float32
 				hits, err := r.summaryDB.SearchConversationSummariesFTS(ctx, r.agentID, args.Query, poolSize)
 				if err != nil {
 					goto fallback
@@ -132,6 +136,7 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 				if r.vecDB != nil && r.embedder != nil && r.embedder.Available() {
 					vecs, embErr := r.embedder.Embed(ctx, []string{args.Query})
 					if embErr == nil && len(vecs) == 1 {
+						queryEmb = vecs[0]
 						vecIDs, vecErr := r.vecDB.SearchConversationSummariesVector(ctx, vecs[0], poolSize)
 						if vecErr == nil && len(vecIDs) > 0 {
 							vecHits, fetchErr := r.vecDB.GetConversationSummariesByIDs(ctx, vecIDs)
@@ -164,15 +169,26 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 					}
 				}
 
+				// MMR diversity rerank: when embeddings are available and
+				// the pool still exceeds limit, pick a diversity-aware
+				// top-K. lambda=0.6 balances query relevance against
+				// redundancy; stage 2 will make it per-agent / bandit-tuned.
+				// Best-effort — any shortfall leaves the prior order intact.
+				if queryEmb != nil && r.vecDB != nil && len(hits) > limit {
+					embMap, mmrErr := r.vecDB.GetConversationSummaryEmbeddings(ctx, summaryIDs(hits))
+					if mmrErr == nil && len(embMap) >= limit {
+						mmrHits := selectMMR(hits, embMap, queryEmb, 0.6, limit)
+						if len(mmrHits) >= limit {
+							hits = mmrHits
+						}
+					}
+				}
+
 				// Reinforcement: bump access_count for the surfaced
 				// summaries so frequently-recalled ones score higher
 				// (and refresh recency) on future queries. Best-effort.
 				if len(hits) > 0 {
-					ids := make([]int64, len(hits))
-					for i, h := range hits {
-						ids[i] = h.ID
-					}
-					_ = r.summaryDB.IncrementConversationSummaryAccess(ctx, ids)
+					_ = r.summaryDB.IncrementConversationSummaryAccess(ctx, summaryIDs(hits))
 				}
 
 				return formatSummaryResults(hits, args.Query), nil
@@ -239,6 +255,15 @@ func reorderByRerank(hits []store.ConversationSummary, scored []embedding.Scored
 		return hits // fallback: keep original order
 	}
 	return out
+}
+
+// summaryIDs collects each summary's ID in order.
+func summaryIDs(hits []store.ConversationSummary) []int64 {
+	ids := make([]int64, len(hits))
+	for i, h := range hits {
+		ids[i] = h.ID
+	}
+	return ids
 }
 
 // formatSummaryResults renders conversation_summaries hits for the LLM.
