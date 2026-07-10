@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -81,5 +82,68 @@ func TestInsertRecallEvent(t *testing.T) {
 	}
 	if idsJSON != "[10,20,30]" {
 		t.Errorf("summary_ids json = %q, want [10,20,30]", idsJSON)
+	}
+}
+
+func TestTryUpgradeLambdaPromotesStrongExploration(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	// Seed explored recalls: lambda=0.7 gets strong feedback (22 up / 3
+	// down → 88%), lambda=0.5 gets weak (3 up / 22 down → 12%). Current
+	// default lambda is 0.6 with no feedback.
+	mustEvent := func(id string, lambda float64, up bool) {
+		t.Helper()
+		if err := db.InsertRecallEvent(ctx, RecallEvent{
+			RecallID: id, AgentID: "a1", Lambda: lambda, Explored: true,
+			SummaryIDs: []int64{1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.InsertRecallFeedback(ctx, id, up); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 25; i++ {
+		mustEvent(fmt.Sprintf("r7-%d", i), 0.7, i >= 3) // 22 up
+	}
+	for i := 0; i < 25; i++ {
+		mustEvent(fmt.Sprintf("r5-%d", i), 0.5, i < 3) // 3 up
+	}
+
+	upgraded, newLambda, err := db.TryUpgradeLambda(ctx, "a1")
+	if err != nil {
+		t.Fatalf("try upgrade: %v", err)
+	}
+	if !upgraded || newLambda != 0.7 {
+		t.Errorf("upgrade = %v %v, want true 0.7", upgraded, newLambda)
+	}
+	got, _ := db.GetAgentMMRLambda(ctx, "a1")
+	if got != 0.7 {
+		t.Errorf("persisted lambda = %v, want 0.7", got)
+	}
+}
+
+func TestTryUpgradeLambdaNoUpgradeBelowThreshold(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	// Only 5 samples at lambda=0.7 — below minSamples (20), no upgrade.
+	for i := 0; i < 5; i++ {
+		_ = db.InsertRecallEvent(ctx, RecallEvent{
+			RecallID: fmt.Sprintf("x-%d", i), AgentID: "a1", Lambda: 0.7,
+			Explored: true, SummaryIDs: []int64{1},
+		})
+		_ = db.InsertRecallFeedback(ctx, fmt.Sprintf("x-%d", i), true)
+	}
+
+	upgraded, newLambda, err := db.TryUpgradeLambda(ctx, "a1")
+	if err != nil {
+		t.Fatalf("try upgrade: %v", err)
+	}
+	if upgraded || newLambda != DefaultMMRLambda {
+		t.Errorf("upgrade = %v %v, want false 0.6 (insufficient samples)", upgraded, newLambda)
 	}
 }
