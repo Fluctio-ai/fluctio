@@ -10,6 +10,7 @@ import (
 	"math"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -539,6 +540,21 @@ func float32ToBlob(vec []float32) []byte {
 	return buf
 }
 
+// float32FromBlob is the inverse of float32ToBlob: it decodes a
+// little-endian float32 byte slice back into a vector. Returns nil for
+// empty or mis-sized input.
+func float32FromBlob(buf []byte) []float32 {
+	if len(buf) == 0 || len(buf)%4 != 0 {
+		return nil
+	}
+	vec := make([]float32, len(buf)/4)
+	for i := range vec {
+		bits := binary.LittleEndian.Uint32(buf[i*4:])
+		vec[i] = math.Float32frombits(bits)
+	}
+	return vec
+}
+
 // InsertConversationSummaryVector writes an embedding row.
 // SQLite: vec0 ignores INSERT OR REPLACE, so delete-then-insert makes
 // re-vectorizing an existing summary_id idempotent (needed after a
@@ -572,6 +588,27 @@ func float32ToPGVector(vec []float32) string {
 		parts[i] = fmt.Sprintf("%.8g", v)
 	}
 	return "[" + strings.Join(parts, ",") + "]"
+}
+
+// parsePGVectorText decodes the "[a,b,c]" text form pgvector returns
+// when a vector column is scanned as a string. Inverse of float32ToPGVector.
+func parsePGVectorText(s string) ([]float32, error) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "[")
+	s = strings.TrimSuffix(s, "]")
+	if s == "" {
+		return nil, nil
+	}
+	parts := strings.Split(s, ",")
+	vec := make([]float32, len(parts))
+	for i, p := range parts {
+		f, err := strconv.ParseFloat(strings.TrimSpace(p), 32)
+		if err != nil {
+			return nil, err
+		}
+		vec[i] = float32(f)
+	}
+	return vec, nil
 }
 
 // ConversationSummaryVectorShape reports the dimension + embedding model
@@ -652,6 +689,75 @@ func (d *DBStore) SearchConversationSummariesVector(ctx context.Context, embeddi
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// GetConversationSummaryEmbeddings batches fetch of the stored embedding
+// vectors for the given summary IDs. IDs without a stored vector are
+// omitted from the result map. Used by MMR to compute inter-candidate
+// similarity without re-embedding.
+func (d *DBStore) GetConversationSummaryEmbeddings(ctx context.Context, ids []int64) (map[int64][]float32, error) {
+	out := make(map[int64][]float32, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids))
+	for i, id := range ids {
+		if d.dialect == "postgres" {
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+		} else {
+			placeholders[i] = "?"
+		}
+		args = append(args, id)
+	}
+
+	var rows *sql.Rows
+	var err error
+	switch d.dialect {
+	case "postgres":
+		rows, err = d.db.QueryContext(ctx,
+			fmt.Sprintf(`SELECT id, embedding::text FROM conversation_summaries
+				WHERE id IN (%s) AND embedding IS NOT NULL`,
+				strings.Join(placeholders, ",")),
+			args...)
+	default:
+		rows, err = d.db.QueryContext(ctx,
+			fmt.Sprintf(`SELECT summary_id, embedding FROM conversation_summaries_vec
+				WHERE summary_id IN (%s)`, strings.Join(placeholders, ",")),
+			args...)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		if d.dialect == "postgres" {
+			var text sql.NullString
+			if err := rows.Scan(&id, &text); err != nil {
+				return nil, err
+			}
+			if !text.Valid || text.String == "" {
+				continue
+			}
+			vec, perr := parsePGVectorText(text.String)
+			if perr != nil {
+				return nil, perr
+			}
+			out[id] = vec
+		} else {
+			var buf []byte
+			if err := rows.Scan(&id, &buf); err != nil {
+				return nil, err
+			}
+			if vec := float32FromBlob(buf); vec != nil {
+				out[id] = vec
+			}
+		}
+	}
+	return out, rows.Err()
 }
 
 // ClearConversationSummaryVectors deletes every row from the vector

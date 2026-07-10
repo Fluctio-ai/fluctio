@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -410,4 +411,91 @@ func fileRecencyWeight(filePath string, now time.Time) float64 {
 		return 0.1
 	}
 	return weight
+}
+
+// cosineSim returns the cosine similarity between two equal-length
+// float32 vectors, as a float64 in [-1, 1]. Returns 0 for empty or
+// mismatched-length input.
+func cosineSim(a, b []float32) float64 {
+	n := len(a)
+	if n == 0 || n != len(b) {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := 0; i < n; i++ {
+		af, bf := float64(a[i]), float64(b[i])
+		dot += af * bf
+		na += af * af
+		nb += bf * bf
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
+}
+
+// selectMMR applies Maximal Marginal Relevance to a candidate pool.
+// Starting from the query-relevance ranking implied by queryEmb, it
+// greedily picks the candidate that maximizes:
+//
+//	lambda*sim(query, doc) - (1-lambda)*max(sim(doc, already selected))
+//
+// so topK balances query relevance against redundancy with what is
+// already chosen. emb maps each candidate's summary ID to its vector;
+// candidates missing a vector are skipped. lambda=1 reduces to pure
+// relevance order; lambda=0 to pure diversity. Returns fewer than topK
+// when not enough candidates carry vectors.
+func selectMMR(candidates []store.ConversationSummary, emb map[int64][]float32, queryEmb []float32, lambda float64, topK int) []store.ConversationSummary {
+	if topK <= 0 || len(candidates) == 0 {
+		return nil
+	}
+	type cand struct {
+		s   store.ConversationSummary
+		v   []float32
+		rel float64 // sim(query, doc)
+	}
+	pool := make([]cand, 0, len(candidates))
+	for _, s := range candidates {
+		v, ok := emb[s.ID]
+		if !ok || len(v) == 0 {
+			continue
+		}
+		pool = append(pool, cand{s: s, v: v, rel: cosineSim(queryEmb, v)})
+	}
+	if len(pool) == 0 {
+		return nil
+	}
+
+	selected := make([]store.ConversationSummary, 0, topK)
+	chosenVecs := make([][]float32, 0, topK)
+	used := make([]bool, len(pool))
+
+	for len(selected) < topK {
+		bestIdx := -1
+		bestScore := 0.0
+		for i, c := range pool {
+			if used[i] {
+				continue
+			}
+			// diversity penalty: max similarity to any already-selected doc
+			maxSim := 0.0
+			for _, sv := range chosenVecs {
+				if sim := cosineSim(c.v, sv); sim > maxSim {
+					maxSim = sim
+				}
+			}
+			score := lambda*c.rel - (1-lambda)*maxSim
+			if bestIdx == -1 || score > bestScore {
+				bestIdx = i
+				bestScore = score
+			}
+		}
+		if bestIdx == -1 {
+			break
+		}
+		used[bestIdx] = true
+		selected = append(selected, pool[bestIdx].s)
+		chosenVecs = append(chosenVecs, pool[bestIdx].v)
+	}
+	return selected
 }
