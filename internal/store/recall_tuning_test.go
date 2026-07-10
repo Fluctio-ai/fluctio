@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 )
 
 func TestAgentMMRLambdaDefaultAndRoundTrip(t *testing.T) {
@@ -145,5 +146,61 @@ func TestTryUpgradeLambdaNoUpgradeBelowThreshold(t *testing.T) {
 	}
 	if upgraded || newLambda != DefaultMMRLambda {
 		t.Errorf("upgrade = %v %v, want false 0.6 (insufficient samples)", upgraded, newLambda)
+	}
+}
+
+// TestIncrementConversationSummaryAccessMaintainsTimeSum guards the
+// placeholder-ordering in IncrementConversationSummaryAccess: access_count
+// AND access_time_sum must both grow. A sqlite ? misalignment would leave
+// access_count at 0 (the UPDATE matches no rows), failing this test.
+func TestIncrementConversationSummaryAccessMaintainsTimeSum(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	res, err := db.db.ExecContext(ctx, `INSERT INTO conversation_summaries
+		(user_id, agent_id, session_key, chatter_user_id, summary, keywords, seq_start, seq_end)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"u1", "a1", "s1", "c1", "sum", "[]", 0, 10)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	id, _ := res.LastInsertId()
+
+	var ac0 int
+	var ats0 int64
+	if err := db.db.QueryRowContext(ctx, `SELECT access_count, access_time_sum FROM conversation_summaries WHERE id = ?`, id).Scan(&ac0, &ats0); err != nil {
+		t.Fatalf("query before: %v", err)
+	}
+	if ac0 != 0 || ats0 != 0 {
+		t.Fatalf("defaults: access_count=%d access_time_sum=%d, want 0/0", ac0, ats0)
+	}
+
+	before := time.Now().Unix()
+	if err := db.IncrementConversationSummaryAccess(ctx, []int64{id}); err != nil {
+		t.Fatalf("increment 1: %v", err)
+	}
+	var ac1 int
+	var ats1 int64
+	db.db.QueryRowContext(ctx, `SELECT access_count, access_time_sum FROM conversation_summaries WHERE id = ?`, id).Scan(&ac1, &ats1)
+	if ac1 != 1 {
+		t.Errorf("after 1st: access_count=%d, want 1", ac1)
+	}
+	if ats1 < before {
+		t.Errorf("after 1st: access_time_sum=%d < call time %d", ats1, before)
+	}
+
+	// second increment: access_count must grow; access_time_sum must not shrink.
+	if err := db.IncrementConversationSummaryAccess(ctx, []int64{id}); err != nil {
+		t.Fatalf("increment 2: %v", err)
+	}
+	var ac2 int
+	var ats2 int64
+	db.db.QueryRowContext(ctx, `SELECT access_count, access_time_sum FROM conversation_summaries WHERE id = ?`, id).Scan(&ac2, &ats2)
+	if ac2 != 2 {
+		t.Errorf("after 2nd: access_count=%d, want 2", ac2)
+	}
+	if ats2 < ats1 {
+		t.Errorf("after 2nd: access_time_sum=%d < %d (should not shrink)", ats2, ats1)
 	}
 }

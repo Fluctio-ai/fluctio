@@ -34,6 +34,7 @@ type ConversationSummary struct {
 	EmbeddingModel string // empty if no embedding generated
 	Importance     int    // 1-5 LLM-assigned value; 0 = legacy/unset
 	AccessCount    int    // times surfaced by memory_search (reinforcement)
+	AccessTimeSum  int64  // sum of recall unix ts; /AccessCount = mean recall time (scheme mean_time)
 	LastAccessedAt time.Time
 	CreatedAt      time.Time
 }
@@ -197,7 +198,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 		args = append(args, fetchLimit)
 		rows, err := d.db.QueryContext(ctx, `
 			SELECT id, user_id, agent_id, session_key, chatter_user_id,
-			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
+			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			FROM conversation_summaries
 			WHERE agent_id = $1
 			  AND (`+strings.Join(clauses, " OR ")+`)
@@ -224,7 +225,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 	args = append(args, fetchLimit)
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT id, user_id, agent_id, session_key, chatter_user_id,
-		       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
+		       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 		FROM conversation_summaries
 		WHERE agent_id = ?
 		  AND (`+strings.Join(clauses, " OR ")+`)
@@ -253,7 +254,7 @@ func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 		err := rows.Scan(
 			&s.ID, &s.UserID, &s.AgentID, &s.SessionKey, &s.ChatterUserID,
 			&s.Summary, &keywordsJSON, &s.SeqStart, &s.SeqEnd, &embModel,
-			&s.Importance, &s.AccessCount, &lastAccessed, &s.CreatedAt,
+			&s.Importance, &s.AccessCount, &s.AccessTimeSum, &lastAccessed, &s.CreatedAt,
 			&topic, &segmentsJSON,
 		)
 		if err != nil {
@@ -300,19 +301,33 @@ func (d *DBStore) IncrementConversationSummaryAccess(ctx context.Context, ids []
 	if len(ids) == 0 {
 		return nil
 	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, 0, len(ids))
+	nowUnix := time.Now().Unix()
+	n := len(ids)
+	placeholders := make([]string, n)
+	args := make([]any, 0, n+1)
+	// `now` appears in the SQL before the WHERE id IN (...) list, so it
+	// must lead the args slice: sqlite ? binds by position, postgres $N
+	// by number — leading with now keeps both correct (nowPh=$1 / ids=$2..).
+	args = append(args, nowUnix)
+	var nowPh string
+	if d.dialect == "postgres" {
+		nowPh = "$1"
+	} else {
+		nowPh = "?"
+	}
 	for i, id := range ids {
 		if d.dialect == "postgres" {
-			placeholders[i] = fmt.Sprintf("$%d", i+1)
+			placeholders[i] = fmt.Sprintf("$%d", i+2)
 		} else {
 			placeholders[i] = "?"
 		}
 		args = append(args, id)
 	}
 	q := fmt.Sprintf(`UPDATE conversation_summaries
-		SET access_count = access_count + 1, last_accessed_at = CURRENT_TIMESTAMP
-		WHERE id IN (%s)`, strings.Join(placeholders, ","))
+		SET access_count = access_count + 1,
+		    access_time_sum = access_time_sum + %s,
+		    last_accessed_at = CURRENT_TIMESTAMP
+		WHERE id IN (%s)`, nowPh, strings.Join(placeholders, ","))
 	_, err := d.db.ExecContext(ctx, q, args...)
 	return err
 }
@@ -802,7 +817,7 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE agent_id = $1
 			 ORDER BY created_at
@@ -810,7 +825,7 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 	default:
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE agent_id = ?
 			 ORDER BY created_at
@@ -834,14 +849,14 @@ func (d *DBStore) ListConversationSummariesBySession(ctx context.Context, userID
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE user_id = $1 AND agent_id = $2 AND session_key = $3
 			 ORDER BY created_at`, userID, agentID, sessionKey)
 	default:
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE user_id = ? AND agent_id = ? AND session_key = ?
 			 ORDER BY created_at`, userID, agentID, sessionKey)
@@ -914,7 +929,7 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE embedding IS NULL OR ($1 != '' AND (embedding_model IS NULL OR embedding_model != $1))
 			 ORDER BY created_at
@@ -953,7 +968,7 @@ func (d *DBStore) GetConversationSummariesByIDs(ctx context.Context, ids []int64
 	}
 
 	q := fmt.Sprintf(`SELECT id, user_id, agent_id, session_key, chatter_user_id,
-	       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, last_accessed_at, created_at, topic, segments
+	       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 	FROM conversation_summaries
 	WHERE id IN (%s)
 	ORDER BY created_at DESC`, strings.Join(placeholders, ","))

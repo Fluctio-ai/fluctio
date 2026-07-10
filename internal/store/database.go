@@ -4736,6 +4736,7 @@ func (d *DBStore) migrateConversationSummariesScoring(ctx context.Context) error
 	columns := []col{
 		{"importance", "INTEGER NOT NULL DEFAULT 0"},
 		{"access_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"access_time_sum", "INTEGER NOT NULL DEFAULT 0"},
 		{"last_accessed_at", "TIMESTAMP"},
 	}
 	for _, c := range columns {
