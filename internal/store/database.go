@@ -185,6 +185,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateWikiAutoGenLastRun(ctx); err != nil {
 		return fmt.Errorf("migrate wiki autogen last-run table: %w", err)
 	}
+	if err := d.migrateRecallTuning(ctx); err != nil {
+		return fmt.Errorf("migrate recall tuning tables: %w", err)
+	}
 	return nil
 }
 
