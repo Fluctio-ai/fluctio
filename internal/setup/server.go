@@ -258,6 +258,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/chat/stream", auth(s.handleChatStream))
 	mux.HandleFunc("POST /api/chat/team/stream", auth(s.handleTeamChatStream))
 	mux.HandleFunc("POST /api/chat/steer", auth(s.handleChatSteer))
+	mux.HandleFunc("POST /api/chat/recall-feedback", auth(s.handleRecallFeedback))
 	mux.HandleFunc("GET /api/chats", auth(s.handleChats))
 	mux.HandleFunc("GET /api/chat/history", auth(s.handleChatHistory))
 	mux.HandleFunc("GET /api/chat/todo", auth(s.handleChatTodo))

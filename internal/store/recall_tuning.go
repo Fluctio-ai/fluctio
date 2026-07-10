@@ -123,6 +123,25 @@ func (d *DBStore) InsertRecallEvent(ctx context.Context, ev RecallEvent) error {
 	return err
 }
 
+// GetRecallEventAgentID resolves which agent a recall_id belongs to, so
+// feedback can be routed to that agent's tuning without trusting the
+// client to name the agent. Returns "" + nil error when the id is unknown.
+func (d *DBStore) GetRecallEventAgentID(ctx context.Context, recallID string) (string, error) {
+	var agentID string
+	q := `SELECT agent_id FROM memory_recall_events WHERE recall_id = ?`
+	if d.dialect == "postgres" {
+		q = `SELECT agent_id FROM memory_recall_events WHERE recall_id = $1`
+	}
+	err := d.db.QueryRowContext(ctx, q, recallID).Scan(&agentID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return agentID, nil
+}
+
 // LambdaStat summarizes feedback for one explored lambda value.
 type LambdaStat struct {
 	Lambda float64
