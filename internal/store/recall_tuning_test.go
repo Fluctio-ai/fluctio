@@ -204,3 +204,19 @@ func TestIncrementConversationSummaryAccessMaintainsTimeSum(t *testing.T) {
 		t.Errorf("after 2nd: access_time_sum=%d < %d (should not shrink)", ats2, ats1)
 	}
 }
+
+func TestReRankSummariesPrefersNewerMeanRecallTime(t *testing.T) {
+	// Two summaries with equal overlap/importance/creation; one has a
+	// newer mean recall time → must rank first under batch min-max recency.
+	base := time.Unix(1000, 0)
+	older := ConversationSummary{ID: 1, Summary: "alpha beta", Keywords: []string{"alpha"}, CreatedAt: base, Importance: 3, AccessCount: 1, AccessTimeSum: 1000}
+	newer := ConversationSummary{ID: 2, Summary: "alpha beta", Keywords: []string{"alpha"}, CreatedAt: base, Importance: 3, AccessCount: 1, AccessTimeSum: 5000}
+
+	out := reRankSummaries([]ConversationSummary{older, newer}, "alpha", 2)
+	if len(out) != 2 {
+		t.Fatalf("got %d results, want 2", len(out))
+	}
+	if out[0].ID != 2 {
+		t.Errorf("newer mean-recall-time (id=2) should rank first, got id=%d", out[0].ID)
+	}
+}

@@ -475,9 +475,11 @@ func recencyWeightSummary(reference time.Time) float64 {
 }
 
 // Three-factor recall weights. importance carries the LLM-assigned value;
-// access rewards frequently-recalled summaries (reinforcement). recency
-// decays from the last relevant moment (last access if any, else creation
-// — being recalled "refreshes" a memory).
+// access rewards frequently-recalled summaries (reinforcement, log1p-
+// saturated). recency is the in-batch min-max of mean recall time (or
+// creation time if never recalled) — newest=1, oldest=0 — so a single
+// fresh recall can't refresh an otherwise-stale summary, and a uniformly
+// old pool still preserves relative ordering.
 const (
 	importanceWeight = 1.0 // importance is 1-5, comparable to a keyword hit (×3)
 	accessWeight     = 0.2 // each recall adds ~20% to the recency multiplier
@@ -502,6 +504,33 @@ func reRankSummaries(summaries []ConversationSummary, query string, topK int) []
 	}
 	var ranked []scored
 
+	// Batch-normalize recency over mean recall time (creation time for
+	// never-recalled summaries). In-batch min-max keeps relative ordering
+	// sharp even when the whole pool is old — absolute decay would crush
+	// everything against its 0.1 floor and erase the signal (scheme
+	// mean_time). The mean (not last access) means a single fresh recall
+	// can't refresh an otherwise-stale summary into top rank.
+	if len(summaries) == 0 {
+		return nil
+	}
+	refTimes := make([]time.Time, len(summaries))
+	for i, s := range summaries {
+		if s.AccessCount > 0 && s.AccessTimeSum > 0 {
+			refTimes[i] = time.Unix(s.AccessTimeSum/int64(s.AccessCount), 0)
+		} else {
+			refTimes[i] = s.CreatedAt
+		}
+	}
+	minT, maxT := refTimes[0], refTimes[0]
+	for _, t := range refTimes[1:] {
+		if t.Before(minT) {
+			minT = t
+		}
+		if t.After(maxT) {
+			maxT = t
+		}
+	}
+
 	for i, s := range summaries {
 		summaryToks := tokenizeSummarySet(s.Summary)
 		kwText := strings.Join(s.Keywords, " ")
@@ -517,13 +546,11 @@ func reRankSummaries(summaries []ConversationSummary, query string, topK int) []
 			imp = 3
 		}
 
-		// Recency keyed on the last access when present — recalling a
-		// summary refreshes it (slower decay), mirroring reinforcement.
-		ref := s.LastAccessedAt
-		if ref.IsZero() {
-			ref = s.CreatedAt
+		// recency: in-batch min-max of mean recall time (newest=1, oldest=0).
+		recency := 1.0
+		if maxT.After(minT) {
+			recency = float64(refTimes[i].Sub(minT)) / float64(maxT.Sub(minT))
 		}
-		recency := recencyWeightSummary(ref)
 
 		// baseScore + token overlap + importance, scaled by recency and a
 		// reinforcement multiplier from access_count. Saturation (log1p)
