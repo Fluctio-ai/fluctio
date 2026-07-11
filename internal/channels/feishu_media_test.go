@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/fastclaw-ai/fastclaw/internal/bus"
 )
@@ -55,5 +56,41 @@ func TestFeishuSendMediaItemUploadsAndSendsFile(t *testing.T) {
 	}
 	if !uploaded || !sent {
 		t.Fatalf("uploaded=%v sent=%v", uploaded, sent)
+	}
+}
+
+func TestFeishuInboundFileIsDownloadedAndForwarded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/open-apis/im/v1/messages/msg_1/resources/file_1" || r.URL.Query().Get("type") != "file" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = w.Write([]byte("pdf-data"))
+	}))
+	defer server.Close()
+
+	mb := bus.New()
+	l := &Feishu{
+		bus:          mb,
+		accountID:    "app_1",
+		httpClient:   server.Client(),
+		apiBaseURL:   server.URL,
+		accessTok:    "token",
+		accessTokExp: time.Now().Add(time.Hour),
+	}
+	var ev feishuMessageEvent
+	ev.Sender.SenderType = "user"
+	ev.Sender.SenderID.OpenID = "user_1"
+	ev.Message.MessageID = "msg_1"
+	ev.Message.ChatID = "chat_1"
+	ev.Message.ChatType = "p2p"
+	ev.Message.MessageType = "file"
+	ev.Message.Content = `{"file_key":"file_1","file_name":"report.pdf"}`
+	l.dispatchInbound(ev)
+
+	got := <-mb.Inbound
+	if len(got.MediaItems) != 1 || got.MediaItems[0].Filename != "report.pdf" || string(got.MediaItems[0].Bytes) != "pdf-data" {
+		t.Fatalf("media = %#v", got.MediaItems)
 	}
 }

@@ -459,6 +459,27 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 		if ag == nil {
 			return "", fmt.Errorf("agent %q not found", task.AgentID)
 		}
+		if len(task.Message.MediaItems) > 0 {
+			atts := make([]agent.Attachment, 0, len(task.Message.MediaItems))
+			for _, item := range task.Message.MediaItems {
+				mimeType := item.ContentType
+				if mimeType == "" {
+					mimeType = "application/octet-stream"
+				}
+				atts = append(atts, agent.Attachment{
+					Name: item.Filename,
+					URL:  "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(item.Bytes),
+				})
+			}
+			paths := ag.WriteSessionAttachments(ctx, task.Message.ChatID, task.Message.ProjectID, atts)
+			if len(paths) > 0 {
+				var refs strings.Builder
+				for _, p := range paths {
+					fmt.Fprintf(&refs, "[Attached: /workspace/%s]\n", p)
+				}
+				task.Message.Text = refs.String() + task.Message.Text
+			}
+		}
 		chanMgr.SendTyping(task.Message.Channel, task.AccountID, task.Message.ChatID)
 		typingDone := make(chan struct{})
 		go func() {
