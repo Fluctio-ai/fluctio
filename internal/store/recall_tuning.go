@@ -201,6 +201,23 @@ func (d *DBStore) GetLambdaFeedbackStats(ctx context.Context, agentID string) ([
 	return stats, rows.Err()
 }
 
+// RecallStats summarizes one agent's recall activity for the tuning panel.
+type RecallStats struct {
+	TotalRecalls    int
+	ExploredRecalls int
+}
+
+// GetRecallStats returns total + explored recall counts for an agent.
+func (d *DBStore) GetRecallStats(ctx context.Context, agentID string) (RecallStats, error) {
+	var s RecallStats
+	q := `SELECT COUNT(*), COALESCE(SUM(explored), 0) FROM memory_recall_events WHERE agent_id = ?`
+	if d.dialect == "postgres" {
+		q = `SELECT COUNT(*), COALESCE(SUM(explored), 0) FROM memory_recall_events WHERE agent_id = $1`
+	}
+	err := d.db.QueryRowContext(ctx, q, agentID).Scan(&s.TotalRecalls, &s.ExploredRecalls)
+	return s, err
+}
+
 // recallUpgradeMinSamples / recallUpgradeWinThreshold gate a lambda
 // upgrade: an explored lambda needs at least this many feedback samples
 // and this win rate before it can replace the current best.

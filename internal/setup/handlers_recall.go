@@ -61,3 +61,41 @@ func (s *Server) handleRecallFeedback(w http.ResponseWriter, r *http.Request) {
 		"upgraded": upgraded, "lambda": lambda,
 	})
 }
+
+// handleGetRecallTuning returns the agent's current bandit state for the
+// memory-tuning panel: current MMR lambda, recall counts (total + how
+// many were ε-greedy explorations), and per-lambda feedback stats. Makes
+// the otherwise-black-box λ optimization observable.
+func (s *Server) handleGetRecallTuning(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.requireAgentOwner(w, r, id) == nil {
+		return
+	}
+	db, ok := s.dataStore.(*store.DBStore)
+	if !ok || db == nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "store not available"})
+		return
+	}
+	ctx := r.Context()
+	lambda, err := db.GetAgentMMRLambda(ctx, id)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	stats, err := db.GetRecallStats(ctx, id)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	fbStats, err := db.GetLambdaFeedbackStats(ctx, id)
+	if err != nil {
+		fbStats = nil // best-effort: feedback stats are non-critical for display
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"ok":               true,
+		"mmr_lambda":       lambda,
+		"total_recalls":    stats.TotalRecalls,
+		"explored_recalls": stats.ExploredRecalls,
+		"feedback_stats":   fbStats,
+	})
+}
