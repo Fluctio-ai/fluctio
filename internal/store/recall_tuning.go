@@ -218,6 +218,21 @@ func (d *DBStore) GetRecallStats(ctx context.Context, agentID string) (RecallSta
 	return s, err
 }
 
+// PreviewRecall runs a basic recall (FTS + scoring) for the tuning panel's
+// test box. NOTE: does not include vector recall, reranker, or MMR — it's
+// a preview of which summaries match the query, not a full reproduction
+// of memory_search. Use it to eyeball recall coverage, not lambda effects.
+func (d *DBStore) PreviewRecall(ctx context.Context, agentID, query string, limit int) ([]ConversationSummary, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	hits, err := d.SearchConversationSummariesFTS(ctx, agentID, query, limit*3)
+	if err != nil {
+		return nil, err
+	}
+	return reRankSummaries(hits, query, limit), nil
+}
+
 // recallUpgradeMinSamples / recallUpgradeWinThreshold gate a lambda
 // upgrade: an explored lambda needs at least this many feedback samples
 // and this win rate before it can replace the current best.

@@ -3,6 +3,7 @@ package setup
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
@@ -97,5 +98,49 @@ func (s *Server) handleGetRecallTuning(w http.ResponseWriter, r *http.Request) {
 		"total_recalls":    stats.TotalRecalls,
 		"explored_recalls": stats.ExploredRecalls,
 		"feedback_stats":   fbStats,
+	})
+}
+
+// handleRecallTest runs a basic recall preview (FTS + scoring) for the
+// tuning panel's test box. Owner-only. NOTE: excludes vector recall,
+// reranker, and MMR — a coverage preview, not a lambda-effect test.
+func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.requireAgentOwner(w, r, id) == nil {
+		return
+	}
+	var req struct {
+		Query string `json:"query"`
+		Limit int    `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
+		return
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "query is required"})
+		return
+	}
+	db, ok := s.dataStore.(*store.DBStore)
+	if !ok || db == nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "store not available"})
+		return
+	}
+	hits, err := db.PreviewRecall(r.Context(), id, req.Query, req.Limit)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	out := make([]map[string]any, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, map[string]any{
+			"id": h.ID, "summary": h.Summary, "topic": h.Topic,
+			"keywords": h.Keywords, "created_at": h.CreatedAt,
+			"importance": h.Importance, "access_count": h.AccessCount,
+		})
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"ok": true, "results": out,
+		"note": "basic recall preview; excludes vector recall, reranker, and MMR",
 	})
 }
