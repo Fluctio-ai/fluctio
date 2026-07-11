@@ -202,7 +202,7 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 							lambda = clampLambda(lambda)
 							explored = true
 						}
-						mmrHits := selectMMR(hits, embMap, queryEmb, lambda, limit)
+						mmrHits := SelectMMR(hits, embMap, queryEmb, lambda, limit)
 						if len(mmrHits) >= limit {
 							hits = mmrHits
 							if r.summaryDB != nil {
@@ -495,7 +495,7 @@ func cosineSim(a, b []float32) float64 {
 	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
-// selectMMR applies Maximal Marginal Relevance to a candidate pool.
+// SelectMMR applies Maximal Marginal Relevance to a candidate pool.
 // Starting from the query-relevance ranking implied by queryEmb, it
 // greedily picks the candidate that maximizes:
 //
@@ -506,7 +506,7 @@ func cosineSim(a, b []float32) float64 {
 // candidates missing a vector are skipped. lambda=1 reduces to pure
 // relevance order; lambda=0 to pure diversity. Returns fewer than topK
 // when not enough candidates carry vectors.
-func selectMMR(candidates []store.ConversationSummary, emb map[int64][]float32, queryEmb []float32, lambda float64, topK int) []store.ConversationSummary {
+func SelectMMR(candidates []store.ConversationSummary, emb map[int64][]float32, queryEmb []float32, lambda float64, topK int) []store.ConversationSummary {
 	if topK <= 0 || len(candidates) == 0 {
 		return nil
 	}

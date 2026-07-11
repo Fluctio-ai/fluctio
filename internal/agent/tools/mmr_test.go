@@ -43,32 +43,32 @@ func TestSelectMMR(t *testing.T) {
 	cands := []store.ConversationSummary{{ID: 1}, {ID: 2}, {ID: 3}}
 
 	// lambda=1: pure relevance → A first.
-	got := selectMMR(cands, emb, query, 1.0, 3)
+	got := SelectMMR(cands, emb, query, 1.0, 3)
 	if len(got) != 3 || got[0].ID != 1 {
 		t.Fatalf("lambda=1 first = %v, want 1", mmrIDs(got))
 	}
 
 	// lambda=0.3: diversity matters → second pick should be C (3), not B.
-	got = selectMMR(cands, emb, query, 0.3, 3)
+	got = SelectMMR(cands, emb, query, 0.3, 3)
 	if len(got) < 2 || got[1].ID != 3 {
 		t.Errorf("lambda=0.3 second = %d, want 3 (diverse); order=%v", got[1].ID, mmrIDs(got))
 	}
 
 	// topK larger than pool → returns all available.
-	got = selectMMR(cands, emb, query, 0.5, 10)
+	got = SelectMMR(cands, emb, query, 0.5, 10)
 	if len(got) != 3 {
 		t.Errorf("topK>pool = %d, want 3", len(got))
 	}
 
 	// candidate missing a vector is skipped.
 	noVec := []store.ConversationSummary{{ID: 1}, {ID: 99}}
-	got = selectMMR(noVec, emb, query, 0.5, 5)
+	got = SelectMMR(noVec, emb, query, 0.5, 5)
 	if len(got) != 1 || got[0].ID != 1 {
 		t.Errorf("missing-vector skip = %v, want [1]", mmrIDs(got))
 	}
 
 	// empty input → nil.
-	if got := selectMMR(nil, emb, query, 0.5, 5); got != nil {
+	if got := SelectMMR(nil, emb, query, 0.5, 5); got != nil {
 		t.Errorf("nil candidates = %v, want nil", mmrIDs(got))
 	}
 }

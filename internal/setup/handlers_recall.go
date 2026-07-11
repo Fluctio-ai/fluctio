@@ -5,6 +5,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/embedding"
+	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
@@ -101,12 +105,15 @@ func (s *Server) handleGetRecallTuning(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleRecallTest runs a basic recall preview (FTS + scoring) for the
-// tuning panel's test box. Owner-only. NOTE: excludes vector recall,
-// reranker, and MMR — a coverage preview, not a lambda-effect test.
+// handleRecallTest runs a recall preview for the tuning panel's test box.
+// When the agent has embedding enabled it reproduces the full memory_search
+// path (FTS + vector recall + MMR with the agent's current lambda) so the
+// user can see the lambda's diversity effect. Otherwise it falls back to a
+// basic FTS + scoring preview.
 func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if s.requireAgentOwner(w, r, id) == nil {
+	rec := s.requireAgentOwner(w, r, id)
+	if rec == nil {
 		return
 	}
 	var req struct {
@@ -126,11 +133,87 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "store not available"})
 		return
 	}
-	hits, err := db.PreviewRecall(r.Context(), id, req.Query, req.Limit)
+	ctx := r.Context()
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+
+	// Full path when embedding is configured + reachable.
+	var mem config.MemoryCfg
+	if err := scope.SettingInto(ctx, db, "memory", rec.UserID, id, &mem); err == nil && mem.Embedding.Enabled {
+		emb := embedding.ProbeEmbedder(ctx, embedding.NewOpenAICompatEmbedder(
+			mem.Embedding.APIBase, mem.Embedding.APIKey, mem.Embedding.Model, mem.Embedding.Dim, mem.Embedding.DimEnabled))
+		if emb.Available() {
+			hits, err := db.SearchConversationSummariesFTS(ctx, id, req.Query, limit*3)
+			if err == nil {
+				if vecs, e := emb.Embed(ctx, []string{req.Query}); e == nil && len(vecs) == 1 {
+					if vecIDs, ve := db.SearchConversationSummariesVector(ctx, vecs[0], limit*3); ve == nil && len(vecIDs) > 0 {
+						if vecHits, fe := db.GetConversationSummariesByIDs(ctx, vecIDs); fe == nil {
+							hits = mergeRecallPool(hits, vecHits, id, limit*3)
+						}
+					}
+					if len(hits) > limit {
+						if embMap, ee := db.GetConversationSummaryEmbeddings(ctx, recallHitIDs(hits)); ee == nil && len(embMap) >= limit {
+							lambda, _ := db.GetAgentMMRLambda(ctx, id)
+							if mmr := tools.SelectMMR(hits, embMap, vecs[0], lambda, limit); len(mmr) >= limit {
+								hits = mmr
+							}
+						}
+					}
+				}
+			}
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"ok": true, "results": formatRecallHits(hits), "mode": "full",
+			})
+			return
+		}
+	}
+
+	// Fallback: basic FTS + scoring (no vector/MMR).
+	hits, err := db.PreviewRecall(ctx, id, req.Query, limit)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"ok": true, "results": formatRecallHits(hits), "mode": "basic",
+		"note": "embedding disabled; excludes vector recall and MMR",
+	})
+}
+
+// mergeRecallPool dedups FTS + vector hits and re-scopes the global vector
+// results to this agent (vec0 KNN is global). Mirrors memory_search's merge.
+func mergeRecallPool(fts, vec []store.ConversationSummary, agentID string, limit int) []store.ConversationSummary {
+	seen := make(map[int64]bool)
+	var out []store.ConversationSummary
+	for _, h := range fts {
+		if !seen[h.ID] {
+			seen[h.ID] = true
+			out = append(out, h)
+		}
+	}
+	for _, h := range vec {
+		if h.AgentID == agentID && !seen[h.ID] {
+			seen[h.ID] = true
+			out = append(out, h)
+		}
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func recallHitIDs(hits []store.ConversationSummary) []int64 {
+	ids := make([]int64, len(hits))
+	for i, h := range hits {
+		ids[i] = h.ID
+	}
+	return ids
+}
+
+func formatRecallHits(hits []store.ConversationSummary) []map[string]any {
 	out := make([]map[string]any, 0, len(hits))
 	for _, h := range hits {
 		out = append(out, map[string]any{
@@ -139,10 +222,7 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 			"importance": h.Importance, "access_count": h.AccessCount,
 		})
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"ok": true, "results": out,
-		"note": "basic recall preview; excludes vector recall, reranker, and MMR",
-	})
+	return out
 }
 
 // handlePutRecallTuning lets the owner manually set the agent's MMR lambda.
