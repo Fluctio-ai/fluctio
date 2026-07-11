@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -222,5 +223,165 @@ func TestReRankSummariesPrefersNewerMeanRecallTime(t *testing.T) {
 	}
 	if out[0].ID != 2 {
 		t.Errorf("newer mean-recall-time (id=2) should rank first, got id=%d", out[0].ID)
+	}
+}
+
+// TestVec0SelectProbe isolates whether a non-KNN SELECT on the vec0
+// virtual table (GetConversationSummaryEmbeddings) hangs — it has never
+// been exercised by a test before the implicit-feedback sweep.
+func TestVec0SelectProbe(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	v := make([]float32, 1024)
+	v[0] = 1
+	if err := db.InsertConversationSummaryVector(ctx, 1, v); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	m, err := db.GetConversationSummaryEmbeddings(ctx, []int64{1})
+	if err != nil {
+		t.Fatalf("get embeddings: %v", err)
+	}
+	if len(m) != 1 {
+		t.Errorf("got %d embeddings, want 1", len(m))
+	}
+}
+
+// TestSweepStepsProbe exercises each step the sweep performs, with t.Log
+// before/after each, to localize a hang.
+func TestSweepStepsProbe(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	v := make([]float32, 1024)
+	v[0] = 1
+	if err := db.InsertConversationSummaryVector(ctx, 100, v); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("vec inserted")
+
+	if err := db.InsertRecallEvent(ctx, RecallEvent{
+		RecallID: "p1", AgentID: "a1", UserID: "u1", SessionKey: "s1",
+		Lambda: 0.6, Explored: true, SummaryIDs: []int64{100},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-30 * time.Minute)
+	if _, err := db.db.ExecContext(ctx, `UPDATE memory_recall_events SET created_at = ? WHERE recall_id = ?`, old, "p1"); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("event inserted + backdated")
+
+	for i := 0; i < 3; i++ {
+		if _, err := db.db.ExecContext(ctx,
+			`INSERT INTO session_messages (user_id, agent_id, session_key, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			"u1", "a1", "s1", i, "user", fmt.Sprintf("alpha %d", i), old.Add(time.Duration(i+1)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Log("messages inserted")
+
+	cutoff := time.Now().Add(-5 * time.Minute)
+	rows, err := db.db.QueryContext(ctx,
+		`SELECT recall_id FROM memory_recall_events
+		 WHERE explored = 1 AND session_key != '' AND user_id != '' AND created_at < ?
+		   AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id)
+		 ORDER BY created_at LIMIT ?`, cutoff, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for rows.Next() {
+		count++
+	}
+	rows.Close()
+	t.Logf("events queried: %d", count)
+
+	msgs, err := db.ListSessionMessagesAfterTime(ctx, "u1", "a1", "s1", old, 3)
+	t.Logf("messages listed: %d err=%v", len(msgs), err)
+
+	embs, err := db.GetConversationSummaryEmbeddings(ctx, []int64{100})
+	t.Logf("embeddings: %d err=%v", len(embs), err)
+}
+
+// sweepMockEmbedder maps "alpha" content → dim0 unit, else → dim1023
+// (orthogonal to both test summaries, cosine ≈ 0).
+type sweepMockEmbedder struct{}
+
+func (sweepMockEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i, t := range texts {
+		v := make([]float32, 1024)
+		if strings.Contains(strings.ToLower(t), "alpha") {
+			v[0] = 1
+		} else {
+			v[1023] = 1
+		}
+		out[i] = v
+	}
+	return out, nil
+}
+func (sweepMockEmbedder) Model() string   { return "mock" }
+func (sweepMockEmbedder) Dim() int        { return 1024 }
+func (sweepMockEmbedder) Available() bool { return true }
+
+func TestSweepImplicitFeedbackRecordsUpDown(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	dim0 := make([]float32, 1024)
+	dim0[0] = 1
+	dim1 := make([]float32, 1024)
+	dim1[1] = 1
+	if err := db.InsertConversationSummaryVector(ctx, 100, dim0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.InsertConversationSummaryVector(ctx, 200, dim1); err != nil {
+		t.Fatal(err)
+	}
+
+	mk := func(recallID string, summaryID int64, msgs []string) {
+		ev := RecallEvent{
+			RecallID: recallID, AgentID: "a1", UserID: "u1", SessionKey: "s-" + recallID,
+			Lambda: 0.6, Explored: true, SummaryIDs: []int64{summaryID},
+		}
+		if err := db.InsertRecallEvent(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-30 * time.Minute)
+		if _, err := db.db.ExecContext(ctx, `UPDATE memory_recall_events SET created_at = ? WHERE recall_id = ?`, old, recallID); err != nil {
+			t.Fatal(err)
+		}
+		for i, c := range msgs {
+			if _, err := db.db.ExecContext(ctx,
+				`INSERT INTO session_messages (user_id, agent_id, session_key, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+				"u1", "a1", "s-"+recallID, i, "user", c, old.Add(time.Duration(i+1)*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mk("rc-up", 100, []string{"alpha details", "more alpha", "alpha again"})
+	mk("rc-down", 200, []string{"beta off topic", "gamma other", "delta unrelated"})
+
+	cfg := DefaultImplicitFeedbackConfig
+	cfg.WindowMessages = 3
+	cfg.MaxAgeMinutes = 5
+	n, err := db.SweepImplicitFeedback(ctx, sweepMockEmbedder{}, cfg)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("processed = %d, want 2", n)
+	}
+	var upVal int
+	db.db.QueryRowContext(ctx, `SELECT up FROM memory_recall_feedback WHERE recall_id = ?`, "rc-up").Scan(&upVal)
+	if upVal != 1 {
+		t.Errorf("rc-up feedback up=%d, want 1", upVal)
+	}
+	db.db.QueryRowContext(ctx, `SELECT up FROM memory_recall_feedback WHERE recall_id = ?`, "rc-down").Scan(&upVal)
+	if upVal != 0 {
+		t.Errorf("rc-down feedback up=%d, want 0", upVal)
 	}
 }

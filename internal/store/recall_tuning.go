@@ -5,7 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
+	"strings"
 	"time"
+
+	"github.com/fluctio-ai/fluctio/internal/embedding"
 )
 
 // DefaultMMRLambda is the starting MMR lambda (relevance vs diversity)
@@ -281,6 +285,217 @@ func (d *DBStore) PreviewRecall(ctx context.Context, agentID, query string, limi
 		return nil, err
 	}
 	return reRankSummaries(hits, query, limit), nil
+}
+
+// ListSessionMessagesAfterTime returns up to limit messages in a session
+// created after `after`, ascending by created_at. Used by the implicit-
+// feedback sweep to read what the user said following a recall.
+func (d *DBStore) ListSessionMessagesAfterTime(ctx context.Context, userID, agentID, sessionKey string, after time.Time, limit int) ([]SessionMessage, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	var rows *sql.Rows
+	var err error
+	if d.dialect == "postgres" {
+		rows, err = d.db.QueryContext(ctx,
+			`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
+			 FROM session_messages
+			 WHERE user_id = $1 AND agent_id = $2 AND session_key = $3 AND created_at > $4
+			 ORDER BY created_at ASC LIMIT $5`,
+			userID, agentID, sessionKey, after, limit)
+	} else {
+		rows, err = d.db.QueryContext(ctx,
+			`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
+			 FROM session_messages
+			 WHERE user_id = ? AND agent_id = ? AND session_key = ? AND created_at > ?
+			 ORDER BY created_at ASC LIMIT ?`,
+			userID, agentID, sessionKey, after, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionMessage
+	for rows.Next() {
+		var m SessionMessage
+		var contentParts, toolCalls, metadata, rawAssistant string
+		if err := rows.Scan(&m.Seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp); err != nil {
+			return nil, err
+		}
+		if contentParts != "" && contentParts != "null" {
+			var v interface{}
+			if json.Unmarshal([]byte(contentParts), &v) == nil {
+				m.ContentParts = v
+			}
+		}
+		if toolCalls != "" && toolCalls != "null" {
+			var v interface{}
+			if json.Unmarshal([]byte(toolCalls), &v) == nil {
+				m.ToolCalls = v
+			}
+		}
+		if metadata != "" && metadata != "null" {
+			var v map[string]interface{}
+			if json.Unmarshal([]byte(metadata), &v) == nil {
+				m.Metadata = v
+			}
+		}
+		if rawAssistant != "" && rawAssistant != "null" {
+			m.RawAssistant = json.RawMessage(rawAssistant)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ImplicitFeedbackConfig tunes the implicit-feedback sweep.
+type ImplicitFeedbackConfig struct {
+	WindowMessages int     // post-recall messages to consider
+	UpThreshold    float64 // max cosine >= this records thumbs-up
+	DownThreshold  float64 // max cosine <= this records thumbs-down
+	MaxAgeMinutes  int     // only sweep events older than this (give convo time)
+	BatchLimit     int     // max events per sweep
+}
+
+// DefaultImplicitFeedbackConfig — 3-message window, cosine 0.5/0.3 split,
+// 10-minute cooldown, 50-event batch.
+var DefaultImplicitFeedbackConfig = ImplicitFeedbackConfig{
+	WindowMessages: 3,
+	UpThreshold:    0.5,
+	DownThreshold:  0.3,
+	MaxAgeMinutes:  10,
+	BatchLimit:     50,
+}
+
+// SweepImplicitFeedback is the implicit signal source for the bandit: for
+// each explored recall whose conversation has progressed and has no
+// feedback yet, it embeds the messages that followed and compares (max
+// cosine) to the recalled summaries' embeddings. Stays on topic → up;
+// clearly leaves → down; uncertain middle is unrecorded. Returns the
+// feedback count written. Caller builds the embedder from agent memory
+// config; store imports embedding without a cycle.
+func (d *DBStore) SweepImplicitFeedback(ctx context.Context, emb embedding.Embedder, cfg ImplicitFeedbackConfig) (int, error) {
+	if emb == nil || !emb.Available() {
+		return 0, nil
+	}
+	if cfg.WindowMessages <= 0 {
+		cfg = DefaultImplicitFeedbackConfig
+	}
+	cutoff := time.Now().Add(-time.Duration(cfg.MaxAgeMinutes) * time.Minute)
+	q := `SELECT recall_id, agent_id, user_id, session_key, summary_ids, created_at
+		FROM memory_recall_events
+		WHERE explored = 1 AND session_key != '' AND user_id != '' AND created_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id)
+		ORDER BY created_at LIMIT ?`
+	if d.dialect == "postgres" {
+		q = `SELECT recall_id, agent_id, user_id, session_key, summary_ids, created_at
+			FROM memory_recall_events
+			WHERE explored = 1 AND session_key != '' AND user_id != '' AND created_at < $1
+			  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id)
+			ORDER BY created_at LIMIT $2`
+	}
+	rows, err := d.db.QueryContext(ctx, q, cutoff, cfg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+
+	// Materialize events and close rows BEFORE issuing the per-event
+	// follow-up queries (ListSessionMessagesAfterTime, GetConversation-
+	// SummaryEmbeddings). On the shared-cache in-memory sqlite the pool
+	// serializes hard, so a still-open rows would deadlock those queries.
+	type pendingEvent struct {
+		recallID, agentID, userID, sessionKey string
+		summaryIDs                            []int64
+		created                               time.Time
+	}
+	var events []pendingEvent
+	for rows.Next() {
+		var (
+			recallID       string
+			agentID        string
+			userID         string
+			sessionKey     string
+			summaryIDsJSON string
+			created        time.Time
+		)
+		if err := rows.Scan(&recallID, &agentID, &userID, &sessionKey, &summaryIDsJSON, &created); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		var summaryIDs []int64
+		if err := json.Unmarshal([]byte(summaryIDsJSON), &summaryIDs); err != nil || len(summaryIDs) == 0 {
+			continue
+		}
+		events = append(events, pendingEvent{recallID, agentID, userID, sessionKey, summaryIDs, created})
+	}
+	rowsErr := rows.Err()
+	rows.Close()
+	if rowsErr != nil {
+		return 0, rowsErr
+	}
+
+	processed := 0
+	for _, ev := range events {
+		msgs, err := d.ListSessionMessagesAfterTime(ctx, ev.userID, ev.agentID, ev.sessionKey, ev.created, cfg.WindowMessages)
+		if err != nil || len(msgs) < cfg.WindowMessages {
+			continue
+		}
+		texts := make([]string, 0, len(msgs))
+		for _, m := range msgs {
+			if strings.TrimSpace(m.Content) != "" {
+				texts = append(texts, m.Content)
+			}
+		}
+		if len(texts) == 0 {
+			continue
+		}
+		sumEmbs, err := d.GetConversationSummaryEmbeddings(ctx, ev.summaryIDs)
+		if err != nil || len(sumEmbs) == 0 {
+			continue
+		}
+		msgVecs, err := emb.Embed(ctx, texts)
+		if err != nil || len(msgVecs) == 0 {
+			continue
+		}
+		maxCos := 0.0
+		for _, mv := range msgVecs {
+			for _, sv := range sumEmbs {
+				if c := cosineF32(mv, sv); c > maxCos {
+					maxCos = c
+				}
+			}
+		}
+		if maxCos >= cfg.UpThreshold {
+			if err := d.InsertRecallFeedback(ctx, ev.recallID, true); err == nil {
+				processed++
+			}
+		} else if maxCos <= cfg.DownThreshold {
+			if err := d.InsertRecallFeedback(ctx, ev.recallID, false); err == nil {
+				processed++
+			}
+		}
+	}
+	return processed, nil
+}
+
+// cosineF32 returns the cosine similarity of two equal-length float32
+// vectors as a float64 in [-1,1]; 0 for empty/mismatched input.
+func cosineF32(a, b []float32) float64 {
+	n := len(a)
+	if n == 0 || n != len(b) {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := 0; i < n; i++ {
+		af, bf := float64(a[i]), float64(b[i])
+		dot += af * bf
+		na += af * af
+		nb += bf * bf
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
 // recallUpgradeMinSamples / recallUpgradeWinThreshold gate a lambda
