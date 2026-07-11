@@ -368,7 +368,7 @@ func TestSweepImplicitFeedbackRecordsUpDown(t *testing.T) {
 	cfg := DefaultImplicitFeedbackConfig
 	cfg.WindowMessages = 3
 	cfg.MaxAgeMinutes = 5
-	n, err := db.SweepImplicitFeedback(ctx, sweepMockEmbedder{}, cfg)
+	n, err := db.SweepImplicitFeedback(ctx, "a1", sweepMockEmbedder{}, cfg)
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}

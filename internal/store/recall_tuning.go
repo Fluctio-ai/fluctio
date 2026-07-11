@@ -374,7 +374,7 @@ var DefaultImplicitFeedbackConfig = ImplicitFeedbackConfig{
 // clearly leaves → down; uncertain middle is unrecorded. Returns the
 // feedback count written. Caller builds the embedder from agent memory
 // config; store imports embedding without a cycle.
-func (d *DBStore) SweepImplicitFeedback(ctx context.Context, emb embedding.Embedder, cfg ImplicitFeedbackConfig) (int, error) {
+func (d *DBStore) SweepImplicitFeedback(ctx context.Context, agentID string, emb embedding.Embedder, cfg ImplicitFeedbackConfig) (int, error) {
 	if emb == nil || !emb.Available() {
 		return 0, nil
 	}
@@ -384,17 +384,17 @@ func (d *DBStore) SweepImplicitFeedback(ctx context.Context, emb embedding.Embed
 	cutoff := time.Now().Add(-time.Duration(cfg.MaxAgeMinutes) * time.Minute)
 	q := `SELECT recall_id, agent_id, user_id, session_key, summary_ids, created_at
 		FROM memory_recall_events
-		WHERE explored = 1 AND session_key != '' AND user_id != '' AND created_at < ?
+		WHERE explored = 1 AND agent_id = ? AND session_key != '' AND user_id != '' AND created_at < ?
 		  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id)
 		ORDER BY created_at LIMIT ?`
 	if d.dialect == "postgres" {
 		q = `SELECT recall_id, agent_id, user_id, session_key, summary_ids, created_at
 			FROM memory_recall_events
-			WHERE explored = 1 AND session_key != '' AND user_id != '' AND created_at < $1
+			WHERE explored = 1 AND agent_id = $1 AND session_key != '' AND user_id != '' AND created_at < $2
 			  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id)
-			ORDER BY created_at LIMIT $2`
+			ORDER BY created_at LIMIT $3`
 	}
-	rows, err := d.db.QueryContext(ctx, q, cutoff, cfg.BatchLimit)
+	rows, err := d.db.QueryContext(ctx, q, agentID, cutoff, cfg.BatchLimit)
 	if err != nil {
 		return 0, err
 	}
