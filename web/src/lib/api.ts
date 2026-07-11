@@ -1504,6 +1504,37 @@ export async function getAgentRecallTuning(agentId: string): Promise<RecallTunin
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
   return res.json().catch(() => ({ ok: false }));
 }
+
+export type RecallTestHit = {
+  id: number;
+  summary: string;
+  topic?: string;
+  keywords?: string[];
+  created_at?: string;
+  importance?: number;
+  access_count?: number;
+};
+export type RecallTestResult = {
+  ok?: boolean;
+  results?: RecallTestHit[];
+  note?: string;
+  error?: string;
+};
+// previewRecall runs a basic recall preview (FTS + scoring, no MMR) for
+// the tuning panel's test box.
+export async function previewRecall(
+  agentId: string,
+  query: string,
+  limit?: number,
+): Promise<RecallTestResult> {
+  const res = await apiFetch(`/api/agents/${agentId}/recall-test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, limit }),
+  });
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: false }));
+}
 export async function setAgentMemory(agentId: string, memory: AgentMemory): Promise<{ ok?: boolean; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/memory`, {
     method: "PUT", headers: { "Content-Type": "application/json" },

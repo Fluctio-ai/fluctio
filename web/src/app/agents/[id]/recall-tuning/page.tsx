@@ -3,19 +3,32 @@
 import { useEffect, useState, useCallback, type ReactNode } from "react";
 import { useT } from "@/lib/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Database, Sparkles, FlaskConical } from "lucide-react";
-import { getAgentRecallTuning, type RecallTuningState } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Database, Sparkles, FlaskConical, Search, Loader2 } from "lucide-react";
+import {
+  getAgentRecallTuning,
+  previewRecall,
+  type RecallTuningState,
+  type RecallTestHit,
+} from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 
 // Per-agent recall-tuning panel — surfaces the otherwise-black-box MMR
-// lambda bandit: current lambda, recall counts, per-lambda feedback
-// stats. Lets the user observe how the recall scorer auto-tunes. Read-
-// only for now (a test-query box + manual override follow).
+// lambda bandit (current lambda, recall counts, per-lambda feedback) and
+// a test box to preview which summaries a query recalls. Read-only
+// scoring state + a coverage preview (excludes vector/reranker/MMR).
 export default function AgentRecallTuningPage() {
   const t = useT();
   const agentId = useAgentIdFromURL();
   const [state, setState] = useState<RecallTuningState | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // test box
+  const [testQuery, setTestQuery] = useState("");
+  const [testHits, setTestHits] = useState<RecallTestHit[] | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testNote, setTestNote] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -28,6 +41,20 @@ export default function AgentRecallTuningPage() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const runTest = async () => {
+    if (!testQuery.trim()) return;
+    setTesting(true);
+    setTestHits(null);
+    setTestNote(null);
+    try {
+      const res = await previewRecall(agentId, testQuery);
+      setTestHits(res.results ?? []);
+      if (res.note) setTestNote(res.note);
+    } finally {
+      setTesting(false);
+    }
+  };
 
   if (loading) return <Skeleton className="h-40 w-full" />;
   if (!state || state.ok === false) {
@@ -97,6 +124,41 @@ export default function AgentRecallTuningPage() {
               })}
             </tbody>
           </table>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-medium">{t("recallTuning.testBox")}</h3>
+        <div className="flex gap-2">
+          <Input
+            value={testQuery}
+            onChange={(e) => setTestQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") runTest();
+            }}
+            placeholder={t("recallTuning.testPlaceholder")}
+          />
+          <Button onClick={runTest} disabled={testing || !testQuery.trim()}>
+            {testing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+          </Button>
+        </div>
+        {testNote && <p className="mt-1 text-xs text-muted-foreground">{testNote}</p>}
+        {testHits && testHits.length === 0 && (
+          <p className="mt-2 text-sm text-muted-foreground">{t("recallTuning.noResults")}</p>
+        )}
+        {testHits && testHits.length > 0 && (
+          <ul className="mt-2 space-y-2">
+            {testHits.map((h) => (
+              <li key={h.id} className="rounded border p-2 text-sm">
+                {h.topic && <div className="font-medium">{h.topic}</div>}
+                <div className="text-muted-foreground">{h.summary}</div>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>
