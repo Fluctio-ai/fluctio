@@ -19,6 +19,7 @@ import {
   SparklesIcon,
   UserCog,
   Wand2Icon,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -37,6 +38,7 @@ import AgentRegexHooksPage from "@/app/agents/[id]/regex-hooks/page";
 import AgentKnowledgePage from "@/app/agents/[id]/knowledge/page";
 import AgentWikiPage from "@/app/agents/[id]/wiki/page";
 import AgentMemoryPage from "@/app/agents/[id]/memory/page";
+import AgentRecallTuningPage from "@/app/agents/[id]/recall-tuning/page";
 import AgentMCPPage from "@/app/agents/[id]/mcp/page";
 import AgentUsagePage from "@/app/agents/[id]/usage/page";
 import AccountSettingsPage from "@/app/settings/account/page";
@@ -61,7 +63,8 @@ export type AgentSettingsTab =
   | "usage"
   | "account"
   | "general"
-  | "about";
+  | "about"
+  | "recall-tuning";
 
 type TabIcon = React.ComponentType<{ className?: string }>;
 
@@ -79,6 +82,7 @@ const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> 
   { id: "knowledge", label: "settings.knowledge", icon: BookOpenIcon },
   { id: "wiki", label: "settings.wiki", icon: BookMarkedIcon },
   { id: "memory", label: "settings.memory", icon: DatabaseIcon },
+  { id: "recall-tuning", label: "settings.recallTuning", icon: SlidersHorizontal },
   { id: "usage", label: "settings.usage", icon: CoinsIcon },
 ];
 
@@ -206,6 +210,7 @@ export function AgentSettingsDialog({
           {tab === "knowledge" && <AgentKnowledgePage />}
           {tab === "wiki" && <AgentWikiPage />}
           {tab === "memory" && <AgentMemoryPage />}
+          {tab === "recall-tuning" && <AgentRecallTuningPage />}
           {tab === "usage" && <AgentUsagePage />}
           {tab === "account" && (
             <div className="p-6 max-w-3xl">

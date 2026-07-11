@@ -1487,6 +1487,23 @@ export async function getAgentMemory(agentId: string): Promise<{ memory?: AgentM
   if (!res.ok) return {};
   return res.json().catch(() => ({}));
 }
+
+export type RecallFeedbackStat = { lambda: number; ups: number; downs: number };
+export type RecallTuningState = {
+  ok?: boolean;
+  mmr_lambda?: number;
+  total_recalls?: number;
+  explored_recalls?: number;
+  feedback_stats?: RecallFeedbackStat[];
+  error?: string;
+};
+// getAgentRecallTuning reads the agent's bandit state (current MMR lambda,
+// recall counts, per-lambda feedback) for the recall-tuning panel.
+export async function getAgentRecallTuning(agentId: string): Promise<RecallTuningState> {
+  const res = await apiFetch(`/api/agents/${agentId}/recall-tuning`);
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: false }));
+}
 export async function setAgentMemory(agentId: string, memory: AgentMemory): Promise<{ ok?: boolean; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/memory`, {
     method: "PUT", headers: { "Content-Type": "application/json" },
