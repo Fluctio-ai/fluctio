@@ -1753,6 +1753,11 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 
 	resp, err := a.streamChatToResponse(ctx, messages, nil)
 	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("plan-mode chat canceled", "agent", a.name)
+			emitEvent(ctx, ChatEvent{Type: "done"})
+			return ""
+		}
 		slog.Error("plan-mode chat failed", "agent", a.name, "error", err)
 		emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": err.Error()}})
 		emitEvent(ctx, ChatEvent{Type: "done"})
@@ -2186,6 +2191,15 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		a.hooks.Run(ctx, hcAfter)
 
 		if err != nil {
+			// Cancellation is a control-flow outcome (Stop, shutdown, or a
+			// disconnected caller), not a provider failure. Publishing it as
+			// an error leaves a persisted "context canceled" bubble that can
+			// arrive after the UI has already rendered "(Stopped)".
+			if errors.Is(err, context.Canceled) {
+				slog.Info("LLM chat canceled", "agent", a.name)
+				emitEvent(ctx, ChatEvent{Type: "done"})
+				return ""
+			}
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
 			emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": err.Error()}})
 			emitEvent(ctx, ChatEvent{Type: "done"})

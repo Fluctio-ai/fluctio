@@ -897,6 +897,10 @@ export function ChatScreen() {
           case "error": {
             claim();
             const msg = data.data?.message || "Unknown error";
+            // Older gateways persisted cancellation as an error event.
+            // Ignore those on replay so Stop produces one clear status
+            // instead of "(Stopped)" followed by a stale error bubble.
+            if (/\bcontext canceled\b/i.test(msg)) break;
             setMessages((prev) => [
               ...prev,
               { id: `e-${Date.now()}`, role: "agent", content: `Error: ${msg}`, timestamp: Date.now() },
@@ -1681,6 +1685,7 @@ export function ChatScreen() {
             // serialization mismatch, etc.) and the only signal was a
             // gateway log line the user can't see.
             const msg = evt.data?.message || "Unknown error";
+            if (/\bcontext canceled\b/i.test(msg)) break;
             setMessages((prev) => [
               ...prev,
               { id: `e-${Date.now()}`, role: "agent", content: `Error: ${msg}`, timestamp: Date.now() },
