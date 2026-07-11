@@ -509,6 +509,13 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 		// can upload as photos. The textual placeholders are stripped
 		// from the body so users don't see the raw `![](...)` syntax.
 		text, items := splitMediaFromReply(ctx, g.workspace, task.AgentID, task.Message.ProjectID, task.Message.ChatID, reply)
+		// Ordinary markdown links are how agents expose non-image final
+		// deliverables (`[report](/workspace/report.pdf)`). Resolve those
+		// explicitly as attachments too. Besides fixing document delivery,
+		// this makes the final reply authoritative: when it names one or more
+		// outputs, the fallback below does not sweep up draft/process files.
+		text, fileItems := splitFilesFromReply(ctx, g.workspace, task.AgentID, task.Message.ProjectID, task.Message.ChatID, text)
+		items = append(items, fileItems...)
 		// Workspace fallback: list the session's files and attach
 		// every image whose mtime falls in this turn's window. Catches
 		// the case where the LLM emits a broken data URL (with
@@ -520,7 +527,12 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 		// images — the explicit markdown refs are authoritative and
 		// the time-based scan can pick up stale files whose mtime
 		// was refreshed by sandbox mount/restart.
-		if len(items) == 0 {
+		// WeChat must never infer deliverables from every file created during
+		// the turn: document tools commonly write drafts/conversion inputs in
+		// addition to the final output. Its final reply is authoritative and
+		// the system prompt requires the agent to link each final deliverable.
+		// Other channels retain the legacy safety net for compatibility.
+		if len(items) == 0 && task.Message.Channel != "wechat" {
 			items = appendNewWorkspaceMedia(ctx, g.workspace, task.AgentID, task.Message.ProjectID, task.Message.ChatID, workspaceBefore, workspaceSnapshotOK, items)
 		}
 		// Web-streamed turns already delivered the reply via the hub.
@@ -914,6 +926,52 @@ func allChannelRows(st store.Store) ([]store.ConfigRecord, error) {
 // reuse them when building MediaItems and stripping the marker from
 // the chat body.
 var imgRefRegex = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+
+// fileRefRegex intentionally accepts only /workspace links. Normal web links
+// remain in the message, and image syntax has already been removed by
+// splitMediaFromReply before this matcher runs.
+var fileRefRegex = regexp.MustCompile(`\[([^\]]*)\]\((/workspace/[^)]+)\)`)
+
+// splitFilesFromReply resolves explicitly linked workspace documents into
+// outbound attachments and removes the raw markdown link from IM text.
+func splitFilesFromReply(ctx context.Context, ws workspace.Store, agentID, projectID, sessionID, reply string) (string, []bus.MediaItem) {
+	if reply == "" || ws == nil {
+		return reply, nil
+	}
+	matches := fileRefRegex.FindAllStringSubmatchIndex(reply, -1)
+	if len(matches) == 0 {
+		return reply, nil
+	}
+	var items []bus.MediaItem
+	var out strings.Builder
+	cursor := 0
+	for _, m := range matches {
+		path := reply[m[4]:m[5]]
+		key := strings.TrimPrefix(path, "/workspace/")
+		rc, err := ws.Get(ctx, agentID, projectID, sessionID, key)
+		if err != nil {
+			slog.Warn("split file: workspace get failed", "key", key, "error", err)
+			continue
+		}
+		data, readErr := io.ReadAll(rc)
+		rc.Close()
+		if readErr != nil || len(data) == 0 || len(data) > maxAttachmentBytes {
+			continue
+		}
+		base := filepath.Base(key)
+		items = append(items, bus.MediaItem{Filename: base, ContentType: mime.TypeByExtension(filepath.Ext(base)), Bytes: data})
+		out.WriteString(reply[cursor:m[0]])
+		cursor = m[1]
+		if cursor < len(reply) && reply[cursor] == '\n' {
+			cursor++
+		}
+	}
+	if len(items) == 0 {
+		return reply, nil
+	}
+	out.WriteString(reply[cursor:])
+	return strings.TrimSpace(out.String()), items
+}
 
 // splitMediaFromReply pulls every `![alt](src)` ref out of `reply` and
 // turns it into a MediaItem the IM channel can upload directly:

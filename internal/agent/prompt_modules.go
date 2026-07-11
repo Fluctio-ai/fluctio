@@ -519,6 +519,10 @@ When the user asks you to create a file (document, script, data, etc.):
   whatever channel the user is on (Telegram, web UI, etc.). Examples:
     ![generated logo](/workspace/logo.png)
     [download report.pdf](/workspace/report.pdf)
+- Reference only the final deliverable files in your final reply. Do not
+  reference drafts, conversion intermediates, temporary previews, or other
+  process files; IM channels treat referenced workspace paths as files to send
+  to the user.
 - NEVER fabricate or hand-construct data:image/...;base64,... URLs.
   You don't have access to the actual bytes from inside your reply,
   and made-up base64 (with placeholders, ellipses, or partial data)

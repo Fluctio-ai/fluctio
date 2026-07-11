@@ -46,3 +46,21 @@ func TestAppendNewWorkspaceMediaRequiresSuccessfulSnapshot(t *testing.T) {
 		t.Fatalf("got %d attachments after failed snapshot, want 0", len(got))
 	}
 }
+
+func TestSplitFilesFromReplyUsesExplicitFinalDocument(t *testing.T) {
+	ctx := context.Background()
+	ws := workspace.NewLocalFS(t.TempDir())
+	for name, body := range map[string]string{"draft.pdf": "draft", "final.pdf": "final"} {
+		if err := ws.Put(ctx, "agent", "", "chat", name, bytes.NewBufferString(body), int64(len(body)), "application/pdf"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	text, items := splitFilesFromReply(ctx, ws, "agent", "", "chat", "已完成：[最终报告](/workspace/final.pdf)")
+	if text != "已完成：" {
+		t.Fatalf("text = %q", text)
+	}
+	if len(items) != 1 || items[0].Filename != "final.pdf" || string(items[0].Bytes) != "final" {
+		t.Fatalf("items = %#v, want only final.pdf", items)
+	}
+}
