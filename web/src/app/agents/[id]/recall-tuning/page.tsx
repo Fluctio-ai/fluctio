@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Database, Sparkles, FlaskConical, Search, Loader2 } from "lucide-react";
 import {
   getAgentRecallTuning,
+  setAgentRecallTuning,
   previewRecall,
   type RecallTuningState,
   type RecallTestHit,
@@ -23,6 +24,10 @@ export default function AgentRecallTuningPage() {
   const agentId = useAgentIdFromURL();
   const [state, setState] = useState<RecallTuningState | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // manual lambda override
+  const [lambdaInput, setLambdaInput] = useState("");
+  const [savingLambda, setSavingLambda] = useState(false);
 
   // test box
   const [testQuery, setTestQuery] = useState("");
@@ -41,6 +46,22 @@ export default function AgentRecallTuningPage() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (state?.mmr_lambda != null) setLambdaInput(state.mmr_lambda.toFixed(2));
+  }, [state?.mmr_lambda]);
+
+  const saveLambda = async () => {
+    const v = parseFloat(lambdaInput);
+    if (Number.isNaN(v) || v < 0 || v > 1) return;
+    setSavingLambda(true);
+    try {
+      await setAgentRecallTuning(agentId, v);
+      await refresh();
+    } finally {
+      setSavingLambda(false);
+    }
+  };
 
   const runTest = async () => {
     if (!testQuery.trim()) return;
@@ -93,6 +114,24 @@ export default function AgentRecallTuningPage() {
           value={`${(exploreRate * 100).toFixed(0)}%`}
           icon={<Sparkles className="h-4 w-4" />}
         />
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-medium">{t("recallTuning.setLambda")}</h3>
+        <div className="flex gap-2">
+          <Input
+            value={lambdaInput}
+            onChange={(e) => setLambdaInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveLambda();
+            }}
+            placeholder="0.0 – 1.0"
+          />
+          <Button onClick={saveLambda} disabled={savingLambda || !lambdaInput}>
+            {savingLambda ? <Loader2 className="h-4 w-4 animate-spin" /> : t("recallTuning.save")}
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">{t("recallTuning.lambdaHint")}</p>
       </div>
 
       <div>

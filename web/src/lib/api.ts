@@ -1535,6 +1535,20 @@ export async function previewRecall(
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
   return res.json().catch(() => ({ ok: false }));
 }
+// setAgentRecallTuning manually overrides the agent's MMR lambda (the bandit
+// keeps exploring/tuning from this new starting point).
+export async function setAgentRecallTuning(
+  agentId: string,
+  mmrLambda: number,
+): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/recall-tuning`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mmr_lambda: mmrLambda }),
+  });
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: false }));
+}
 export async function setAgentMemory(agentId: string, memory: AgentMemory): Promise<{ ok?: boolean; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/memory`, {
     method: "PUT", headers: { "Content-Type": "application/json" },

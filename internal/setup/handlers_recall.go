@@ -144,3 +144,35 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 		"note": "basic recall preview; excludes vector recall, reranker, and MMR",
 	})
 }
+
+// handlePutRecallTuning lets the owner manually set the agent's MMR lambda.
+// This overrides the bandit's current best as a fresh starting point — the
+// bandit keeps exploring from there and may promote again once new feedback
+// accumulates (i.e. a manual nudge, not a hard lock).
+func (s *Server) handlePutRecallTuning(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.requireAgentOwner(w, r, id) == nil {
+		return
+	}
+	var req struct {
+		MmrLambda float64 `json:"mmr_lambda"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
+		return
+	}
+	if req.MmrLambda < 0 || req.MmrLambda > 1 {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "mmr_lambda must be in [0,1]"})
+		return
+	}
+	db, ok := s.dataStore.(*store.DBStore)
+	if !ok || db == nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "store not available"})
+		return
+	}
+	if err := db.SetAgentMMRLambda(r.Context(), id, req.MmrLambda); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "mmr_lambda": req.MmrLambda})
+}
