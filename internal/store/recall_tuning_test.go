@@ -57,6 +57,7 @@ func TestInsertRecallEvent(t *testing.T) {
 	ev := RecallEvent{
 		RecallID:   "recall-abc",
 		AgentID:    "agent-1",
+		UserID:     "user-1",
 		SessionKey: "sess-1",
 		Lambda:     0.6,
 		Explored:   true,
@@ -66,22 +67,23 @@ func TestInsertRecallEvent(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	// Verify the row landed with the right payload (incl. session_key + JSON IDs).
+	// Verify the row landed with the right payload (incl. user_id/session_key + JSON IDs).
 	var (
 		recallID   string
+		userID     string
 		sessionKey string
 		lambda     float64
 		explored   int
 		idsJSON    string
 	)
 	err := db.db.QueryRowContext(ctx,
-		`SELECT recall_id, session_key, lambda, explored, summary_ids FROM memory_recall_events WHERE recall_id = ?`,
-		ev.RecallID).Scan(&recallID, &sessionKey, &lambda, &explored, &idsJSON)
+		`SELECT recall_id, user_id, session_key, lambda, explored, summary_ids FROM memory_recall_events WHERE recall_id = ?`,
+		ev.RecallID).Scan(&recallID, &userID, &sessionKey, &lambda, &explored, &idsJSON)
 	if err != nil {
 		t.Fatalf("query back: %v", err)
 	}
-	if recallID != "recall-abc" || sessionKey != "sess-1" || lambda != 0.6 || explored != 1 {
-		t.Errorf("row = %q %q %v %v, want recall-abc sess-1 0.6 1", recallID, sessionKey, lambda, explored)
+	if recallID != "recall-abc" || userID != "user-1" || sessionKey != "sess-1" || lambda != 0.6 || explored != 1 {
+		t.Errorf("row = %q %q %q %v %v, want recall-abc user-1 sess-1 0.6 1", recallID, userID, sessionKey, lambda, explored)
 	}
 	if idsJSON != "[10,20,30]" {
 		t.Errorf("summary_ids json = %q, want [10,20,30]", idsJSON)

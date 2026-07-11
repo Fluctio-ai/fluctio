@@ -191,6 +191,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateRecallEventSession(ctx); err != nil {
 		return fmt.Errorf("migrate recall event session_key: %w", err)
 	}
+	if err := d.migrateRecallEventUser(ctx); err != nil {
+		return fmt.Errorf("migrate recall event user_id: %w", err)
+	}
 	return nil
 }
 

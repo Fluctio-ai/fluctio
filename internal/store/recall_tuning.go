@@ -34,6 +34,7 @@ func (d *DBStore) migrateRecallTuning(ctx context.Context) error {
 			id          INTEGER PRIMARY KEY,
 			recall_id   TEXT NOT NULL,
 			agent_id    TEXT NOT NULL,
+			user_id     TEXT NOT NULL DEFAULT '',
 			session_key TEXT NOT NULL DEFAULT '',
 			lambda      REAL NOT NULL,
 			explored    INTEGER NOT NULL DEFAULT 0,
@@ -81,10 +82,34 @@ func (d *DBStore) migrateRecallEventSession(ctx context.Context) error {
 	return err
 }
 
+// migrateRecallEventUser adds user_id to memory_recall_events for existing
+// DBs (ships in migrateRecallTuning's CREATE for new DBs). The implicit-
+// feedback sweep needs it to look up session messages (queried by
+// userID + sessionKey). Idempotent via tableHasColumn.
+func (d *DBStore) migrateRecallEventUser(ctx context.Context) error {
+	hasTable, err := d.tableExists(ctx, "memory_recall_events")
+	if err != nil {
+		return err
+	}
+	if !hasTable {
+		return nil
+	}
+	has, err := d.tableHasColumn(ctx, "memory_recall_events", "user_id")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	_, err = d.db.ExecContext(ctx, `ALTER TABLE memory_recall_events ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
 // RecallEvent records one memory_search call for stage-2b feedback linkage.
 type RecallEvent struct {
 	RecallID   string  // unique id surfaced (later) for thumbs-up/down
 	AgentID    string
+	UserID     string  // owner user_id (implicit feedback: look up session messages)
 	SessionKey string  // chat session the recall happened in (implicit feedback)
 	Lambda     float64 // the MMR lambda actually used
 	Explored   bool    // true if this was an ε-greedy exploration
@@ -138,13 +163,13 @@ func (d *DBStore) InsertRecallEvent(ctx context.Context, ev RecallEvent) error {
 	if ev.Explored {
 		explored = 1
 	}
-	q := `INSERT INTO memory_recall_events (recall_id, agent_id, session_key, lambda, explored, summary_ids)
-	      VALUES (?, ?, ?, ?, ?, ?)`
+	q := `INSERT INTO memory_recall_events (recall_id, agent_id, user_id, session_key, lambda, explored, summary_ids)
+	      VALUES (?, ?, ?, ?, ?, ?, ?)`
 	if d.dialect == "postgres" {
-		q = `INSERT INTO memory_recall_events (recall_id, agent_id, session_key, lambda, explored, summary_ids)
-		     VALUES ($1, $2, $3, $4, $5, $6)`
+		q = `INSERT INTO memory_recall_events (recall_id, agent_id, user_id, session_key, lambda, explored, summary_ids)
+		     VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	}
-	_, err = d.db.ExecContext(ctx, q, ev.RecallID, ev.AgentID, ev.SessionKey, ev.Lambda, explored, string(idsJSON))
+	_, err = d.db.ExecContext(ctx, q, ev.RecallID, ev.AgentID, ev.UserID, ev.SessionKey, ev.Lambda, explored, string(idsJSON))
 	return err
 }
 
