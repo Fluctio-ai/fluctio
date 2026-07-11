@@ -709,6 +709,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.wikiAutoGenTicker(ctx)
 	}()
+	// Implicit feedback sweep: periodically turns "did the user stay on the
+	// recalled topic?" into thumbs-up/down so the MMR-lambda bandit can tune
+	// without anyone clicking a button. Decoupled from chat traffic.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runImplicitFeedbackSweep(ctx)
+	}()
 	// Idle session summary sweep: summarize sessions the user ended by
 	// walking away (never /compact, never /new) so their content still
 	// enters cross-session recall. Default 10min interval, 24h idle
