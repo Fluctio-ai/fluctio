@@ -9,9 +9,12 @@ import { Database, Sparkles, FlaskConical, Search, Loader2 } from "lucide-react"
 import {
   getAgentRecallTuning,
   setAgentRecallTuning,
+  getRecentRecalls,
+  sendRecallFeedback,
   previewRecall,
   type RecallTuningState,
   type RecallTestHit,
+  type RecallEventView,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 
@@ -34,6 +37,7 @@ export default function AgentRecallTuningPage() {
   const [testHits, setTestHits] = useState<RecallTestHit[] | null>(null);
   const [testing, setTesting] = useState(false);
   const [testNote, setTestNote] = useState<string | null>(null);
+  const [recalls, setRecalls] = useState<RecallEventView[] | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -43,9 +47,15 @@ export default function AgentRecallTuningPage() {
     }
   }, [agentId]);
 
+  const refreshRecalls = useCallback(async () => {
+    const res = await getRecentRecalls(agentId);
+    setRecalls(res.events ?? []);
+  }, [agentId]);
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    refreshRecalls();
+  }, [refresh, refreshRecalls]);
 
   useEffect(() => {
     if (state?.mmr_lambda != null) setLambdaInput(state.mmr_lambda.toFixed(2));
@@ -75,6 +85,12 @@ export default function AgentRecallTuningPage() {
     } finally {
       setTesting(false);
     }
+  };
+
+  const vote = async (recallId: string, up: boolean) => {
+    await sendRecallFeedback(recallId, up);
+    await refresh();
+    await refreshRecalls();
   };
 
   if (loading) return <Skeleton className="h-40 w-full" />;
@@ -195,6 +211,38 @@ export default function AgentRecallTuningPage() {
               <li key={h.id} className="rounded border p-2 text-sm">
                 {h.topic && <div className="font-medium">{h.topic}</div>}
                 <div className="text-muted-foreground">{h.summary}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div>
+        <h3 className="mb-2 text-sm font-medium">{t("recallTuning.recentRecalls")}</h3>
+        {(recalls?.length ?? 0) === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("recallTuning.noRecalls")}</p>
+        ) : (
+          <ul className="space-y-2">
+            {recalls!.map((rc) => (
+              <li key={rc.recall_id} className="rounded border p-2 text-sm">
+                <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>λ={rc.lambda.toFixed(2)}</span>
+                  {rc.explored && <span className="rounded bg-muted px-1">explored</span>}
+                </div>
+                {rc.summaries.map((sm) => (
+                  <div key={sm.id} className="text-muted-foreground">
+                    {sm.topic ? `${sm.topic}: ` : ""}
+                    {sm.summary}
+                  </div>
+                ))}
+                <div className="mt-1 flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => vote(rc.recall_id, true)}>
+                    👍
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => vote(rc.recall_id, false)}>
+                    👎
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>

@@ -1549,6 +1549,34 @@ export async function setAgentRecallTuning(
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
   return res.json().catch(() => ({ ok: false }));
 }
+
+export type RecallSummaryPreview = { id: number; summary: string; topic?: string };
+export type RecallEventView = {
+  recall_id: string;
+  lambda: number;
+  explored: boolean;
+  created_at: string;
+  summaries: RecallSummaryPreview[];
+};
+export async function getRecentRecalls(
+  agentId: string,
+): Promise<{ ok?: boolean; events?: RecallEventView[]; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/recall-events`);
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: false }));
+}
+export async function sendRecallFeedback(
+  recallId: string,
+  up: boolean,
+): Promise<{ ok?: boolean; upgraded?: boolean; lambda?: number; error?: string }> {
+  const res = await apiFetch(`/api/chat/recall-feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ recall_id: recallId, up }),
+  });
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: false }));
+}
 export async function setAgentMemory(agentId: string, memory: AgentMemory): Promise<{ ok?: boolean; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/memory`, {
     method: "PUT", headers: { "Content-Type": "application/json" },

@@ -279,6 +279,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/tools/registered", auth(s.handleListAgentRegisteredTools))
 	mux.HandleFunc("GET /api/agents/{id}/recall-tuning", auth(s.handleGetRecallTuning))
 	mux.HandleFunc("PUT /api/agents/{id}/recall-tuning", auth(s.handlePutRecallTuning))
+	mux.HandleFunc("GET /api/agents/{id}/recall-events", auth(s.handleListRecallEvents))
 	mux.HandleFunc("POST /api/agents/{id}/recall-test", auth(s.handleRecallTest))
 	mux.HandleFunc("DELETE /api/agents/{id}", auth(s.handleDeleteAgent))
 

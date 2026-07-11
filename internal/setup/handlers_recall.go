@@ -256,3 +256,56 @@ func (s *Server) handlePutRecallTuning(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "mmr_lambda": req.MmrLambda})
 }
+
+// handleListRecallEvents returns the agent's recent recalls with summary
+// previews, for the tuning panel's manual-feedback section (👍/👎).
+func (s *Server) handleListRecallEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.requireAgentOwner(w, r, id) == nil {
+		return
+	}
+	db, ok := s.dataStore.(*store.DBStore)
+	if !ok || db == nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "store not available"})
+		return
+	}
+	ctx := r.Context()
+	events, err := db.ListRecentRecallEvents(ctx, id, 20)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// Collect summary ids, fetch once, build a lookup.
+	idSet := map[int64]bool{}
+	for _, ev := range events {
+		for _, sid := range ev.SummaryIDs {
+			idSet[sid] = true
+		}
+	}
+	ids := make([]int64, 0, len(idSet))
+	for sid := range idSet {
+		ids = append(ids, sid)
+	}
+	sumMap := map[int64]store.ConversationSummary{}
+	if len(ids) > 0 {
+		if sums, err := db.GetConversationSummariesByIDs(ctx, ids); err == nil {
+			for _, sm := range sums {
+				sumMap[sm.ID] = sm
+			}
+		}
+	}
+	out := make([]map[string]any, 0, len(events))
+	for _, ev := range events {
+		sums := make([]map[string]any, 0, len(ev.SummaryIDs))
+		for _, sid := range ev.SummaryIDs {
+			if sm, ok := sumMap[sid]; ok {
+				sums = append(sums, map[string]any{"id": sm.ID, "summary": sm.Summary, "topic": sm.Topic})
+			}
+		}
+		out = append(out, map[string]any{
+			"recall_id": ev.RecallID, "lambda": ev.Lambda, "explored": ev.Explored,
+			"created_at": ev.CreatedAt, "summaries": sums,
+		})
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "events": out})
+}

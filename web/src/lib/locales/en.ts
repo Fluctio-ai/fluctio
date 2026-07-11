@@ -98,6 +98,8 @@ const en: Record<string, string> = {
   "recallTuning.testBox": "Test a Query",
   "recallTuning.testPlaceholder": "Type a query to preview recalls…",
   "recallTuning.noResults": "No matching summaries.",
+  "recallTuning.recentRecalls": "Recent Recalls",
+  "recallTuning.noRecalls": "No recalls yet.",
   "settings.apiKeys": "API Keys",
   "apikeys.agentScopedDesc": "Generate an agent-scoped API key. The holder calls /v1/chat/completions as the owner. Revoke anytime.",
   "apikeys.create": "Create new key",

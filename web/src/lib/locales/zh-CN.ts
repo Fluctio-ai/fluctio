@@ -98,6 +98,8 @@ const zhCN: Record<string, string> = {
   "recallTuning.testBox": "测试查询",
   "recallTuning.testPlaceholder": "输入查询预览召回…",
   "recallTuning.noResults": "没有匹配的摘要。",
+  "recallTuning.recentRecalls": "最近召回",
+  "recallTuning.noRecalls": "暂无召回记录。",
   "settings.apiKeys": "API 密钥",
   "apikeys.agentScopedDesc": "为该 agent 生成专属 API 密钥，持有者以 owner 身份调用 /v1/chat/completions。可随时吊销重生成。",
   "apikeys.create": "生成新密钥",

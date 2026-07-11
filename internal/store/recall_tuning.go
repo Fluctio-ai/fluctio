@@ -272,6 +272,47 @@ func (d *DBStore) GetRecallStats(ctx context.Context, agentID string) (RecallSta
 	return s, err
 }
 
+// ListRecentRecallEvents returns the agent's most recent recall events
+// (newest first), for the tuning panel's manual-feedback section.
+func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, limit int) ([]RecallEvent, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := `SELECT recall_id, agent_id, user_id, session_key, lambda, explored, summary_ids, created_at
+		FROM memory_recall_events
+		WHERE agent_id = ?
+		ORDER BY created_at DESC LIMIT ?`
+	if d.dialect == "postgres" {
+		q = `SELECT recall_id, agent_id, user_id, session_key, lambda, explored, summary_ids, created_at
+			FROM memory_recall_events
+			WHERE agent_id = $1
+			ORDER BY created_at DESC LIMIT $2`
+	}
+	rows, err := d.db.QueryContext(ctx, q, agentID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RecallEvent
+	for rows.Next() {
+		var (
+			ev          RecallEvent
+			explored    int
+			summaryJSON string
+		)
+		if err := rows.Scan(&ev.RecallID, &ev.AgentID, &ev.UserID, &ev.SessionKey, &ev.Lambda, &explored, &summaryJSON, &ev.CreatedAt); err != nil {
+			return nil, err
+		}
+		ev.Explored = explored != 0
+		_ = json.Unmarshal([]byte(summaryJSON), &ev.SummaryIDs)
+		if ev.SummaryIDs == nil {
+			ev.SummaryIDs = []int64{}
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
 // PreviewRecall runs a basic recall (FTS + scoring) for the tuning panel's
 // test box. NOTE: does not include vector recall, reranker, or MMR — it's
 // a preview of which summaries match the query, not a full reproduction
