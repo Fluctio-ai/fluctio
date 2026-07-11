@@ -209,6 +209,7 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 								_ = r.summaryDB.InsertRecallEvent(ctx, store.RecallEvent{
 									RecallID:   newRecallID(),
 									AgentID:    r.agentID,
+									SessionKey: r.sessionID,
 									Lambda:     lambda,
 									Explored:   explored,
 									SummaryIDs: summaryIDs(mmrHits),

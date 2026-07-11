@@ -188,6 +188,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateRecallTuning(ctx); err != nil {
 		return fmt.Errorf("migrate recall tuning tables: %w", err)
 	}
+	if err := d.migrateRecallEventSession(ctx); err != nil {
+		return fmt.Errorf("migrate recall event session_key: %w", err)
+	}
 	return nil
 }
 
