@@ -2634,8 +2634,7 @@ export function ChatScreen() {
                       </Button>
                     ) : (
                       <Button
-                        onMouseDown={(e) => {
-                          e.preventDefault();
+                        onClick={() => {
                           if (sending) handleSteer();
                           else handleSend();
                         }}
@@ -2700,8 +2699,7 @@ export function ChatScreen() {
                     </Button>
                   ) : (
                     <Button
-                      onMouseDown={(e) => {
-                        e.preventDefault();
+                      onClick={() => {
                         if (sending) handleSteer();
                         else handleSend();
                       }}
