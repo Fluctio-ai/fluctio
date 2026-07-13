@@ -309,7 +309,7 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
         history[i].content &&
         !(history[i].toolCalls && history[i].toolCalls!.length > 0)
       ) {
-        msgs.push({ id: `h-${i}`, role: "agent", content: history[i].content || "", timestamp: h.timestamp || 0, metadata: history[i].metadata });
+        msgs.push({ id: `h-${i}`, role: "agent", content: history[i].content || "", timestamp: history[i].timestamp || 0, metadata: history[i].metadata });
         i++;
       }
     } else if (h.role === "assistant") {

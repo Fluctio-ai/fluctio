@@ -228,6 +228,13 @@ func providerMessageFromStored(m store.SessionMessage) provider.Message {
 		Provider:     m.Provider,
 		Model:        m.Model,
 	}
+	// Restore created_at as the provider.Message timestamp (unix ms) so
+	// WebChatHistory can place produced files under the message whose
+	// turn created them. Zero-time (no row / pre-archive session) leaves
+	// Timestamp at 0 and the UI falls back to the last agent message.
+	if !m.Timestamp.IsZero() {
+		out.Timestamp = m.Timestamp.UnixMilli()
+	}
 	if m.ToolCalls != nil {
 		if raw, err := json.Marshal(m.ToolCalls); err == nil {
 			var tcs []provider.ToolCall

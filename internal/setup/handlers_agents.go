@@ -958,7 +958,7 @@ func (s *Server) handleAgentFileList(w http.ResponseWriter, r *http.Request) {
 		files = append(files, map[string]any{
 			"path":    o.Path,
 			"size":    o.Size,
-			"modTime": o.ModTime.Unix(),
+			"modTime": o.ModTime.UnixMilli(),
 		})
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"files": files})
