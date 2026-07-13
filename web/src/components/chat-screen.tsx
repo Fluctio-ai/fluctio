@@ -2623,7 +2623,7 @@ export function ChatScreen() {
                         </div>
                       )}
                     </div>
-                    {sending ? (
+                    {sending && !input.trim() && attachments.length === 0 ? (
                       <Button
                         onClick={handleStop}
                         size="icon"
@@ -2636,7 +2636,8 @@ export function ChatScreen() {
                       <Button
                         onMouseDown={(e) => {
                           e.preventDefault();
-                          handleSend();
+                          if (sending) handleSteer();
+                          else handleSend();
                         }}
                         disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                         size="icon"
@@ -2688,7 +2689,7 @@ export function ChatScreen() {
                     className="flex-1 resize-none bg-transparent text-[15px] leading-8 placeholder:text-muted-foreground/50 outline-none disabled:opacity-50"
                     style={{ maxHeight: 200, minHeight: 32 }}
                   />
-                  {sending ? (
+                  {sending && !input.trim() && attachments.length === 0 ? (
                     <Button
                       onClick={handleStop}
                       size="icon"
@@ -2701,7 +2702,8 @@ export function ChatScreen() {
                     <Button
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        handleSend();
+                        if (sending) handleSteer();
+                        else handleSend();
                       }}
                       disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                       size="icon"
