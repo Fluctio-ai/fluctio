@@ -78,7 +78,7 @@ type DockerSandbox struct {
 // explicit policy with NetMode: "none".
 func NewDockerSandbox(image, workspace string, policy *Policy) *DockerSandbox {
 	if image == "" {
-		image = "thinkany/fluctio-sandbox:latest"
+		image = "ghcr.io/fluctio-ai/fluctio-sandbox:latest"
 	}
 	if policy == nil {
 		policy = &Policy{}

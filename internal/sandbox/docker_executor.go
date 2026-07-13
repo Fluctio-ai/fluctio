@@ -236,7 +236,7 @@ func (p *DockerExecutorPool) Backend() string { return "docker" }
 // NewDockerExecutorPool creates a pool of Docker-backed executors.
 func NewDockerExecutorPool(image, workspaceRoot string, policy *Policy) *DockerExecutorPool {
 	if image == "" {
-		image = "thinkany/fluctio-sandbox:latest"
+		image = "ghcr.io/fluctio-ai/fluctio-sandbox:latest"
 	}
 	return &DockerExecutorPool{
 		executors:     make(map[string]*DockerExecutor),

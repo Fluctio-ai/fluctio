@@ -21,6 +21,7 @@ env:
   # "Fluctio-ai" (capital F) which GHCR rejects, so hardcode the
   # lowercased org name.
   IMAGE: ghcr.io/fluctio-ai/fluctio
+  SANDBOX_IMAGE: ghcr.io/fluctio-ai/fluctio-sandbox
 
 jobs:
   # --- Shared: derive version metadata ---
@@ -130,3 +131,34 @@ jobs:
           done
           docker buildx imagetools create $TAG_ARGS \
             $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+  # --- Sandbox image (agent exec runtime: node + python + camoufox-cli) ---
+  # Heavier than the main image (pulls Firefox + system libs), built in
+  # parallel with the main build/merge. Single build-push with multi-arch
+  # manifest (no per-arch digest merge needed — sandbox is less size-
+  # sensitive and this keeps the job simpler).
+  sandbox:
+    needs: meta
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push sandbox
+        uses: docker/build-push-action@v6
+        with:
+          context: deploy/docker/sandbox
+          file: deploy/docker/sandbox/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.SANDBOX_IMAGE }}:latest
+            ${{ env.SANDBOX_IMAGE }}:${{ needs.meta.outputs.version }}
+            ${{ env.SANDBOX_IMAGE }}:${{ needs.meta.outputs.sha7 }}
+          cache-from: type=gha,scope=sandbox
+          cache-to: type=gha,scope=sandbox,mode=max
