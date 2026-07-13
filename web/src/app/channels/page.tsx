@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Radio, MessageCircle, Hash, Send } from "lucide-react";
 import { getChannels, type ChannelInfo } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 const channelIcons: Record<string, React.ElementType> = {
   telegram: Send,
@@ -33,6 +34,7 @@ const channelColors: Record<string, string> = {
 };
 
 export default function ChannelsPage() {
+  const tt = useT();
   const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [editChannel, setEditChannel] = useState<ChannelInfo | null>(null);
@@ -52,9 +54,9 @@ export default function ChannelsPage() {
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">Channels</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">{tt("channels.channelsTitle")}</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Manage messaging platform connections
+          {tt("channels.manageSubtitle")}
         </p>
       </div>
 
@@ -70,9 +72,9 @@ export default function ChannelsPage() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-muted mb-4">
               <Radio className="h-7 w-7 text-muted-foreground" />
             </div>
-            <p className="text-sm text-muted-foreground mb-1">No channels configured</p>
+            <p className="text-sm text-muted-foreground mb-1">{tt("channels.empty")}</p>
             <p className="text-xs text-muted-foreground/60">
-              Configure channels in Settings or fluctio.json
+              {tt("channels.emptyHint")}
             </p>
           </div>
         </div>
@@ -106,7 +108,7 @@ export default function ChannelsPage() {
                         isConnected ? "bg-success" : "bg-muted-foreground"
                       }`}
                     />
-                    {isConnected ? "Connected" : "Disconnected"}
+                    {isConnected ? tt("channels.connected") : tt("channels.disconnected")}
                   </Badge>
                 </div>
                 <p className="text-base font-medium capitalize mb-1">
@@ -115,7 +117,7 @@ export default function ChannelsPage() {
                 <p className="text-sm text-muted-foreground">
                   {channel.botUsername
                     ? `@${channel.botUsername}`
-                    : "Click to configure"}
+                    : tt("channels.clickToConfigure")}
                 </p>
               </div>
             );
@@ -128,15 +130,15 @@ export default function ChannelsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="capitalize">
-              {editChannel?.type} Configuration
+              {tt("channels.configTitle", { type: editChannel?.type ?? "" })}
             </DialogTitle>
             <DialogDescription>
-              Update channel connection settings
+              {tt("channels.updateSettings")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label>Bot Token</Label>
+              <Label>{tt("channels.botToken")}</Label>
               <Input
                 type="password"
                 defaultValue="••••••••••••"
@@ -145,7 +147,7 @@ export default function ChannelsPage() {
             </div>
             {editChannel?.botUsername && (
               <div className="space-y-2">
-                <Label>Bot Username</Label>
+                <Label>{tt("channels.botUsername")}</Label>
                 <Input
                   value={editChannel.botUsername}
                   disabled
@@ -156,9 +158,9 @@ export default function ChannelsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditChannel(null)}>
-              Cancel
+              {tt("common.cancel")}
             </Button>
-            <Button>Save</Button>
+            <Button>{tt("common.save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -25,8 +25,10 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Puzzle, Download, Settings } from "lucide-react";
 import { getPlugins, updatePlugin, type PluginInfo } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 export default function PluginsPage() {
+  const tt = useT();
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [editPlugin, setEditPlugin] = useState<PluginInfo | null>(null);
@@ -89,14 +91,14 @@ export default function PluginsPage() {
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Plugins</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{tt("plugins.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Extend Fluctio with custom plugins
+            {tt("pluginsPage.subtitle")}
           </p>
         </div>
         <Button variant="outline">
           <Download className="h-4 w-4 mr-2" />
-          Install Plugin
+          {tt("pluginsPage.install")}
         </Button>
       </div>
 
@@ -112,9 +114,9 @@ export default function PluginsPage() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 mb-4">
               <Puzzle className="h-7 w-7 text-primary" />
             </div>
-            <p className="text-sm text-muted-foreground">No plugins installed</p>
+            <p className="text-sm text-muted-foreground">{tt("pluginsPage.noPlugins")}</p>
             <p className="text-xs text-muted-foreground/60 mt-1">
-              Plugins add channels, tools, and providers
+              {tt("pluginsPage.noPluginsHint")}
             </p>
           </div>
         ) : (
@@ -122,12 +124,12 @@ export default function PluginsPage() {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead>Plugin</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Version</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Enabled</TableHead>
-                <TableHead className="text-right">Config</TableHead>
+                <TableHead>{tt("pluginsPage.colPlugin")}</TableHead>
+                <TableHead>{tt("pluginsPage.colType")}</TableHead>
+                <TableHead>{tt("pluginsPage.colVersion")}</TableHead>
+                <TableHead>{tt("pluginsPage.colStatus")}</TableHead>
+                <TableHead>{tt("pluginsPage.colEnabled")}</TableHead>
+                <TableHead className="text-right">{tt("pluginsPage.colConfig")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -189,14 +191,14 @@ export default function PluginsPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Puzzle className="h-5 w-5 text-primary" />
-              {editPlugin?.id} Configuration
+              {tt("pluginsPage.configTitle", { name: editPlugin?.id ?? "" })}
             </DialogTitle>
             <DialogDescription>
-              Edit plugin configuration as JSON
+              {tt("pluginsPage.configDesc")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label>Config JSON</Label>
+            <Label>{tt("pluginsPage.configLabel")}</Label>
             <Textarea
               value={configJson}
               onChange={(e) => setConfigJson(e.target.value)}
@@ -206,10 +208,10 @@ export default function PluginsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditPlugin(null)}>
-              Cancel
+              {tt("common.cancel")}
             </Button>
             <Button onClick={handleSaveConfig} disabled={saving}>
-              {saving ? "Saving..." : "Save Config"}
+              {saving ? tt("common.saving") : tt("pluginsPage.saveConfig")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -2260,18 +2260,18 @@ export function ChatScreen() {
                       )}
                       {msg.role === "agent" && msg.metadata?.iterationCapReached && (
                         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">
-                          <span className="font-medium">Iteration limit reached</span>
+                          <span className="font-medium">{t("preview.iterationLimit")}</span>
                           <span className="opacity-80">
-                            Agent hit the {msg.metadata.iterationCapValue ?? ""} tool-call budget before finishing. The answer above was synthesized from partial results — fields may be marked unknown / partial. Continue the conversation to push further.
+                            {t("preview.iterationLimitDesc", { value: msg.metadata.iterationCapValue ?? "" })}
                           </span>
                         </div>
                       )}
                       {msg.role === "agent" && msg.metadata?.planMode && (
                         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">
                           <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                          <span className="font-medium">Plan only — review before executing.</span>
+                          <span className="font-medium">{t("preview.planOnly")}</span>
                           <span className="opacity-80">
-                            Tools were disabled for this turn. Reply with &quot;go&quot; (or edits) to run it.
+                            {t("preview.planOnlyDesc")}
                           </span>
                         </div>
                       )}
@@ -2345,7 +2345,7 @@ export function ChatScreen() {
                           <button
                             onClick={() => handleCopy(msg)}
                             className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                            title="Copy"
+                            title={t("chat.copy")}
                           >
                             {copiedId === msg.id ? (
                               <Check className="h-3 w-3 text-success" />
@@ -2356,7 +2356,7 @@ export function ChatScreen() {
                           <button
                             onClick={() => handleRetry(msg)}
                             className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                            title="Resend (refills the composer)"
+                            title={t("chat.resend")}
                           >
                             <RotateCcw className="h-3 w-3" />
                           </button>
@@ -2371,7 +2371,7 @@ export function ChatScreen() {
                           <button
                             onClick={() => handleCopy(msg)}
                             className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                            title="Copy"
+                            title={t("chat.copy")}
                           >
                             {copiedId === msg.id ? (
                               <Check className="h-3 w-3 text-success" />
@@ -2382,10 +2382,10 @@ export function ChatScreen() {
                           <button
                             onClick={() => setFilesSheetOpen(true)}
                             className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                            title="View task files"
+                            title={t("chat.viewTaskFiles")}
                           >
                             <FolderOpen className="h-3 w-3" />
-                            <span>Files</span>
+                            <span>{t("chat.files")}</span>
                           </button>
                         </>
                       )}
@@ -2852,6 +2852,7 @@ function familyOf(name: string): ToolFamily {
  *  container (ToolRoundsBundle) can stack rounds without each one
  *  re-imposing its own bubble alignment. */
 function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, roundIndex, subagentProgress }: { msg: ChatMessage; surfacedSrcs?: ReadonlySet<string>; agentId: string; sessionId: string; nested?: boolean; roundIndex?: number; subagentProgress?: { iteration?: number; max?: number; phase?: "thinking" | "running" | "final-delivery" | "done"; tools?: string[] } | null }) {
+  const t = useT();
   const [groupOpen, setGroupOpen] = useState(false);
   const [expandedTool, setExpandedTool] = useState<Record<string, boolean>>({});
 
@@ -2969,7 +2970,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
                     {tc.metadata?.sandbox && (
                       <span
                         className="flex items-center gap-0.5 rounded bg-success/10 px-1 py-0.5 text-[10px] font-medium text-success dark:text-success"
-                        title="Executed inside a sandboxed container"
+                        title={t("chat.sandboxedExec")}
                       >
                         <ShieldCheck className="h-2.5 w-2.5" />
                         sandbox
@@ -3217,16 +3218,17 @@ function BuildLogView({ text }: { text: string }) {
 }
 
 function FilesPanel({ files, onOpen }: { files: ProducedFile[]; onOpen: () => void }) {
+  const t = useT();
   return (
     <div className="mt-2 max-w-[85%]">
       <button
         type="button"
         onClick={onOpen}
         className="group inline-flex items-center gap-2 rounded-lg border border-border bg-card/50 px-3 py-2 hover:bg-card/80 transition-colors"
-        title="Open workspace files"
+        title={t("preview.openWorkspaceFiles")}
       >
         <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0 group-hover:text-foreground transition-colors" />
-        <span className="text-sm font-medium text-foreground">Open files</span>
+        <span className="text-sm font-medium text-foreground">{t("preview.openFiles")}</span>
         <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground/80 tabular-nums">
           {files.length}
         </span>
@@ -3456,6 +3458,7 @@ function WorkspacePanel({
   projectId?: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState<ProducedFile | null>(null);
@@ -3671,7 +3674,7 @@ function WorkspacePanel({
         <div
           onMouseDown={(e) => { e.preventDefault(); setResizing(true); }}
           className={`absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-10 group ${resizing ? "" : ""}`}
-          title="Drag to resize"
+          title={t("preview.dragResize")}
         >
           <div
             className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${
@@ -3694,7 +3697,7 @@ function WorkspacePanel({
                   render={
                     <button
                       className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                      title="More actions"
+                      title={t("preview.moreActions")}
                     >
                       <MoreHorizontal className="h-4 w-4" />
                     </button>
@@ -3708,7 +3711,7 @@ function WorkspacePanel({
                       }
                     >
                       <ExternalLink className="h-4 w-4 text-muted-foreground" />
-                      <span>Open in new tab</span>
+                      <span>{t("preview.openInNewTab")}</span>
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem
@@ -3722,7 +3725,7 @@ function WorkspacePanel({
                     }}
                   >
                     <Download className="h-4 w-4 text-muted-foreground" />
-                    <span>Download zip</span>
+                    <span>{t("preview.downloadZip")}</span>
                   </DropdownMenuItem>
                   {deployMode === "self-hosted" && (
                     <DropdownMenuItem
@@ -3730,12 +3733,12 @@ function WorkspacePanel({
                       onClick={handleReveal}
                     >
                       <FolderSearch className="h-4 w-4 text-muted-foreground" />
-                      <span>Open in Finder</span>
+                      <span>{t("preview.openInFinder")}</span>
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuItem disabled={loading} onClick={refresh}>
                     <RefreshCw className="h-4 w-4 text-muted-foreground" />
-                    <span>Refresh</span>
+                    <span>{t("preview.refresh")}</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -3760,7 +3763,7 @@ function WorkspacePanel({
                       ? "pointer-events-none text-muted-foreground/40"
                       : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                   }`}
-                  title="Download all as zip"
+                  title={t("preview.downloadAllZip")}
                 >
                   <Download className="h-4 w-4" />
                 </a>
@@ -3769,7 +3772,7 @@ function WorkspacePanel({
                     onClick={handleReveal}
                     disabled={revealing || (!sessionId && !projectId)}
                     className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
-                    title="Open folder in Finder"
+                    title={t("preview.openFolderFinder")}
                   >
                     <FolderSearch className="h-4 w-4" />
                   </button>
@@ -3778,7 +3781,7 @@ function WorkspacePanel({
                   onClick={refresh}
                   disabled={loading}
                   className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
-                  title="Refresh"
+                  title={t("preview.refresh")}
                 >
                   <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
                 </button>
@@ -3787,7 +3790,7 @@ function WorkspacePanel({
             <button
               onClick={onClose}
               className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-              title="Close"
+              title={t("preview.close")}
             >
               <X className="h-4 w-4" />
             </button>
@@ -3905,7 +3908,7 @@ function WorkspacePanel({
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
                   <FileText className="h-6 w-6" />
-                  <p className="text-sm">Select a file to view it here.</p>
+                  <p className="text-sm">{t("preview.selectFile")}</p>
                 </div>
               )}
             </div>
@@ -3916,7 +3919,7 @@ function WorkspacePanel({
               <iframe
                 src={appPreview.previewUrl}
                 className="h-full w-full border-0 bg-white"
-                title="App preview"
+                title={t("preview.appPreview")}
               />
             ) : appPreview.status === "starting" || appPreview.status === "scaffolding" ? (
               <div className="flex h-full flex-col">
@@ -3924,8 +3927,8 @@ function WorkspacePanel({
                   <RefreshCw className="h-4 w-4 shrink-0 animate-spin" />
                   <span>
                     {appPreview.status === "scaffolding"
-                      ? "Installing dependencies — this can take a few minutes…"
-                      : "Starting the dev server…"}
+                      ? t("preview.installingDeps")
+                      : t("preview.startingDev")}
                   </span>
                 </div>
                 <div className="min-h-0 flex-1">
@@ -3934,17 +3937,17 @@ function WorkspacePanel({
               </div>
             ) : appPreview.status === "crashed" ? (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-                <p className="text-sm text-destructive">Preview failed to start.</p>
+                <p className="text-sm text-destructive">{t("preview.previewFailed")}</p>
                 <p className="text-xs text-muted-foreground">
-                  Ask the agent to check the dev-server logs (app_preview_logs).
+                  {t("preview.checkLogs")}
                 </p>
               </div>
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
                 <Eye className="h-6 w-6" />
-                <p className="text-sm">No preview yet.</p>
+                <p className="text-sm">{t("preview.noPreview")}</p>
                 <p className="text-xs">
-                  Ask the agent to build an app, and it shows up here.
+                  {t("preview.askBuild")}
                 </p>
               </div>
             )}
@@ -3971,6 +3974,7 @@ function formatRelativeTime(ts?: number): string {
 // Files tab): image / pdf / markdown / highlighted text / rendered-or-source
 // HTML. onClose, when given, deselects the file.
 function FileViewer({ agentId, file, onClose }: { agentId: string; file: ProducedFile; onClose?: () => void }) {
+  const t = useT();
   const { preview } = fileKind(file.path);
   const src = fileUrl(agentId, file.path, false);
   const downloadUrl = fileUrl(agentId, file.path, true);
@@ -4009,7 +4013,7 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
               <button
                 onClick={() => setView(view === "rendered" ? "source" : "rendered")}
                 className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                title={view === "rendered" ? "View source" : "View rendered"}
+                title={view === "rendered" ? t("preview.viewSource") : t("preview.viewRendered")}
               >
                 {view === "rendered" ? <Code2 className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -4019,7 +4023,7 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
               target="_blank"
               rel="noopener noreferrer"
               className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              title="Open in new tab"
+              title={t("preview.openInNewTab")}
             >
               <ExternalLink className="h-4 w-4" />
             </a>
@@ -4027,7 +4031,7 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
               <button
                 onClick={onClose}
                 className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                title="Close file"
+                title={t("preview.closeFile")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -4062,9 +4066,9 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
                 </div>
               )
             ) : error ? (
-              <p className="p-4 text-sm text-destructive">Failed to load: {error}</p>
+              <p className="p-4 text-sm text-destructive">{t("preview.loadFailed", { error })}</p>
             ) : text === null ? (
-              <p className="p-4 text-sm text-muted-foreground">Loading…</p>
+              <p className="p-4 text-sm text-muted-foreground">{t("preview.loading")}</p>
             ) : text.includes("```") ? (
               // Content with its own fences would break the fenced wrapper —
               // fall back to a plain (unhighlighted) full-bleed block.
@@ -4080,9 +4084,9 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
           {preview === "none" && (
             <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
               <File className="h-12 w-12 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">Preview not available for this file type.</p>
+              <p className="text-sm text-muted-foreground">{t("preview.notAvailable")}</p>
               <a href={downloadUrl} className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90">
-                <Download className="h-3.5 w-3.5" /> Download
+                <Download className="h-3.5 w-3.5" /> {t("preview.download")}
               </a>
             </div>
           )}

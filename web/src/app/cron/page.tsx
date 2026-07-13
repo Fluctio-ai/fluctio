@@ -51,8 +51,10 @@ import {
   type CronJobInfo,
   type AgentDetail,
 } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 export default function CronPage() {
+  const tt = useT();
   const [jobs, setJobs] = useState<CronJobInfo[]>([]);
   const [agents, setAgents] = useState<AgentDetail[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,14 +132,14 @@ export default function CronPage() {
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">Cron Jobs</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{tt("cron.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            Schedule automated agent tasks
+            {tt("cron.subtitle")}
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          New Job
+          {tt("cron.newJob")}
         </Button>
       </div>
 
@@ -153,13 +155,13 @@ export default function CronPage() {
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 mb-4">
               <Clock className="h-7 w-7 text-primary" />
             </div>
-            <p className="text-sm text-muted-foreground">No cron jobs configured</p>
+            <p className="text-sm text-muted-foreground">{tt("cron.noJobs")}</p>
             <Button
               onClick={() => setCreateOpen(true)}
               variant="outline"
               className="mt-4"
             >
-              Create your first job
+              {tt("cron.createFirst")}
             </Button>
           </div>
         ) : (
@@ -167,13 +169,13 @@ export default function CronPage() {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead>Name</TableHead>
-                <TableHead>Schedule</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Agent</TableHead>
-                <TableHead>Last Run</TableHead>
-                <TableHead>Enabled</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>{tt("cron.colName")}</TableHead>
+                <TableHead>{tt("cron.colSchedule")}</TableHead>
+                <TableHead>{tt("cron.colType")}</TableHead>
+                <TableHead>{tt("cron.colAgent")}</TableHead>
+                <TableHead>{tt("cron.colLastRun")}</TableHead>
+                <TableHead>{tt("cron.colEnabled")}</TableHead>
+                <TableHead className="text-right">{tt("cron.colActions")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -197,7 +199,7 @@ export default function CronPage() {
                   </TableCell>
                   <TableCell>
                     <span className="text-xs text-muted-foreground">
-                      {job.lastRun || "Never"}
+                      {job.lastRun || tt("cron.never")}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -228,36 +230,36 @@ export default function CronPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Cron Job</DialogTitle>
+            <DialogTitle>{tt("cron.createJob")}</DialogTitle>
             <DialogDescription>
-              Schedule an automated agent task
+              {tt("cron.createJobDesc")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label>Job Name</Label>
+              <Label>{tt("cron.jobName")}</Label>
               <Input
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="daily-report"
+                placeholder={tt("cron.jobNamePlaceholder")}
               />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Type</Label>
+                <Label>{tt("cron.type")}</Label>
                 <Select value={newType} onValueChange={(v) => v && setNewType(v)}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cron">Cron Expression</SelectItem>
-                    <SelectItem value="interval">Interval</SelectItem>
-                    <SelectItem value="exact">Exact Time</SelectItem>
+                    <SelectItem value="cron">{tt("cron.typeCron")}</SelectItem>
+                    <SelectItem value="interval">{tt("cron.typeInterval")}</SelectItem>
+                    <SelectItem value="exact">{tt("cron.typeExact")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Schedule</Label>
+                <Label>{tt("cron.schedule")}</Label>
                 <Input
                   value={newSchedule}
                   onChange={(e) => setNewSchedule(e.target.value)}
@@ -267,10 +269,10 @@ export default function CronPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>Agent</Label>
+              <Label>{tt("cron.agent")}</Label>
               <Select value={newAgentId} onValueChange={(v) => v && setNewAgentId(v)}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Select agent" />
+                  <SelectValue placeholder={tt("cron.selectAgent")} />
                 </SelectTrigger>
                 <SelectContent>
                   {agents.map((a) => (
@@ -282,11 +284,11 @@ export default function CronPage() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Message</Label>
+              <Label>{tt("cron.message")}</Label>
               <Textarea
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Generate a daily status report..."
+                placeholder={tt("cron.messagePlaceholder")}
                 rows={3}
                 className="resize-none"
               />
@@ -294,13 +296,13 @@ export default function CronPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              Cancel
+              {tt("common.cancel")}
             </Button>
             <Button
               onClick={handleCreate}
               disabled={!newName.trim() || !newSchedule.trim() || saving}
             >
-              {saving ? "Creating..." : "Create Job"}
+              {saving ? tt("cron.creating") : tt("cron.createJobBtn")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -310,18 +312,18 @@ export default function CronPage() {
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Cron Job</AlertDialogTitle>
+            <AlertDialogTitle>{tt("cron.deleteJob")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this job? This action cannot be undone.
+              {tt("cron.deleteConfirm")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{tt("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Delete
+              {tt("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
