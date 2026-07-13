@@ -95,6 +95,7 @@ import { useT } from "@/lib/i18n";
 interface ProducedFile {
   path: string; // path relative to workspace
   size?: number;
+  modTime?: number; // unix ms — places the file under the message that produced it
 }
 
 interface UserAttachment {
@@ -248,7 +249,7 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
             channel: h.senderChannel,
           }
         : undefined;
-      msgs.push({ id: `h-${i}`, role: "user", content: h.content || "", timestamp: 0, attachments, sender });
+      msgs.push({ id: `h-${i}`, role: "user", content: h.content || "", timestamp: h.timestamp || 0, attachments, sender });
       i++;
     } else if (h.role === "assistant" && h.toolCalls && h.toolCalls.length > 0) {
       // Group: assistant tool_calls + following tool results + final assistant content
@@ -287,13 +288,13 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
       // block; split, the model's actual answer stands as a first-class
       // reply.
       if (h.content) {
-        msgs.push({ id: `h-pre-${i}`, role: "agent", content: h.content, timestamp: 0, metadata: h.metadata });
+        msgs.push({ id: `h-pre-${i}`, role: "agent", content: h.content, timestamp: h.timestamp || 0, metadata: h.metadata });
       }
       msgs.push({
         id: `h-tool-${i}`,
         role: "tool-group",
         content: "",
-        timestamp: 0,
+        timestamp: h.timestamp || 0,
         toolCalls: calls,
       });
       // If next is assistant with ONLY content and no tool calls (final
@@ -308,11 +309,11 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
         history[i].content &&
         !(history[i].toolCalls && history[i].toolCalls!.length > 0)
       ) {
-        msgs.push({ id: `h-${i}`, role: "agent", content: history[i].content || "", timestamp: 0, metadata: history[i].metadata });
+        msgs.push({ id: `h-${i}`, role: "agent", content: history[i].content || "", timestamp: h.timestamp || 0, metadata: history[i].metadata });
         i++;
       }
     } else if (h.role === "assistant") {
-      msgs.push({ id: `h-${i}`, role: "agent", content: h.content || "", timestamp: 0, metadata: h.metadata });
+      msgs.push({ id: `h-${i}`, role: "agent", content: h.content || "", timestamp: h.timestamp || 0, metadata: h.metadata });
       i++;
     } else {
       i++; // skip unexpected
@@ -1195,13 +1196,35 @@ export function ChatScreen() {
             await listAgentFiles(selectedAgent, sessionId)
           )
             .filter((f) => !isSystemFile(f.path))
-            .map((f) => ({ path: f.path, size: f.size }));
+            .map((f) => ({ path: f.path, size: f.size, modTime: f.modTime }));
           if (sessionFiles.length > 0) {
-            for (let i = built.length - 1; i >= 0; i--) {
-              if (built[i].role === "agent" || built[i].role === "tool-group") {
-                built[i] = { ...built[i], files: sessionFiles };
-                break;
+            // Place each file under the agent/tool-group message whose
+            // turn produced it: last candidate with timestamp <= file's
+            // modTime. Falls back to the last agent message when modTime
+            // is missing or predates every agent message.
+            const candidateIdxs: number[] = [];
+            built.forEach((m, idx) => {
+              if (m.role === "agent" || m.role === "tool-group") candidateIdxs.push(idx);
+            });
+            const lastAgentIdx = candidateIdxs.length > 0 ? candidateIdxs[candidateIdxs.length - 1] : -1;
+            const filesByMsg = new Map<number, ProducedFile[]>();
+            for (const f of sessionFiles) {
+              let target = lastAgentIdx;
+              if (f.modTime && f.modTime > 0) {
+                let found = -1;
+                for (const idx of candidateIdxs) {
+                  if (built[idx].timestamp > 0 && built[idx].timestamp <= f.modTime) found = idx;
+                }
+                if (found >= 0) target = found;
               }
+              if (target >= 0) {
+                const arr = filesByMsg.get(target) || [];
+                arr.push(f);
+                filesByMsg.set(target, arr);
+              }
+            }
+            for (const [idx, files] of filesByMsg) {
+              built[idx] = { ...built[idx], files };
             }
           }
         } catch { /* listing failed — fall back to no panel */ }
@@ -2103,6 +2126,7 @@ export function ChatScreen() {
                     .map((r) => (
                       <FilesPanel
                         key={`files-${r.id}`}
+                        agentId={selectedAgent}
                         files={r.files!}
                         onOpen={() => setFilesSheetOpen(true)}
                       />
@@ -2328,7 +2352,7 @@ export function ChatScreen() {
                       )}
                     </div>
                     {msg.files && msg.files.length > 0 && (
-                      <FilesPanel files={msg.files} onOpen={() => setFilesSheetOpen(true)} />
+                      <FilesPanel agentId={selectedAgent} files={msg.files} onOpen={() => setFilesSheetOpen(true)} />
                     )}
                     <div
                       className={`flex items-center gap-1.5 mt-1 ${
@@ -3194,11 +3218,11 @@ function zipUrl(agentId: string, sessionId: string, projectId?: string): string 
   return `/api/agents/${agentId}/files.zip${qs ? "?" + qs : ""}`;
 }
 
-// FilesPanel no longer inlines the produced-file list into the message
-// bubble — a long workspace (skills/, .DS_Store, lockfiles, …) buried the
-// reply. Instead it surfaces a single "Open files" affordance that opens
-// the WorkspacePanel side sheet, which already handles the tree, preview,
-// and download. onOpen is wired to setFilesSheetOpen(true) at the call site.
+// FilesPanel inlines the produced-file list under the message that
+// created it: one row per file (icon + name + size + download), click
+// opens an inline FileViewer preview. The WorkspacePanel side sheet
+// (full tree) is reached separately via the header "show workspace"
+// button, so this panel no longer needs an onOpen trigger.
 // BuildLogView renders the live scaffold/dev log as a scrolling terminal,
 // auto-pinned to the bottom so the latest pnpm-install lines stay visible.
 function BuildLogView({ text }: { text: string }) {
@@ -3217,22 +3241,44 @@ function BuildLogView({ text }: { text: string }) {
   );
 }
 
-function FilesPanel({ files, onOpen }: { files: ProducedFile[]; onOpen: () => void }) {
+function FilesPanel({ agentId, files, onOpen }: { agentId: string; files: ProducedFile[]; onOpen: () => void }) {
   const t = useT();
   return (
-    <div className="mt-2 max-w-[85%]">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="group inline-flex items-center gap-2 rounded-lg border border-border bg-card/50 px-3 py-2 hover:bg-card/80 transition-colors"
-        title={t("preview.openWorkspaceFiles")}
-      >
-        <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0 group-hover:text-foreground transition-colors" />
-        <span className="text-sm font-medium text-foreground">{t("preview.openFiles")}</span>
-        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground/80 tabular-nums">
-          {files.length}
-        </span>
-      </button>
+    <div className="mt-2 space-y-1.5 max-w-[85%]">
+      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+        {t("chat.files")}
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {files.map((f) => {
+          const { icon: Icon } = fileKind(f.path);
+          const basename = f.path.split("/").pop() || f.path;
+          const downloadUrl = fileUrl(agentId, f.path, true);
+          return (
+            <div
+              key={f.path}
+              className="group flex items-center gap-2.5 rounded-lg border border-border bg-card/50 px-3 py-2 hover:bg-card/80 transition-colors"
+            >
+              <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+              <button
+                onClick={onOpen}
+                className="flex-1 min-w-0 text-left"
+              >
+                <div className="text-sm font-medium text-foreground truncate">{basename}</div>
+                {f.size !== undefined && (
+                  <div className="text-[11px] text-muted-foreground/70">{formatBytes(f.size)}</div>
+                )}
+              </button>
+              <a
+                href={downloadUrl}
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                title={t("preview.download")}
+              >
+                <Download className="h-4 w-4" />
+              </a>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

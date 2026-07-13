@@ -1072,7 +1072,7 @@ func (a *Agent) WebChatHistory(sessionId string) []map[string]any {
 			if text == "" && len(imageURLs) == 0 {
 				continue
 			}
-			entry := map[string]any{"role": "user", "content": text}
+			entry := map[string]any{"role": "user", "content": text, "timestamp": m.Timestamp}
 			if len(imageURLs) > 0 {
 				entry["imageUrls"] = imageURLs
 			}
@@ -1090,7 +1090,7 @@ func (a *Agent) WebChatHistory(sessionId string) []map[string]any {
 			}
 			history = append(history, entry)
 		case "assistant":
-			entry := map[string]any{"role": "assistant"}
+			entry := map[string]any{"role": "assistant", "timestamp": m.Timestamp}
 			if m.Content != "" {
 				entry["content"] = m.Content
 			}
@@ -1122,6 +1122,7 @@ func (a *Agent) WebChatHistory(sessionId string) []map[string]any {
 				"content":    m.Content,
 				"name":       m.Name,
 				"toolCallId": m.ToolCallID,
+				"timestamp":  m.Timestamp,
 			}
 			if len(m.Metadata) > 0 {
 				entry["metadata"] = m.Metadata

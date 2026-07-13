@@ -726,6 +726,7 @@ export interface ChatHistoryMessage {
   // role==="assistant" it can carry iterationCapReached / iterationCapValue
   // so the chat UI can badge the bubble on history reload.
   metadata?: ToolResultMetadata;
+  timestamp?: number; // unix ms — places produced files under the message that created them
   // Set on user-role messages whose original turn carried image
   // attachments. The chat UI renders these as inline thumbnails on
   // bubbles loaded from history.
