@@ -115,7 +115,16 @@ func (hr *HookRegistry) Run(ctx context.Context, hc *HookContext) {
 	}
 }
 
-// LoggingHook returns a hook function that logs timing information.
+// LoggingHook returns a hook function that logs each hook point.
+//
+// Model-call timing works: loop.go bridges the BeforeModelCall StartTime
+// into the AfterModelCall HookContext (`StartTime: hcBefore.StartTime`),
+// so time.Since(hc.StartTime) is accurate. Tool-call timing does NOT:
+// loop.go fires BeforeToolCall/AfterToolCall with separate HookContext
+// instances and never bridges StartTime, so the After context's StartTime
+// is the zero value — time.Since(time.Time{}) overflows int64 duration
+// (~2025yr > ~292yr max) and logs a nonsense max-duration. Tool timing,
+// when needed, must be bridged at the loop.go call site like Model.
 func LoggingHook() HookFunc {
 	return func(ctx context.Context, hc *HookContext) {
 		switch hc.Point {
@@ -131,17 +140,14 @@ func LoggingHook() HookFunc {
 				"has_tool_calls", hasTools,
 			)
 		case BeforeToolCall:
-			hc.StartTime = time.Now()
 			slog.Info("hook: before tool call",
 				"agent", hc.AgentName,
 				"tool", hc.ToolName,
 			)
 		case AfterToolCall:
-			elapsed := time.Since(hc.StartTime)
 			slog.Info("hook: after tool call",
 				"agent", hc.AgentName,
 				"tool", hc.ToolName,
-				"elapsed", elapsed,
 				"error", hc.Error,
 			)
 		case BeforeSystemPrompt:
