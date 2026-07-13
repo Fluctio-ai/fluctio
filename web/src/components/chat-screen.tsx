@@ -527,6 +527,10 @@ export function ChatScreen() {
   }>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [filesSheetOpen, setFilesSheetOpen] = useState(false);
+  // File the user clicked inside the conversation (a FilesPanel row) —
+  // handed to WorkspacePanel as initialFile so opening the panel also
+  // opens that file's preview, instead of landing on an empty tree.
+  const [pendingFile, setPendingFile] = useState<ProducedFile | null>(null);
   // The workspace/preview panel opens to the right of chat. The platform
   // sidebar is left in whatever state the user put it — opening a file in
   // the conversation no longer collapses it.
@@ -1052,6 +1056,7 @@ export function ChatScreen() {
   // not every render, so the user can still re-open it within the SAME chat.
   useEffect(() => {
     setFilesSheetOpen(false);
+    setPendingFile(null);
   }, [urlSessionId, urlProjectId]);
 
   // Keep the local sessionTitle in sync with the session list. Unknown
@@ -1624,9 +1629,20 @@ export function ChatScreen() {
               try {
                 const args = JSON.parse(tc.arguments);
                 const p: string = typeof args?.path === "string" ? args.path : "";
-                if (p && !p.startsWith("/") && !isSystemFile(p) && !seenPaths.has(p)) {
-                  seenPaths.add(p);
-                  turnFiles.push({ path: p, size: parseWrittenSize(resultText) });
+                if (p && !p.startsWith("/") && !isSystemFile(p)) {
+                  // Normalize to the workspace path the file actually lands
+                  // at (write_file's relative path resolves under
+                  // sessions/<sid>/ or projects/<pid>/). Without this prefix
+                  // the row's download/preview URL 404s AND the file shows
+                  // twice — once here (args path) and once in the post-turn
+                  // listAgentFiles diff (real path), because the two paths
+                  // don't string-match for dedup.
+                  const prefix = projectIdHint ? `projects/${projectIdHint}/` : `sessions/${sessionId}/`;
+                  const fullp = prefix + p;
+                  if (!seenPaths.has(fullp)) {
+                    seenPaths.add(fullp);
+                    turnFiles.push({ path: fullp, size: parseWrittenSize(resultText) });
+                  }
                 }
               } catch { /* ignore bad args */ }
             }
@@ -2128,7 +2144,7 @@ export function ChatScreen() {
                         key={`files-${r.id}`}
                         agentId={selectedAgent}
                         files={r.files!}
-                        onOpen={() => setFilesSheetOpen(true)}
+                        onOpenFile={(f) => { setPendingFile(f); setFilesSheetOpen(true); }}
                       />
                     ));
                   if (rounds.length === 1) {
@@ -2352,7 +2368,7 @@ export function ChatScreen() {
                       )}
                     </div>
                     {msg.files && msg.files.length > 0 && (
-                      <FilesPanel agentId={selectedAgent} files={msg.files} onOpen={() => setFilesSheetOpen(true)} />
+                      <FilesPanel agentId={selectedAgent} files={msg.files} onOpenFile={(f) => { setPendingFile(f); setFilesSheetOpen(true); }} />
                     )}
                     <div
                       className={`flex items-center gap-1.5 mt-1 ${
@@ -2736,7 +2752,8 @@ export function ChatScreen() {
           // urlSessionId is set and we pass the real sessionId.
           sessionId={urlSessionId ? sessionId : ""}
           projectId={!urlSessionId && urlProjectId ? urlProjectId : undefined}
-          onClose={() => setFilesSheetOpen(false)}
+          initialFile={pendingFile}
+          onClose={() => { setFilesSheetOpen(false); setPendingFile(null); }}
         />
       )}
     </div>
@@ -3241,7 +3258,7 @@ function BuildLogView({ text }: { text: string }) {
   );
 }
 
-function FilesPanel({ agentId, files, onOpen }: { agentId: string; files: ProducedFile[]; onOpen: () => void }) {
+function FilesPanel({ agentId, files, onOpenFile }: { agentId: string; files: ProducedFile[]; onOpenFile: (f: ProducedFile) => void }) {
   const t = useT();
   return (
     <div className="mt-2 space-y-1.5 max-w-[85%]">
@@ -3260,7 +3277,7 @@ function FilesPanel({ agentId, files, onOpen }: { agentId: string; files: Produc
             >
               <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
               <button
-                onClick={onOpen}
+                onClick={() => onOpenFile(f)}
                 className="flex-1 min-w-0 text-left"
               >
                 <div className="text-sm font-medium text-foreground truncate">{basename}</div>
@@ -3498,11 +3515,13 @@ function WorkspacePanel({
   sessionId,
   projectId,
   onClose,
+  initialFile,
 }: {
   agentId: string;
   sessionId: string;
   projectId?: string;
   onClose: () => void;
+  initialFile?: ProducedFile | null;
 }) {
   const t = useT();
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
@@ -3653,6 +3672,14 @@ function WorkspacePanel({
   useEffect(() => {
     setPreviewing(null);
   }, [agentId, sessionId, projectId]);
+
+  // Open the file the caller handed us via initialFile (a FilesPanel row
+  // click in the conversation). Fires on pendingFile change — including
+  // first mount when the panel was opened by that click — so the tree
+  // lands pre-selected instead of showing an empty viewer.
+  useEffect(() => {
+    if (initialFile) setPreviewing(initialFile);
+  }, [initialFile]);
 
   // While the Preview tab is open, poll the runtime so a "building" preview
   // flips to the live iframe on its own (and reflects sleep/crash). Cheap
