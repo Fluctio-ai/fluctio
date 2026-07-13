@@ -68,6 +68,9 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 			reply:   fmt.Sprintf("👋 Hi! I'm %s, your AI assistant.\n\nJust send me a message to chat. Use /help to see available commands.", a.name),
 		}
 
+	case "/claim":
+		return a.slashClaim(msg)
+
 	case "/new", "/reset":
 		// Clear any goal attached to the OLD session_key — design
 		// §6 chose "fresh session = clean state" over "goal follows

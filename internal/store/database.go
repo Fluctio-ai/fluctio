@@ -131,6 +131,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionsAddProjectID(ctx); err != nil {
 		return fmt.Errorf("migrate sessions.project_id: %w", err)
 	}
+	if err := d.migrateIMClaims(ctx); err != nil {
+		return fmt.Errorf("migrate im_claims: %w", err)
+	}
 	if err := d.migrateSessionMessagesAddOrigin(ctx); err != nil {
 		return fmt.Errorf("migrate session_messages.origin: %w", err)
 	}
@@ -319,6 +322,22 @@ func (d *DBStore) CountPendingKBSources(ctx context.Context, agentID string) (in
 		return 0, err
 	}
 	return n, nil
+}
+
+func (d *DBStore) migrateIMClaims(ctx context.Context) error {
+	_, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS im_claims (
+		id TEXT PRIMARY KEY,
+		agent_id TEXT NOT NULL,
+		channel TEXT NOT NULL,
+		owner_uuid TEXT NOT NULL,
+		code TEXT NOT NULL,
+		intent TEXT NOT NULL,
+		expires_at TIMESTAMP NOT NULL,
+		used BOOLEAN NOT NULL DEFAULT FALSE,
+		attempts INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	return err
 }
 
 func (d *DBStore) migrateKBWiki(ctx context.Context) error {

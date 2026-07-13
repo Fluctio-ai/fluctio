@@ -283,6 +283,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/agents/{id}/recall-test", auth(s.handleRecallTest))
 	mux.HandleFunc("DELETE /api/agents/{id}", auth(s.handleDeleteAgent))
 
+	// IM claim: owner mints a verification code so an IM user can bind as admin via /claim <code>
+	mux.HandleFunc("POST /api/agents/{id}/im-claim", auth(s.handleCreateIMClaim))
+	mux.HandleFunc("GET /api/agents/{id}/im-claim/{channel}", auth(s.handleGetIMClaim))
+	mux.HandleFunc("POST /api/agents/{id}/im-unbind", auth(s.handleUnbindIM))
+	mux.HandleFunc("POST /api/agents/{id}/im-rebind", auth(s.handleRebindIM))
+
 	mux.HandleFunc("GET /api/agents/{id}/files", auth(s.handleAgentFileList))
 	mux.HandleFunc("GET /api/agents/{id}/files.zip", auth(s.handleAgentFilesZip))
 	mux.HandleFunc("GET /api/agents/{id}/files/{path...}", auth(s.handleAgentFile))

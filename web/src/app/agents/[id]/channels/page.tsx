@@ -50,6 +50,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
+import { ImOwnerClaimSection } from "@/components/im-claim-panel";
 
 // Channels page: per-agent IM bot bindings. One card per channel type
 // in the catalog — connected types show bot info + Disconnect, others
@@ -161,6 +162,8 @@ export default function AgentChannelsPage() {
           </p>
         </div>
       </div>
+
+      <ImOwnerClaimSection agentId={agentId} channels={channels} />
 
       {error && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">

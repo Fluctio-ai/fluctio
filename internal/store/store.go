@@ -50,6 +50,12 @@ type Store interface {
 	DeletePushDevice(ctx context.Context, userID, token string) error
 	ListPushDevices(ctx context.Context, userID string) ([]PushDeviceRecord, error)
 
+	// --- IM claim codes (owner binds IM platform ID via /claim <code>) ---
+	CreateIMClaim(ctx context.Context, agentID, channel, ownerUUID, intent string) (string, error)
+	RedeemIMClaim(ctx context.Context, agentID, channel, code string) (bool, error)
+	GetActiveIMClaim(ctx context.Context, agentID, channel string) (*IMClaimRecord, error)
+	CleanupExpiredIMClaims(ctx context.Context) (int, error)
+
 	// --- API keys (per user) ---
 	ListAPIKeys(ctx context.Context, userID string) ([]APIKeyRecord, error)
 	GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, error)

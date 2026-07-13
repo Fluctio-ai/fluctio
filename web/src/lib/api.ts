@@ -1338,6 +1338,9 @@ export interface AgentFileConfig {
   providers?: Record<string, ProviderData>;
   mcpServers?: Record<string, MCPServerConfig>;
   kb?: AgentKBCfg;
+  // admins mirrors config.AgentFileConfig.Admins — per-channel admin
+  // platform IDs (IM identity claim flow binds via /claim <code>).
+  admins?: Record<string, string[]>;
 }
 
 // AgentKBCfg mirrors config.AgentKBCfg (slice 4b-1) — per-agent KB
@@ -2301,4 +2304,51 @@ export function fileUrl(agentId: string, path: string, download = false): string
   if (download) params.set("download", "1");
   const qs = params.toString();
   return `/api/agents/${agentId}/files/${encoded}${qs ? "?" + qs : ""}`;
+}
+
+// --- IM admin-identity claim. getAgentConfig (above) returns AgentFileConfig
+// incl. admins; the helpers below drive the claim/unbind/rebind endpoints. ---
+export async function createAgentIMClaim(
+  agentId: string,
+  channel: string,
+): Promise<{ ok?: boolean; code?: string; channel?: string; expiresAt?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/im-claim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel }),
+  });
+  return res.json();
+}
+
+export async function getAgentIMClaim(
+  agentId: string,
+  channel: string,
+): Promise<{ active?: boolean; code?: string; expiresAt?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/im-claim/${channel}`);
+  return res.json();
+}
+
+export async function unbindAgentIM(
+  agentId: string,
+  channel: string,
+  platformId: string,
+): Promise<{ remaining?: number; lastUnbind?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/im-unbind`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel, platformId }),
+  });
+  return res.json();
+}
+
+export async function rebindAgentIM(
+  agentId: string,
+  channel: string,
+): Promise<{ ok?: boolean; code?: string; channel?: string; expiresAt?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/im-rebind`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel }),
+  });
+  return res.json();
 }
