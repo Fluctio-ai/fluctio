@@ -139,6 +139,8 @@ table and is edited through the dashboard or `fluctio agents config`.
 - **Self-tuning MMR λ (bandit)** — ε-greedy explores the relevance-vs-diversity tradeoff; explicit 👍/👎 and **implicit feedback** (follow-up conversation similarity, swept on a cron) drive λ upgrades with a seesaw non-regression guard. No button-clicking required.
 - **Recall Tuning panel** (agent settings → Recall Tuning): observe current λ / recall & exploration counts / per-λ win rate, test a query (full FTS+vector+MMR preview), manually override λ, and 👍/👎 recent recalls
 
+<img src="previews/recall-tuning.png" alt="Fluctio Recall Tuning panel" width="900">
+
 ### API
 - OpenAI-compatible `/v1/chat/completions` (streaming)
 - HTTP API reference: [`docs/upstream-api.md`](docs/upstream-api.md)
