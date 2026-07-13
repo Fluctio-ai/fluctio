@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/fastclaw-ai/fastclaw/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 func TestAppendNewWorkspaceMediaSkipsHistoricalFiles(t *testing.T) {

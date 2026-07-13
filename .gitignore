@@ -83,3 +83,6 @@ run.err.*
 
 # runtime logs (restart*.log)
 *.log
+
+# Local-only SVG asset (wave animation icon, not for repo)
+/ic_动画_动作_波浪.svg

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fastclaw-ai/fastclaw/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/bus"
 )
 
 func TestFeishuSendMediaItemUploadsAndSendsFile(t *testing.T) {
