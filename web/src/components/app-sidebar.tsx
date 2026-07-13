@@ -120,11 +120,19 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const [settingsUserOnly, setSettingsUserOnly] = React.useState(false);
 
   // Keep status polling so the online dot / admin flag stay fresh.
+  // Persist isAdmin so refreshes don't pop the admin-only nav in/out.
   React.useEffect(() => {
-    getStatus().then(setStatus).catch(() => {});
-    const iv = setInterval(() => {
-      getStatus().then(setStatus).catch(() => {});
-    }, 15000);
+    const fetch = () =>
+      getStatus()
+        .then((s) => {
+          setStatus(s);
+          if (typeof window !== "undefined") {
+            localStorage.setItem("fluctio:isAdmin", s.isAdmin ? "1" : "0");
+          }
+        })
+        .catch(() => {});
+    fetch();
+    const iv = setInterval(fetch, 15000);
     return () => clearInterval(iv);
   }, []);
 
@@ -231,7 +239,15 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
     }
   }, [activeAgentId]);
 
-  const isAdmin = status?.isAdmin ?? false;
+  // Optimistic + cached: most fluctio users are the owner (admin), so
+  // first-paint the admin nav (Agents/Models/Skills/Tools) instead of
+  // popping Skills/Tools in after getStatus resolves. The persisted
+  // value keeps refreshes stable; a non-admin flips to false once.
+  const isAdmin =
+    status?.isAdmin ??
+    (typeof window !== "undefined"
+      ? localStorage.getItem("fluctio:isAdmin") !== "0"
+      : true);
   const t = useT();
   return (
     <Sidebar collapsible="icon" {...props}>
