@@ -69,7 +69,7 @@ Click an agent to enter its management panel:
 - **Files** — Edit SOUL.md, IDENTITY.md, MEMORY.md, etc.
 - **Skills** — Agent-private skills
 - **Models** — Agent-specific provider + model overrides (shadow system entries by name; agent-scope `agents.defaults.model` overrides the system default)
-- **Channels** — Connect IM bots (Telegram, Discord, Slack) so end-users can chat with the agent on their platform of choice
+- **Channels** — Connect IM bots (Telegram, Discord, Slack, Feishu) so end-users can chat with the agent on their platform of choice
 - **Scheduler** — Inspect and manage cron jobs the agent created via `create_cron_job` ("每天 9 点提醒我", "5 分钟后叫我"); pause / delete from the UI
 - **Sessions** — Conversation history
 
@@ -111,9 +111,10 @@ table and is edited through the dashboard or `fluctio agents config`.
 - Prompt cache support (RawAssistant preservation)
 
 ### Channels
-- Per-agent Telegram / Discord / Slack bot bindings — end-users chat with the agent on their platform
+- Per-agent Telegram / Discord / Slack / Feishu bot bindings — end-users chat with the agent on their platform
 - Tokens validated before save (Telegram `getMe`, Discord `/users/@me`, Slack `auth.test`)
 - Sessions are isolated per channel + chatID, so a user's Telegram thread and Discord thread stay separate
+- Feishu supports inbound document/file attachments (delivered to the agent as workspace files)
 
 ### Tools & Sandbox
 - Built-in: exec, read_file, write_file, list_dir, web_fetch, web_search, memory_search
@@ -130,6 +131,13 @@ table and is edited through the dashboard or `fluctio agents config`.
 - MEMORY.md — long-term facts, auto-updated by heartbeat
 - Session-based context with full history preservation
 - Thinking/reasoning content preserved for memory extraction
+- Cross-session recall via `memory_search` (conversation summaries: FTS + vector KNN + cross-encoder rerank)
+- **Anti-enrichment scoring** — three orthogonal axes keep frequently-recalled memories from drowning out fresh/relevant ones:
+  - Frequency: log1p-saturated reinforcement (caps the boost from repeated recall)
+  - Semantic: Maximal Marginal Relevance (MMR) reranks for a diverse top-K
+  - Recency: batch min-max of mean recall time (a single fresh recall can't refresh an otherwise-stale memory)
+- **Self-tuning MMR λ (bandit)** — ε-greedy explores the relevance-vs-diversity tradeoff; explicit 👍/👎 and **implicit feedback** (follow-up conversation similarity, swept on a cron) drive λ upgrades with a seesaw non-regression guard. No button-clicking required.
+- **Recall Tuning panel** (agent settings → Recall Tuning): observe current λ / recall & exploration counts / per-λ win rate, test a query (full FTS+vector+MMR preview), manually override λ, and 👍/👎 recent recalls
 
 ### API
 - OpenAI-compatible `/v1/chat/completions` (streaming)
@@ -143,6 +151,7 @@ table and is edited through the dashboard or `fluctio agents config`.
 - Skill install `/api/skills/install` (ClawHub + GitHub)
 - API key management `/api/apikeys` (owner-level; single tier)
 - Per-owner API key + agent creation via `/api/users/{id}/apikeys` and `/api/users/{id}/agents` (self-service)
+- Recall tuning: `/api/agents/{id}/recall-tuning` (GET bandit state / PUT manual λ), `/api/agents/{id}/recall-test` (query preview), `/api/agents/{id}/recall-events` (recent recalls), `/api/chat/recall-feedback` (👍/👎)
 
 ## Configuration
 
