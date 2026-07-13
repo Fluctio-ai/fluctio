@@ -579,6 +579,7 @@ const en: Record<string, string> = {
 
   // Overview
   "overview.title": "Overview",
+  "overview.subtitle": "Monitor your Fluctio gateway",
   "overview.disabled": "Disabled",
   "overview.sandbox": "Sandbox",
   "overview.activeAgents": "Active agents",

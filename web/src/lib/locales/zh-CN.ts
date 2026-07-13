@@ -579,6 +579,7 @@ const zhCN: Record<string, string> = {
 
   // Overview
   "overview.title": "概览",
+  "overview.subtitle": "监控你的 Fluctio 网关",
   "overview.disabled": "已禁用",
   "overview.sandbox": "沙箱",
   "overview.activeAgents": "活跃智能体",
