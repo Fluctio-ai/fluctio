@@ -290,7 +290,7 @@ export default function RuntimeSettingsPage() {
                   <Input
                     value={sandboxDockerImage}
                     onChange={(e) => setSandboxDockerImage(e.target.value)}
-                    placeholder="thinkany/fluctio-sandbox:latest"
+                    placeholder="ghcr.io/fluctio-ai/fluctio-sandbox:latest"
                     className="font-mono text-sm"
                   />
                 </div>
