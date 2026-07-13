@@ -17,7 +17,10 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/fluctio
+  # docker image refs must be lowercase; github.repository_owner is
+  # "Fluctio-ai" (capital F) which GHCR rejects, so hardcode the
+  # lowercased org name.
+  IMAGE: ghcr.io/fluctio-ai/fluctio
 
 jobs:
   # --- Shared: derive version metadata ---
