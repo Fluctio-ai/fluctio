@@ -1197,6 +1197,9 @@ const zhCN: Record<string, string> = {
   "models.testingLabel": "测试中",
   "models.thisAgent": "此智能体",
   "models.clearingFallsBack": "清除后回退到",
+  "models.contextWindowLabel": "上下文窗口",
+  "models.maxTokensLabel": "输出上限 (MaxTokens)",
+  "models.fetchProviderList": "获取模型列表",
 
   // Agent skills page extras
   "skills.agentSubtitle": "技能作用域为",

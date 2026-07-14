@@ -1197,6 +1197,9 @@ const en: Record<string, string> = {
   "models.testingLabel": "Testing",
   "models.thisAgent": "this agent",
   "models.clearingFallsBack": "Clearing falls back to",
+  "models.contextWindowLabel": "Context Window",
+  "models.maxTokensLabel": "Max Tokens",
+  "models.fetchProviderList": "Fetch model list",
 
   // Agent skills page extras
   "skills.agentSubtitle": "Skills scoped to",

@@ -173,6 +173,11 @@ export default function AgentModelsPage() {
   const [acQuery, setAcQuery] = useState("");
   const [acMatches, setAcMatches] = useState<string[]>([]);
   const acDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Blur-timer ref: stores the deferred dropdown-close so it can be
+  // cancelled when focus moves to another row (prevents stale-closure
+  // race) and cleared on unmount (prevents leak). Same pattern as
+  // acDebounceRef above.
+  const acBlurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Provider model fetch results (from POST /api/agents/{id}/models/fetch).
   const [fetchResults, setFetchResults] = useState<{ id: string; contextWindow: number }[] | null>(null);
   const [fetching, setFetching] = useState(false);
@@ -304,6 +309,10 @@ export default function AgentModelsPage() {
     }, 300);
     return () => {
       if (acDebounceRef.current) clearTimeout(acDebounceRef.current);
+      if (acBlurTimerRef.current) {
+        clearTimeout(acBlurTimerRef.current);
+        acBlurTimerRef.current = null;
+      }
     };
   }, [acQuery, acActiveIdx, builtinModels]);
 
@@ -976,7 +985,7 @@ export default function AgentModelsPage() {
                     ) : (
                       <Download className="h-3 w-3 mr-1.5" />
                     )}
-                    获取模型列表
+                    {t("models.fetchProviderList")}
                   </Button>
                   <Button variant="outline" size="sm" onClick={handleAddModel}>
                     <Plus className="h-3 w-3 mr-1.5" />
@@ -990,7 +999,7 @@ export default function AgentModelsPage() {
                 <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1.5 max-h-56 overflow-y-auto">
                   {fetchResults.length === 0 ? (
                     <p className="text-xs text-muted-foreground text-center py-2">
-                      Provider returned no models.
+                      {t("models.noModelsReturned")}
                     </p>
                   ) : (
                     fetchResults.map((fm) => (
@@ -1062,13 +1071,22 @@ export default function AgentModelsPage() {
                           setAcQuery(e.target.value);
                         }}
                         onFocus={() => {
+                          // Cancel any pending blur-close from a previously
+                          // focused row so it can't stale-close this dropdown.
+                          if (acBlurTimerRef.current) {
+                            clearTimeout(acBlurTimerRef.current);
+                            acBlurTimerRef.current = null;
+                          }
                           setAcActiveIdx(idx);
                           setAcQuery(m.id);
                         }}
                         onBlur={() => {
                           // Delay to allow click registration on dropdown items.
-                          setTimeout(() => {
-                            if (acActiveIdx === idx) setAcActiveIdx(null);
+                          // Store in ref so onFocus can cancel it (race fix)
+                          // and unmount can clean it up (leak fix).
+                          acBlurTimerRef.current = setTimeout(() => {
+                            setAcActiveIdx((prev) => (prev === idx ? null : prev));
+                            acBlurTimerRef.current = null;
                           }, 200);
                         }}
                         placeholder="e.g. gpt-4o"
@@ -1106,7 +1124,7 @@ export default function AgentModelsPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <Label className="text-xs">Context Window</Label>
+                      <Label className="text-xs">{t("models.contextWindowLabel")}</Label>
                       <Input
                         type="number"
                         value={m.contextWindow || ""}
@@ -1116,7 +1134,7 @@ export default function AgentModelsPage() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">Max Tokens</Label>
+                      <Label className="text-xs">{t("models.maxTokensLabel")}</Label>
                       <Input
                         type="number"
                         value={m.maxTokens || ""}
