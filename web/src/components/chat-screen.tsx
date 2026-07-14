@@ -138,8 +138,11 @@ type SlashItem =
 
 interface ChatMessage {
   id: string;
-  role: "user" | "agent" | "tool-group";
+  role: "user" | "agent" | "tool-group" | "notice";
   content: string;
+  // For role==="notice" — currently "compaction_notice" is the only kind.
+  // Set so the renderer can distinguish future notice variants.
+  kind?: string;
   timestamp: number;
   toolCalls?: { id: string; name: string; arguments: string; result?: string; metadata?: ToolResultMetadata }[];
   files?: ProducedFile[];
@@ -312,6 +315,11 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
         msgs.push({ id: `h-${i}`, role: "agent", content: history[i].content || "", timestamp: history[i].timestamp || 0, metadata: history[i].metadata });
         i++;
       }
+    } else if (h.role === "assistant" && h.kind === "compaction_notice") {
+      // Compaction notice entry from WebChatHistory — render as a
+      // centered system bubble, not a normal assistant message.
+      msgs.push({ id: `h-${i}`, role: "notice", kind: "compaction_notice", content: h.content || "", timestamp: h.timestamp || 0 });
+      i++;
     } else if (h.role === "assistant") {
       msgs.push({ id: `h-${i}`, role: "agent", content: h.content || "", timestamp: h.timestamp || 0, metadata: h.metadata });
       i++;
@@ -1011,6 +1019,20 @@ export function ChatScreen() {
                   detail: { agentId: selectedAgent },
                 }),
               );
+            }
+            break;
+          }
+          case "compaction_notice": {
+            // Auto-compaction happened mid-turn — show a centered notice
+            // bubble using the backend's pre-formatted content text so
+            // the live display matches what history reload returns.
+            const content = data.data?.content;
+            if (content) {
+              claim();
+              setMessages((prev) => [
+                ...prev,
+                { id: `cn-${Date.now()}`, role: "notice", kind: "compaction_notice", content, timestamp: Date.now() },
+              ]);
             }
             break;
           }
@@ -1754,6 +1776,18 @@ export function ChatScreen() {
             ]);
             break;
           }
+          case "compaction_notice": {
+            // Auto-compaction happened mid-turn — insert a centered
+            // notice bubble using the backend's content text.
+            const content = evt.data?.content;
+            if (content) {
+              setMessages((prev) => [
+                ...prev,
+                { id: `cn-${Date.now()}`, role: "notice", kind: "compaction_notice", content, timestamp: Date.now() },
+              ]);
+            }
+            break;
+          }
         }
       }, abortRef.current.signal, imageDataUrls, projectIdHint);
       // Diff the workspace against the pre-turn snapshot so files
@@ -2148,6 +2182,18 @@ export function ChatScreen() {
               const elements: React.ReactNode[] = [];
               for (let i = 0; i < messages.length; i++) {
                 const msg = messages[i];
+                // Compaction notice — render as a centered, muted pill
+                // bubble instead of a normal user/agent message.
+                if (msg.role === "notice") {
+                  elements.push(
+                    <div key={msg.id} className="flex justify-center my-3">
+                      <span className="text-xs text-muted-foreground bg-muted/40 rounded-full px-3 py-1">
+                        {msg.content}
+                      </span>
+                    </div>,
+                  );
+                  continue;
+                }
                 if (msg.role === "tool-group") {
                   const start = i;
                   while (

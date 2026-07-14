@@ -2206,7 +2206,12 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 				Metadata:  map[string]any{"compactionNotice": meta},
 				Timestamp: time.Now().UnixMilli(),
 			})
-			emitEvent(ctx, ChatEvent{Type: "compaction_notice", Data: meta})
+			emitEvent(ctx, ChatEvent{Type: "compaction_notice", Data: map[string]any{
+				"content":        text,
+				"before":         meta["before"],
+				"after":          meta["after"],
+				"retained_turns": meta["retained_turns"],
+			}})
 		}
 	}
 
@@ -3068,7 +3073,12 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 				Metadata:  map[string]any{"compactionNotice": meta},
 				Timestamp: time.Now().UnixMilli(),
 			})
-			emitEvent(ctx, ChatEvent{Type: "compaction_notice", Data: meta})
+			emitEvent(ctx, ChatEvent{Type: "compaction_notice", Data: map[string]any{
+				"content":        text,
+				"before":         meta["before"],
+				"after":          meta["after"],
+				"retained_turns": meta["retained_turns"],
+			}})
 		}
 	}
 

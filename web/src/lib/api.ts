@@ -747,6 +747,10 @@ export async function getChangedFiles(
 export interface ChatHistoryMessage {
   role: "user" | "assistant" | "tool";
   content?: string;
+  // Set to "compaction_notice" for auto-compaction notice entries so the
+  // chat UI can render them as centered system bubbles instead of normal
+  // assistant messages.
+  kind?: string;
   toolCalls?: { id: string; name: string; arguments: string }[];
   name?: string;
   toolCallId?: string;
@@ -1038,7 +1042,8 @@ export interface ChatStreamEvent {
     | "error"
     | "done"
     | "subagent_progress"
-    | "auth_prompt";
+    | "auth_prompt"
+    | "compaction_notice";
   // Per-session monotonic sequence assigned by chat_events. Lets the
   // chat page dedupe events arriving on both the active POST stream
   // and the parallel /api/chat/subscribe SSE connection. -1 means
@@ -1070,6 +1075,13 @@ export interface ChatStreamEvent {
     // channels get a plain-text content event fallback (see loop_auth.go).
     description?: string;
     options?: { cmd: string; label_zh: string; label_en: string }[];
+    // compaction_notice payload — the backend's pre-formatted text plus
+    // the raw before/after token counts. The web UI displays `content`
+    // directly (no client-side formatting) so the live bubble matches
+    // what history reload returns.
+    before?: number;
+    after?: number;
+    retained_turns?: number;
   };
 }
 
