@@ -74,11 +74,19 @@ export function ChatMarkdown({
   text,
   agentId,
   sessionId,
+  baseDir,
   bareCode = false,
 }: {
   text: string;
   agentId?: string;
   sessionId?: string;
+  // Workspace directory (relative to the agent root, e.g.
+  // "sessions/<sid>" or "sessions/<sid>/sub") that relative URLs in the
+  // markdown should resolve against. Used by the file previewer where an
+  // .md references sibling images/links by bare relative path — without
+  // this the browser resolves them against the page URL and they 404.
+  // Omitted in chat-bubble context (model emits /workspace/... paths).
+  baseDir?: string;
   // File-viewer mode: hide the floating copy pill on code blocks (the .chat-md
   // strip already removes the card) so a source file reads as plain code.
   bareCode?: boolean;
@@ -98,9 +106,39 @@ export function ChatMarkdown({
         const rel = url.slice("/workspace/".length);
         return fileUrl(agentId, sessionId ? `sessions/${sessionId}/${rel}` : rel);
       }
+      // NOTE: bare relative URLs (e.g. "cover.png") CANNOT be handled here.
+      // Streamdown runs rehype-harden BEFORE urlTransform, and harden's
+      // parseUrl returns null for a scheme-less, non-root path (no origin
+      // to resolve against), so the image is already replaced by the
+      // "[Image blocked]" indicator before this transform runs. Such URLs
+      // are pre-resolved in processedText below instead.
       return defaultUrlTransform(url, key, node);
     };
   }, [agentId, sessionId]);
+
+  // Pre-resolve bare relative image/link URLs in the markdown SOURCE so
+  // they become root-absolute /api/... paths before Streamdown parses and
+  // harden scrubs them. harden accepts root-relative URLs (its dummy-base
+  // parse path yields http: → wildcard), but blocks bare relative ones
+  // ("cover.png" → parseUrl null → "[Image blocked]"). Only in file-preview
+  // context (baseDir supplied).
+  const processedText = useMemo(() => {
+    if (!agentId || baseDir === undefined) return text;
+    return text.replace(/(!?\[[^\]]*\]\()([^)\s]+)(\))/g, (m, prefix, url, suffix) => {
+      if (
+        /^[a-z][a-z0-9+.-]*:/i.test(url) ||
+        url.startsWith("/") ||
+        url.startsWith("#") ||
+        url.startsWith("data:")
+      ) {
+        return m;
+      }
+      let rel = url;
+      if (rel.startsWith("./")) rel = rel.slice(2);
+      const fullPath = baseDir ? `${baseDir}/${rel}` : rel;
+      return prefix + fileUrl(agentId, fullPath) + suffix;
+    });
+  }, [text, agentId, baseDir]);
 
   // Click anywhere on a mermaid diagram → fullscreen. Streamdown renders a
   // hidden fullscreen toggle inside the block; we delegate the click to it.
@@ -138,7 +176,7 @@ export function ChatMarkdown({
           mermaid: { panZoom: false, copy: false, download: false, fullscreen: true },
         }}
       >
-        {text}
+        {processedText}
       </Streamdown>
     </div>
   );

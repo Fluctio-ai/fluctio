@@ -4068,6 +4068,10 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
   const src = fileUrl(agentId, file.path, false);
   const downloadUrl = fileUrl(agentId, file.path, true);
   const basename = file.path.split("/").pop() || file.path;
+  // Directory portion of the file's workspace path (e.g. "sessions/<sid>")
+  // so relative image/link URLs in a previewed .md resolve against the
+  // file's own location rather than the page URL.
+  const baseDir = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Default to SOURCE for markdown/html — clicking a file shows its code; the
@@ -4151,7 +4155,7 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
                 />
               ) : (
                 <div className="h-full overflow-auto p-4">
-                  <ChatMarkdown text={text ?? ""} />
+                  <ChatMarkdown text={text ?? ""} agentId={agentId} baseDir={baseDir} />
                 </div>
               )
             ) : error ? (
