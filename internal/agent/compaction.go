@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -181,7 +182,7 @@ func compressOlderMessages(messages []provider.Message, prov provider.Provider, 
 		},
 	}
 
-	resp, err := prov.Chat(nil, summaryPrompt, nil, model, 2048, 0.3)
+	resp, err := prov.Chat(context.Background(), summaryPrompt, nil, model, 2048, 0.3)
 	if err != nil {
 		return nil, fmt.Errorf("summarize conversation: %w", err)
 	}

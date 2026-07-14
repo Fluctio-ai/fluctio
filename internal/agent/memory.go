@@ -431,3 +431,165 @@ func stripJSONFence(s string) string {
 	s = strings.TrimSuffix(strings.TrimSpace(s), "```")
 	return strings.TrimSpace(s)
 }
+
+// tryAutoTitle fires the auto-title summariser when the current session
+// has enough user turns. Extracted so both the success path
+// (runPostTurn) and the empty-response bail can call it — the title
+// only needs the opening turns, so a failed turn (e.g. context too
+// long → empty response) shouldn't block naming the session.
+func (a *Agent) tryAutoTitle(ctx context.Context, messages []provider.Message) {
+	if !a.memoryCfg.AutoTitle.Enabled || a.memoryCfg.AutoTitle.AfterRounds <= 0 {
+		return
+	}
+	sessionUserTurns := 0
+	for _, m := range messages {
+		if m.Role == "user" {
+			sessionUserTurns++
+		}
+	}
+	afterRounds := a.memoryCfg.AutoTitle.AfterRounds
+	willFire := sessionUserTurns >= afterRounds
+	slog.Info("auto-title gate",
+		"agent", a.name,
+		"session_user_turns", sessionUserTurns,
+		"after_rounds", afterRounds,
+		"will_fire", willFire)
+	if !willFire {
+		return
+	}
+	sessionKey := a.registry.GoalSessionKey()
+	if sessionKey == "" || a.provider == nil {
+		return
+	}
+	var hub *EventHub
+	if stream := streamFromContext(ctx); stream != nil {
+		hub = stream.hub
+	}
+	go a.maybeAutoTitle(sessionKey, messages, hub, a.ownerUserID)
+}
+
+// maybeAutoTitle asks the LLM to summarise the opening turns of a
+// session into a short title and writes it to sessions.title. Best-
+// effort background work — every error path logs at debug/warn and
+// returns, never breaking the chat flow. Skips any session whose title
+// is already non-empty (user renamed OR a previous run landed).
+func (a *Agent) maybeAutoTitle(sessionKey string, messages []provider.Message, hub *EventHub, ownerUserID string) {
+	if a.dataStore == nil || ownerUserID == "" {
+		return
+	}
+	ctx := context.Background()
+
+	// Skip if already titled — user renamed or a previous run landed.
+	if title, _ := a.dataStore.LookupSessionTitle(ctx, ownerUserID, a.name, sessionKey); strings.TrimSpace(title) != "" {
+		return
+	}
+
+	// Build a compact transcript for the summariser. Only the first few
+	// turns — a title never needs the whole conversation — and only the
+	// text part of each message (images / tool I/O are noise for it).
+	const maxMessages = 10 // ~5 user/assistant turns
+	var sb strings.Builder
+	count := 0
+	for _, m := range messages {
+		if m.Role != "user" && m.Role != "assistant" {
+			continue
+		}
+		text := strings.TrimSpace(m.TextContent())
+		if text == "" {
+			continue
+		}
+		// Truncate long messages so the prompt stays cheap.
+		if len(text) > 600 {
+			text = text[:600] + "…"
+		}
+		who := "User"
+		if m.Role == "assistant" {
+			who = "Assistant"
+		}
+		sb.WriteString(who)
+		sb.WriteString(": ")
+		sb.WriteString(text)
+		sb.WriteString("\n")
+		count++
+		if count >= maxMessages {
+			break
+		}
+	}
+	if count == 0 {
+		return
+	}
+
+	model := a.memoryCfg.AutoTitle.Model
+	if model == "" {
+		model = a.model
+	}
+	maxChars := a.memoryCfg.AutoTitle.MaxChars
+	if maxChars == 0 {
+		maxChars = 30
+	}
+
+	prompt := fmt.Sprintf(
+		"Summarize the following conversation in a single short title. "+
+			"Constraints: at most %d characters, no quotes, no trailing period, "+
+			"no emoji. Respond with the title and nothing else.\n\n%s",
+		maxChars, sb.String())
+	resp, err := a.provider.Chat(ctx, []provider.Message{
+		{Role: "user", Content: prompt},
+	}, nil, model, 4096, 0.3)
+	if err != nil {
+		slog.Warn("auto-title: LLM call failed", "agent", a.name, "session", sessionKey, "model", model, "error", err)
+		return
+	}
+	title := cleanAutoTitle(resp.Content, maxChars)
+	if title == "" {
+		return
+	}
+	if err := a.dataStore.RenameSession(ctx, ownerUserID, a.name, sessionKey, title); err != nil {
+		slog.Warn("auto-title: rename failed", "agent", a.name, "session", sessionKey, "error", err)
+		return
+	}
+	slog.Info("auto-title: wrote", "agent", a.name, "session", sessionKey, "title", title)
+
+	// Push a live event so subscribed chat panels update the sidebar /
+	// header title without a manual refresh. Persist first so the seq
+	// lets reconnecting clients dedup.
+	if hub != nil {
+		evt := ChatEvent{
+			Type: "session_title",
+			Data: map[string]any{
+				"sessionKey": sessionKey,
+				"title":      title,
+			},
+		}
+		var seq int64 = -1
+		blob, _ := json.Marshal(evt.Data)
+		if s, err := a.dataStore.AppendSessionEvent(ctx, ownerUserID, a.name, sessionKey, evt.Type, blob); err == nil {
+			seq = s
+		} else {
+			slog.Debug("auto-title: persist event failed", "error", err)
+		}
+		hub.Publish(ownerUserID, a.name, sessionKey, EventEnvelope{Seq: seq, Event: evt})
+	}
+}
+
+// cleanAutoTitle strips the quotes / backticks the model tends to wrap
+// around the title, collapses newlines, and truncates to maxChars on a
+// rune boundary.
+func cleanAutoTitle(s string, maxChars int) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "\"'`")
+	s = strings.TrimSpace(s)
+	// Collapse newlines + tabs to spaces — the title is one line.
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	if maxChars > 0 {
+		runes := []rune(s)
+		if len(runes) > maxChars {
+			s = string(runes[:maxChars])
+		}
+	}
+	return strings.TrimSpace(s)
+}

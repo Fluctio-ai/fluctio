@@ -264,6 +264,11 @@ type MemoryCfg struct {
 	// the gateway ticker scans the agent's KB for sources whose
 	// wiki_generated_at is NULL and runs the two-step wiki pipeline.
 	WikiAutoGen WikiAutoGenCfg `json:"wikiAutoGen,omitempty"`
+	// AutoTitle drives the PostTurn hook that asks the LLM to summarise
+	// the opening turns of a chat into a short title written back to
+	// sessions.title. The hook skips any session whose title is already
+	// non-empty (user renamed it), so auto-title never clobbers a human.
+	AutoTitle AutoTitleCfg `json:"autoTitle,omitempty"`
 }
 
 // WikiAutoGenCfg configures the background wiki auto-generation sweep.
@@ -272,6 +277,24 @@ type WikiAutoGenCfg struct {
 	Interval  time.Duration `json:"interval,omitempty"`  // default 6h
 	Model     string        `json:"model,omitempty"`     // empty = agent default
 	MaxTokens int           `json:"maxTokens,omitempty"` // 0 = default 8192; caps LLM output for the analysis + page-generation steps
+}
+
+// AutoTitleCfg configures the PostTurn hook that asks the LLM to
+// summarise the first N turns of a chat into a short title written back
+// to sessions.title. Default-on so new installs get sensible titles out
+// of the box; the hook skips any session whose title is already
+// non-empty (user renamed it), so auto-title never clobbers a human.
+type AutoTitleCfg struct {
+	Enabled     bool   `json:"enabled"`
+	AfterRounds int    `json:"afterRounds,omitempty"` // default 3
+	Model       string `json:"model,omitempty"`       // empty = agent's primary model
+	// MaxChars caps the generated title. Default 30 — long enough for a
+	// short summary, short enough to fit the sidebar without ellipsis.
+	MaxChars int `json:"maxChars,omitempty"`
+	// MaxTries is the number of turns AFTER AfterRounds to keep
+	// retrying on LLM failure / empty result. Default 2 — so with
+	// AfterRounds=3 the hook fires on turns 3, 4, 5; gives up at 6.
+	MaxTries int `json:"maxTries,omitempty"`
 }
 
 // MemorySettingsCfg holds operational knobs for the memory subsystem.

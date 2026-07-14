@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -12,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle } from "lucide-react";
-import { getAgent, updateAgent } from "@/lib/api";
+import { getAgent, getAgentMemory, setAgentMemory, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
@@ -53,6 +54,12 @@ export default function AgentContextPage() {
   // LLM-driven distill pass that appends to USER.md / MEMORY.md.
   const [autoPersist, setAutoPersist] = useState(false);
   const [autoPersistSaving, setAutoPersistSaving] = useState(false);
+  // Auto-title lives in memory.autoTitle (system-level), unlike the
+  // agent-level toggles above. On = LLM summarises opening turns into
+  // sessions.title.
+  const [autoTitleEnabled, setAutoTitleEnabled] = useState(false);
+  const [autoTitleModel, setAutoTitleModel] = useState("");
+  const [autoTitleSaving, setAutoTitleSaving] = useState(false);
   const [sharedIdentity, setSharedIdentity] = useState(false);
   const [sharedIdentitySaving, setSharedIdentitySaving] = useState(false);
   // Per-agent default UI language for slash-command replies on IM
@@ -78,6 +85,10 @@ export default function AgentContextPage() {
       setSplitReplies(agentRec?.splitReplies === true);
       setAutoPersist(agentRec?.autoPersist === true);
       setSharedIdentity(agentRec?.sharedIdentity === true);
+      const mem = await getAgentMemory(agentId).catch(() => null);
+      const at = mem?.memory?.autoTitle;
+      setAutoTitleEnabled(at?.enabled === true);
+      setAutoTitleModel(at?.model || "");
       const lang = (agentRec?.config?.language as string) || "";
       setLanguage(lang === "en" || lang === "zh-CN" ? lang : "");
     } finally {
@@ -92,6 +103,30 @@ export default function AgentContextPage() {
   const flashSaved = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  // Save memory.autoTitle (enabled + model). afterRounds / maxTries /
+  // maxChars keep their defaults — only enabled + model are operator-
+  // facing. Reads the current memory first so we don't clobber sibling
+  // keys (wikiAutoGen, autoPersist, ...).
+  const saveAutoTitle = async (patch: { enabled?: boolean; model?: string }) => {
+    if (!agentId) return;
+    const next = {
+      enabled: patch.enabled ?? autoTitleEnabled,
+      afterRounds: 3,
+      model: patch.model ?? autoTitleModel,
+    };
+    setAutoTitleSaving(true);
+    try {
+      const cur = await getAgentMemory(agentId).catch(() => null);
+      const base = cur?.memory || {};
+      await setAgentMemory(agentId, { ...base, autoTitle: next });
+      if (patch.enabled !== undefined) setAutoTitleEnabled(patch.enabled);
+      if (patch.model !== undefined) setAutoTitleModel(patch.model);
+      flashSaved();
+    } finally {
+      setAutoTitleSaving(false);
+    }
   };
 
   const handlePromptModeChange = async (next: PromptModeValue) => {
@@ -348,6 +383,39 @@ export default function AgentContextPage() {
             onCheckedChange={handleAutoPersistChange}
             disabled={autoPersistSaving}
             aria-label={t("context.autoPersist")}
+          />
+        </div>
+      </div>
+
+      {/* Auto-title: LLM summarises opening turns into sessions.title */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <MessageSquare className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <h3 className="font-medium">{t("context.autoTitle")}</h3>
+              <p className="text-sm text-muted-foreground mt-1">{t("context.autoTitleDesc")}</p>
+              {autoTitleEnabled && (
+                <div className="mt-3 space-y-1">
+                  <label className="text-xs text-muted-foreground">{t("context.autoTitleModel")}</label>
+                  <Input
+                    placeholder={t("context.autoTitleModelPlaceholder")}
+                    value={autoTitleModel}
+                    onChange={(e) => setAutoTitleModel(e.target.value)}
+                    onBlur={() => saveAutoTitle({ model: autoTitleModel })}
+                    disabled={autoTitleSaving}
+                    className="h-8"
+                  />
+                  <p className="text-[11px] text-muted-foreground">{t("context.autoTitleModelHint")}</p>
+                </div>
+              )}
+            </div>
+          </div>
+          <Switch
+            checked={autoTitleEnabled}
+            onCheckedChange={(v) => saveAutoTitle({ enabled: v })}
+            disabled={autoTitleSaving}
+            aria-label={t("context.autoTitle")}
           />
         </div>
       </div>

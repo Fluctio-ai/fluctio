@@ -955,6 +955,27 @@ export function ChatScreen() {
             applySteerEvent(data.data?.content || "");
             break;
           }
+          case "session_title": {
+            const d = (data.data ?? {}) as Record<string, unknown>;
+            const sk = d.sessionKey;
+            const title = d.title;
+            if (typeof sk === "string" && typeof title === "string" && title) {
+              setSessions((prev) =>
+                prev.map((s) => (s.id === sk || s.chatId === sk ? { ...s, title } : s)),
+              );
+              // The sidebar (nav-projects) holds its own sessions list
+              // sourced via fluctio:sessions-changed — nudge it to
+              // refetch so the new title lands there too.
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(
+                  new CustomEvent("fluctio:sessions-changed", {
+                    detail: { agentId: selectedAgent },
+                  }),
+                );
+              }
+            }
+            break;
+          }
           case "done": {
             claim();
             // Defensive clear — content events should already have

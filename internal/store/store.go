@@ -91,6 +91,10 @@ type Store interface {
 	// the session's owner (e.g. parent user viewing a child app_user's
 	// session in the dashboard).
 	GetSessionByKey(ctx context.Context, agentID, sessionKey string) (*SessionRecord, error)
+	// LookupSessionTitle returns the session's title ("" when never
+	// renamed). The auto-title PostTurn hook reads this to decide
+	// whether to fire — empty = OK to summarise, non-empty = leave it.
+	LookupSessionTitle(ctx context.Context, userID, agentID, sessionKey string) (string, error)
 	// LookupSessionOwner returns the user_id that owns the given session.
 	// Used to resolve the correct user_id for cross-user session reads.
 	LookupSessionOwner(ctx context.Context, agentID, sessionKey string) (string, error)

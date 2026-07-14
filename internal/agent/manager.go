@@ -265,6 +265,21 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			// of erroring every search.
 			var mem config.MemoryCfg
 			if err := scope.SettingInto(context.Background(), db, "memory", m.uid, rc.ID, &mem); err == nil {
+				// Stamp the merged memory config onto the agent so PostTurn
+				// hooks read operator-set values. NewAgentWithSkillsCfg (the
+				// production path) never loads fullCfg.Memory — only the
+				// dead NewAgentWithFullCfg does — so without this stamp
+				// memoryCfg stays zero-valued and every gate (autoTitle,
+				// autoPersist default, ...) reads disabled. Re-apply
+				// rc.AutoPersist afterwards so the per-agent override still
+				// wins over the memory-config default.
+				ag.memoryCfg = mem
+				if rc.AutoPersist != nil {
+					ag.memoryCfg.AutoPersist.Enabled = *rc.AutoPersist
+				}
+				if ag.memoryCfg.AutoPersist.EveryNTurns == 0 {
+					ag.memoryCfg.AutoPersist.EveryNTurns = 5
+				}
 				ag.summaryModel = mem.SummaryModel
 				if mem.Embedding.Enabled {
 					ec := mem.Embedding

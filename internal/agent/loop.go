@@ -2268,6 +2268,12 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 
 		if !resp.HasToolCalls() {
 			if strings.TrimSpace(resp.Content) == "" {
+				// Auto-title only needs the opening turns — fire even
+				// when the turn itself failed (e.g. context too long →
+				// empty response), or long sessions that pre-date
+				// auto-title never get named because every turn bails
+				// here before runPostTurn.
+				a.tryAutoTitle(ctx, messages)
 				emptyMsg := "model returned an empty response"
 				emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": emptyMsg}})
 				emitEvent(ctx, ChatEvent{Type: "done"})
@@ -2817,6 +2823,17 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 		slog.Info("auto-persist firing", "agent", a.name, "chatter", chatterUID, "model", model, "chatter_turns", chatterTurns, "messages", len(messages))
 		go AutoPersistMemory(ctx, chatterMem, a.provider, model, messages)
 	}
+
+	// Auto-title: within the AfterRounds..AfterRounds+MaxTries window,
+	// ask the LLM for a one-line summary and write it to sessions.title.
+	// maybeAutoTitle bails when the title is already non-empty (user
+	// renamed OR a previous run landed), so retries are cheap — one DB
+	// lookup, no LLM. sessionUserTurns counts THIS session's user
+	// messages from the in-memory slice runPostTurn already holds.
+	// Auto-title: fire if the session has enough user turns. tryAutoTitle
+	// is shared with the empty-response bail so a failed turn still names
+	// the session — the title only needs the opening turns.
+	a.tryAutoTitle(ctx, messages)
 
 	// Skills learner
 	if a.skillsLearner != nil {

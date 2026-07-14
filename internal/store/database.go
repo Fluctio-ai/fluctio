@@ -3100,6 +3100,21 @@ func (d *DBStore) RenameSession(ctx context.Context, userID, agentID, sessionKey
 	return err
 }
 
+// LookupSessionTitle returns the session's title, or "" when the row is
+// missing / title never set. Used by the auto-title PostTurn hook to
+// skip sessions the user already named.
+func (d *DBStore) LookupSessionTitle(ctx context.Context, userID, agentID, sessionKey string) (string, error) {
+	var title string
+	err := d.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COALESCE(title,'') FROM sessions WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2), d.ph(3)),
+		userID, agentID, sessionKey).Scan(&title)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return title, err
+}
+
 // MoveSession flips a session's project_id. Empty string detaches the
 // session from its current project (drag-out to "Chats"). The caller
 // must have already migrated the workspace files and validated that
