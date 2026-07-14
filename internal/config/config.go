@@ -714,6 +714,13 @@ type ResolvedAgent struct {
 	Workspace            string
 	Model                string
 	MaxTokens            int
+	// ContextWindow is the agent's effective context window (tokens), used
+	// by Phase 2 to derive a model-aware compaction threshold. 0 = unknown
+	// (operator hasn't set it AND no builtin-table match). Priority at
+	// resolve time: ModelEntry.ContextWindow (future, P1-T7) → builtin table
+	// (LookupModelMeta) → 0. The table fallback is applied in
+	// MergedAgentConfig when this field is still 0 after entry merge.
+	ContextWindow        int
 	Temperature          float64
 	MaxToolIterations    int
 	MaxParallelToolCalls int
@@ -988,6 +995,17 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 		const chatbotDefaultIter = 5
 		if resolved.MaxToolIterations > chatbotDefaultIter {
 			resolved.MaxToolIterations = chatbotDefaultIter
+		}
+	}
+
+	// Table fallback: when no ModelEntry.ContextWindow mapping has set a
+	// value yet (resolved.ContextWindow == 0), look up the builtin model
+	// table so Phase 2 always has a non-zero threshold for known models.
+	// A future ModelEntry.ContextWindow → resolved mapping (P1-T7) will run
+	// before this guard and win by setting a non-zero value.
+	if resolved.ContextWindow == 0 && resolved.Model != "" {
+		if cw, ok := LookupModelMeta(resolved.Model); ok {
+			resolved.ContextWindow = cw
 		}
 	}
 
