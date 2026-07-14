@@ -572,6 +572,29 @@ export async function testProvider(config: { apiBase: string; apiKey: string; mo
   return res.json();
 }
 
+// Builtin model table — merged from the embedded JSON + local override file.
+// Returns { modelId: contextWindow } for every known model. Used by the
+// models page for autocomplete suggestions.
+export async function getBuiltinModels(): Promise<Record<string, number>> {
+  const r = await apiFetch("/api/models/builtin");
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+// Fetch the live model list from the agent's bound upstream provider.
+// Each item includes a contextWindow resolved via the builtin table.
+// Unsupported / unreachable providers yield HTTP 501.
+export async function fetchProviderModels(
+  agentId: string
+): Promise<{ id: string; contextWindow: number }[]> {
+  const r = await apiFetch(
+    `/api/agents/${encodeURIComponent(agentId)}/models/fetch`,
+    { method: "POST" }
+  );
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
 // Config — persisted system_settings block (super_admin only).
 export async function saveConfig(config: Record<string, unknown>) {
   const res = await apiFetch("/api/config", {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,7 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
-import { Brain, Plus, Pencil, Trash2, Check, Cpu, Loader2, Share2 } from "lucide-react";
+import { Brain, Plus, Pencil, Trash2, Check, Cpu, Loader2, Share2, Download } from "lucide-react";
 import {
   getAgent,
   getConfig,
@@ -41,6 +41,8 @@ import {
   testProvider,
   testStoredProvider,
   updateAgent,
+  getBuiltinModels,
+  fetchProviderModels,
   type ModelEntry,
   type ProviderRow,
 } from "@/lib/api";
@@ -164,6 +166,17 @@ export default function AgentModelsPage() {
   const [modelTests, setModelTests] = useState<Record<number, ModelTestResult>>({});
   const [batchTesting, setBatchTesting] = useState(false);
 
+  // Builtin model table — loaded once for autocomplete + contextWindow fill.
+  const [builtinModels, setBuiltinModels] = useState<Record<string, number>>({});
+  // Per-row autocomplete state. Only one row's dropdown is open at a time.
+  const [acActiveIdx, setAcActiveIdx] = useState<number | null>(null);
+  const [acQuery, setAcQuery] = useState("");
+  const [acMatches, setAcMatches] = useState<string[]>([]);
+  const acDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Provider model fetch results (from POST /api/agents/{id}/models/fetch).
+  const [fetchResults, setFetchResults] = useState<{ id: string; contextWindow: number }[] | null>(null);
+  const [fetching, setFetching] = useState(false);
+
   const cleanModelRows = formModels
     .map((m, idx) => ({ idx, id: m.id.trim() }))
     .filter((t) => t.id);
@@ -265,6 +278,68 @@ export default function AgentModelsPage() {
     setTimeout(() => setSaved(false), 2000);
   };
 
+  // Load builtin model table once for autocomplete + contextWindow autofill.
+  useEffect(() => {
+    getBuiltinModels()
+      .then(setBuiltinModels)
+      .catch(() => {});
+  }, []);
+
+  // Debounced autocomplete: when the active row's query changes, wait 300ms
+  // then filter the builtin table by prefix. Results capped at 8.
+  useEffect(() => {
+    if (acActiveIdx === null) return;
+    if (acDebounceRef.current) clearTimeout(acDebounceRef.current);
+    acDebounceRef.current = setTimeout(() => {
+      const q = acQuery.trim().toLowerCase();
+      if (!q) {
+        setAcMatches([]);
+        return;
+      }
+      const keys = Object.keys(builtinModels)
+        .filter((k) => k.toLowerCase().startsWith(q))
+        .sort()
+        .slice(0, 8);
+      setAcMatches(keys);
+    }, 300);
+    return () => {
+      if (acDebounceRef.current) clearTimeout(acDebounceRef.current);
+    };
+  }, [acQuery, acActiveIdx, builtinModels]);
+
+  // Selecting an autocomplete item fills the model row's id + contextWindow.
+  const handleAutocompleteSelect = (idx: number, modelId: string) => {
+    handleUpdateModel(idx, "id", modelId);
+    const cw = builtinModels[modelId];
+    if (cw) handleUpdateModel(idx, "contextWindow", cw);
+    setAcActiveIdx(null);
+    setAcMatches([]);
+  };
+
+  // "获取模型列表" — calls the agent's bound provider to list upstream models.
+  // Results render as clickable items; clicking one adds a model row with the
+  // fetched id + contextWindow.
+  const handleFetchModels = async () => {
+    if (!agentId) return;
+    setFetching(true);
+    try {
+      const list = await fetchProviderModels(agentId);
+      setFetchResults(list);
+    } catch {
+      setFetchResults(null);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const handlePickFetchedModel = (id: string, contextWindow: number) => {
+    setFormModels((prev) => [
+      ...prev,
+      { ...emptyModel(), id, name: id, contextWindow: contextWindow || 200000 },
+    ]);
+    setFetchResults(null);
+  };
+
   const openAddDialog = () => {
     setEditingName(null);
     setEditingId(null);
@@ -276,6 +351,8 @@ export default function AgentModelsPage() {
     setFormApiKey("");
     setFormModels(presetModelRows("openai"));
     setModelTests({});
+    setFetchResults(null);
+    setAcActiveIdx(null);
     setDialogOpen(true);
   };
 
@@ -307,6 +384,8 @@ export default function AgentModelsPage() {
           )
         : {},
     );
+    setFetchResults(null);
+    setAcActiveIdx(null);
     setDialogOpen(true);
   };
 
@@ -885,11 +964,51 @@ export default function AgentModelsPage() {
             <div className="space-y-3 pt-2 border-t border-border">
               <div className="flex items-center justify-between">
                 <Label className="text-base">{t("models.modelsLabel")}</Label>
-                <Button variant="outline" size="sm" onClick={handleAddModel}>
-                  <Plus className="h-3 w-3 mr-1.5" />
-                  {t("models.addModel")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFetchModels}
+                    disabled={fetching || !agentId}
+                  >
+                    {fetching ? (
+                      <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3 w-3 mr-1.5" />
+                    )}
+                    获取模型列表
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleAddModel}>
+                    <Plus className="h-3 w-3 mr-1.5" />
+                    {t("models.addModel")}
+                  </Button>
+                </div>
               </div>
+
+              {/* Fetched model list — click an item to add it as a model row. */}
+              {fetchResults && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1.5 max-h-56 overflow-y-auto">
+                  {fetchResults.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-2">
+                      Provider returned no models.
+                    </p>
+                  ) : (
+                    fetchResults.map((fm) => (
+                      <button
+                        key={fm.id}
+                        type="button"
+                        onClick={() => handlePickFetchedModel(fm.id, fm.contextWindow)}
+                        className="flex items-center justify-between w-full px-2.5 py-1.5 rounded text-xs hover:bg-accent font-mono"
+                      >
+                        <span>{fm.id}</span>
+                        <span className="text-muted-foreground text-[10px]">
+                          {fm.contextWindow >= 1000 ? `${Math.round(fm.contextWindow / 1000)}K` : fm.contextWindow || "—"}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
 
               {formModels.length === 0 && (
                 <p className="text-sm text-muted-foreground/60 text-center py-4">
@@ -933,14 +1052,47 @@ export default function AgentModelsPage() {
                     </Button>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
+                    <div className="space-y-1 relative">
                       <Label className="text-xs">{t("models.modelIdLabel")}</Label>
                       <Input
                         value={m.id}
-                        onChange={(e) => handleUpdateModel(idx, "id", e.target.value)}
+                        onChange={(e) => {
+                          handleUpdateModel(idx, "id", e.target.value);
+                          setAcActiveIdx(idx);
+                          setAcQuery(e.target.value);
+                        }}
+                        onFocus={() => {
+                          setAcActiveIdx(idx);
+                          setAcQuery(m.id);
+                        }}
+                        onBlur={() => {
+                          // Delay to allow click registration on dropdown items.
+                          setTimeout(() => {
+                            if (acActiveIdx === idx) setAcActiveIdx(null);
+                          }, 200);
+                        }}
                         placeholder="e.g. gpt-4o"
                         className="font-mono text-xs h-8"
                       />
+                      {acActiveIdx === idx && acMatches.length > 0 && (
+                        <ul className="absolute z-50 left-0 right-0 mt-0.5 max-h-44 overflow-y-auto rounded-md border border-border bg-popover shadow-md">
+                          {acMatches.map((mid) => (
+                            <li
+                              key={mid}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                handleAutocompleteSelect(idx, mid);
+                              }}
+                              className="flex items-center justify-between px-2.5 py-1.5 text-xs hover:bg-accent cursor-pointer font-mono"
+                            >
+                              <span>{mid}</span>
+                              <span className="text-muted-foreground text-[10px]">
+                                {builtinModels[mid] >= 1000 ? `${Math.round(builtinModels[mid] / 1000)}K` : builtinModels[mid]}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">{t("models.displayNameLabel")}</Label>
@@ -948,6 +1100,28 @@ export default function AgentModelsPage() {
                         value={m.name}
                         onChange={(e) => handleUpdateModel(idx, "name", e.target.value)}
                         placeholder="e.g. GPT-4o"
+                        className="text-xs h-8"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Context Window</Label>
+                      <Input
+                        type="number"
+                        value={m.contextWindow || ""}
+                        onChange={(e) => handleUpdateModel(idx, "contextWindow", e.target.value)}
+                        placeholder="e.g. 200000"
+                        className="text-xs h-8"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Max Tokens</Label>
+                      <Input
+                        type="number"
+                        value={m.maxTokens || ""}
+                        onChange={(e) => handleUpdateModel(idx, "maxTokens", e.target.value)}
+                        placeholder="e.g. 8192"
                         className="text-xs h-8"
                       />
                     </div>
