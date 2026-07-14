@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -75,15 +77,15 @@ func (s *Server) providerConfigForAgent(ctx context.Context, agentID string) (co
 }
 
 // fetchUpstreamModelIDs calls the upstream list-models endpoint for the
-// given provider. Supports openai-compatible, gemini, and anthropic;
-// other apiTypes return an error so the handler can surface 501.
+// given provider. Supports anthropic-messages, gemini, and any
+// OpenAI-compatible apiType (openai-chat, "", etc.); unknown apiTypes
+// also fall through to the OpenAI-compatible default, mirroring the
+// dispatch pattern in provider.NewProvider and runProviderTest.
 //
 // The returned IDs are raw upstream names (no "provider/" prefix) so
 // callers can feed them straight into config.LookupModelMeta.
 func fetchUpstreamModelIDs(ctx context.Context, prov config.ProviderConfig) ([]string, error) {
 	apiType := prov.APIType
-	// NormalizeAPIBase: trims trailing /, adds /v1 for bare openai hosts,
-	// strips /v1 for anthropic (anthropic URLs include /v1 in the path).
 	base := provider.NormalizeAPIBase(prov.APIBase, apiType)
 
 	switch apiType {
@@ -93,16 +95,17 @@ func fetchUpstreamModelIDs(ctx context.Context, prov config.ProviderConfig) ([]s
 		// so re-append it here.
 		return fetchIDs(ctx, base+"/v1/models", prov.APIKey, "2023-06-01")
 	case "gemini":
-		return fetchIDs(ctx, base+"/models?key="+prov.APIKey, "", "")
-	case "openai", "":
-		// OpenAI-compatible: /v1/models with Bearer auth. For hosts
-		// where NormalizeAPIBase appended /v1 already, this becomes
-		// /v1/v1/models — which is wrong. Trim /v1 first then add it
-		// back unconditionally to handle both bare and /v1-bearing
-		// apiBase values consistently.
-		return fetchIDs(ctx, strings.TrimSuffix(base, "/v1")+"/v1/models", "Bearer "+prov.APIKey, "")
+		// Spec requires Gemini list-models support. No gemini provider
+		// preset exists in the codebase today, but a custom provider
+		// configured with apiType=gemini will hit this path.
+		// Gemini uses query-param auth, not a bearer header.
+		return fetchIDs(ctx, base+"/models?key="+url.QueryEscape(prov.APIKey), "", "")
 	default:
-		return nil, fmt.Errorf("unsupported apiType %q for list models", apiType)
+		// OpenAI-compatible (openai-chat, "", and any future apiType).
+		// Mirrors NewProvider: anything that isn't anthropic-messages is
+		// treated as OpenAI-compatible. NormalizeAPIBase already ensures
+		// /v1 is in the base for bare hosts, so we just append /models.
+		return fetchIDs(ctx, base+"/models", "Bearer "+prov.APIKey, "")
 	}
 }
 
@@ -128,7 +131,8 @@ func fetchIDs(ctx context.Context, url, bearerKey, anthropicVersion string) ([]s
 		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("upstream request: %w", err)
 	}
