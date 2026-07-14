@@ -1076,13 +1076,15 @@ export function ChatScreen() {
     const s = sessions.find((x) => x.id === sessionId);
     return s?.channel || "web";
   }, [sessions, sessionId]);
-  // Read-only channel / actAs views keep the textarea editable so the
-  // user can type local query slashes such as /usage, while the send
-  // gate below blocks normal messages and mutating slash commands.
+  // Read-only channel / actAs views fully disable the composer (textarea,
+  // attach, send) — the web path can't deliver into upstream IM platforms,
+  // and single-user mode no longer needs slash commands typed here, so the
+  // conversation is shown pure read-only and the user is pointed to the
+  // originating channel to reply.
   const isReadOnlyChannel = currentChannel !== "web";
   const isReadOnlyView = isReadOnlyChannel || isActAsView;
   const inputIsReadOnlySafeSlashCommand = isReadOnlySafeSlashCommand(input);
-  const canUseComposer = !!selectedAgent;
+  const canUseComposer = !!selectedAgent && !isReadOnlyView;
   const canSendComposer =
     canUseComposer && (!isReadOnlyView || inputIsReadOnlySafeSlashCommand);
   const canAttach = !!selectedAgent && !sending && !isReadOnlyView;
@@ -2476,14 +2478,11 @@ export function ChatScreen() {
               // Block the input outright and tell the user where to
               // reply.
               <div className="mb-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                This conversation lives on{" "}
+                {t("chatScreen.conversationLivesOn")}{" "}
                 <span className="font-medium text-foreground">
                   {channelLabel(currentChannel)}
                 </span>
-                . Reply from there — slash commands like{" "}
-                <span className="font-mono text-foreground">/usage</span> can
-                run here, but normal messages typed here won't reach the user
-                on the other side.
+                {t("chatScreen.replyFromThere")}
               </div>
             )}
             {isActAsView && !isReadOnlyChannel && (
@@ -2578,13 +2577,11 @@ export function ChatScreen() {
                     onKeyDown={handleKeyDown}
                     onBlur={() => setTimeout(() => setSlashOpen(false), 120)}
                     placeholder={
-                      isActAsView
+                      isReadOnlyView
                         ? t("chat.readOnlyPlaceholder")
-                        : isReadOnlyChannel
-                          ? t("chat.slashOnlyPlaceholder", { channel: channelLabel(currentChannel) })
-                          : selectedAgent
-                            ? t("chat.messagePlaceholder", { name: agentName || selectedAgent })
-                            : t("chat.selectAgentFirst")
+                        : selectedAgent
+                          ? t("chat.messagePlaceholder", { name: agentName || selectedAgent })
+                          : t("chat.selectAgentFirst")
                     }
                     disabled={!canUseComposer}
                     rows={3}
@@ -2596,7 +2593,7 @@ export function ChatScreen() {
                       <label
                         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors ${
                           !canAttach
-                            ? "opacity-50 cursor-not-allowed"
+                            ? "opacity-50"
                             : "hover:bg-muted hover:text-foreground cursor-pointer"
                         }`}
                         aria-label={t("chat.attachFiles")}
@@ -2653,7 +2650,7 @@ export function ChatScreen() {
                   <label
                     className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors ${
                       !canAttach
-                        ? "opacity-50 cursor-not-allowed"
+                        ? "opacity-50"
                         : "hover:bg-muted hover:text-foreground cursor-pointer"
                     }`}
                     aria-label={t("chat.attachFiles")}
@@ -2675,13 +2672,11 @@ export function ChatScreen() {
                     onKeyDown={handleKeyDown}
                     onBlur={() => setTimeout(() => setSlashOpen(false), 120)}
                     placeholder={
-                      isActAsView
+                      isReadOnlyView
                         ? t("chat.readOnlyPlaceholder")
-                        : isReadOnlyChannel
-                          ? t("chat.slashOnlyPlaceholder", { channel: channelLabel(currentChannel) })
-                          : selectedAgent
-                            ? t("chat.messagePlaceholder", { name: agentName || selectedAgent })
-                            : t("chat.selectAgentFirst")
+                        : selectedAgent
+                          ? t("chat.messagePlaceholder", { name: agentName || selectedAgent })
+                          : t("chat.selectAgentFirst")
                     }
                     disabled={!canUseComposer}
                     rows={1}

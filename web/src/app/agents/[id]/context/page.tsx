@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Brain, Check, Link2, MessageSquare, MessagesSquare, Puzzle } from "lucide-react";
+import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle } from "lucide-react";
 import { getAgent, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
@@ -55,6 +55,11 @@ export default function AgentContextPage() {
   const [autoPersistSaving, setAutoPersistSaving] = useState(false);
   const [sharedIdentity, setSharedIdentity] = useState(false);
   const [sharedIdentitySaving, setSharedIdentitySaving] = useState(false);
+  // Per-agent default UI language for slash-command replies on IM
+  // channels (web forwards its i18n locale per-request, IM can't).
+  // "" = no override saved → runtime default (Chinese).
+  const [language, setLanguage] = useState("");
+  const [languageSaving, setLanguageSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -73,6 +78,8 @@ export default function AgentContextPage() {
       setSplitReplies(agentRec?.splitReplies === true);
       setAutoPersist(agentRec?.autoPersist === true);
       setSharedIdentity(agentRec?.sharedIdentity === true);
+      const lang = (agentRec?.config?.language as string) || "";
+      setLanguage(lang === "en" || lang === "zh-CN" ? lang : "");
     } finally {
       setLoading(false);
     }
@@ -147,6 +154,23 @@ export default function AgentContextPage() {
       setSharedIdentity(prev);
     } finally {
       setSharedIdentitySaving(false);
+    }
+  };
+
+  // Reply language: "en" / "zh-CN". Drives slash-command reply language
+  // on IM channels (web carries its own locale). Optimistic, rolls back
+  // on failure — same shape as the toggles above.
+  const handleLanguageChange = async (next: string) => {
+    const prev = language;
+    setLanguage(next);
+    setLanguageSaving(true);
+    try {
+      await updateAgent(agentId, { language: next });
+      flashSaved();
+    } catch {
+      setLanguage(prev);
+    } finally {
+      setLanguageSaving(false);
     }
   };
 
@@ -243,6 +267,40 @@ export default function AgentContextPage() {
             {t("context.pluginToolsExample")}
           </span>
         </div>
+      </div>
+
+      {/* Reply language — IM channels can't forward the web client's
+          i18n locale, so this per-agent default picks the language for
+          slash-command replies (/usage /status /help …) there. */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Languages className="h-4 w-4 text-primary" />
+            <h3 className="font-medium">{t("context.replyLanguage")}</h3>
+          </div>
+        </div>
+        <Select
+          value={language || "zh-CN"}
+          onValueChange={(v: string | null) => {
+            if (v === "zh-CN" || v === "en") {
+              handleLanguageChange(v);
+            }
+          }}
+          disabled={languageSaving}
+        >
+          <SelectTrigger className="text-sm max-w-[240px]">
+            <SelectValue>
+              {language === "en" ? t("context.langEn") : t("context.langZh")}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="zh-CN">{t("context.langZh")}</SelectItem>
+            <SelectItem value="en">{t("context.langEn")}</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="mt-3 text-xs text-muted-foreground">
+          {t("context.replyLanguageDesc")}
+        </p>
       </div>
 
       {/* Multi-bubble replies — applies to every IM channel. Lives here

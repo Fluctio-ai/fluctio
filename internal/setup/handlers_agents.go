@@ -482,6 +482,12 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// non-nil = write the per-agent KB override. Send enabled=false
 		// to disable (no separate reset signal).
 		KB *config.AgentKBCfg `json:"kb,omitempty"`
+		// Language is the default UI language for slash-command replies
+		// when the inbound source carries none (IM channels). ptr so
+		// nil = leave unchanged, empty string = clear (fall back to the
+		// runtime default), "en"/"zh-CN" = set. Lives in the agent config
+		// blob alongside mcpServers / kb.
+		Language *string `json:"language,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -543,6 +549,19 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			rec.Config = map[string]interface{}{}
 		}
 		rec.Config["kb"] = req.KB
+	}
+	// Language override lives in the agent config blob; MergedAgentConfig
+	// forwards it into ResolvedAgent.Language so HandleMessage can fall
+	// back to it when msg.Lang is empty (IM channels).
+	if req.Language != nil {
+		if rec.Config == nil {
+			rec.Config = map[string]interface{}{}
+		}
+		if *req.Language == "" {
+			delete(rec.Config, "language")
+		} else {
+			rec.Config["language"] = strings.TrimSpace(*req.Language)
+		}
 	}
 	if err := s.dataStore.SaveAgent(r.Context(), rec); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

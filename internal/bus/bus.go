@@ -88,6 +88,12 @@ type InboundMessage struct {
 	// sessions by owner identity instead of by channel triple, so
 	// conversations are shared across all channels.
 	SharedIdentity bool
+	// Lang is the chatter's UI language preference, forwarded by the web
+	// client from its i18n locale (localStorage "fluctio-locale") so
+	// slash-command replies and other runtime-rendered text can localize.
+	// Empty for IM channels and legacy callers; consumers fall back to a
+	// default. See agent.popLang (extraction) and agent.slashT (lookup).
+	Lang string
 }
 
 // SessionTriple returns the (channel, accountID, chatID) used for session

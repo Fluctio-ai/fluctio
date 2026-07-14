@@ -626,6 +626,13 @@ type AgentFileConfig struct {
 	// regardless of this field, since those channels carry the Fluctio
 	// identity directly and don't need a per-platform allowlist.
 	Admins map[string][]string `json:"admins,omitempty"`
+	// Language is the default UI language for this agent's slash-command
+	// replies when the inbound source carries none (IM channels, cron,
+	// legacy callers). "en" or "zh-CN"; empty falls back to the runtime
+	// default (Chinese). Set by the operator from the agent settings
+	// dialog so all IM channels on this agent localize without each
+	// chatter having to configure their own.
+	Language string `json:"language,omitempty"`
 }
 
 // AgentKBCfg is the per-agent knowledge-base auto-query configuration.
@@ -716,6 +723,10 @@ type ResolvedAgent struct {
 	// search and injects results (augment) or short-circuits the LLM
 	// (strict). See AgentKBCfg for field semantics.
 	KB *AgentKBCfg
+	// Language is the agent's default UI language for slash-command
+	// replies when the inbound source carries none. Mirrors
+	// AgentFileConfig.Language. See Agent.language / popLang / slashT.
+	Language string
 }
 
 type TeamEntry struct {
@@ -931,6 +942,9 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 		}
 		if fileCfg.PromptMode != "" {
 			resolved.PromptMode = fileCfg.PromptMode
+		}
+		if fileCfg.Language != "" {
+			resolved.Language = fileCfg.Language
 		}
 		if fileCfg.SplitReplies != nil {
 			v := *fileCfg.SplitReplies

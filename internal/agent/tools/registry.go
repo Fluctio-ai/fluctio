@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -83,6 +84,9 @@ const IdentityFileRefusal = "[refused: this file is part of the agent's private 
 // Callers should `return IdentityFileRefusal, nil` so the model sees
 // a tool-shaped, model-readable refusal instead of an opaque error.
 func (r *Registry) identityFileBlocked(path string) bool {
+	if isIdentityFilePath(path) {
+		slog.Info("diag: identityFileBlocked", "callerIsAdmin", r.callerIsAdmin)
+	}
 	return !r.callerIsAdmin && isIdentityFilePath(path)
 }
 

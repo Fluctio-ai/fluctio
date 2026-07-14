@@ -103,6 +103,20 @@ type Agent struct {
 	// Agent too so ReloadWorkspaceFiles can re-apply after rebuilding
 	// the ContextBuilder from scratch.
 	displayName string
+	// language is the agent's default UI language for slash-command
+	// replies when the inbound source carries none (IM channels, cron).
+	// Loaded from agent.json's "language" field; empty → slashT's own
+	// default (Chinese). HandleMessage falls back to this after popLang
+	// when msg.Lang is empty.
+	language string
+	// singleUser marks this as a single-user install (owner.json present
+	// under the Fluctio home). When true, every chatter is treated as the
+	// operator for the identity-file confidentiality gate — so IM
+	// chatters can read/write IDENTITY.md / SOUL.md and a name they give
+	// the agent in conversation actually persists. Multi-user installs
+	// keep the gate closed: non-owner chatters stay blocked from the
+	// operator's private configuration.
+	singleUser bool
 	// dataStore is the full relational Store (when wired by the
 	// manager). Used for per-turn durable lookups that can't go through
 	// the narrower MemoryStore — currently just the autoPersist gate
@@ -343,6 +357,12 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	hooks.Register(AfterToolCall, LoggingHook())
 
 	eng := newSDKEngine(rc.ID)
+	// single-user install (owner.json present under the Fluctio home)
+	// loosens the identity-file confidentiality gate so IM chatters can
+	// read/write IDENTITY.md — e.g. to persist a name they gave the
+	// agent. Multi-user installs keep the gate: non-owner chatters stay
+	// blocked from the operator's private configuration.
+	singleUserOwner, _ := config.LoadOwnerFile(homeDir)
 
 	ag := &Agent{
 		name:                 rc.ID,
@@ -359,6 +379,8 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 		maxParallelToolCalls: rc.MaxParallelToolCalls,
 		thinking:             rc.Thinking,
 		promptMode:           rc.PromptMode,
+		language:             rc.Language,
+		singleUser:           singleUserOwner != nil,
 		homePath:             rc.Home,
 		workspacePath:        workspace,
 		homeDir:              homeDir,
@@ -369,6 +391,7 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 		engine:               eng,
 		costTracker:          eng.costTracker,
 	}
+	slog.Info("diag: agent built", "id", rc.ID, "singleUser", ag.singleUser, "homeDir", homeDir)
 
 	// authGate enforces the per-agent write/exec policy (hardline command
 	// floor + workspace boundary + dangerous-pattern tier). Built once
@@ -1861,7 +1884,40 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 }
 
 // HandleMessage processes an inbound message through the ReAct loop.
+// popLang extracts and removes the "lang" string param from params,
+// returning it. Returns "" when params is nil, has no "lang" key, or the
+// value isn't a string. Removing the key keeps the locale out of the
+// LLM-facing client-params blob (see renderClientParams) — only the
+// dedicated bus.InboundMessage.Lang field carries it onward.
+func popLang(params map[string]any) string {
+	if params == nil {
+		return ""
+	}
+	v, ok := params["lang"]
+	if !ok {
+		return ""
+	}
+	delete(params, "lang")
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
 func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) string {
+	// Lift the chatter's UI locale out of Params (where the web client
+	// forwards its i18n setting) into the Lang field, so slash replies can
+	// localize and the locale doesn't leak into the LLM-facing "Client
+	// Parameters" system message rendered from Params. No-op for IM/cron
+	// sources that never set params["lang"].
+	msg.Lang = popLang(msg.Params)
+	// IM channels, cron, and legacy callers never set params["lang"], so
+	// fall back to the agent's configured default language (agent.json
+	// "language" field). Empty stays empty → slashT then applies its own
+	// default (Chinese).
+	if msg.Lang == "" {
+		msg.Lang = a.language
+	}
 	// Regex hooks: intercept messages matching a pattern and execute CLI
 	// instead of the LLM. Evaluated before slash commands so fixed-format
 	// messages (e.g. "翻译 xxx") bypass the agent loop entirely.
@@ -1985,7 +2041,8 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// admin. File tools use this to refuse identity-file reads from
 	// regular chatters (SOUL/IDENTITY/BOOTSTRAP/... leak as verbatim
 	// chat replies otherwise).
-	a.registry.SetCallerIsAdmin(a.isAdminChatter(msg))
+	a.registry.SetCallerIsAdmin(a.singleUser || a.isAdminChatter(msg))
+	slog.Info("diag: identity gate (msg)", "agent", a.agentID, "singleUser", a.singleUser, "isAdmin", a.isAdminChatter(msg), "channel", msg.Channel, "msgUserID", msg.UserID, "ownerUserID", a.ownerUserID)
 	// Plumb the persistent session_key for goal-scoped tools.
 	// SetSessionID above uses msg.ChatID (the channel-level chat
 	// identifier); goal tools need the durable session.Session.SessionKey
@@ -2845,7 +2902,8 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		sess.SetProviderModel(prov, mdl)
 	}
 	a.bindSession(ctx, msg.Channel, msg.AccountID, msg.ChatID, msg.ProjectID)
-	a.registry.SetCallerIsAdmin(a.isAdminChatter(msg))
+	a.registry.SetCallerIsAdmin(a.singleUser || a.isAdminChatter(msg))
+	slog.Info("diag: identity gate (stream)", "agent", a.agentID, "singleUser", a.singleUser, "isAdmin", a.isAdminChatter(msg), "channel", msg.Channel, "msgUserID", msg.UserID, "ownerUserID", a.ownerUserID)
 	a.registry.SetGoalSessionKey(sess.SessionKey())
 	// Per-user file writes (USER.md / MEMORY.md) need to land in the
 	// per-turn chatter's row, not the UserSpace owner — see
@@ -3443,6 +3501,7 @@ func (a *Agent) UpdateConfig(rc config.ResolvedAgent) {
 	a.temperature = rc.Temperature
 	a.maxToolIterations = rc.MaxToolIterations
 	a.maxParallelToolCalls = rc.MaxParallelToolCalls
+	a.language = rc.Language
 	// Sandbox flags drive the system prompt's "Working Directory" / "home
 	// dir" description and the sandbox-capabilities block. Without this
 	// propagation an agent that existed before sandbox was enabled keeps

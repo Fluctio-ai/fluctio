@@ -91,6 +91,11 @@ export interface AgentDetail {
   soul?: string;
   skills?: string[];
   tools?: string[];
+  // config mirrors the backend agents row's Config blob (rec.Config) —
+  // per-agent AgentFileConfig fields (kb, mcpServers, language, ...) as
+  // a raw map. The Context page reads config.language for the reply-
+  // language override.
+  config?: Record<string, unknown>;
 }
 
 export interface SkillEnvSpec {
@@ -1045,6 +1050,15 @@ export interface ChatStreamEvent {
   };
 }
 
+// currentLocale reads the chatter's i18n locale straight from localStorage
+// (same key i18n.tsx uses: "fluctio-locale"). Read here in the API layer so
+// every sendChatStream call carries the locale without each caller having
+// to thread it through. Returns "en" outside the browser (SSR).
+function currentLocale(): string {
+  if (typeof window === "undefined") return "en";
+  return localStorage.getItem("fluctio-locale") || "en";
+}
+
 export async function sendChatStream(
   agentId: string,
   sessionId: string,
@@ -1072,7 +1086,10 @@ export async function sendChatStream(
       projectId: projectId || undefined,
       message,
       imageUrls: imageUrls ?? [],
-      params: params && Object.keys(params).length > 0 ? params : undefined,
+      // Lang follows the chatter's i18n locale so the backend can localize
+      // slash-command replies (agent.popLang lifts it onto Lang). Spread
+      // after caller params so the locale always reflects the live setting.
+      params: { ...(params || {}), lang: currentLocale() },
     }),
     signal,
   });
@@ -1289,6 +1306,10 @@ export interface AgentUpdatePayload {
   // to clear, or send the full desired map to replace.
   mcpServers?: Record<string, MCPServerConfig>;
   mcpServersReset?: boolean;
+  // Default UI language for slash-command replies when the inbound
+  // source carries none (IM channels). "" clears the override (falls
+  // back to runtime default, Chinese); "en" / "zh-CN" sets it.
+  language?: string;
 }
 
 export async function updateAgent(id: string, agent: AgentUpdatePayload) {
@@ -1342,6 +1363,9 @@ export interface AgentFileConfig {
   // admins mirrors config.AgentFileConfig.Admins — per-channel admin
   // platform IDs (IM identity claim flow binds via /claim <code>).
   admins?: Record<string, string[]>;
+  // language mirrors config.AgentFileConfig.Language — default UI
+  // language for slash replies on IM channels. Read via getAgentConfig.
+  language?: string;
 }
 
 // AgentKBCfg mirrors config.AgentKBCfg (slice 4b-1) — per-agent KB

@@ -57,7 +57,7 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 	if slashRequiresAdmin(cmd, msg) && !a.isAdminChatter(msg) {
 		return slashResult{
 			handled: true,
-			reply:   fmt.Sprintf("🔒 `%s` 只有 agent owner / admin 能用。让 owner 把你的 platform 用户 ID 加进 agent.json 的 `admins.%s` 里(用 `/whoami` 查自己的 ID)。", cmd, msg.Channel),
+			reply:   slashTf(msg.Lang, "admin.denied", cmd, msg.Channel),
 		}
 	}
 
@@ -65,7 +65,7 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 	case "/start":
 		return slashResult{
 			handled: true,
-			reply:   fmt.Sprintf("👋 Hi! I'm %s, your AI assistant.\n\nJust send me a message to chat. Use /help to see available commands.", a.name),
+			reply:   slashTf(msg.Lang, "start.greeting", a.name),
 		}
 
 	case "/claim":
@@ -95,7 +95,7 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 		// resolve to the new (max updated_at) row via Manager.Get's
 		// active-session lookup.
 		a.sessions.OpenNewSession(msg.Channel, msg.AccountID, msg.ChatID)
-		return slashResult{handled: true, reply: "🔄 New session started. Previous conversation kept as history."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "new.done")}
 
 	case "/retry":
 		return a.slashRetry(msg)
@@ -134,7 +134,7 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 
 	case "/model":
 		if len(args) == 0 {
-			return slashResult{handled: true, reply: fmt.Sprintf("Current model: `%s`\n\nUsage: /model <model-name>\nExample: /model gpt-4o-mini", a.model)}
+			return slashResult{handled: true, reply: slashTf(msg.Lang, "model.current", a.model)}
 		}
 		return a.slashModel(msg, args[0])
 
@@ -145,16 +145,15 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 		return a.slashPlan(msg, args)
 
 	case "/help":
-		return slashResult{handled: true, reply: a.slashHelp()}
+		return slashResult{handled: true, reply: a.slashHelp(msg.Lang)}
 
 	case "/version":
-		return slashResult{handled: true, reply: fmt.Sprintf("⚡ Fluctio\nAgent: %s\nModel: %s", a.name, a.model)}
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "version", a.name, a.model)}
 
 	case "/whoami":
 		return slashResult{
 			handled: true,
-			reply: fmt.Sprintf("Channel: `%s`\nYour user ID: `%s`\nSender name: `%s`\n\n(Add this ID to `admins.%s` in the agent config to grant write-slash access.)",
-				msg.Channel, msg.UserID, msg.SenderName, msg.Channel),
+			reply: slashTf(msg.Lang, "whoami", msg.Channel, msg.UserID, msg.SenderName, msg.Channel),
 		}
 
 	default:
@@ -171,20 +170,20 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 func (a *Agent) slashAuthReply(msg bus.InboundMessage, approved bool) slashResult {
 	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 	if sess == nil {
-		return slashResult{handled: true, reply: "⚠️ 找不到当前会话。\nNo active session found."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "auth.no_session")}
 	}
 	pending := sess.PopPendingCalls()
 	if len(pending) == 0 {
 		if approved {
-			return slashResult{handled: true, reply: "⚠️ 当前没有等待授权的操作。\nNo operation is awaiting authorization."}
+			return slashResult{handled: true, reply: slashT(msg.Lang, "auth.nothing_pending_yes")}
 		}
-		return slashResult{handled: true, reply: "🚫 已拒绝，当前没有待执行的操作。\nDenied — no operation was waiting, but your refusal is noted."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "auth.nothing_pending_no")}
 	}
 	if approved {
 		sess.SetApprovedPending(pending)
-		return slashResult{handled: true, continueToLoop: true, reply: fmt.Sprintf("✅ 已授权 %d 个操作，立即执行…\nApproved %d operation(s), executing now.", len(pending), len(pending))}
+		return slashResult{handled: true, continueToLoop: true, reply: slashTf(msg.Lang, "auth.approved", len(pending))}
 	}
-	return slashResult{handled: true, reply: fmt.Sprintf("🚫 已拒绝 %d 个操作。\nDenied %d operation(s).", len(pending), len(pending))}
+	return slashResult{handled: true, reply: slashTf(msg.Lang, "auth.denied", len(pending))}
 }
 
 // slashSetAuthMode switches the authorization mode (ask/auto/yolo) and
@@ -195,14 +194,10 @@ func (a *Agent) slashAuthReply(msg bus.InboundMessage, approved bool) slashResul
 func (a *Agent) slashSetAuthMode(msg bus.InboundMessage, mode string) slashResult {
 	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 	if sess == nil {
-		return slashResult{handled: true, reply: "⚠️ 找不到当前会话。\nNo active session found."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "auth.no_session")}
 	}
 	a.authMode = mode
-	desc := map[string][2]string{
-		AuthModeAsk:  {"workspace 外写操作会先问你（/yes 授权，/no 拒绝）", "outside-workspace writes will prompt you (/yes to approve, /no to deny)"},
-		AuthModeAuto: {"workspace 外写操作自动拒绝（不询问）", "outside-workspace writes are auto-denied (no prompt)"},
-		AuthModeYolo: {"全部放行（注意风险）", "everything is allowed (use with caution)"},
-	}[mode]
+	desc := slashT(msg.Lang, "authmode.desc."+mode)
 	// Re-judge pending calls under the new mode (yolo→all, auto→none,
 	// ask→re-prompt on next attempt). Newly-allowed ones execute
 	// immediately via drainApprovedPending on this continuation turn.
@@ -219,10 +214,7 @@ func (a *Agent) slashSetAuthMode(msg bus.InboundMessage, mode string) slashResul
 			sess.SetApprovedPending(approved)
 		}
 	}
-	reply := fmt.Sprintf("🔧 授权模式已切到 `%s`。\n%s", mode, desc[0])
-	if desc[1] != "" {
-		reply += "\nAuth mode set to `" + mode + "`.\n" + desc[1]
-	}
+	reply := slashTf(msg.Lang, "authmode.set", mode, desc)
 	return slashResult{handled: true, continueToLoop: len(approved) > 0, reply: reply}
 }
 
@@ -308,7 +300,7 @@ func (a *Agent) slashRetry(msg bus.InboundMessage) slashResult {
 		}
 	}
 	if lastUserIdx < 0 {
-		return slashResult{handled: true, reply: "No previous message to retry."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "retry.empty")}
 	}
 
 	// Save snapshot for undo
@@ -326,7 +318,7 @@ func (a *Agent) slashRetry(msg bus.InboundMessage) slashResult {
 	// But we return handled here to avoid double-processing — gateway should re-send
 	return slashResult{
 		handled: true,
-		reply:   fmt.Sprintf("🔁 Retrying: *%s*", truncateSlash(lastUserText, 80)),
+		reply:   slashTf(msg.Lang, "retry.doing", truncateSlash(lastUserText, 80)),
 	}
 }
 
@@ -338,7 +330,7 @@ func (a *Agent) slashUndo(msg bus.InboundMessage) slashResult {
 		// No snapshot — try to remove last user+assistant turn manually
 		msgs := sess.GetMessages()
 		if len(msgs) < 2 {
-			return slashResult{handled: true, reply: "Nothing to undo."}
+			return slashResult{handled: true, reply: slashT(msg.Lang, "undo.nothing")}
 		}
 		// Trim trailing assistant messages + the user message before them
 		end := len(msgs)
@@ -349,11 +341,11 @@ func (a *Agent) slashUndo(msg bus.InboundMessage) slashResult {
 			end--
 		}
 		sess.ReplaceMessages(msgs[:end])
-		return slashResult{handled: true, reply: "↩️ Undid last turn."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "undo.done_turn")}
 	}
 
 	if sess.Undo() {
-		return slashResult{handled: true, reply: "↩️ Undid last action."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "undo.done_action")}
 	}
 	return slashResult{handled: true, reply: "Nothing to undo."}
 }
@@ -363,19 +355,19 @@ func (a *Agent) slashCompact(msg bus.InboundMessage) slashResult {
 	sessionMsgs := sess.GetMessages()
 
 	if len(sessionMsgs) == 0 {
-		return slashResult{handled: true, reply: "No messages to compact."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "compact.empty")}
 	}
 
 	result, err := CompactMessages(sessionMsgs, a.homePath, a.provider, a.model)
 	if err != nil {
-		return slashResult{handled: true, reply: fmt.Sprintf("Compaction error: %v", err)}
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "compact.error", err)}
 	}
 	if result != nil && result.Pruned {
 		sess.ReplaceMessages(result.Messages)
 		a.maybeExtractSummary(sess, "compaction")
-		return slashResult{handled: true, reply: fmt.Sprintf("✅ Compacted: %d → %d messages.", len(sessionMsgs), len(result.Messages))}
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "compact.done", len(sessionMsgs), len(result.Messages))}
 	}
-	return slashResult{handled: true, reply: "Session is within limits, no compaction needed."}
+	return slashResult{handled: true, reply: slashT(msg.Lang, "compact.skip")}
 }
 
 func (a *Agent) slashStatus(msg bus.InboundMessage) slashResult {
@@ -390,17 +382,7 @@ func (a *Agent) slashStatus(msg bus.InboundMessage) slashResult {
 
 	soul := a.loadSoulName()
 
-	status := fmt.Sprintf("⚡ Fluctio Status\n"+
-		"─────────────────\n"+
-		"Agent:       %s\n"+
-		"Model:       %s\n"+
-		"Personality: %s\n"+
-		"Max Tokens:  %d\n"+
-		"Temperature: %.1f\n"+
-		"Max Iter:    %d\n"+
-		"Session Msgs:%d\n"+
-		"Memory:      %d lines\n"+
-		"Workspace:   %s",
+	status := slashTf(msg.Lang, "status",
 		a.name, a.model, soul,
 		a.maxTokens, a.temperature, a.maxToolIterations,
 		len(sessionMsgs), memLines, a.homePath,
@@ -424,27 +406,18 @@ func (a *Agent) slashUsage(msg bus.InboundMessage) slashResult {
 		}
 	}
 
-	reply := a.billingUsageText(context.Background())
+	reply := a.billingUsageText(context.Background(), msg.Lang)
 	if reply != "" {
 		reply += "\n\n"
 	}
-	reply += fmt.Sprintf("📊 Session Usage\n"+
-		"User turns:      %d\n"+
-		"Assistant turns: %d\n"+
-		"Tool calls:      %d\n"+
-		"Total messages:  %d",
+	reply += slashTf(msg.Lang, "usage.session",
 		userTurns, asstTurns, toolTurns, len(msgs),
 	)
 
 	// Append cost tracking info from SDK engine
 	if a.costTracker != nil {
 		stats := a.costTracker.Stats()
-		reply += fmt.Sprintf("\n─────────────────\n"+
-			"Cost:            %s\n"+
-			"Input tokens:    %v\n"+
-			"Output tokens:   %v\n"+
-			"API duration:    %vms\n"+
-			"Tool duration:   %vms",
+		reply += "\n" + slashTf(msg.Lang, "usage.cost",
 			a.costTracker.FormatCost(),
 			stats["totalInputTokens"],
 			stats["totalOutputTokens"],
@@ -456,7 +429,7 @@ func (a *Agent) slashUsage(msg bus.InboundMessage) slashResult {
 	return slashResult{handled: true, reply: reply}
 }
 
-func (a *Agent) billingUsageText(ctx context.Context) string {
+func (a *Agent) billingUsageText(ctx context.Context, lang string) string {
 	if a.meter == nil {
 		return ""
 	}
@@ -467,18 +440,12 @@ func (a *Agent) billingUsageText(ctx context.Context) string {
 	if a.quotaStore != nil {
 		if _, qerr := a.quotaStore.GetQuota(ctx, userID); qerr == nil {
 			if status, err := usage.CheckQuota(ctx, a.quotaStore, a.meter, userID); err == nil && status != nil {
-				return fmt.Sprintf("💳 Billing Usage\n"+
-					"Billing user:   %s\n"+
-					"Tokens:         %d / %s\n"+
-					"Requests:       %d / %s\n"+
-					"Remaining:      %s tokens, %s requests\n"+
-					"Allowed:        %t\n"+
-					"Resets at:      %s",
+				return slashTf(lang, "usage.billing.quota",
 					userID,
-					status.TokensUsed, usageLimitText(status.MonthlyTokenLimit),
-					status.RequestsUsed, usageLimitText(status.MonthlyRequestLimit),
-					remainingText(status.MonthlyTokenLimit, status.TokensUsed),
-					remainingText(status.MonthlyRequestLimit, status.RequestsUsed),
+					status.TokensUsed, usageLimitText(status.MonthlyTokenLimit, lang),
+					status.RequestsUsed, usageLimitText(status.MonthlyRequestLimit, lang),
+					remainingText(status.MonthlyTokenLimit, status.TokensUsed, lang),
+					remainingText(status.MonthlyRequestLimit, status.RequestsUsed, lang),
 					status.Allowed, emptyDash(status.ResetsAt))
 			}
 		}
@@ -488,24 +455,19 @@ func (a *Agent) billingUsageText(ctx context.Context) string {
 		return ""
 	}
 	tokens := totals.Input + totals.Output + totals.CacheRead + totals.CacheCreation
-	return fmt.Sprintf("💳 Billing Usage\n"+
-		"Billing user:   %s\n"+
-		"Tokens:         %d used in last 30 days\n"+
-		"Requests:       %d in last 30 days\n"+
-		"Quota:          unlimited / not configured",
-		userID, tokens, totals.Requests)
+	return slashTf(lang, "usage.billing.unlimited", userID, tokens, totals.Requests)
 }
 
-func usageLimitText(limit int64) string {
+func usageLimitText(limit int64, lang string) string {
 	if limit <= 0 {
-		return "unlimited"
+		return slashT(lang, "usage.unlimited")
 	}
 	return fmt.Sprintf("%d", limit)
 }
 
-func remainingText(limit, used int64) string {
+func remainingText(limit, used int64, lang string) string {
 	if limit <= 0 {
-		return "unlimited"
+		return slashT(lang, "usage.unlimited")
 	}
 	left := limit - used
 	if left < 0 {
@@ -535,19 +497,14 @@ func (a *Agent) slashInsights(msg bus.InboundMessage, days int) slashResult {
 		}
 	}
 
-	reply := fmt.Sprintf("🔍 Insights (last %d days)\n"+
-		"─────────────────────────\n"+
-		"Log files:       %d total, %d recent\n"+
-		"Memory file:     %s\n"+
-		"Workspace:       %s\n\n"+
-		"Tip: Use /status for session info, /usage for token stats.",
+	reply := slashTf(msg.Lang, "insights",
 		days, totalFiles, recentFiles,
 		func() string {
 			info, err := os.Stat(filepath.Join(a.homePath, "MEMORY.md"))
 			if err != nil {
-				return "not found"
+				return slashT(msg.Lang, "insights.memfile.notfound")
 			}
-			return fmt.Sprintf("%.1f KB, updated %s", float64(info.Size())/1024, info.ModTime().Format("2006-01-02 15:04"))
+			return slashTf(msg.Lang, "insights.memfile.fmt", float64(info.Size())/1024, info.ModTime().Format("2006-01-02 15:04"))
 		}(),
 		a.homePath,
 	)
@@ -558,20 +515,20 @@ func (a *Agent) slashInsights(msg bus.InboundMessage, days int) slashResult {
 func (a *Agent) slashPersonalityList(msg bus.InboundMessage) slashResult {
 	presets := a.listPersonalities()
 	if len(presets) == 0 {
-		return slashResult{handled: true, reply: "No personality presets found.\n\nCreate files named SOUL-<name>.md in your workspace to add presets.\nExample: SOUL-assistant.md, SOUL-dev.md"}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "personality.empty")}
 	}
 	current := a.loadSoulName()
 	var sb strings.Builder
-	sb.WriteString("🎭 Personalities\n")
-	sb.WriteString("─────────────────\n")
+	sb.WriteString(slashT(msg.Lang, "personality.list_header"))
+	mark := slashT(msg.Lang, "personality.current_mark")
 	for _, p := range presets {
 		if p == current {
-			sb.WriteString(fmt.Sprintf("• %s ← current\n", p))
+			sb.WriteString(fmt.Sprintf("• %s%s\n", p, mark))
 		} else {
 			sb.WriteString(fmt.Sprintf("• %s\n", p))
 		}
 	}
-	sb.WriteString("\nUsage: /personality <name>")
+	sb.WriteString(slashT(msg.Lang, "personality.usage_line"))
 	return slashResult{handled: true, reply: sb.String()}
 }
 
@@ -580,27 +537,27 @@ func (a *Agent) slashPersonalitySet(msg bus.InboundMessage, name string) slashRe
 	// Look for SOUL-<name>.md in workspace
 	srcPath := filepath.Join(a.homePath, fmt.Sprintf("SOUL-%s.md", name))
 	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
-		return slashResult{handled: true, reply: fmt.Sprintf("Personality '%s' not found.\nExpected: %s", name, srcPath)}
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "personality.not_found", name, srcPath)}
 	}
 
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
-		return slashResult{handled: true, reply: fmt.Sprintf("Error reading personality: %v", err)}
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "personality.read_err", err)}
 	}
 
 	destPath := filepath.Join(a.homePath, "SOUL.md")
 	if err := os.WriteFile(destPath, data, 0o644); err != nil {
-		return slashResult{handled: true, reply: fmt.Sprintf("Error applying personality: %v", err)}
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "personality.write_err", err)}
 	}
 
-	return slashResult{handled: true, reply: fmt.Sprintf("🎭 Personality set to: **%s**\nSOUL.md updated. Takes effect on the next message.", name)}
+	return slashResult{handled: true, reply: slashTf(msg.Lang, "personality.set_done", name)}
 }
 
 // slashModel switches the active model for this agent session.
 func (a *Agent) slashModel(msg bus.InboundMessage, model string) slashResult {
 	old := a.model
 	a.model = model
-	return slashResult{handled: true, reply: fmt.Sprintf("🤖 Model switched: `%s` → `%s`", old, model)}
+	return slashResult{handled: true, reply: slashTf(msg.Lang, "model.switched", old, model)}
 }
 
 // listPersonalities finds SOUL-<name>.md files in workspace.
@@ -633,44 +590,8 @@ func (a *Agent) loadSoulName() string {
 	return "default"
 }
 
-func (a *Agent) slashHelp() string {
-	return `⚡ Fluctio Commands
-
-Conversation
-  /new, /reset    — Clear session history
-  /retry          — Re-run last message
-  /undo           — Undo last turn
-
-Context
-  /compact        — Compress context window
-  /status         — Agent status & memory info
-  /usage          — Session token/turn stats
-  /insights [N]   — Activity insights (last N days, default 7)
-
-Personality & Model
-  /personality        — List available personalities
-  /personality <name> — Switch personality (SOUL-<name>.md)
-  /model <name>       — Switch LLM model
-
-Goal (persistent multi-turn objective)
-  /goal <objective> — Create a goal; agent self-continues until done
-  /goal             — Show current goal status
-  /goal pause       — Pause continuation
-  /goal resume      — Resume a paused goal
-  /goal clear       — Delete the goal
-
-Plan
-  /plan <task>      — Run <task> in plan mode: emit a numbered plan, no tool calls
-
-Info
-  /help           — Show this help
-  /version        — Show version
-  /whoami         — Show your platform user ID
-
-🔒 Agent-wide write commands (/undo /retry /compact /model /personality)
-   and group-chat /new or /reset are restricted to the agent owner + admins
-   listed in agent.json's "admins" field. Private-chat /new and /reset are
-   available to the chatter. Use /whoami to find your ID.`
+func (a *Agent) slashHelp(lang string) string {
+	return slashT(lang, "help")
 }
 
 // slashPlan handles `/plan <task>`: republish the rest of the message
@@ -681,7 +602,7 @@ Info
 func (a *Agent) slashPlan(msg bus.InboundMessage, args []string) slashResult {
 	task := strings.TrimSpace(strings.Join(args, " "))
 	if task == "" {
-		return slashResult{handled: true, reply: "Usage: `/plan <task>`"}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "plan.usage")}
 	}
 
 	// Clone the inbound msg so routing fields (channel, account, chat,
@@ -701,7 +622,7 @@ func (a *Agent) slashPlan(msg bus.InboundMessage, args []string) slashResult {
 	case a.messageBus.Inbound <- out:
 		return slashResult{handled: true, reply: "", continuationQueued: true}
 	default:
-		return slashResult{handled: true, reply: "Bus full, try again."}
+		return slashResult{handled: true, reply: slashT(msg.Lang, "plan.bus_full")}
 	}
 }
 
