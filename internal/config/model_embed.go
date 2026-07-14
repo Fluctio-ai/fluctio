@@ -3,6 +3,7 @@ package config
 import (
 	_ "embed"
 	"encoding/json"
+	"os"
 )
 
 //go:embed model_context.json
@@ -15,6 +16,30 @@ func builtinModelTable() map[string]int {
 	out := map[string]int{}
 	if err := json.Unmarshal(modelContextJSON, &out); err != nil {
 		return nil
+	}
+	return out
+}
+
+// mergedModelTable 合并内置表 + 本地覆盖文件（path 为空或读失败则只用内置）。
+// 同 key 本地覆盖优先。用于 LookupModelMeta。
+func mergedModelTable(localPath string) map[string]int {
+	out := builtinModelTable()
+	if out == nil {
+		out = map[string]int{}
+	}
+	if localPath == "" {
+		return out
+	}
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		return out
+	}
+	local := map[string]int{}
+	if err := json.Unmarshal(data, &local); err != nil {
+		return out
+	}
+	for k, v := range local {
+		out[k] = v
 	}
 	return out
 }
