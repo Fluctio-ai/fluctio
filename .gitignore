@@ -86,3 +86,6 @@ run.err.*
 
 # Local-only SVG asset (wave animation icon, not for repo)
 /ic_动画_动作_波浪.svg
+
+# Local agent outputs (generated files, not for repo)
+/outputs/
