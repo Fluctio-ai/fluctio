@@ -222,3 +222,99 @@ func TestCompressOlderMessagesNeverStartsTailWithTool(t *testing.T) {
 		}
 	}
 }
+
+// TestPruneOldToolResultsTruncatesOversizedInTail pins the fix for the
+// "model returned an empty response" every-turn loop: a single multi-MB
+// tool result landing in the preserved recent tail used to survive
+// compaction untouched, keeping the context above the model limit.
+// pruneOldToolResults now caps oversized tool results even in the tail.
+func TestPruneOldToolResultsTruncatesOversizedInTail(t *testing.T) {
+	huge := strings.Repeat("x", maxRetainedToolResultBytes*4) // well over the cap
+	msgs := make([]provider.Message, PruneTurnAge+5)
+	for i := range msgs {
+		msgs[i] = provider.Message{Role: "user", Content: "u"}
+	}
+	// Oversized tool result inside the retained tail window.
+	msgs[len(msgs)-1] = provider.Message{
+		Role: "tool", ToolCallID: "big", Content: huge,
+	}
+	out := pruneOldToolResults(msgs)
+	last := out[len(out)-1]
+	if last.Role != "tool" || last.ToolCallID != "big" {
+		t.Fatalf("tail tool result identity lost: %+v", last)
+	}
+	if len(last.Content) >= len(huge) {
+		t.Errorf("oversized tail tool result was not truncated: got %d bytes", len(last.Content))
+	}
+	if !strings.Contains(last.Content, "truncated") {
+		t.Errorf("truncated tail should carry a marker; got %q", last.Content)
+	}
+}
+
+// TestPruneOldToolResultsTruncatesOversizedInShortHistory covers the
+// len <= PruneTurnAge path: compressOlderMessages short-circuits there,
+// so without truncating the oversized tool result the LLM call ships
+// with a context that exceeds the model limit.
+func TestPruneOldToolResultsTruncatesOversizedInShortHistory(t *testing.T) {
+	huge := strings.Repeat("x", maxRetainedToolResultBytes*4)
+	msgs := []provider.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "yo", ToolCalls: []provider.ToolCall{{ID: "t1"}}},
+		{Role: "tool", ToolCallID: "t1", Content: huge},
+	}
+	out := pruneOldToolResults(msgs)
+	if out[2].Role != "tool" || out[2].ToolCallID != "t1" {
+		t.Fatalf("tool result identity lost: %+v", out[2])
+	}
+	if len(out[2].Content) >= len(huge) {
+		t.Errorf("oversized tool result in short history was not truncated: %d bytes", len(out[2].Content))
+	}
+	if !strings.Contains(out[2].Content, "truncated") {
+		t.Errorf("truncated result should carry a marker; got %q", out[2].Content)
+	}
+}
+
+// TestPruneOldToolResultsKeepsNormalTailToolResults ensures the cap
+// only bites on oversized results — normal tool replies in the tail
+// pass through verbatim so the model keeps live tool context.
+func TestPruneOldToolResultsKeepsNormalTailToolResults(t *testing.T) {
+	normal := strings.Repeat("y", 500) // well under the cap
+	msgs := make([]provider.Message, PruneTurnAge+2)
+	for i := range msgs {
+		msgs[i] = provider.Message{Role: "user", Content: "u"}
+	}
+	msgs[len(msgs)-1] = provider.Message{
+		Role: "tool", ToolCallID: "ok", Content: normal,
+	}
+	out := pruneOldToolResults(msgs)
+	if out[len(out)-1].Content != normal {
+		t.Errorf("normal-sized tail tool result should be unchanged")
+	}
+}
+
+// TestCompactMessagesHandlesOversizedToolResult reproduces the production
+// failure end-to-end: a long session whose retained tail carries one
+// multi-MB tool result. Before the fix compaction left the oversized
+// result untouched, the context stayed above the threshold, and the LLM
+// returned an empty response every turn. Now compaction caps it and the
+// result lands under the threshold via the prune-only path (no LLM call).
+func TestCompactMessagesHandlesOversizedToolResult(t *testing.T) {
+	huge := strings.Repeat("z", 2_200_000) // ~2.2 MB, matches the prod row
+	msgs := make([]provider.Message, PruneTurnAge+5)
+	for i := range msgs {
+		msgs[i] = provider.Message{Role: "user", Content: "x"}
+	}
+	msgs[len(msgs)-1] = provider.Message{
+		Role: "tool", ToolCallID: "huge", Content: huge,
+	}
+	out, err := CompactMessages(msgs, t.TempDir(), &fakeSummarizer{}, "")
+	if err != nil {
+		t.Fatalf("CompactMessages: %v", err)
+	}
+	if !out.Pruned {
+		t.Fatal("expected compaction to prune the oversized tool result")
+	}
+	if est := EstimateTokens(out.Messages); est >= DefaultTokenThreshold {
+		t.Errorf("compaction left context over threshold: %d tokens", est)
+	}
+}

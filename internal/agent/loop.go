@@ -2110,6 +2110,10 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		sess.ReplaceMessages(compactResult.Messages)
 		sessionMsgs = compactResult.Messages
 		slog.Info("context compacted", "agent", a.name, "log_file", compactResult.LogFile)
+		// Persist a topic summary so cross-session recall captures long
+		// conversations the user never explicitly /compact'd or /new'd.
+		// Mirrors the /compact slash path (trigger "compaction").
+		a.maybeExtractSummary(sess, "auto-compaction")
 	}
 
 	messages := make([]provider.Message, 0, len(sessionMsgs)+4)
@@ -2957,6 +2961,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	if compactResult != nil && compactResult.Pruned {
 		sess.ReplaceMessages(compactResult.Messages)
 		sessionMsgs = compactResult.Messages
+		// Persist a topic summary so cross-session recall captures long
+		// conversations the user never explicitly /compact'd or /new'd.
+		a.maybeExtractSummary(sess, "auto-compaction")
 	}
 
 	messages := make([]provider.Message, 0, len(sessionMsgs)+4)

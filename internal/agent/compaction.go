@@ -19,6 +19,16 @@ const (
 	PruneTurnAge = 20
 	// truncatedPlaceholder replaces pruned tool results.
 	truncatedPlaceholder = "[Result truncated - see memory logs]"
+	// maxRetainedToolResultBytes caps a single tool-result message kept
+	// in the preserved recent tail (and in short histories that skip
+	// the age-based prune). The tail is exempt from the ordinary prune
+	// so the model keeps live tool context, but a single multi-MB
+	// result (huge file dump, verbose API response) blows past every
+	// model's context window — compaction can never bring the context
+	// back under threshold, so the LLM returns an empty response every
+	// turn. Keep the head + marker so the model still sees the result
+	// shape without the bulk.
+	maxRetainedToolResultBytes = 16384
 )
 
 // EstimateTokens provides a rough token estimate: chars/4.
@@ -121,24 +131,42 @@ func safeCompactionCutoff(messages []provider.Message, cutoff int) int {
 	return cutoff
 }
 
-// pruneOldToolResults strips tool result content from messages older than PruneTurnAge.
+// pruneOldToolResults strips tool result content from messages older than
+// PruneTurnAge, and additionally truncates any oversized tool result that
+// survives into the preserved recent tail (or into a short history that
+// skips the age-based prune entirely). Without the tail cap, a single
+// multi-MB tool dump lands inside the retained window and compaction can
+// never bring the context under the model's limit — every subsequent turn
+// gets an empty response.
 func pruneOldToolResults(messages []provider.Message) []provider.Message {
-	if len(messages) <= PruneTurnAge {
-		return messages
-	}
-
-	cutoff := len(messages) - PruneTurnAge
 	result := make([]provider.Message, len(messages))
 	copy(result, messages)
 
-	for i := 0; i < cutoff; i++ {
-		if result[i].Role == "tool" && len(result[i].Content) > 200 {
-			result[i] = provider.Message{
-				Role:       "tool",
-				Content:    truncatedPlaceholder,
-				ToolCallID: result[i].ToolCallID,
-				Name:       result[i].Name,
+	cutoff := len(result) - PruneTurnAge
+	if cutoff < 0 {
+		cutoff = 0
+	}
+	for i := range result {
+		if result[i].Role != "tool" {
+			continue
+		}
+		if i < cutoff {
+			// Historical tool results: strip content down to the stub.
+			if len(result[i].Content) > 200 {
+				result[i] = provider.Message{
+					Role:       "tool",
+					Content:    truncatedPlaceholder,
+					ToolCallID: result[i].ToolCallID,
+					Name:       result[i].Name,
+				}
 			}
+		} else if len(result[i].Content) > maxRetainedToolResultBytes {
+			// Retained tail: cap oversized tool results so a single
+			// multi-MB dump can't hold the context above the model's
+			// limit. Keep the head so the model still sees what the
+			// tool returned.
+			result[i].Content = result[i].Content[:maxRetainedToolResultBytes] +
+				"\n[... result truncated to keep context under model limit ...]"
 		}
 	}
 
