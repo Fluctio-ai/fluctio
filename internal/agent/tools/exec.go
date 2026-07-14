@@ -193,6 +193,13 @@ func makeExecToolFull(r *Registry, sbCfg *SandboxConfig, envProvider SkillEnvPro
 		}
 
 		cmd := exec.CommandContext(execCtx, "sh", "-c", command)
+		// cwd into the session workspace so host-mode exec (skill scripts,
+		// generated files) lands output where the user can see it — matching
+		// sandbox mode's /workspace. Cloud stores expose no host path, so we
+		// leave cmd.Dir unset and fall back to the gateway's cwd as before.
+		if dir := r.hostWorkspaceDir(); dir != "" {
+			cmd.Dir = dir
+		}
 
 		// Always set cmd.Env explicitly. Default Go behavior is to
 		// inherit the parent's full env, which leaks daemon secrets

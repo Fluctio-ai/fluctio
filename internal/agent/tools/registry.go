@@ -586,6 +586,30 @@ func (r *Registry) scopeSessionID() string {
 	return r.sessionID
 }
 
+// hostWorkspaceDir returns the on-disk directory for the current session's
+// workspace when the store backs onto the local filesystem (LocalFS).
+// Host-mode exec cwds here so skill scripts and other host-shell commands
+// land generated files in the session workspace — matching sandbox mode's
+// /workspace cwd, so the same relative-path skill command produces files
+// in the same place under either backend.
+//
+// Returns "" for cloud stores (S3/R2 have no host path) or when no store
+// is wired; callers leave cmd.Dir unset and inherit the gateway's cwd.
+func (r *Registry) hostWorkspaceDir() string {
+	if r.workspaceStore == nil || r.agentID == "" {
+		return ""
+	}
+	ls, ok := r.workspaceStore.(workspace.LocalScoper)
+	if !ok {
+		return ""
+	}
+	dir, ok := ls.LocalScopeDir(r.agentID, r.projectID, r.scopeSessionID())
+	if !ok || dir == "" {
+		return ""
+	}
+	return dir
+}
+
 // SetCodingSubdir redirects the file tools into a subfolder of the scope
 // workspace — the folder a project runtime scaffolds its app into, so the
 // template doesn't litter the workspace root AND the agent's edits land
