@@ -32,6 +32,37 @@ func TestWithMessageTimestampsUsesExplicitChatterTimezone(t *testing.T) {
 	}
 }
 
+func TestWithMessageTimestampsSkipsCompactionNotice(t *testing.T) {
+	store := newFakeMemoryStore()
+	a := &Agent{
+		memory:  NewMemoryWithStoreForUser("", store, ownerUID, testAgentID),
+		agentID: testAgentID,
+	}
+
+	normal := provider.Message{Role: "user", Content: "hello", Timestamp: 0}
+	notice := provider.Message{
+		Role:      "assistant",
+		Content:   "📝 上下文已自动压缩…",
+		Timestamp: time.Now().UnixMilli(),
+		Metadata:  map[string]any{"compactionNotice": map[string]any{"tokensBefore": 1000}},
+	}
+	after := provider.Message{Role: "user", Content: "next turn"}
+
+	got := a.withMessageTimestampsForChatter([]provider.Message{normal, notice, after}, chatterUID)
+
+	if len(got) != 2 {
+		t.Fatalf("message count = %d, want 2 (notice filtered)", len(got))
+	}
+	for _, m := range got {
+		if _, ok := m.Metadata["compactionNotice"]; ok {
+			t.Fatalf("compaction notice leaked into LLM-bound output: %+v", m)
+		}
+	}
+	if got[0].Content != "hello" || got[1].Content != "next turn" {
+		t.Fatalf("order/content wrong: got %+v", got)
+	}
+}
+
 func TestRuntimeContextUsesChatterTimezone(t *testing.T) {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {

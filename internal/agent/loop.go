@@ -3596,13 +3596,21 @@ func (a *Agent) withMessageTimestampsForChatter(msgs []provider.Message, chatter
 		return msgs
 	}
 	loc := a.chatterLocation(chatterUID)
-	out := make([]provider.Message, len(msgs))
-	for i, m := range msgs {
+	out := make([]provider.Message, 0, len(msgs))
+	for _, m := range msgs {
+		// Compaction notices are UI-only bubbles (role=assistant + visible
+		// Content text). If we let them through, the notice text reaches
+		// the LLM as a fake assistant turn and pollutes context. Skip the
+		// whole message — Metadata itself is stripped by provider
+		// serializers, but the Content would still leak.
+		if _, ok := m.Metadata["compactionNotice"]; ok {
+			continue
+		}
 		if m.Role == "user" && m.Timestamp > 0 && m.Content != "" {
 			t := time.UnixMilli(m.Timestamp).In(loc)
 			m.Content = "[" + t.Format("2006-01-02 15:04 Mon") + "] " + m.Content
 		}
-		out[i] = m
+		out = append(out, m)
 	}
 	return out
 }
