@@ -358,7 +358,7 @@ func (a *Agent) slashCompact(msg bus.InboundMessage) slashResult {
 		return slashResult{handled: true, reply: slashT(msg.Lang, "compact.empty")}
 	}
 
-	result, err := CompactMessages(sessionMsgs, a.homePath, a.provider, a.model)
+	result, err := CompactMessages(sessionMsgs, a.homePath, a.provider, a.model, DefaultTokenThreshold)
 	if err != nil {
 		return slashResult{handled: true, reply: slashTf(msg.Lang, "compact.error", err)}
 	}

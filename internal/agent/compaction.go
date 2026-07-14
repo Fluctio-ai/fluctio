@@ -46,22 +46,27 @@ func EstimateTokens(messages []provider.Message) int {
 
 // CompactResult holds the result of a compaction operation.
 type CompactResult struct {
-	Messages []provider.Message
-	Pruned   bool
-	LogFile  string
+	Messages     []provider.Message
+	Pruned       bool
+	LogFile      string
+	TokensBefore int // token count before compaction (for Phase 3 notice)
+	TokensAfter  int // token count after compaction (for Phase 3 notice)
 }
 
 // CompactMessages prunes and optionally compresses the message history when it exceeds the token threshold.
 // Step 1 (Pruning): For messages older than PruneTurnAge, strip tool result content.
 // Step 2 (Compression): If still over threshold after pruning, summarize older messages
 // using the LLM and write full history to a log file.
-func CompactMessages(messages []provider.Message, workspace string, prov provider.Provider, model string) (*CompactResult, error) {
+func CompactMessages(messages []provider.Message, workspace string, prov provider.Provider, model string, threshold int) (*CompactResult, error) {
 	tokens := EstimateTokens(messages)
-	if tokens < DefaultTokenThreshold {
-		return &CompactResult{Messages: messages}, nil
+	if threshold <= 0 {
+		threshold = DefaultTokenThreshold // defensive: caller passed 0
+	}
+	if tokens < threshold {
+		return &CompactResult{Messages: messages, TokensBefore: tokens, TokensAfter: tokens}, nil
 	}
 
-	slog.Info("context compaction triggered", "tokens", tokens, "threshold", DefaultTokenThreshold, "message_count", len(messages))
+	slog.Info("context compaction triggered", "tokens", tokens, "threshold", threshold, "message_count", len(messages))
 
 	// Write full history to log file before any modifications
 	logFile, err := writeHistoryLog(messages, workspace)
@@ -75,11 +80,13 @@ func CompactMessages(messages []provider.Message, workspace string, prov provide
 
 	slog.Info("after pruning", "tokens_before", tokens, "tokens_after", prunedTokens)
 
-	if prunedTokens < DefaultTokenThreshold {
+	if prunedTokens < threshold {
 		return &CompactResult{
-			Messages: pruned,
-			Pruned:   true,
-			LogFile:  logFile,
+			Messages:     pruned,
+			Pruned:       true,
+			LogFile:      logFile,
+			TokensBefore: tokens,
+			TokensAfter:  prunedTokens,
 		}, nil
 	}
 
@@ -88,18 +95,23 @@ func CompactMessages(messages []provider.Message, workspace string, prov provide
 	if err != nil {
 		slog.Warn("compression failed, using pruned messages", "error", err)
 		return &CompactResult{
-			Messages: pruned,
-			Pruned:   true,
-			LogFile:  logFile,
+			Messages:     pruned,
+			Pruned:       true,
+			LogFile:      logFile,
+			TokensBefore: tokens,
+			TokensAfter:  prunedTokens,
 		}, nil
 	}
 
-	slog.Info("after compression", "tokens_before", prunedTokens, "tokens_after", EstimateTokens(compressed))
+	compressedTokens := EstimateTokens(compressed)
+	slog.Info("after compression", "tokens_before", prunedTokens, "tokens_after", compressedTokens)
 
 	return &CompactResult{
-		Messages: compressed,
-		Pruned:   true,
-		LogFile:  logFile,
+		Messages:     compressed,
+		Pruned:       true,
+		LogFile:      logFile,
+		TokensBefore: tokens,
+		TokensAfter:  compressedTokens,
 	}, nil
 }
 

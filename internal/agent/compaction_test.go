@@ -307,7 +307,7 @@ func TestCompactMessagesHandlesOversizedToolResult(t *testing.T) {
 	msgs[len(msgs)-1] = provider.Message{
 		Role: "tool", ToolCallID: "huge", Content: huge,
 	}
-	out, err := CompactMessages(msgs, t.TempDir(), &fakeSummarizer{}, "")
+	out, err := CompactMessages(msgs, t.TempDir(), &fakeSummarizer{}, "", DefaultTokenThreshold)
 	if err != nil {
 		t.Fatalf("CompactMessages: %v", err)
 	}
@@ -316,5 +316,36 @@ func TestCompactMessagesHandlesOversizedToolResult(t *testing.T) {
 	}
 	if est := EstimateTokens(out.Messages); est >= DefaultTokenThreshold {
 		t.Errorf("compaction left context over threshold: %d tokens", est)
+	}
+}
+
+// TestCompactMessagesThresholdControlsTrigger verifies that the threshold
+// parameter controls whether compaction fires. A very high threshold should
+// skip compaction entirely; a very low threshold should force it.
+func TestCompactMessagesThresholdControlsTrigger(t *testing.T) {
+	msgs := make([]provider.Message, PruneTurnAge+5)
+	for i := range msgs {
+		msgs[i] = provider.Message{Role: "user", Content: strings.Repeat("x", 1000)}
+	}
+
+	// High threshold → compaction should NOT trigger.
+	out, err := CompactMessages(msgs, t.TempDir(), &fakeSummarizer{}, "", 10_000_000)
+	if err != nil {
+		t.Fatalf("CompactMessages high threshold: %v", err)
+	}
+	if out.Pruned {
+		t.Error("high threshold should not trigger compaction")
+	}
+	if out.TokensBefore == 0 {
+		t.Error("TokensBefore should be populated even when no compaction runs")
+	}
+
+	// Low threshold → compaction SHOULD trigger.
+	out2, err := CompactMessages(msgs, t.TempDir(), &fakeSummarizer{}, "", 1000)
+	if err != nil {
+		t.Fatalf("CompactMessages low threshold: %v", err)
+	}
+	if !out2.Pruned {
+		t.Error("low threshold should trigger compaction")
 	}
 }
