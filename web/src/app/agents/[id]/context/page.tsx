@@ -231,11 +231,10 @@ export default function AgentContextPage() {
     }
   };
 
-  // formatK renders a token count in a human-friendly way: 10000+ → "N万",
-  // 1000+ → "NK", below 1000 → the raw number.
+  // formatK renders a token count in a human-friendly way using the
+  // "K" suffix, which is locale-neutral and readable in both EN/CJK.
   const formatK = (n: number): string => {
-    if (n >= 10000) return `${(n / 10000).toFixed(0)}万`;
-    if (n >= 1000) return `${(n / 1000).toFixed(0)}K`;
+    if (n >= 1000) return `${Math.round(n / 1000)}K`;
     return String(n);
   };
 
@@ -262,15 +261,15 @@ export default function AgentContextPage() {
   };
 
   // handleCompactionManualSave fires on input blur — writes the fixed
-  // threshold and clears the mode override. 0 or empty reverts to
-  // mode-based (balanced default).
+  // threshold and clears the mode override. An empty input (NaN) is
+  // treated as "no change" and skips the save entirely so we don't
+  // clobber an already-saved mode with a 0 threshold.
   const handleCompactionManualSave = async () => {
     const parsed = parseInt(compactionManual, 10);
-    const threshold = isNaN(parsed) || parsed < 0 ? 0 : parsed;
+    if (isNaN(parsed)) return; // empty input — skip save
+    const threshold = parsed < 0 ? 0 : parsed;
     setCompactionSaving(true);
     try {
-      // Save mode="" (balanced) + threshold. If threshold is 0, the
-      // runtime ignores it and falls back to mode-based calculation.
       await updateAgent(agentId, { compactionMode: "", compactionThreshold: threshold });
       flashSaved();
     } catch {
