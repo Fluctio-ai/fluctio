@@ -70,6 +70,15 @@ func (g *Generator) Generate(ctx context.Context, agentID, sourceID string) *Gen
 	// Extract JSON plan from analysis
 	plan := extractPlan(analysisText)
 	if plan == nil {
+		// Log the tail so truncation vs. missing-JSON is diagnosable: a
+		// truncated analysis ends mid-sentence with no JSON; a model that
+		// skipped the dispatch plan ends with finished prose but no block.
+		tail := analysisText
+		if len(tail) > 400 {
+			tail = tail[len(tail)-400:]
+		}
+		slog.Warn("wiki: could not extract plan from analysis",
+			"source", sourceID, "analysis_len", len(analysisText), "analysis_tail", tail)
 		result.Error = "could not extract plan from analysis"
 		return result
 	}

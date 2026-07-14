@@ -63,7 +63,7 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	}
 
 	invoker := func(ctx context.Context, messages []provider.Message) (string, error) {
-		resp, err := prov.Chat(ctx, messages, nil, model, 4096, 0.3)
+		resp, err := prov.Chat(ctx, messages, nil, model, 8192, 0.3)
 		if err != nil {
 			return "", err
 		}
