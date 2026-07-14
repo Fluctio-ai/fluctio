@@ -400,3 +400,24 @@ func TestModeMarginPct(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildCompactionNotice verifies the Phase 3 notice builder:
+// text must mention compaction + retained turns, meta must carry
+// before/after/retained_turns, and large token counts must format
+// as 万 (Chinese friendly).
+func TestBuildCompactionNotice(t *testing.T) {
+	r := &CompactResult{TokensBefore: 123456, TokensAfter: 4111}
+	text, meta := buildCompactionNotice(r)
+	if !strings.Contains(text, "压缩") || !strings.Contains(text, "20") {
+		t.Errorf("notice text missing compaction + retained turns: %q", text)
+	}
+	if meta["before"] != 123456 || meta["after"] != 4111 {
+		t.Errorf("meta stats wrong: %v", meta)
+	}
+	if !strings.Contains(text, "12.3万") {
+		t.Errorf("before should be formatted as 万: %q", text)
+	}
+	if meta["retained_turns"] != PruneTurnAge {
+		t.Errorf("retained_turns want %d got %v", PruneTurnAge, meta["retained_turns"])
+	}
+}

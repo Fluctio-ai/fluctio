@@ -2179,6 +2179,18 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// conversations the user never explicitly /compact'd or /new'd.
 		// Mirrors the /compact slash path (trigger "compaction").
 		a.maybeExtractSummary(sess, "auto-compaction")
+		// Persist compaction notice (方案 B: role=assistant + metadata.compactionNotice)
+		// and emit SSE event so web/IM can show a bubble (Phase 3 Task 1).
+		if compactResult.TokensBefore > 0 {
+			text, meta := buildCompactionNotice(compactResult)
+			sess.Append(provider.Message{
+				Role:      "assistant",
+				Content:   text,
+				Metadata:  map[string]any{"compactionNotice": meta},
+				Timestamp: time.Now().UnixMilli(),
+			})
+			emitEvent(ctx, ChatEvent{Type: "compaction_notice", Data: meta})
+		}
 	}
 
 	messages := make([]provider.Message, 0, len(sessionMsgs)+4)
@@ -3030,6 +3042,17 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		// Persist a topic summary so cross-session recall captures long
 		// conversations the user never explicitly /compact'd or /new'd.
 		a.maybeExtractSummary(sess, "auto-compaction")
+		// Persist compaction notice (方案 B) + emit SSE event — Phase 3 Task 1.
+		if compactResult.TokensBefore > 0 {
+			text, meta := buildCompactionNotice(compactResult)
+			sess.Append(provider.Message{
+				Role:      "assistant",
+				Content:   text,
+				Metadata:  map[string]any{"compactionNotice": meta},
+				Timestamp: time.Now().UnixMilli(),
+			})
+			emitEvent(ctx, ChatEvent{Type: "compaction_notice", Data: meta})
+		}
 	}
 
 	messages := make([]provider.Message, 0, len(sessionMsgs)+4)

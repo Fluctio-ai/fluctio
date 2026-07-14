@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -88,6 +89,30 @@ type CompactResult struct {
 	LogFile      string
 	TokensBefore int // token count before compaction (for Phase 3 notice)
 	TokensAfter  int // token count after compaction (for Phase 3 notice)
+}
+
+// buildCompactionNotice 生成压缩提示的可读文本 + 统计 metadata。
+// text: IM/web 都显示的可读文案；meta: {before, after, retained_turns} 供 web 气泡。
+// 文案为 spec 3.3 定义的固定中文（后端 notice 不做 locale 化，超出本 task 范围）。
+func buildCompactionNotice(r *CompactResult) (string, map[string]any) {
+	meta := map[string]any{
+		"before":         r.TokensBefore,
+		"after":          r.TokensAfter,
+		"retained_turns": PruneTurnAge,
+	}
+	text := fmt.Sprintf("📝 上下文已自动压缩（%s → %s tokens，保留最近 %d 轮）",
+		formatTokenCount(r.TokensBefore), formatTokenCount(r.TokensAfter), PruneTurnAge)
+	return text, meta
+}
+
+// formatTokenCount 中文友好显示：>=10000 用"万"，否则原数。
+// 后端 notice 文案用此函数（与前端 locale 感知的 formatK 不同——
+// 后端拿 user locale 超出本 task 范围）。
+func formatTokenCount(n int) string {
+	if n >= 10000 {
+		return strconv.FormatFloat(float64(n)/10000, 'f', 1, 64) + "万"
+	}
+	return strconv.Itoa(n)
 }
 
 // CompactMessages prunes and optionally compresses the message history when it exceeds the token threshold.
