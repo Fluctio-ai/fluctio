@@ -648,6 +648,45 @@ func (s *Server) handleBuiltinModels(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(tbl)
 }
 
+// handleFetchProviderModels calls the agent's bound provider upstream to
+// list available models, then enriches each ID with a contextWindow via
+// config.LookupModelMeta (P1-T3). Returns 200 [{id, contextWindow}] on
+// success. Upstream unreachable / unsupported apiType → 501; agent or
+// provider misconfigured → 400.
+//
+// The route is registered as POST so a body isn't required and the call
+// has a side-effect flavor (network egress) that doesn't belong in GET.
+func (s *Server) handleFetchProviderModels(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	prov, err := s.providerConfigForAgent(r.Context(), agentID)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{
+			"ok":    false,
+			"error": "provider not configured: " + err.Error(),
+		})
+		return
+	}
+	ids, err := fetchUpstreamModelIDs(r.Context(), prov)
+	if err != nil {
+		jsonResponse(w, http.StatusNotImplemented, map[string]any{
+			"ok":    false,
+			"error": "upstream list failed: " + err.Error(),
+		})
+		return
+	}
+	type item struct {
+		ID            string `json:"id"`
+		ContextWindow int    `json:"contextWindow"`
+	}
+	out := make([]item, 0, len(ids))
+	for _, id := range ids {
+		cw, _ := config.LookupModelMeta(id)
+		out = append(out, item{ID: id, ContextWindow: cw})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
 // handleTestStoredProvider runs the same connection check, but reads the
 // apiKey + apiBase + apiType + authType from a saved provider row instead
 // of taking them from the request body. Lets the Edit dialog test against

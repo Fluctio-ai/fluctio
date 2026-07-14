@@ -419,6 +419,11 @@ func (s *Server) Run(ctx context.Context) error {
 	// Built-in model contextWindow table (for models page autocomplete).
 	mux.HandleFunc("GET /api/models/builtin", auth(s.handleBuiltinModels))
 
+	// Fetch live model list from the agent's bound upstream provider.
+	// Each id is enriched with a contextWindow via LookupModelMeta.
+	// Upstream unreachable / unsupported → 501.
+	mux.HandleFunc("POST /api/agents/{id}/models/fetch", auth(s.handleFetchProviderModels))
+
 	// Cron jobs (per-user, config-defined catalog)
 	mux.HandleFunc("GET /api/cron", auth(s.handleListCronJobs))
 	mux.HandleFunc("POST /api/cron", auth(s.handleCreateCronJob))
