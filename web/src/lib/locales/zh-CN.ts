@@ -778,6 +778,7 @@ const zhCN: Record<string, string> = {
   "wiki.autoGen": "自动生成",
   "wiki.autoGenInterval": "扫描间隔",
   "wiki.autoGenHours": "小时",
+  "wiki.autoGenMaxTokens": "最大 Token",
   "wiki.autoGenHint": "后台每小时检查，为新增的知识库源自动生成 Wiki。",
   "wiki.autoGenLastRun": "上次运行",
   "wiki.autoGenNever": "从未",

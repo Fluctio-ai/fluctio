@@ -268,9 +268,10 @@ type MemoryCfg struct {
 
 // WikiAutoGenCfg configures the background wiki auto-generation sweep.
 type WikiAutoGenCfg struct {
-	Enabled  bool          `json:"enabled"`
-	Interval time.Duration `json:"interval,omitempty"` // default 6h
-	Model    string        `json:"model,omitempty"`    // empty = agent default
+	Enabled   bool          `json:"enabled"`
+	Interval  time.Duration `json:"interval,omitempty"`  // default 6h
+	Model     string        `json:"model,omitempty"`     // empty = agent default
+	MaxTokens int           `json:"maxTokens,omitempty"` // 0 = default 8192; caps LLM output for the analysis + page-generation steps
 }
 
 // MemorySettingsCfg holds operational knobs for the memory subsystem.

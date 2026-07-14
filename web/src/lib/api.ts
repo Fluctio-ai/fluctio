@@ -1463,7 +1463,7 @@ export interface WikiPage {
 export interface WikiLink { src_page_id: string; dst_page_id: string; relation: string; weight: number; }
 export interface WikiStats { page_counts: Record<string, number>; total_pages: number; total_edges: number; }
 export interface WikiGraph { nodes: WikiPage[]; edges: WikiLink[] | null; }
-export interface WikiAutoGenCfg { enabled: boolean; interval?: number; model?: string; }
+export interface WikiAutoGenCfg { enabled: boolean; interval?: number; model?: string; maxTokens?: number; }
 
 export async function getWikiStats(agentId: string): Promise<WikiStats> {
   const res = await apiFetch(`/api/agents/${agentId}/wiki/stats`);

@@ -404,6 +404,21 @@ export default function WikiPage() {
                   <span className="text-xs text-muted-foreground">{t("wiki.autoGenHours")}</span>
                 </div>
               </div>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs text-muted-foreground">{t("wiki.autoGenMaxTokens")}</label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={512}
+                  className="w-20 h-7 text-xs"
+                  value={wikiCfg.maxTokens && wikiCfg.maxTokens > 0 ? wikiCfg.maxTokens : 8192}
+                  onChange={(e) => {
+                    const v = Math.max(0, Number(e.target.value) || 0);
+                    saveWikiCfg({ ...wikiCfg, maxTokens: v });
+                  }}
+                  disabled={wikiSaving}
+                />
+              </div>
               <p className="text-[11px] leading-tight text-muted-foreground">{t("wiki.autoGenHint")}</p>
               {autogenStatus && (
                 <div className="text-[11px] leading-tight text-muted-foreground space-y-0.5 pt-1">

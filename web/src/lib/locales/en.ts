@@ -778,6 +778,7 @@ const en: Record<string, string> = {
   "wiki.autoGen": "Auto-generate",
   "wiki.autoGenInterval": "Scan every",
   "wiki.autoGenHours": "hours",
+  "wiki.autoGenMaxTokens": "Max tokens",
   "wiki.autoGenHint": "Background sweep each hour auto-generates Wiki pages for new KB sources.",
   "wiki.autoGenLastRun": "Last run",
   "wiki.autoGenNever": "never",
