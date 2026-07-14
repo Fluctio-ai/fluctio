@@ -2212,6 +2212,24 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 				"after":          meta["after"],
 				"retained_turns": meta["retained_turns"],
 			}})
+			// Broadcast notice text to IM channels (web session receives it
+			// via the SSE event above; IM has no SSE so we push via the
+			// outbound bus). Sent before the ReAct loop starts so the user
+			// sees the notice before the agent's reply. Non-blocking send:
+			// a full outbound queue drops the notice rather than stalling
+			// the agent loop — matches sendMediaFiles pattern.
+			if msg.Channel != "web" && isIMChannel(msg.Channel) && a.messageBus != nil {
+				select {
+				case a.messageBus.Outbound <- bus.OutboundMessage{
+					Channel:   msg.Channel,
+					AccountID: msg.AccountID,
+					ChatID:    msg.ChatID,
+					Text:      text,
+				}:
+				default:
+					slog.Warn("outbound channel full, dropping compaction notice", "agent", a.name)
+				}
+			}
 		}
 	}
 
@@ -3079,6 +3097,24 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 				"after":          meta["after"],
 				"retained_turns": meta["retained_turns"],
 			}})
+			// Broadcast notice text to IM channels (web session receives it
+			// via the SSE event above; IM has no SSE so we push via the
+			// outbound bus). Sent before the ReAct loop starts so the user
+			// sees the notice before the agent's reply. Non-blocking send:
+			// a full outbound queue drops the notice rather than stalling
+			// the agent loop — matches sendMediaFiles pattern.
+			if msg.Channel != "web" && isIMChannel(msg.Channel) && a.messageBus != nil {
+				select {
+				case a.messageBus.Outbound <- bus.OutboundMessage{
+					Channel:   msg.Channel,
+					AccountID: msg.AccountID,
+					ChatID:    msg.ChatID,
+					Text:      text,
+				}:
+				default:
+					slog.Warn("outbound channel full, dropping compaction notice", "agent", a.name)
+				}
+			}
 		}
 	}
 
