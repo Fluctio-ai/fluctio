@@ -1177,6 +1177,23 @@ func (a *Agent) WebChatHistory(sessionId string) []map[string]any {
 			}
 			history = append(history, entry)
 		case "assistant":
+			// 压缩提示单独渲染成 notice entry（前端识别
+			// entry.kind="compaction_notice"）。必须放在常规 assistant
+			// 处理之前，避免 notice 文案被当成正常回复。
+			if _, ok := m.Metadata["compactionNotice"]; ok {
+				meta, _ := m.Metadata["compactionNotice"].(map[string]any)
+				entry := map[string]any{
+					"role":      "assistant",
+					"kind":      "compaction_notice",
+					"content":   m.Content,
+					"timestamp": m.Timestamp,
+				}
+				for k, v := range meta {
+					entry[k] = v // before / after / retained_turns
+				}
+				history = append(history, entry)
+				continue
+			}
 			entry := map[string]any{"role": "assistant", "timestamp": m.Timestamp}
 			if m.Content != "" {
 				entry["content"] = m.Content
