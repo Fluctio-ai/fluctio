@@ -185,6 +185,45 @@ func (a *Agent) compactionThresholdNow(systemPrompt string) int {
 	return computeThreshold(a.compactionThreshold, a.contextWindow, sysTokens, a.maxTokens, a.compactionMode)
 }
 
+// CompactionPreview is the JSON-serialisable projection of the agent's
+// compaction geometry, surfaced to the context-page UI so the operator
+// can see what each mode would actually threshold at before picking one.
+// SystemPromptTokens is 0 in v1 (we don't build the system prompt here),
+// so the per-mode threshold is the maximal value; the live loop subtracts
+// the real system-prompt token count via compactionThresholdNow.
+type CompactionPreview struct {
+	ContextWindow      int            `json:"contextWindow"`
+	MaxTokens          int            `json:"maxTokens"`
+	SystemPromptTokens int            `json:"systemPromptTokens"`
+	Modes              map[string]int `json:"modes"` // conservative/balanced/aggressive → threshold
+	ManualThreshold    int            `json:"manualThreshold,omitempty"`
+}
+
+// CompactionPreview returns the per-mode threshold estimates for this
+// agent. sysTokens=0 (v1 simplification — the live loop factors the real
+// system prompt in via compactionThresholdNow). Floor 1000 matches
+// computeThreshold so the preview can never show a value the loop would
+// never actually use.
+func (a *Agent) CompactionPreview() CompactionPreview {
+	const sysTokens = 0
+	modes := map[string]int{}
+	for _, m := range []string{"conservative", "balanced", "aggressive"} {
+		margin := a.contextWindow * modeMarginPct(m) / 100
+		t := a.contextWindow - sysTokens - a.maxTokens - margin
+		if t < 1000 {
+			t = 1000
+		}
+		modes[m] = t
+	}
+	return CompactionPreview{
+		ContextWindow:      a.contextWindow,
+		MaxTokens:          a.maxTokens,
+		SystemPromptTokens: sysTokens,
+		Modes:              modes,
+		ManualThreshold:    a.compactionThreshold,
+	}
+}
+
 // SetSandboxPool wires the per-(agent,session) executor pool. Called by
 // attachSandboxToAgents on boot and by hot-reload's reloadSandbox after
 // onboarding flips sandbox on. The pool is consulted by bindSession at

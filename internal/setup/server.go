@@ -55,6 +55,10 @@ type AgentHandle interface {
 	// this agent currently has loaded (built-ins + MCP + plugin tools).
 	// Used by the Tools tab to render the allowlist checkbox picker.
 	RegisteredTools() []tools.ToolInfo
+	// CompactionPreview returns the per-mode compaction threshold
+	// estimates for the context-page UI. Mirrors agent.CompactionPreview
+	// so handlers stay on the AgentHandle abstraction.
+	CompactionPreview() agent.CompactionPreview
 }
 
 // AgentProvider is implemented by gateway.UserSpace's agent manager — used
@@ -423,6 +427,11 @@ func (s *Server) Run(ctx context.Context) error {
 	// Each id is enriched with a contextWindow via LookupModelMeta.
 	// Upstream unreachable / unsupported → 501.
 	mux.HandleFunc("POST /api/agents/{id}/models/fetch", auth(s.handleFetchProviderModels))
+
+	// Compaction threshold preview: returns contextWindow/maxTokens +
+	// per-mode (conservative/balanced/aggressive) threshold estimates so
+	// the context-page UI can show what each mode does before applying.
+	mux.HandleFunc("GET /api/agents/{id}/compaction/preview", auth(s.handleCompactionPreview))
 
 	// Cron jobs (per-user, config-defined catalog)
 	mux.HandleFunc("GET /api/cron", auth(s.handleListCronJobs))

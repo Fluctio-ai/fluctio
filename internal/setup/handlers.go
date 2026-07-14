@@ -687,6 +687,27 @@ func (s *Server) handleFetchProviderModels(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(out)
 }
 
+// handleCompactionPreview returns the agent's contextWindow, maxTokens,
+// and the three mode-specific (conservative/balanced/aggressive)
+// threshold estimates so the context-page UI can show what each mode
+// would actually threshold at before the operator picks one. Uses
+// resolveAgent so the call goes through the same auth + lazy-attach
+// path as other per-agent endpoints; agent not resolvable → 404.
+func (s *Server) handleCompactionPreview(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	ag := s.resolveAgent(r, agentID)
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{
+			"ok":    false,
+			"error": "agent not found",
+		})
+		return
+	}
+	resp := ag.CompactionPreview()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
 // handleTestStoredProvider runs the same connection check, but reads the
 // apiKey + apiBase + apiType + authType from a saved provider row instead
 // of taking them from the request body. Lets the Edit dialog test against
