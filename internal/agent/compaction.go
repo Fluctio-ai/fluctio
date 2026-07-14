@@ -31,6 +31,20 @@ const (
 	maxRetainedToolResultBytes = 16384
 )
 
+// modeMarginPct 把档位映射成 margin 占 ContextWindow 的百分比。
+// 保守 30 / 平衡 15 / 激进 10。激进档仍留 10% 垫——chars/4 对中文低估 30-50%，
+// margin 再小会重现 empty response。
+func modeMarginPct(mode string) int {
+	switch mode {
+	case "conservative":
+		return 30
+	case "aggressive":
+		return 10
+	default:
+		return 15 // balanced（默认）
+	}
+}
+
 // EstimateTokens provides a rough token estimate: chars/4.
 func EstimateTokens(messages []provider.Message) int {
 	total := 0

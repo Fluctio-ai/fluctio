@@ -349,3 +349,20 @@ func TestCompactMessagesThresholdControlsTrigger(t *testing.T) {
 		t.Error("low threshold should trigger compaction")
 	}
 }
+
+// TestModeMarginPct verifies the mode→margin-percent mapping used by
+// the dynamic compaction threshold (Phase 2 Task 2).
+func TestModeMarginPct(t *testing.T) {
+	cases := map[string]int{
+		"conservative": 30,
+		"balanced":     15,
+		"aggressive":   10,
+		"":             15, // 默认 balanced
+		"unknown":      15,
+	}
+	for mode, want := range cases {
+		if got := modeMarginPct(mode); got != want {
+			t.Errorf("modeMarginPct(%q) = %d, want %d", mode, got, want)
+		}
+	}
+}

@@ -162,6 +162,19 @@ type Agent struct {
 	// ordinary agents, which then never see those tools and keep their
 	// per-chat file isolation. See SetProjectRuntime.
 	projectRuntime *coderuntime.Manager
+
+	// contextWindow is the agent's active model's context-window size
+	// (tokens), injected by the manager from Phase 1's ResolvedAgent.
+	// 0 = unknown → compaction falls back to the legacy flat threshold.
+	contextWindow int
+	// compactionThreshold is an operator-set fixed threshold (tokens).
+	// 0 = unset → the loop computes a dynamic threshold from
+	// contextWindow and compactionMode (Phase 2 Task 3).
+	compactionThreshold int
+	// compactionMode selects the margin aggressiveness for the dynamic
+	// threshold: "conservative" (30%), "balanced"/"" (15%, default),
+	// or "aggressive" (10%). See modeMarginPct.
+	compactionMode string
 }
 
 // SetSandboxPool wires the per-(agent,session) executor pool. Called by
