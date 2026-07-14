@@ -12,8 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle } from "lucide-react";
-import { getAgent, getAgentMemory, setAgentMemory, updateAgent } from "@/lib/api";
+import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle, Archive } from "lucide-react";
+import { getAgent, getAgentMemory, setAgentMemory, updateAgent, getCompactionPreview, type CompactionPreview } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
@@ -67,6 +67,14 @@ export default function AgentContextPage() {
   // "" = no override saved → runtime default (Chinese).
   const [language, setLanguage] = useState("");
   const [languageSaving, setLanguageSaving] = useState(false);
+  // Compaction mode selector: "" = balanced (default), "conservative" /
+  // "balanced" / "aggressive" = preset margins, "manual" = operator-set
+  // fixed threshold. The radio value "manual" is a UI-only sentinel —
+  // what actually gets saved is compactionMode="" + compactionThreshold>0.
+  const [compactionPreview, setCompactionPreview] = useState<CompactionPreview | null>(null);
+  const [compactionRadio, setCompactionRadio] = useState<string>("");
+  const [compactionManual, setCompactionManual] = useState<string>("");
+  const [compactionSaving, setCompactionSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -91,6 +99,20 @@ export default function AgentContextPage() {
       setAutoTitleModel(at?.model || "");
       const lang = (agentRec?.config?.language as string) || "";
       setLanguage(lang === "en" || lang === "zh-CN" ? lang : "");
+      // Load compaction preview + derive the radio selection from the
+      // saved state. If manualThreshold > 0, the "manual" radio is
+      // selected and the input is pre-filled. Otherwise the saved mode
+      // (or "" for balanced default) is selected.
+      const cp = await getCompactionPreview(agentId).catch(() => null);
+      setCompactionPreview(cp);
+      if (cp) {
+        if (cp.manualThreshold && cp.manualThreshold > 0) {
+          setCompactionRadio("manual");
+          setCompactionManual(String(cp.manualThreshold));
+        } else {
+          setCompactionRadio(cp.compactionMode || "balanced");
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -206,6 +228,55 @@ export default function AgentContextPage() {
       setLanguage(prev);
     } finally {
       setLanguageSaving(false);
+    }
+  };
+
+  // formatK renders a token count in a human-friendly way: 10000+ → "N万",
+  // 1000+ → "NK", below 1000 → the raw number.
+  const formatK = (n: number): string => {
+    if (n >= 10000) return `${(n / 10000).toFixed(0)}万`;
+    if (n >= 1000) return `${(n / 1000).toFixed(0)}K`;
+    return String(n);
+  };
+
+  // handleCompactionRadioChange saves the mode immediately when a preset
+  // is picked. "manual" is a UI-only sentinel that just expands the
+  // input — no save happens until the user types a threshold.
+  const handleCompactionRadioChange = async (next: string) => {
+    if (next === compactionRadio) return;
+    const prev = compactionRadio;
+    setCompactionRadio(next);
+    // "manual" doesn't save — just expands the input.
+    if (next === "manual") return;
+    setCompactionSaving(true);
+    try {
+      const mode = next === "balanced" ? "" : next;
+      await updateAgent(agentId, { compactionMode: mode as "" | "conservative" | "balanced" | "aggressive", compactionThreshold: 0 });
+      setCompactionManual("");
+      flashSaved();
+    } catch {
+      setCompactionRadio(prev);
+    } finally {
+      setCompactionSaving(false);
+    }
+  };
+
+  // handleCompactionManualSave fires on input blur — writes the fixed
+  // threshold and clears the mode override. 0 or empty reverts to
+  // mode-based (balanced default).
+  const handleCompactionManualSave = async () => {
+    const parsed = parseInt(compactionManual, 10);
+    const threshold = isNaN(parsed) || parsed < 0 ? 0 : parsed;
+    setCompactionSaving(true);
+    try {
+      // Save mode="" (balanced) + threshold. If threshold is 0, the
+      // runtime ignores it and falls back to mode-based calculation.
+      await updateAgent(agentId, { compactionMode: "", compactionThreshold: threshold });
+      flashSaved();
+    } catch {
+      // Roll back is implicit — the radio stays where the user put it.
+    } finally {
+      setCompactionSaving(false);
     }
   };
 
@@ -439,6 +510,114 @@ export default function AgentContextPage() {
             aria-label={t("context.sharedIdentity")}
           />
         </div>
+      </div>
+
+      {/* Compaction threshold mode selector — three presets + custom.
+          Each preset shows the estimated trigger threshold derived from
+          the agent model's context window. When the model is off-table
+          (contextWindow=0), thresholds are floored at 1000 and we show
+          an "unknown window" hint instead of misleading large numbers. */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Archive className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("context.compaction")}</h3>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">
+          {t("context.compactionDesc")}
+        </p>
+        {compactionPreview?.contextWindow === 0 ? (
+          <p className="text-xs text-muted-foreground italic">
+            {t("context.compactionUnknownWindow")}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {([
+              { value: "conservative", label: t("context.compactionConservative"), desc: t("context.compactionConservativeDesc") },
+              { value: "balanced", label: t("context.compactionBalanced"), desc: t("context.compactionBalancedDesc") },
+              { value: "aggressive", label: t("context.compactionAggressive"), desc: t("context.compactionAggressiveDesc") },
+            ] as const).map((opt) => (
+              <label
+                key={opt.value}
+                className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors ${
+                  compactionRadio === opt.value
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:bg-muted/50"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="compaction-mode"
+                  value={opt.value}
+                  checked={compactionRadio === opt.value}
+                  onChange={() => handleCompactionRadioChange(opt.value)}
+                  disabled={compactionSaving}
+                  className="mt-0.5"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{opt.label}</span>
+                    {opt.value === "balanced" && (compactionRadio === "" || compactionRadio === "balanced") && (
+                      <Badge variant="outline" className="text-[10px]">
+                        {t("context.compactionDefault")}
+                      </Badge>
+                    )}
+                    {compactionPreview && (
+                      <span className="text-xs text-muted-foreground">
+                        {t("context.compactionEstimate", { tokens: formatK(compactionPreview.modes[opt.value]) })}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
+                </div>
+              </label>
+            ))}
+            {/* Manual threshold — UI-only "manual" sentinel radio.
+                Selecting it expands the input; the actual save fires on
+                blur with compactionThreshold>0 + compactionMode="". */}
+            <label
+              className={`flex items-start gap-3 p-3 rounded-md border cursor-pointer transition-colors ${
+                compactionRadio === "manual"
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:bg-muted/50"
+              }`}
+            >
+              <input
+                type="radio"
+                name="compaction-mode"
+                value="manual"
+                checked={compactionRadio === "manual"}
+                onChange={() => handleCompactionRadioChange("manual")}
+                disabled={compactionSaving}
+                className="mt-0.5"
+              />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{t("context.compactionManual")}</span>
+                  {compactionPreview?.manualThreshold && compactionPreview.manualThreshold > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {t("context.compactionEstimate", { tokens: formatK(compactionPreview.manualThreshold) })}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">{t("context.compactionManualDesc")}</p>
+                {compactionRadio === "manual" && (
+                  <div className="mt-2 space-y-1">
+                    <Input
+                      type="number"
+                      placeholder={t("context.compactionManualPlaceholder")}
+                      value={compactionManual}
+                      onChange={(e) => setCompactionManual(e.target.value)}
+                      onBlur={handleCompactionManualSave}
+                      disabled={compactionSaving}
+                      className="h-8 max-w-[200px]"
+                    />
+                    <p className="text-[11px] text-muted-foreground">{t("context.compactionManualHint")}</p>
+                  </div>
+                )}
+              </div>
+            </label>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1333,6 +1333,15 @@ export interface AgentUpdatePayload {
   // source carries none (IM channels). "" clears the override (falls
   // back to runtime default, Chinese); "en" / "zh-CN" sets it.
   language?: string;
+  // CompactionMode selects the margin aggressiveness for the dynamic
+  // compaction threshold: "conservative" / "balanced" / "aggressive".
+  // "" clears the override (falls back to balanced default). Omit to
+  // leave the saved value unchanged.
+  compactionMode?: "" | "conservative" | "balanced" | "aggressive";
+  // CompactionThreshold is an operator-set fixed compaction threshold
+  // (tokens). 0 = use dynamic computation from compactionMode. Omit
+  // to leave the saved value unchanged.
+  compactionThreshold?: number;
 }
 
 export async function updateAgent(id: string, agent: AgentUpdatePayload) {
@@ -1342,6 +1351,24 @@ export async function updateAgent(id: string, agent: AgentUpdatePayload) {
     body: JSON.stringify(agent),
   });
   return res.json();
+}
+
+// CompactionPreview is what /api/agents/{id}/compaction/preview returns.
+// The context-page compaction selector uses it to show what each mode
+// would threshold at before the operator picks one.
+export interface CompactionPreview {
+  contextWindow: number;
+  maxTokens: number;
+  systemPromptTokens: number;
+  modes: { conservative: number; balanced: number; aggressive: number };
+  manualThreshold?: number;
+  compactionMode?: string;
+}
+
+export async function getCompactionPreview(agentId: string): Promise<CompactionPreview | null> {
+  const r = await apiFetch(`/api/agents/${encodeURIComponent(agentId)}/compaction/preview`);
+  if (!r.ok) return null;
+  return r.json();
 }
 
 // HookPlugin is the metadata shape returned by /api/plugins/hook —

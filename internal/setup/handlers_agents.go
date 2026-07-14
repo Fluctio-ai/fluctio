@@ -488,6 +488,16 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// runtime default), "en"/"zh-CN" = set. Lives in the agent config
 		// blob alongside mcpServers / kb.
 		Language *string `json:"language,omitempty"`
+		// CompactionMode selects the margin aggressiveness for the
+		// dynamic compaction threshold: "conservative" / "balanced" /
+		// "aggressive". ptr so nil = leave unchanged, empty = clear
+		// (fall back to balanced default). Stored in the config blob;
+		// MergedAgentConfig forwards it to ResolvedAgent.CompactionMode.
+		CompactionMode *string `json:"compactionMode,omitempty"`
+		// CompactionThreshold is an operator-set fixed threshold (tokens).
+		// 0 = use the dynamic computation from CompactionMode. ptr so
+		// nil = leave unchanged. Stored in the config blob.
+		CompactionThreshold *int `json:"compactionThreshold,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -561,6 +571,39 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			delete(rec.Config, "language")
 		} else {
 			rec.Config["language"] = strings.TrimSpace(*req.Language)
+		}
+	}
+	// CompactionMode + CompactionThreshold live in the config blob.
+	// MergedAgentConfig forwards them to ResolvedAgent so the loop's
+	// compactionThresholdNow picks them up. nil ptr = leave unchanged;
+	// ptr-to-empty = clear (fall back to balanced default); valid
+	// string = set. Only documented values are accepted so a typo
+	// doesn't silently degrade to balanced.
+	if req.CompactionMode != nil {
+		if rec.Config == nil {
+			rec.Config = map[string]interface{}{}
+		}
+		cm := strings.TrimSpace(*req.CompactionMode)
+		switch cm {
+		case "":
+			delete(rec.Config, "compactionMode")
+		case "conservative", "balanced", "aggressive":
+			rec.Config["compactionMode"] = cm
+		default:
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "compactionMode must be one of: conservative, balanced, aggressive"})
+			return
+		}
+	}
+	// CompactionThreshold: nil = leave unchanged; 0 = clear (use dynamic
+	// from mode); >0 = fixed threshold.
+	if req.CompactionThreshold != nil {
+		if rec.Config == nil {
+			rec.Config = map[string]interface{}{}
+		}
+		if *req.CompactionThreshold <= 0 {
+			delete(rec.Config, "compactionThreshold")
+		} else {
+			rec.Config["compactionThreshold"] = *req.CompactionThreshold
 		}
 	}
 	if err := s.dataStore.SaveAgent(r.Context(), rec); err != nil {

@@ -197,6 +197,9 @@ type CompactionPreview struct {
 	SystemPromptTokens int            `json:"systemPromptTokens"`
 	Modes              map[string]int `json:"modes"` // conservative/balanced/aggressive → threshold
 	ManualThreshold    int            `json:"manualThreshold,omitempty"`
+	// CompactionMode is the agent's currently-saved mode so the UI can
+	// pre-select the right radio on page load. "" = balanced (default).
+	CompactionMode string `json:"compactionMode,omitempty"`
 }
 
 // CompactionPreview returns the per-mode threshold estimates for this
@@ -221,6 +224,7 @@ func (a *Agent) CompactionPreview() CompactionPreview {
 		SystemPromptTokens: sysTokens,
 		Modes:              modes,
 		ManualThreshold:    a.compactionThreshold,
+		CompactionMode:     a.compactionMode,
 	}
 }
 
