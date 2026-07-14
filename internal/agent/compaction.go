@@ -45,6 +45,29 @@ func modeMarginPct(mode string) int {
 	}
 }
 
+// computeThreshold is the pure-function threshold calculator.
+// Priority: manual (>0, clamped to contextWindow-maxTokens) > dynamic
+// (contextWindow - sysTokens - maxTokens - margin) > fallback
+// (DefaultTokenThreshold). Floor 1000 to avoid pathological 0/negative.
+func computeThreshold(manual, contextWindow, sysTokens, maxTokens int, mode string) int {
+	if manual > 0 {
+		upper := contextWindow - maxTokens
+		if upper > 0 && manual > upper {
+			return upper
+		}
+		return manual
+	}
+	if contextWindow > 0 {
+		margin := contextWindow * modeMarginPct(mode) / 100
+		t := contextWindow - sysTokens - maxTokens - margin
+		if t < 1000 {
+			t = 1000
+		}
+		return t
+	}
+	return DefaultTokenThreshold
+}
+
 // EstimateTokens provides a rough token estimate: chars/4.
 func EstimateTokens(messages []provider.Message) int {
 	total := 0

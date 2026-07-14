@@ -177,6 +177,14 @@ type Agent struct {
 	compactionMode string
 }
 
+// compactionThresholdNow computes the effective compaction threshold for
+// the current turn, factoring in the live system-prompt token count.
+// Delegates to computeThreshold (priority: manual > dynamic > fallback).
+func (a *Agent) compactionThresholdNow(systemPrompt string) int {
+	sysTokens := EstimateTokens([]provider.Message{{Role: "system", Content: systemPrompt}})
+	return computeThreshold(a.compactionThreshold, a.contextWindow, sysTokens, a.maxTokens, a.compactionMode)
+}
+
 // SetSandboxPool wires the per-(agent,session) executor pool. Called by
 // attachSandboxToAgents on boot and by hot-reload's reloadSandbox after
 // onboarding flips sandbox on. The pool is consulted by bindSession at
@@ -3539,6 +3547,10 @@ func (a *Agent) UpdateConfig(rc config.ResolvedAgent) {
 	a.maxToolIterations = rc.MaxToolIterations
 	a.maxParallelToolCalls = rc.MaxParallelToolCalls
 	a.language = rc.Language
+	// Phase 2 compaction fields — keep in sync with buildAgent injection.
+	a.contextWindow = rc.ContextWindow
+	a.compactionMode = rc.CompactionMode
+	a.compactionThreshold = rc.CompactionThreshold
 	// Sandbox flags drive the system prompt's "Working Directory" / "home
 	// dir" description and the sandbox-capabilities block. Without this
 	// propagation an agent that existed before sandbox was enabled keeps

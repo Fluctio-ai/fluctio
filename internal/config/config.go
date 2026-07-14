@@ -657,6 +657,13 @@ type AgentFileConfig struct {
 	// dialog so all IM channels on this agent localize without each
 	// chatter having to configure their own.
 	Language string `json:"language,omitempty"`
+	// CompactionMode selects the margin aggressiveness for the dynamic
+	// compaction threshold: ""/balanced (15%), conservative (30%),
+	// aggressive (10%). Empty = dynamic fallback to balanced.
+	CompactionMode string `json:"compactionMode,omitempty"`
+	// CompactionThreshold is an operator-set fixed compaction threshold
+	// (tokens). 0 = use dynamic computation from CompactionMode.
+	CompactionThreshold int `json:"compactionThreshold,omitempty"`
 }
 
 // AgentKBCfg is the per-agent knowledge-base auto-query configuration.
@@ -721,6 +728,11 @@ type ResolvedAgent struct {
 	// (LookupModelMeta) → 0. The table fallback is applied in
 	// MergedAgentConfig when this field is still 0 after entry merge.
 	ContextWindow        int
+	// CompactionMode and CompactionThreshold are the operator-set
+	// compaction controls, propagated from AgentFileConfig at resolve
+	// time. See AgentFileConfig docs for semantics.
+	CompactionMode       string
+	CompactionThreshold  int
 	Temperature          float64
 	MaxToolIterations    int
 	MaxParallelToolCalls int
@@ -928,6 +940,12 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 		}
 		if fileCfg.MaxTokens > 0 {
 			resolved.MaxTokens = fileCfg.MaxTokens
+		}
+		if fileCfg.CompactionMode != "" {
+			resolved.CompactionMode = fileCfg.CompactionMode
+		}
+		if fileCfg.CompactionThreshold > 0 {
+			resolved.CompactionThreshold = fileCfg.CompactionThreshold
 		}
 		if fileCfg.Temperature > 0 {
 			resolved.Temperature = fileCfg.Temperature

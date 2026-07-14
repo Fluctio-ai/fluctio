@@ -350,6 +350,40 @@ func TestCompactMessagesThresholdControlsTrigger(t *testing.T) {
 	}
 }
 
+// TestComputeThreshold exercises the pure threshold calculator at
+// every priority branch: manual (plain + clamp), dynamic (three modes),
+// fallback (unknown context window), and the 1000-token floor.
+func TestComputeThreshold(t *testing.T) {
+	// manual 优先
+	if got := computeThreshold(50000, 200000, 20000, 8192, "balanced"); got != 50000 {
+		t.Errorf("manual should win: %d", got)
+	}
+	// manual clamp
+	if got := computeThreshold(300000, 200000, 20000, 8192, "balanced"); got != 200000-8192 {
+		t.Errorf("manual should clamp to cw-maxTokens: %d", got)
+	}
+	// 动态 balanced: 200000 - 20000 - 8192 - 30000 = 141808
+	if got := computeThreshold(0, 200000, 20000, 8192, "balanced"); got != 141808 {
+		t.Errorf("balanced dynamic: %d", got)
+	}
+	// conservative margin 30%: 200000-20000-8192-60000=111808
+	if got := computeThreshold(0, 200000, 20000, 8192, "conservative"); got != 111808 {
+		t.Errorf("conservative: %d", got)
+	}
+	// aggressive margin 10%: 200000-20000-8192-20000=151808
+	if got := computeThreshold(0, 200000, 20000, 8192, "aggressive"); got != 151808 {
+		t.Errorf("aggressive: %d", got)
+	}
+	// ContextWindow 未知 → 80000
+	if got := computeThreshold(0, 0, 20000, 8192, "balanced"); got != DefaultTokenThreshold {
+		t.Errorf("unknown cw fallback: %d", got)
+	}
+	// 下限保护
+	if got := computeThreshold(0, 30000, 25000, 8192, "balanced"); got != 1000 {
+		t.Errorf("floor 1000: %d", got)
+	}
+}
+
 // TestModeMarginPct verifies the mode→margin-percent mapping used by
 // the dynamic compaction threshold (Phase 2 Task 2).
 func TestModeMarginPct(t *testing.T) {
