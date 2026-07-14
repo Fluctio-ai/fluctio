@@ -416,6 +416,9 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("PUT /api/scoped-channels/{id}", auth(s.handleUpdateScopedChannel))
 	mux.HandleFunc("DELETE /api/scoped-channels/{id}", auth(s.handleDeleteScopedChannel))
 
+	// Built-in model contextWindow table (for models page autocomplete).
+	mux.HandleFunc("GET /api/models/builtin", auth(s.handleBuiltinModels))
+
 	// Cron jobs (per-user, config-defined catalog)
 	mux.HandleFunc("GET /api/cron", auth(s.handleListCronJobs))
 	mux.HandleFunc("POST /api/cron", auth(s.handleCreateCronJob))

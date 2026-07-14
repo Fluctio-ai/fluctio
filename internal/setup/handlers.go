@@ -640,6 +640,14 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, runProviderTest(r.Context(), req))
 }
 
+// handleBuiltinModels 返回合并后的模型 contextWindow 表（内置 + 本地覆盖）。
+// 前端 models 页 autocomplete 用。
+func (s *Server) handleBuiltinModels(w http.ResponseWriter, r *http.Request) {
+	tbl := config.MergedModelTablePublic()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tbl)
+}
+
 // handleTestStoredProvider runs the same connection check, but reads the
 // apiKey + apiBase + apiType + authType from a saved provider row instead
 // of taking them from the request body. Lets the Edit dialog test against

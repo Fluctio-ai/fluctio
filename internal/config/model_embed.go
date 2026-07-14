@@ -20,6 +20,11 @@ func builtinModelTable() map[string]int {
 	return out
 }
 
+// MergedModelTablePublic 供 HTTP handler 用（读默认本地覆盖路径）。
+func MergedModelTablePublic() map[string]int {
+	return mergedModelTable(modelContextOverridePath())
+}
+
 // mergedModelTable 合并内置表 + 本地覆盖文件（path 为空或读失败则只用内置）。
 // 同 key 本地覆盖优先。用于 LookupModelMeta。
 func mergedModelTable(localPath string) map[string]int {
