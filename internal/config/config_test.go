@@ -106,3 +106,51 @@ func TestMergedAgentConfigContextWindowGuardPreservesPreset(t *testing.T) {
 		t.Fatalf("guard failed: preset ContextWindow %d was overwritten by table value %d", sentinel, resolved.ContextWindow)
 	}
 }
+
+// TestMergedAgentConfigModelEntryContextWindowWins is the full-resolve e2e
+// test deferred from P1-T4. It constructs a Config whose provider has a
+// ModelEntry with ContextWindow=500000 (different from the builtin table's
+// 1000000 for claude-opus-4-8), then verifies resolved.ContextWindow == the
+// ModelEntry value — proving the entry mapping runs before and wins over the
+// table fallback (spec 1.4 priority: entry > table > 0).
+func TestMergedAgentConfigModelEntryContextWindowWins(t *testing.T) {
+	restore := stubNoAgentFile()
+	defer restore()
+
+	const (
+		providerKey = "anthropic"
+		modelID     = "claude-opus-4-8"
+		entryCW     = 500000 // intentionally different from table's 1000000
+	)
+
+	// Guard: skip if the table doesn't know this model, otherwise the test
+	// would be vacuous (we need the table to "want" a different value).
+	tableCW, ok := LookupModelMeta(modelID)
+	if !ok {
+		t.Skipf("builtin table has no entry for %q — table changed?", modelID)
+	}
+	if tableCW == entryCW {
+		t.Skipf("table value %d == entry value — pick a different sentinel", tableCW)
+	}
+
+	cfg := &Config{
+		Providers: map[string]ProviderConfig{
+			providerKey: {
+				APIKey:  "sk-test",
+				APIBase: "https://api.anthropic.com",
+				Models: []ModelEntry{
+					{ID: modelID, Name: modelID, ContextWindow: entryCW},
+				},
+			},
+		},
+	}
+	cfg.Agents.Defaults.Model = providerKey + "/" + modelID
+	entry := AgentEntry{ID: "p1t7-entry-cw-test"}
+
+	resolved := cfg.MergedAgentConfig(entry)
+
+	if resolved.ContextWindow != entryCW {
+		t.Fatalf("ModelEntry.ContextWindow priority failed: got %d, want %d (table value was %d) — entry mapping not wired or table overwrote it",
+			resolved.ContextWindow, entryCW, tableCW)
+	}
+}

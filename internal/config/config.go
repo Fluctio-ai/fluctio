@@ -998,11 +998,28 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 		}
 	}
 
-	// Table fallback: when no ModelEntry.ContextWindow mapping has set a
-	// value yet (resolved.ContextWindow == 0), look up the builtin model
-	// table so Phase 2 always has a non-zero threshold for known models.
-	// A future ModelEntry.ContextWindow → resolved mapping (P1-T7) will run
-	// before this guard and win by setting a non-zero value.
+	// ModelEntry.ContextWindow → resolved (spec 1.4 priority: a non-zero
+	// entry value wins over the builtin table). Parse resolved.Model as
+	// "provider/modelId" and scan the merged Providers map for the
+	// matching ModelEntry. Runs before the table fallback below so the
+	// fallback's ==0 guard skips when the entry already filled a value.
+	if resolved.ContextWindow == 0 && resolved.Model != "" {
+		if parts := strings.SplitN(resolved.Model, "/", 2); len(parts) == 2 {
+			if pc, ok := resolved.Providers[parts[0]]; ok {
+				for _, m := range pc.Models {
+					if m.ID == parts[1] && m.ContextWindow > 0 {
+						resolved.ContextWindow = m.ContextWindow
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// Table fallback: when neither ModelEntry.ContextWindow nor any other
+	// resolve path has set a value (resolved.ContextWindow == 0), look up
+	// the builtin model table so Phase 2 always has a non-zero threshold
+	// for known models.
 	if resolved.ContextWindow == 0 && resolved.Model != "" {
 		if cw, ok := LookupModelMeta(resolved.Model); ok {
 			resolved.ContextWindow = cw
