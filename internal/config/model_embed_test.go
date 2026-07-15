@@ -51,3 +51,43 @@ func TestMergedModelTableNoLocalFile(t *testing.T) {
 		t.Errorf("builtin should still load without local file: %d", merged["gemini"])
 	}
 }
+
+// ---------------------------------------------------------------------------
+// maxTokens 表测试（与 contextWindow 平行，互不干扰）
+// ---------------------------------------------------------------------------
+
+func TestBuiltinMaxTokensTable(t *testing.T) {
+	tbl := builtinMaxTokensTable()
+	if tbl == nil {
+		t.Fatal("builtinMaxTokensTable returned nil — empty JSON should still parse to non-nil map")
+	}
+	if len(tbl) != 0 {
+		t.Errorf("builtin maxTokens table should be empty by default, got %d entries", len(tbl))
+	}
+}
+
+func TestMergedMaxTokensTableLocalOverrides(t *testing.T) {
+	tmp := t.TempDir() + "/model-maxtokens.json"
+	local := `{"claude-sonnet-4-6": 16384, "gpt-5": 32768}`
+	if err := os.WriteFile(tmp, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	merged := mergedMaxTokensTable(tmp)
+	if merged["claude-sonnet-4-6"] != 16384 {
+		t.Errorf("local maxTokens entry missing: %d", merged["claude-sonnet-4-6"])
+	}
+	if merged["gpt-5"] != 32768 {
+		t.Errorf("local maxTokens entry missing: %d", merged["gpt-5"])
+	}
+}
+
+func TestMergedMaxTokensTableNoLocalFile(t *testing.T) {
+	merged := mergedMaxTokensTable("/nonexistent/maxtokens.json")
+	// 内置空表 — 应返回空 map，不 panic
+	if merged == nil {
+		t.Fatal("mergedMaxTokensTable returned nil for missing local file")
+	}
+	if len(merged) != 0 {
+		t.Errorf("expected empty table, got %d entries", len(merged))
+	}
+}

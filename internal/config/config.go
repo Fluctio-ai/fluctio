@@ -877,6 +877,8 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 
 	if entry.MaxTokens > 0 {
 		resolved.MaxTokens = entry.MaxTokens
+	} else if mt, ok := LookupModelMaxTokens(resolved.Model); ok {
+		resolved.MaxTokens = mt
 	}
 	if entry.Temperature > 0 {
 		resolved.Temperature = entry.Temperature

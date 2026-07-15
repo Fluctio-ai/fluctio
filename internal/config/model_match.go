@@ -36,3 +36,38 @@ func modelContextOverridePath() string {
 	}
 	return filepath.Join(home, "model-context.json")
 }
+
+// ---------------------------------------------------------------------------
+// maxTokens lookup（与 contextWindow lookup 平行）
+// ---------------------------------------------------------------------------
+
+// LookupModelMaxTokens 按 modelID 查 maxTokens（substring + longest-first）。
+// 合并内置表 + ~/.fluctio/model-maxtokens.json 本地覆盖。未中返回 matched=false。
+func LookupModelMaxTokens(modelID string) (maxTokens int, matched bool) {
+	return lookupMaxTokensIn(modelID, modelMaxTokensOverridePath())
+}
+
+// lookupMaxTokensIn 用指定本地覆盖路径查（测试入口）。
+// substring 匹配 + longest-first：当多个 key 都为 modelID 子串时取最长。
+func lookupMaxTokensIn(modelID, localPath string) (int, bool) {
+	tbl := mergedMaxTokensTable(localPath)
+	var bestKey string
+	for key := range tbl {
+		if strings.Contains(modelID, key) && len(key) > len(bestKey) {
+			bestKey = key
+		}
+	}
+	if bestKey == "" {
+		return 0, false
+	}
+	return tbl[bestKey], true
+}
+
+// modelMaxTokensOverridePath 返回 ~/.fluctio/model-maxtokens.json 本地覆盖路径。
+func modelMaxTokensOverridePath() string {
+	home, err := HomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, "model-maxtokens.json")
+}

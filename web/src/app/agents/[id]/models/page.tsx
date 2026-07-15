@@ -118,8 +118,8 @@ function emptyModel(): ModelEntry {
     reasoning: false,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 200000,
-    maxTokens: 8192,
+    contextWindow: 0,
+    maxTokens: 0,
   };
 }
 
@@ -344,7 +344,7 @@ export default function AgentModelsPage() {
   const handlePickFetchedModel = (id: string, contextWindow: number) => {
     setFormModels((prev) => [
       ...prev,
-      { ...emptyModel(), id, name: id, contextWindow: contextWindow || 200000 },
+      { ...emptyModel(), id, name: id, contextWindow },
     ]);
     setFetchResults(null);
   };
