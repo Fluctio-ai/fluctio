@@ -13,8 +13,8 @@ import (
 //
 //  1. won't appear in natural prose, so the agent can't trigger a split
 //     by accident in markdown / code / quoted text;
-//  2. survives WeChat's wechatStripMarkdown pass — it's not parsed as
-//     any markdown construct;
+//  2. isn't parsed as any markdown construct, so it reaches the
+//     dispatcher intact;
 //  3. reads as "control instruction" both to a human inspecting the
 //     transcript and to the LLM emitting it.
 //

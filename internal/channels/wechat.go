@@ -19,10 +19,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -505,27 +507,25 @@ func (w *WeChat) SendMessage(msg bus.OutboundMessage) error {
 	if msg.Text == "" && len(msg.MediaItems) == 0 {
 		return nil
 	}
-	// iLink wants markdown stripped — clients render plain text and
-	// will literally show *bold* / [link](url) syntax. Strip it
-	// best-effort, same way weclaw's MarkdownToPlainText helper does.
-	// FlattenMarkdownTables runs FIRST so GFM tables collapse to
-	// "label: value" / middle-dot lines BEFORE wechatStripMarkdown
-	// throws away the rest of the markdown — running it after would
-	// leave a bare `|cell|cell|` blob that's strictly worse.
+	// iLink renders markdown natively in modern WeChat clients, so send
+	// the agent's text as-is — headers, bold, lists, tables etc. display
+	// formatted instead of being collapsed to plain text. Two light
+	// passes first (mirroring hermes-agent's weixin adapter):
+	// wechatNormalizeMarkdownBlocks collapses extra blank lines outside
+	// code blocks so the bubble stays tight; wechatWrapCopyFriendlyLines
+	// soft-wraps very long display lines so they stay easy to copy in
+	// WeChat (which has no horizontal scroll).
 	// Splitting on SplitMessageMarker happens at the dispatcher layer
 	// (internal/channels/manager.go: routeOutbound) so all IM adapters
 	// honor it uniformly — by the time SendMessage gets called here,
 	// msg.Text is a single bubble's worth of content. The dispatcher
 	// also collapses stray markers to newlines when AllowSplit is off,
 	// so we never see them here.
-	plain := wechatStripMarkdown(FlattenMarkdownTables(msg.Text))
-	// Skip the text leg when the body has nothing visible left after
-	// markdown strip — caught the case where a multi-bubble split
-	// produced a chunk whose only content was whitespace or markdown
-	// punctuation, which `sendTextOnly` would otherwise post as a
-	// blank bubble alongside any attached media.
-	if strings.TrimSpace(plain) != "" {
-		if err := w.sendTextOnly(msg.ChatID, plain); err != nil {
+	text := wechatWrapCopyFriendlyLines(wechatNormalizeMarkdownBlocks(msg.Text))
+	// Skip the text leg when the body is empty/whitespace — e.g. a
+	// multi-bubble split chunk whose visible content is all in its media.
+	if strings.TrimSpace(text) != "" {
+		if err := w.sendTextOnly(msg.ChatID, text); err != nil {
 			return err
 		}
 	}
@@ -711,70 +711,125 @@ func wechatGenerateUIN() string {
 	return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%d", n)))
 }
 
-// wechatStripMarkdown is a small best-effort plain-text converter so
-// LLM-emitted markdown doesn't show up as raw `*foo*` / `### bar` in
-// WeChat. Not a full parser — we only handle the common offenders.
-func wechatStripMarkdown(text string) string {
-	if text == "" {
-		return ""
-	}
-	out := text
-	// Strip ATX headers at line starts
-	for _, prefix := range []string{"### ", "## ", "# "} {
-		out = bytesReplaceAtLineStart(out, prefix, "")
-	}
-	// Bold/italic markers — drop the markers themselves
-	out = bytesReplaceAll(out, "**", "")
-	out = bytesReplaceAll(out, "__", "")
-	// Inline code backticks — drop
-	out = bytesReplaceAll(out, "```", "")
-	out = bytesReplaceAll(out, "`", "")
-	return out
+// wechatCopyLineWidth is the soft wrap width for outbound WeChat lines.
+// WeChat clients don't offer horizontal scroll, so paragraphs wider than
+// this get copy-unfriendly; we word-wrap to stay within it. Lines inside
+// code blocks and table rows are exempt.
+const wechatCopyLineWidth = 120
+
+// wechatTableRuleRe matches a GFM table separator row like |---|:--:|-|
+// — such lines must be preserved verbatim (not wrapped) so the table
+// still renders. Matched against the whitespace-trimmed line.
+var wechatTableRuleRe = regexp.MustCompile(`^\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?$`)
+
+// wechatIsFenceLine reports whether s (whitespace-trimmed) is a markdown
+// fenced-code-block delimiter — ``` optionally followed by a language tag.
+func wechatIsFenceLine(stripped string) bool {
+	return strings.HasPrefix(stripped, "```")
 }
 
-func bytesReplaceAll(s, old, new string) string {
-	if old == "" {
-		return s
-	}
-	for {
-		i := indexOf(s, old)
-		if i < 0 {
-			return s
-		}
-		s = s[:i] + new + s[i+len(old):]
-	}
-}
-
-func bytesReplaceAtLineStart(s, prefix, replacement string) string {
-	if prefix == "" {
-		return s
-	}
-	out := make([]byte, 0, len(s))
-	atLineStart := true
-	for i := 0; i < len(s); {
-		if atLineStart && i+len(prefix) <= len(s) && s[i:i+len(prefix)] == prefix {
-			out = append(out, replacement...)
-			i += len(prefix)
-			atLineStart = false
+// wechatNormalizeMarkdownBlocks collapses runs of consecutive blank lines
+// outside fenced code blocks to a single blank line. LLM output frequently
+// has 3-4 blank lines between sections; WeChat renders each as a gap, so
+// compacting keeps the bubble tight. Code-block content is left untouched.
+// Mirrors hermes-agent's _normalize_markdown_blocks.
+func wechatNormalizeMarkdownBlocks(content string) string {
+	lines := strings.Split(content, "\n")
+	result := make([]string, 0, len(lines))
+	inCodeBlock := false
+	blankRun := 0
+	for _, raw := range lines {
+		line := strings.TrimRight(raw, " \t\r")
+		stripped := strings.TrimSpace(line)
+		if wechatIsFenceLine(stripped) {
+			inCodeBlock = !inCodeBlock
+			result = append(result, line)
+			blankRun = 0
 			continue
 		}
-		out = append(out, s[i])
-		atLineStart = s[i] == '\n'
-		i++
+		if inCodeBlock {
+			result = append(result, line)
+			continue
+		}
+		if stripped == "" {
+			blankRun++
+			if blankRun <= 1 {
+				result = append(result, "")
+			}
+			continue
+		}
+		blankRun = 0
+		result = append(result, line)
 	}
-	return string(out)
+	return strings.TrimSpace(strings.Join(result, "\n"))
 }
 
-func indexOf(s, sub string) int {
-	if sub == "" {
-		return 0
+// wechatWrapCopyFriendlyLines soft-wraps display lines wider than
+// wechatCopyLineWidth so long paragraphs stay easy to copy inside WeChat
+// clients. Lines inside fenced code blocks, table rows and the GFM table
+// separator are left intact. Mirrors hermes-agent's
+// _wrap_copy_friendly_lines_for_weixin.
+func wechatWrapCopyFriendlyLines(content string) string {
+	if content == "" {
+		return content
 	}
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
+	lines := strings.Split(content, "\n")
+	wrapped := make([]string, 0, len(lines))
+	inCodeBlock := false
+	for _, raw := range lines {
+		line := strings.TrimRight(raw, " \t\r")
+		stripped := strings.TrimSpace(line)
+		if wechatIsFenceLine(stripped) {
+			inCodeBlock = !inCodeBlock
+			wrapped = append(wrapped, line)
+			continue
+		}
+		if inCodeBlock ||
+			utf8.RuneCountInString(line) <= wechatCopyLineWidth ||
+			stripped == "" ||
+			strings.HasPrefix(stripped, "|") ||
+			wechatTableRuleRe.MatchString(stripped) {
+			wrapped = append(wrapped, line)
+			continue
+		}
+		wrapped = append(wrapped, wechatWordWrap(line, wechatCopyLineWidth)...)
+	}
+	return strings.TrimSpace(strings.Join(wrapped, "\n"))
+}
+
+// wechatWordWrap greedily packs space-separated words into segments no
+// wider than width (counted in runes). A single token longer than width —
+// a bare URL, a run of CJK with no spaces — is kept whole, mirroring
+// Python textwrap with break_long_words=False.
+func wechatWordWrap(line string, width int) []string {
+	if utf8.RuneCountInString(line) <= width {
+		return []string{line}
+	}
+	words := strings.Fields(line)
+	if len(words) <= 1 {
+		return []string{line}
+	}
+	var result []string
+	cur := ""
+	curLen := 0
+	for _, w := range words {
+		wl := utf8.RuneCountInString(w)
+		if cur == "" {
+			cur = w
+			curLen = wl
+		} else if curLen+1+wl <= width {
+			cur += " " + w
+			curLen += 1 + wl
+		} else {
+			result = append(result, cur)
+			cur = w
+			curLen = wl
 		}
 	}
-	return -1
+	if cur != "" {
+		result = append(result, cur)
+	}
+	return result
 }
 
 // --- Wire types (iLink protocol shape, kept private to this package) ---
