@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -60,5 +61,58 @@ func TestMergedMetaTableNoLocalFile(t *testing.T) {
 	merged := mergedMetaTable("/nonexistent/path.json")
 	if got := merged["claude-opus-4-8"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 1000000, MaxTokens: 128000}) {
 		t.Errorf("builtin should still load without local file: got %+v", got)
+	}
+}
+
+// TestMergedMetaTableToleratesCommentKeys verifies the local override
+// parser skips non-ModelMeta values (e.g. a "_comment" string in the
+// seeded example file) rather than rejecting the whole file.
+func TestMergedMetaTableToleratesCommentKeys(t *testing.T) {
+	tmp := t.TempDir() + "/model-meta.json"
+	local := `{"_comment": "human-readable note", "claude-opus-4-8": {"contextWindow": 999, "maxTokens": 111}}`
+	if err := os.WriteFile(tmp, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	merged := mergedMetaTable(tmp)
+	if got := merged["claude-opus-4-8"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 999, MaxTokens: 111}) {
+		t.Errorf("valid entry should survive _comment: got %+v", got)
+	}
+	if _, present := merged["_comment"]; present {
+		t.Error("_comment key should be skipped, not stored")
+	}
+}
+
+// TestEnsureLocalModelMetaSeed writes the example file when absent and
+// leaves it untouched when present (user edits preserved).
+func TestEnsureLocalModelMetaSeed(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/model-meta.json"
+
+	if err := EnsureLocalModelMetaSeed(dir); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("seed not written: %v", err)
+	}
+	if !strings.Contains(string(data), "_comment") || !strings.Contains(string(data), "example-model-id") {
+		t.Errorf("seed missing comment/example: %s", data)
+	}
+
+	// Present → preserved (re-seed must not clobber user content).
+	user := `{"my-model": {"contextWindow": 123, "maxTokens": 7}}`
+	if err := os.WriteFile(path, []byte(user), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureLocalModelMetaSeed(dir); err != nil {
+		t.Fatalf("re-seed: %v", err)
+	}
+	data, _ = os.ReadFile(path)
+	if !strings.Contains(string(data), "my-model") {
+		t.Errorf("user edit clobbered by re-seed: %s", data)
+	}
+
+	if err := EnsureLocalModelMetaSeed(""); err != nil {
+		t.Errorf("empty homeDir should no-op: %v", err)
 	}
 }

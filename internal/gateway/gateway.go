@@ -281,6 +281,9 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 	}
 
 	homeDir, _ := config.HomeDir()
+	if seedErr := config.EnsureLocalModelMetaSeed(homeDir); seedErr != nil {
+		slog.Warn("seed local model-meta.json failed", "error", seedErr)
+	}
 	st, err := store.New(&store.StorageConfig{
 		Type:        store.StorageType(env.Storage.Type),
 		DSN:         env.Storage.DSN,
