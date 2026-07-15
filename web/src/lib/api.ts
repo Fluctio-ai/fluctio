@@ -590,7 +590,7 @@ export async function getBuiltinModels(): Promise<Record<string, BuiltinModelMet
 // Unsupported / unreachable providers yield HTTP 501.
 export async function fetchProviderModels(
   agentId: string
-): Promise<{ id: string; contextWindow: number }[]> {
+): Promise<{ id: string; contextWindow: number; maxTokens: number }[]> {
   const r = await apiFetch(
     `/api/agents/${encodeURIComponent(agentId)}/models/fetch`,
     { method: "POST" }
@@ -607,7 +607,7 @@ export async function fetchModelsByConfig(body: {
   apiKey?: string;
   apiType: string;
   providerId?: string;
-}): Promise<{ id: string; contextWindow: number }[]> {
+}): Promise<{ id: string; contextWindow: number; maxTokens: number }[]> {
   const r = await apiFetch("/api/models/fetch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

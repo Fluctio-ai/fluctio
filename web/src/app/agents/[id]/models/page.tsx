@@ -180,7 +180,7 @@ export default function AgentModelsPage() {
   // acDebounceRef above.
   const acBlurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Provider model fetch results (from POST /api/agents/{id}/models/fetch).
-  const [fetchResults, setFetchResults] = useState<{ id: string; contextWindow: number }[] | null>(null);
+  const [fetchResults, setFetchResults] = useState<{ id: string; contextWindow: number; maxTokens: number }[] | null>(null);
   const [fetching, setFetching] = useState(false);
 
   const cleanModelRows = formModels
@@ -346,10 +346,10 @@ export default function AgentModelsPage() {
     }
   };
 
-  const handlePickFetchedModel = (id: string, contextWindow: number) => {
+  const handlePickFetchedModel = (id: string, contextWindow: number, maxTokens: number) => {
     setFormModels((prev) => [
       ...prev,
-      { ...emptyModel(), id, name: id, contextWindow },
+      { ...emptyModel(), id, name: id, contextWindow, maxTokens: maxTokens || 0 },
     ]);
     setFetchResults(null);
   };
@@ -1011,7 +1011,7 @@ export default function AgentModelsPage() {
                       <button
                         key={fm.id}
                         type="button"
-                        onClick={() => handlePickFetchedModel(fm.id, fm.contextWindow)}
+                        onClick={() => handlePickFetchedModel(fm.id, fm.contextWindow, fm.maxTokens)}
                         className="flex items-center justify-between w-full px-2.5 py-1.5 rounded text-xs hover:bg-accent font-mono"
                       >
                         <span>{fm.id}</span>

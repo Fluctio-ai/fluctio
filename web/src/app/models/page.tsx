@@ -145,7 +145,7 @@ export default function ModelsPage() {
   const [modelTests, setModelTests] = useState<Record<number, ModelTestResult>>({});
   const [batchTesting, setBatchTesting] = useState(false);
   const [fetching, setFetching] = useState(false);
-  const [fetchResults, setFetchResults] = useState<{ id: string; contextWindow: number }[] | null>(null);
+  const [fetchResults, setFetchResults] = useState<{ id: string; contextWindow: number; maxTokens: number }[] | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
   const cleanModelRows = formModels
@@ -310,10 +310,10 @@ export default function ModelsPage() {
     }
   };
 
-  const handlePickFetchedModel = (id: string, contextWindow: number) => {
+  const handlePickFetchedModel = (id: string, contextWindow: number, maxTokens: number) => {
     setFormModels((prev) => [
       ...prev,
-      { ...emptyModel(), id, name: id, contextWindow },
+      { ...emptyModel(), id, name: id, contextWindow, maxTokens: maxTokens || 0 },
     ]);
   };
 
@@ -647,7 +647,7 @@ export default function ModelsPage() {
                           key={fm.id}
                           type="button"
                           disabled={exists}
-                          onClick={() => handlePickFetchedModel(fm.id, fm.contextWindow)}
+                          onClick={() => handlePickFetchedModel(fm.id, fm.contextWindow, fm.maxTokens)}
                           className="flex items-center justify-between w-full px-2.5 py-1.5 rounded text-xs hover:bg-accent font-mono disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <span>{fm.id}</span>

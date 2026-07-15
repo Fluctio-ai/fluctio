@@ -678,11 +678,12 @@ func (s *Server) handleFetchProviderModels(w http.ResponseWriter, r *http.Reques
 	type item struct {
 		ID            string `json:"id"`
 		ContextWindow int    `json:"contextWindow"`
+		MaxTokens     int    `json:"maxTokens"`
 	}
 	out := make([]item, 0, len(ids))
 	for _, id := range ids {
 		meta, _ := config.LookupModelMeta(id)
-		out = append(out, item{ID: id, ContextWindow: meta.ContextWindow})
+		out = append(out, item{ID: id, ContextWindow: meta.ContextWindow, MaxTokens: meta.MaxTokens})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
