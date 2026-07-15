@@ -58,18 +58,23 @@ func (f *Firecrawl) Execute(ctx context.Context, req toolproviders.Request) (too
 	}
 	var out struct {
 		Success bool `json:"success"`
-		Data    []struct {
-			Title       string `json:"title"`
-			URL         string `json:"url"`
-			Markdown    string `json:"markdown"`
-			Description string `json:"description"`
+		Data    struct {
+			// /v2/search returns data as an object keyed by source. "web"
+			// is the default source array (present without scrapeOptions);
+			// "images" / "news" only appear when requested via sources.
+			Web []struct {
+				Title       string `json:"title"`
+				URL         string `json:"url"`
+				Markdown    string `json:"markdown"`
+				Description string `json:"description"`
+			} `json:"web"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return toolproviders.Response{}, fmt.Errorf("firecrawl decode: %w", err)
 	}
-	items := make([]resultItem, 0, len(out.Data))
-	for _, r := range out.Data {
+	items := make([]resultItem, 0, len(out.Data.Web))
+	for _, r := range out.Data.Web {
 		snippet := r.Markdown
 		if snippet == "" {
 			snippet = r.Description
