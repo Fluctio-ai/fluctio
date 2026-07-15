@@ -40,7 +40,11 @@ RUN CGO_ENABLED=0 go build \
 
 # --- Stage 3: Runtime ---
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata
+# docker-cli: the agent's `exec` sandbox spawns sibling containers on the
+# HOST daemon via /var/run/docker.sock (see deploy/docker/docker-compose.yml).
+# Without docker-cli in the image, sandbox creation fails with
+# `exec: "docker": executable file not found in $PATH`.
+RUN apk add --no-cache ca-certificates tzdata docker-cli
 COPY --from=go-builder /fluctio /usr/local/bin/fluctio
 
 # Default data directory. Override at runtime with FLUCTIO_HOME, but the

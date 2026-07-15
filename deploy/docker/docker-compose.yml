@@ -23,16 +23,29 @@ services:
     restart: unless-stopped
     ports:
       - "${FLUCTIO_PORT:-18953}:18953"
+    # Run as root to read /var/run/docker.sock (root:root 0660 is the
+    # dockerd default). If your host socket is group-owned, switch to
+    # group_add: ["docker"] and drop this line instead.
+    user: root
     volumes:
-      - fluctio-data:/data/.fluctio
+      # Sandbox (sibling-container): the gateway spawns sandbox
+      # containers as peers on the HOST daemon, so dockerd must be
+      # reachable from inside this container. Needs docker-cli in the
+      # image (see Dockerfile) + the socket mounted here.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # ⚠️ IDENTICAL host/container path: sandbox passes this path
+      # verbatim to `docker create -v`, so host dockerd must resolve it.
+      # Override FLUCTIO_DATA_DIR in .env with an ABSOLUTE host path.
+      - ${FLUCTIO_DATA_DIR:-/var/lib/fluctio}:${FLUCTIO_DATA_DIR:-/var/lib/fluctio}
     environment:
       # Server default timezone (IANA name). This is the LAST fallback in
       # the chain chatter pref → agent default → system default → TZ —
       # without it the container runs UTC and agents whose chatters never
       # set a timezone get UTC wall clocks and UTC-fired schedules.
       TZ: "${TZ:-Asia/Shanghai}"
-      # FLUCTIO_HOME — sqlite db path + sandbox root + skill cache live here
-      FLUCTIO_HOME: /data/.fluctio
+      # FLUCTIO_HOME — MUST equal the container side of the bind mount
+      # above (sibling-container pattern). Default /var/lib/fluctio.
+      FLUCTIO_HOME: ${FLUCTIO_DATA_DIR:-/var/lib/fluctio}
       # Bind to all interfaces so the host port mapping works
       FLUCTIO_BIND: all
       FLUCTIO_PORT: "18953"
@@ -41,10 +54,13 @@ services:
       FLUCTIO_STORAGE_TYPE: postgres
       FLUCTIO_STORAGE_DSN: "postgres://fluctio:${POSTGRES_PASSWORD:-fluctio-secret}@postgres:5432/fluctio?sslmode=disable"
       FLUCTIO_STORAGE_AUTO_MIGRATE: "true"
-      # Sandbox (optional; uncomment to enable)
-      # FLUCTIO_SANDBOX_ENABLED: "true"
-      # FLUCTIO_SANDBOX_BACKEND: docker
-      # FLUCTIO_SANDBOX_IMAGE: python:3.12-slim
+      # ─── Sandbox ────────────────────────────────────────────────────
+      # Real values live in .env (gitignored); see .env.example.
+      FLUCTIO_SANDBOX_ENABLED: "true"
+      FLUCTIO_SANDBOX_BACKEND: docker
+      # thinkany/fluctio-sandbox:latest ships Python3 + Node + Camoufox
+      # + git/curl. Override via FLUCTIO_SANDBOX_IMAGE in .env.
+      FLUCTIO_SANDBOX_IMAGE: ${FLUCTIO_SANDBOX_IMAGE:-thinkany/fluctio-sandbox:latest}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,5 +82,4 @@ services:
       retries: 5
 
 volumes:
-  fluctio-data:
   postgres-data:
