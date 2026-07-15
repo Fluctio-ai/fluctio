@@ -141,6 +141,12 @@ table and is edited through the dashboard or `fluctio agents config`.
 
 <img src="previews/recall-tuning.png" alt="Fluctio Recall Tuning panel" width="900">
 
+### Context Compaction
+- **Model-aware threshold** — the auto-compaction trigger scales with each model's context window instead of a fixed 80K: `contextWindow − systemPrompt − maxTokens − margin`. Three modes per agent (Conservative 30% / Balanced 15% / Aggressive 10% margin) under agent settings → Context; a manual threshold override is also available. Models with an unknown window fall back to 80K.
+- **Builtin metadata table** — 675 models' `contextWindow` + `maxOutputTokens` (extracted from `docs/models.json` via `scripts/extract_model_meta.py`) are compiled in. `LookupModelMeta` matches **case-insensitively by substring (longest-first)**, so `openai/LongCat-2.0` resolves through the `longcat` key.
+- **Local override** — `~/.fluctio/model-meta.json` (seeded with a commented example on first run) overrides or supplements the builtin table; same-key local wins. Edit it to add models missing from the builtin table.
+- **Compaction notice** — when auto-compaction fires, a persistent `📝 上下文已自动压缩（before → after tokens）` bubble appears mid-conversation (web + IM channels), and is excluded from the LLM-bound message stream so it never pollutes context.
+
 ### API
 - OpenAI-compatible `/v1/chat/completions` (streaming)
 - HTTP API reference: [`docs/upstream-api.md`](docs/upstream-api.md)
