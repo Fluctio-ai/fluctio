@@ -690,6 +690,16 @@ export default function ModelsPage() {
                       <Input value={m.name} onChange={(e) => handleUpdateModel(idx, "name", e.target.value)} placeholder="e.g. GPT-4o" className="text-xs h-8" />
                     </div>
                   </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">{tt("models.contextWindowLabel")}</Label>
+                      <Input type="number" value={m.contextWindow || ""} onChange={(e) => handleUpdateModel(idx, "contextWindow", e.target.value)} placeholder="200000" className="font-mono text-xs h-8" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">{tt("models.maxTokensLabel")}</Label>
+                      <Input type="number" value={m.maxTokens || ""} onChange={(e) => handleUpdateModel(idx, "maxTokens", e.target.value)} placeholder="8192" className="font-mono text-xs h-8" />
+                    </div>
+                  </div>
                 </div>
                 );
               })}
