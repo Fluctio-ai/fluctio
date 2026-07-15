@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { MemoryTestButton } from "@/components/memory-test-button";
 import { Database, Boxes, Settings2, Check, Loader2, RefreshCw } from "lucide-react";
 import {
   getAgentMemory,
@@ -21,10 +22,10 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 
 // Per-agent Memory page — reads/writes the agent-scope "memory" override
-// (MemoryCfg JSON via /api/agents/{id}/memory). Simplified from source:
-// no test-button or vector-shape warning (test-embedding/test-reranker
-// endpoints exist; the inline test UI + existing-vector-dim surface can
-// be added later). Reindex works today.
+// (MemoryCfg JSON via /api/agents/{id}/memory). Each Embedding/Reranker
+// block has an inline Test button (POST /api/memory/test-embedding or
+// /test-reranker) that pings the endpoint with the form's inline
+// credentials before saving. Reindex re-vectorizes all summaries.
 export default function AgentMemoryPage() {
   const t = useT();
   const agentId = useAgentIdFromURL();
@@ -231,6 +232,14 @@ export default function AgentMemoryPage() {
                 <p className="text-xs text-muted-foreground/70">{t("memory.sendDimensions") || "Send dimensions"}</p>
               </div>
             </div>
+            <MemoryTestButton
+              kind="embedding"
+              apiBase={embedding.apiBase || ""}
+              apiKey={embedding.apiKey || ""}
+              model={embedding.model || ""}
+              dim={embedding.dim}
+              dimEnabled={embedding.dimEnabled}
+            />
           </div>
         )}
       </div>
@@ -278,6 +287,12 @@ export default function AgentMemoryPage() {
               <Input type="password" value={reranker.apiKey || ""} onChange={(e) => setReranker({ ...reranker, apiKey: e.target.value })}
                 placeholder="jina_..." className="font-mono text-sm placeholder:text-muted-foreground/70" />
             </div>
+            <MemoryTestButton
+              kind="reranker"
+              apiBase={reranker.apiBase || ""}
+              apiKey={reranker.apiKey || ""}
+              model={reranker.model || ""}
+            />
           </div>
         )}
       </div>
