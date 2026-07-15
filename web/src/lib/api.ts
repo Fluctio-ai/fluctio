@@ -1924,6 +1924,26 @@ export async function saveTools(payload: {
   return res.json();
 }
 
+// probeToolProvider runs a minimal real call against a single provider with
+// the form's inline credentials (not the saved config) so the operator can
+// verify apiKey/endpoint/model before saving. Mirrors the Models page's
+// testProvider flow.
+export async function probeToolProvider(req: {
+  category: string;
+  provider: string;
+  apiKey?: string;
+  endpoint?: string;
+  model?: string;
+  options?: Record<string, string>;
+}): Promise<{ ok: boolean; error?: string; message?: string }> {
+  const res = await apiFetch("/api/tools/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  return res.json();
+}
+
 // Plugins
 export async function getPlugins(): Promise<PluginInfo[]> {
   const res = await apiFetch("/api/plugins");

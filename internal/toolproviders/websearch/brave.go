@@ -28,7 +28,13 @@ func (b *Brave) Execute(ctx context.Context, req toolproviders.Request) (toolpro
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.search.brave.com/res/v1/web/search", nil)
+	// Default Brave endpoint. Override via Config.Endpoint with the full
+	// URL. Used verbatim — same convention as image_gen/tts.
+	endpoint := "https://api.search.brave.com/res/v1/web/search"
+	if req.Config.Endpoint != "" {
+		endpoint = req.Config.Endpoint
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return toolproviders.Response{}, err
 	}

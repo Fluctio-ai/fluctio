@@ -23,10 +23,12 @@ import {
   ChevronDown,
   X,
   Plus,
+  FlaskConical,
 } from "lucide-react";
 import {
   getTools,
   saveTools,
+  probeToolProvider,
   type ToolsConfig,
   type ToolCategoryCatalog,
   type ToolProviderCatalog,
@@ -242,7 +244,7 @@ function CategoryPanel({
             {selected && selected.name === "none" ? (
               <p className="text-xs text-muted-foreground pt-1">{tt("tools.noneBackendDesc", { name: catalog.name })}</p>
             ) : selected && (
-              <ProviderFields provider={selected} settings={providers[selected.name] || {}} onChange={(patch) => setProvider(selected.name, patch)} />
+              <ProviderFields provider={selected} settings={providers[selected.name] || {}} onChange={(patch) => setProvider(selected.name, patch)} category={catalog.name} />
             )}
           </div>
         </div>
@@ -257,13 +259,17 @@ function ProviderFields({
   provider,
   settings,
   onChange,
+  category,
 }: {
   provider: ToolProviderCatalog;
   settings: ToolProviderSettings;
   onChange: (patch: Partial<ToolProviderSettings>) => void;
+  category: string;
 }) {
   const tt = useT();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<{ ok: boolean; error?: string; message?: string } | null>(null);
   const defaultModel = settings.options?.model || "";
 
   const setOption = (k: string, v: string) => {
@@ -271,6 +277,26 @@ function ProviderFields({
     if (v === "") delete opts[k];
     else opts[k] = v;
     onChange({ options: opts });
+  };
+
+  const handleProbe = async () => {
+    setProbing(true);
+    setProbeResult(null);
+    try {
+      const res = await probeToolProvider({
+        category,
+        provider: provider.name,
+        apiKey: settings.apiKey,
+        endpoint: settings.endpoint,
+        model: settings.options?.model,
+        options: settings.options,
+      });
+      setProbeResult(res);
+    } catch {
+      setProbeResult({ ok: false, error: "network error" });
+    } finally {
+      setProbing(false);
+    }
   };
 
   return (
@@ -283,8 +309,19 @@ function ProviderFields({
       )}
       {provider.needsUrl && (
         <div className="space-y-2">
-          <Label>{tt("tools.endpoint")}</Label>
-          <Input type="url" placeholder="https://searxng.example.com" value={settings.endpoint || ""} onChange={(e) => onChange({ endpoint: e.target.value })} className="font-mono text-sm" />
+          <Label>
+            {tt("tools.endpoint")}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              {provider.name === "searxng" ? tt("tools.endpointRequired") : tt("tools.endpointOptional")}
+            </span>
+          </Label>
+          <Input
+            type="url"
+            placeholder={provider.name === "searxng" ? "https://searxng.example.com" : "https://your-proxy.example.com (blank = official API)"}
+            value={settings.endpoint || ""}
+            onChange={(e) => onChange({ endpoint: e.target.value })}
+            className="font-mono text-sm"
+          />
         </div>
       )}
       {provider.models.length > 1 && (
@@ -303,6 +340,28 @@ function ProviderFields({
 
       {showAdvanced && (
         <AdvancedOptionsEditor options={settings.options || {}} onChange={(next) => onChange({ options: next })} />
+      )}
+
+      {/* Probe: run a minimal real call to verify key + endpoint work before
+          saving. "none" and the direct fetcher skip it. */}
+      {provider.name !== "none" && provider.name !== "direct" && (
+        <div className="flex items-center gap-2 pt-1">
+          <Button variant="outline" size="sm" onClick={handleProbe} disabled={probing}>
+            {probing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FlaskConical className="h-3.5 w-3.5" />}
+            <span className="ml-1.5">{probing ? tt("tools.testing") : tt("tools.test")}</span>
+          </Button>
+          {probeResult && (
+            probeResult.ok ? (
+              <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                <Check className="h-3 w-3" /> {probeResult.message || "✓"}
+              </span>
+            ) : (
+              <span className="text-xs text-destructive truncate max-w-[18rem]" title={probeResult.error}>
+                {probeResult.error}
+              </span>
+            )
+          )}
+        </div>
       )}
     </div>
   );

@@ -405,6 +405,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Tools (super_admin only).
 	mux.HandleFunc("GET /api/tools", admin(s.handleGetTools))
 	mux.HandleFunc("PUT /api/tools", admin(s.handleSaveTools))
+	mux.HandleFunc("POST /api/tools/probe", admin(s.handleToolProbe))
 
 	// Channels (read-only list of registered channel adapters at runtime)
 	mux.HandleFunc("GET /api/channels", auth(s.handleListChannels))

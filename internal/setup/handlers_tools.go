@@ -1,9 +1,11 @@
 package setup
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/gateway"
@@ -36,9 +38,10 @@ var builtinCatalog = []categoryCatalog{
 		Name:  "web_search",
 		Label: "Web Search",
 		Providers: []providerCatalog{
-			{Name: "exa", Label: "Exa", NeedsKey: true, Models: []string{"auto", "neural", "keyword"}},
-			{Name: "brave", Label: "Brave Search", NeedsKey: true, Models: []string{"web"}},
+			{Name: "exa", Label: "Exa", NeedsKey: true, NeedsURL: true, Models: []string{"auto", "neural", "keyword"}},
+			{Name: "brave", Label: "Brave Search", NeedsKey: true, NeedsURL: true, Models: []string{"web"}},
 			{Name: "searxng", Label: "SearxNG (self-hosted)", NeedsURL: true, Models: []string{"default"}},
+			{Name: "firecrawl", Label: "Firecrawl", NeedsKey: true, NeedsURL: true, Models: []string{"default"}},
 			// "none" is a sentinel: when picked, web_search is not exposed
 			// to the model at all. There's no external backend — the model
 			// uses its own native search if it has one.
@@ -55,17 +58,17 @@ var builtinCatalog = []categoryCatalog{
 			// quota, but the chain runtime treats blank as valid because
 			// the provider implements CredentialFree.
 			{Name: "direct", Label: "Direct (built-in)", Models: []string{"default"}},
-			{Name: "jina", Label: "Jina Reader", NeedsKey: true, Models: []string{"default"}},
-			{Name: "firecrawl", Label: "Firecrawl", NeedsKey: true, Models: []string{"default"}},
+			{Name: "jina", Label: "Jina Reader", NeedsKey: true, NeedsURL: true, Models: []string{"default"}},
+			{Name: "firecrawl", Label: "Firecrawl", NeedsKey: true, NeedsURL: true, Models: []string{"default"}},
 		},
 	},
 	{
 		Name:  "image_gen",
 		Label: "Image Generation",
 		Providers: []providerCatalog{
-			{Name: "openai", Label: "OpenAI", NeedsKey: true, Models: []string{"gpt-image-1", "dall-e-3"}},
-			{Name: "replicate", Label: "Replicate", NeedsKey: true, Models: []string{"flux-schnell", "flux-dev", "flux-pro", "sdxl", "ideogram"}},
-			{Name: "fal", Label: "Fal", NeedsKey: true, Models: []string{"flux-dev", "flux-schnell", "flux-pro"}},
+			{Name: "openai", Label: "OpenAI", NeedsKey: true, NeedsURL: true, Models: []string{"gpt-image-1", "dall-e-3"}},
+			{Name: "replicate", Label: "Replicate", NeedsKey: true, NeedsURL: true, Models: []string{"flux-schnell", "flux-dev", "flux-pro", "sdxl", "ideogram"}},
+			{Name: "fal", Label: "Fal", NeedsKey: true, NeedsURL: true, Models: []string{"flux-dev", "flux-schnell", "flux-pro"}},
 			// "none" is a sentinel: when picked, image_gen is not exposed
 			// to the model at all. The model falls back to its own native
 			// image-generation capability if it has one.
@@ -76,10 +79,10 @@ var builtinCatalog = []categoryCatalog{
 		Name:  "tts",
 		Label: "Text-to-Speech",
 		Providers: []providerCatalog{
-			{Name: "openai", Label: "OpenAI", NeedsKey: true, Models: []string{"tts-1", "tts-1-hd"}},
-			{Name: "elevenlabs", Label: "ElevenLabs", NeedsKey: true, Models: []string{"eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"}},
-			{Name: "fish", Label: "Fish Audio", NeedsKey: true, Models: []string{"s1", "speech-1.5", "speech-1.6"}},
-			{Name: "minimax", Label: "MiniMax", NeedsKey: true, Models: []string{"speech-02-hd", "speech-02-turbo"}},
+			{Name: "openai", Label: "OpenAI", NeedsKey: true, NeedsURL: true, Models: []string{"tts-1", "tts-1-hd"}},
+			{Name: "elevenlabs", Label: "ElevenLabs", NeedsKey: true, NeedsURL: true, Models: []string{"eleven_multilingual_v2", "eleven_turbo_v2_5", "eleven_flash_v2_5"}},
+			{Name: "fish", Label: "Fish Audio", NeedsKey: true, NeedsURL: true, Models: []string{"s1", "speech-1.5", "speech-1.6"}},
+			{Name: "minimax", Label: "MiniMax", NeedsKey: true, NeedsURL: true, Models: []string{"speech-02-hd", "speech-02-turbo"}},
 			// "none" is a sentinel: when picked, tts is not exposed to the
 			// model at all. The model falls back to its own native audio
 			// capability if it has one.
@@ -212,3 +215,78 @@ func splitRef(ref string) (string, string) {
 
 // Silence unused-import warnings when the package grows.
 var _ = toolproviders.ErrNoResults
+
+// handleToolProbe runs a minimal real call against a single provider so the
+// operator can verify their key + endpoint actually work before relying on
+// it. Returns {ok:true} on success, {ok:false,error:...} on failure. Errors
+// are surfaced verbatim so the operator can read the 401 / network / quota
+// message themselves. The submitted (possibly unsaved) form values are used,
+// so a half-entered config can still be tested before saving.
+func (s *Server) handleToolProbe(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Category string            `json:"category"`
+		Provider string            `json:"provider"`
+		APIKey   string            `json:"apiKey,omitempty"`
+		Endpoint string            `json:"endpoint,omitempty"`
+		Model    string            `json:"model,omitempty"`
+		Options  map[string]string `json:"options,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
+		return
+	}
+	if req.Category == "" || req.Provider == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "category and provider required"})
+		return
+	}
+
+	reg := gateway.ToolProviderRegistry()
+	p := reg.Get(req.Category, req.Provider)
+	if p == nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": fmt.Sprintf("unknown provider %q for category %q", req.Provider, req.Category)})
+		return
+	}
+
+	// "none" makes no outbound call; "direct" is the built-in net/http
+	// fetcher with no creds. Both are always reachable — skip the actual
+	// call to avoid a confusing error when the operator is just sanity-
+	// checking the toggle.
+	if req.Provider == "none" || req.Provider == "direct" {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "message": "no-op provider"})
+		return
+	}
+
+	cfg := toolproviders.ProviderConfig{
+		APIKey:   req.APIKey,
+		Endpoint: req.Endpoint,
+		Model:    req.Model,
+		Options:  req.Options,
+	}
+	// Short timeout so a misconfigured endpoint doesn't hang the dashboard;
+	// image-gen providers can take 10-20s on a cold fal/replicate queue.
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	if _, err := p.Execute(ctx, toolproviders.Request{Args: probeArgs(req.Category), Config: cfg}); err != nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// probeArgs returns the minimal arg map that exercises a category's provider
+// without spending real budget. Each category's input schema is defined in
+// internal/toolproviders/<cat>/<cat>.go.
+func probeArgs(category string) map[string]any {
+	switch category {
+	case "web_search":
+		return map[string]any{"query": "test", "count": 1}
+	case "web_fetch":
+		return map[string]any{"url": "https://example.com", "maxLen": 200}
+	case "image_gen":
+		return map[string]any{"prompt": "a dot", "n": 1, "size": "256x256"}
+	case "tts":
+		return map[string]any{"text": "hi"}
+	}
+	return map[string]any{}
+}

@@ -40,7 +40,15 @@ func (e *Exa) Execute(ctx context.Context, req toolproviders.Request) (toolprovi
 		"type":       mode,
 	}
 	buf, _ := json.Marshal(body)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.exa.ai/search", bytes.NewReader(buf))
+	// Default Exa endpoint. Override via Config.Endpoint with the full URL
+	// (e.g. a self-hosted Exa-compatible service). Used verbatim — no path
+	// appended — same convention as image_gen/tts, so every provider treats
+	// Endpoint as the complete request URL.
+	endpoint := "https://api.exa.ai/search"
+	if req.Config.Endpoint != "" {
+		endpoint = req.Config.Endpoint
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(buf))
 	if err != nil {
 		return toolproviders.Response{}, err
 	}
