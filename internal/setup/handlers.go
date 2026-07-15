@@ -640,10 +640,11 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, runProviderTest(r.Context(), req))
 }
 
-// handleBuiltinModels 返回合并后的模型 contextWindow 表（内置 + 本地覆盖）。
-// 前端 models 页 autocomplete 用。
+// handleBuiltinModels returns the merged model metadata table (builtin +
+// local override) — {modelId: {contextWindow, maxTokens}}. The models page
+// uses it for autocomplete suggestions and contextWindow/maxTokens autofill.
 func (s *Server) handleBuiltinModels(w http.ResponseWriter, r *http.Request) {
-	tbl := config.MergedModelTablePublic()
+	tbl := config.MergedMetaTablePublic()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tbl)
 }
@@ -680,8 +681,8 @@ func (s *Server) handleFetchProviderModels(w http.ResponseWriter, r *http.Reques
 	}
 	out := make([]item, 0, len(ids))
 	for _, id := range ids {
-		cw, _ := config.LookupModelMeta(id)
-		out = append(out, item{ID: id, ContextWindow: cw})
+		meta, _ := config.LookupModelMeta(id)
+		out = append(out, item{ID: id, ContextWindow: meta.ContextWindow})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)

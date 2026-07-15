@@ -2,92 +2,63 @@ package config
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
 
-func TestBuiltinModelTableKnownEntries(t *testing.T) {
-	tbl := builtinModelTable()
-	cases := map[string]int{
-		"claude-opus-4-8": 1000000,
-		"gpt-5.4":         1050000,
-		"gemini":          1048576,
-		"deepseek-chat":   1000000,
-		"glm-5.2":         1048576,
-		"grok-4-fast":     2000000,
-		"claude":          200000, // catch-all
+// TestBuiltinMetaTable verifies the embedded model_meta.json parses and
+// carries both ContextWindow and MaxTokens for known models.
+func TestBuiltinMetaTable(t *testing.T) {
+	tbl := builtinMetaTable()
+	if tbl == nil {
+		t.Fatal("builtinMetaTable returned nil — embed failed to parse")
+	}
+	cases := map[string]ModelMeta{
+		"claude-opus-4-8": {ContextWindow: 1000000, MaxTokens: 128000},
+		"claude-sonnet-4": {ContextWindow: 1000000, MaxTokens: 64000},
+		"gpt-5":           {ContextWindow: 400000, MaxTokens: 128000},
+		"deepseek-chat":   {ContextWindow: 1000000, MaxTokens: 384000},
+		// grok-4-fast has no maxOutputTokens in the source → MaxTokens stays 0.
+		"grok-4-fast": {ContextWindow: 2000000, MaxTokens: 0},
 	}
 	for key, want := range cases {
-		if got := tbl[key]; got != want {
-			t.Errorf("builtinModelTable()[%q] = %d, want %d", key, got, want)
+		if got := tbl[key]; !reflect.DeepEqual(got, want) {
+			t.Errorf("builtinMetaTable()[%q] = %+v, want %+v", key, got, want)
 		}
 	}
-	if len(tbl) < 50 {
-		t.Errorf("builtin table too small: %d entries", len(tbl))
+	if len(tbl) < 600 {
+		t.Errorf("builtin meta table too small: %d entries", len(tbl))
 	}
 }
 
-func TestMergedModelTableLocalOverrides(t *testing.T) {
-	tmp := t.TempDir() + "/model-context.json"
-	// 本地覆盖 claude 的 catch-all + 加一条新模型
-	local := `{"claude": 500000, "my-custom-model": 99000}`
+// TestMergedMetaTableLocalOverrides verifies a local override file wholly
+// replaces the builtin entry for the same key while builtin entries are
+// preserved for keys the local file doesn't touch.
+func TestMergedMetaTableLocalOverrides(t *testing.T) {
+	tmp := t.TempDir() + "/model-meta.json"
+	// Override claude-opus-4-8 entirely + add a new custom model.
+	local := `{"claude-opus-4-8": {"contextWindow": 999, "maxTokens": 111}, "my-custom-model": {"contextWindow": 500, "maxTokens": 50}}`
 	if err := os.WriteFile(tmp, []byte(local), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	merged := mergedModelTable(tmp)
-	if merged["claude"] != 500000 {
-		t.Errorf("local should override builtin claude: got %d", merged["claude"])
+	merged := mergedMetaTable(tmp)
+	if got := merged["claude-opus-4-8"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 999, MaxTokens: 111}) {
+		t.Errorf("local should wholly override builtin claude-opus-4-8: got %+v", got)
 	}
-	if merged["my-custom-model"] != 99000 {
-		t.Errorf("local-only entry missing: %d", merged["my-custom-model"])
+	if got := merged["my-custom-model"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 500, MaxTokens: 50}) {
+		t.Errorf("local-only entry missing: got %+v", got)
 	}
-	if merged["gpt-5.4"] != 1050000 {
-		t.Errorf("builtin entry lost after merge: %d", merged["gpt-5.4"])
-	}
-}
-
-func TestMergedModelTableNoLocalFile(t *testing.T) {
-	merged := mergedModelTable("/nonexistent/path.json")
-	if merged["gemini"] != 1048576 {
-		t.Errorf("builtin should still load without local file: %d", merged["gemini"])
+	// Builtin entry untouched by the local file is preserved.
+	if got := merged["gpt-5"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 400000, MaxTokens: 128000}) {
+		t.Errorf("builtin entry lost after merge: got %+v", got)
 	}
 }
 
-// ---------------------------------------------------------------------------
-// maxTokens 表测试（与 contextWindow 平行，互不干扰）
-// ---------------------------------------------------------------------------
-
-func TestBuiltinMaxTokensTable(t *testing.T) {
-	tbl := builtinMaxTokensTable()
-	if tbl == nil {
-		t.Fatal("builtinMaxTokensTable returned nil — empty JSON should still parse to non-nil map")
-	}
-	if len(tbl) != 0 {
-		t.Errorf("builtin maxTokens table should be empty by default, got %d entries", len(tbl))
-	}
-}
-
-func TestMergedMaxTokensTableLocalOverrides(t *testing.T) {
-	tmp := t.TempDir() + "/model-maxtokens.json"
-	local := `{"claude-sonnet-4-6": 16384, "gpt-5": 32768}`
-	if err := os.WriteFile(tmp, []byte(local), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	merged := mergedMaxTokensTable(tmp)
-	if merged["claude-sonnet-4-6"] != 16384 {
-		t.Errorf("local maxTokens entry missing: %d", merged["claude-sonnet-4-6"])
-	}
-	if merged["gpt-5"] != 32768 {
-		t.Errorf("local maxTokens entry missing: %d", merged["gpt-5"])
-	}
-}
-
-func TestMergedMaxTokensTableNoLocalFile(t *testing.T) {
-	merged := mergedMaxTokensTable("/nonexistent/maxtokens.json")
-	// 内置空表 — 应返回空 map，不 panic
-	if merged == nil {
-		t.Fatal("mergedMaxTokensTable returned nil for missing local file")
-	}
-	if len(merged) != 0 {
-		t.Errorf("expected empty table, got %d entries", len(merged))
+// TestMergedMetaTableNoLocalFile verifies the builtin table still loads
+// when the local override path is missing.
+func TestMergedMetaTableNoLocalFile(t *testing.T) {
+	merged := mergedMetaTable("/nonexistent/path.json")
+	if got := merged["claude-opus-4-8"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 1000000, MaxTokens: 128000}) {
+		t.Errorf("builtin should still load without local file: got %+v", got)
 	}
 }

@@ -37,10 +37,11 @@ func TestMergedAgentConfigContextWindowFallback(t *testing.T) {
 	}
 	// Reference value from the SAME source resolve uses, so the test
 	// stays correct even if the builtin table entry changes later.
-	wantCW, ok := LookupModelMeta(model)
+	meta, ok := LookupModelMeta(model)
 	if !ok {
 		t.Skipf("builtin table has no entry for %q — table changed?", model)
 	}
+	wantCW := meta.ContextWindow
 	if resolved.ContextWindow == 0 {
 		t.Fatalf("ContextWindow=0 — table fallback not wired into MergedAgentConfig (model=%s)", model)
 	}
@@ -87,18 +88,24 @@ func TestMergedAgentConfigContextWindowGuardPreservesPreset(t *testing.T) {
 	const sentinel = 500000
 	// Confirm the table WOULD overwrite if the guard were absent — if not,
 	// the assertion below would be vacuous.
-	tableCW, ok := LookupModelMeta("claude-opus-4-8")
-	if !ok || tableCW == sentinel {
-		t.Skipf("table value (%d, ok=%v) unsuitable for guard test — pick another model", tableCW, ok)
+	tableMeta, ok := LookupModelMeta("claude-opus-4-8")
+	if !ok || tableMeta.ContextWindow == sentinel {
+		t.Skipf("table value (%+v, ok=%v) unsuitable for guard test — pick another model", tableMeta, ok)
 	}
 
 	// Replay the EXACT guard added to MergedAgentConfig (config.go, search
-	// "Table fallback"). A future ModelEntry mapping will set this before
-	// the guard runs; here we simulate that by presetting manually.
+	// "Unified model-meta fallback"). A future ModelEntry mapping will set
+	// this before the guard runs; here we simulate that by presetting
+	// manually.
 	resolved := ResolvedAgent{Model: "claude-opus-4-8", ContextWindow: sentinel}
-	if resolved.ContextWindow == 0 && resolved.Model != "" {
-		if cw, ok := LookupModelMeta(resolved.Model); ok {
-			resolved.ContextWindow = cw
+	if (resolved.ContextWindow == 0 || resolved.MaxTokens == 0) && resolved.Model != "" {
+		if m, ok := LookupModelMeta(resolved.Model); ok {
+			if resolved.ContextWindow == 0 {
+				resolved.ContextWindow = m.ContextWindow
+			}
+			if resolved.MaxTokens == 0 {
+				resolved.MaxTokens = m.MaxTokens
+			}
 		}
 	}
 
@@ -125,10 +132,11 @@ func TestMergedAgentConfigModelEntryContextWindowWins(t *testing.T) {
 
 	// Guard: skip if the table doesn't know this model, otherwise the test
 	// would be vacuous (we need the table to "want" a different value).
-	tableCW, ok := LookupModelMeta(modelID)
+	tableMeta, ok := LookupModelMeta(modelID)
 	if !ok {
 		t.Skipf("builtin table has no entry for %q — table changed?", modelID)
 	}
+	tableCW := tableMeta.ContextWindow
 	if tableCW == entryCW {
 		t.Skipf("table value %d == entry value — pick a different sentinel", tableCW)
 	}

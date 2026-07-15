@@ -877,8 +877,6 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 
 	if entry.MaxTokens > 0 {
 		resolved.MaxTokens = entry.MaxTokens
-	} else if mt, ok := LookupModelMaxTokens(resolved.Model); ok {
-		resolved.MaxTokens = mt
 	}
 	if entry.Temperature > 0 {
 		resolved.Temperature = entry.Temperature
@@ -1036,13 +1034,20 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 		}
 	}
 
-	// Table fallback: when neither ModelEntry.ContextWindow nor any other
-	// resolve path has set a value (resolved.ContextWindow == 0), look up
-	// the builtin model table so Phase 2 always has a non-zero threshold
-	// for known models.
-	if resolved.ContextWindow == 0 && resolved.Model != "" {
-		if cw, ok := LookupModelMeta(resolved.Model); ok {
-			resolved.ContextWindow = cw
+	// Unified model-meta fallback: when ContextWindow or MaxTokens is still
+	// zero after the ModelEntry + entry + fileCfg resolution, fill from the
+	// builtin meta table so Phase 2 always has a non-zero threshold for
+	// known models. One lookup serves both fields (spec: entry > fileCfg >
+	// builtin table > 0; the 8192 MaxTokens default from ApplyDefaults is
+	// preserved because resolved.MaxTokens is non-zero by then).
+	if (resolved.ContextWindow == 0 || resolved.MaxTokens == 0) && resolved.Model != "" {
+		if meta, ok := LookupModelMeta(resolved.Model); ok {
+			if resolved.ContextWindow == 0 {
+				resolved.ContextWindow = meta.ContextWindow
+			}
+			if resolved.MaxTokens == 0 {
+				resolved.MaxTokens = meta.MaxTokens
+			}
 		}
 	}
 

@@ -45,6 +45,7 @@ import {
   fetchProviderModels,
   type ModelEntry,
   type ProviderRow,
+  type BuiltinModelMeta,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
@@ -166,8 +167,8 @@ export default function AgentModelsPage() {
   const [modelTests, setModelTests] = useState<Record<number, ModelTestResult>>({});
   const [batchTesting, setBatchTesting] = useState(false);
 
-  // Builtin model table — loaded once for autocomplete + contextWindow fill.
-  const [builtinModels, setBuiltinModels] = useState<Record<string, number>>({});
+  // Builtin model table — loaded once for autocomplete + contextWindow/maxTokens fill.
+  const [builtinModels, setBuiltinModels] = useState<Record<string, BuiltinModelMeta>>({});
   // Per-row autocomplete state. Only one row's dropdown is open at a time.
   const [acActiveIdx, setAcActiveIdx] = useState<number | null>(null);
   const [acQuery, setAcQuery] = useState("");
@@ -316,11 +317,15 @@ export default function AgentModelsPage() {
     };
   }, [acQuery, acActiveIdx, builtinModels]);
 
-  // Selecting an autocomplete item fills the model row's id + contextWindow.
+  // Selecting an autocomplete item fills the model row's id + contextWindow
+  // (and maxTokens when the builtin table carries one).
   const handleAutocompleteSelect = (idx: number, modelId: string) => {
     handleUpdateModel(idx, "id", modelId);
-    const cw = builtinModels[modelId];
-    if (cw) handleUpdateModel(idx, "contextWindow", cw);
+    const meta = builtinModels[modelId];
+    if (meta) {
+      handleUpdateModel(idx, "contextWindow", meta.contextWindow);
+      if (meta.maxTokens) handleUpdateModel(idx, "maxTokens", meta.maxTokens);
+    }
     setAcActiveIdx(null);
     setAcMatches([]);
   };
@@ -1105,7 +1110,7 @@ export default function AgentModelsPage() {
                             >
                               <span>{mid}</span>
                               <span className="text-muted-foreground text-[10px]">
-                                {builtinModels[mid] >= 1000 ? `${Math.round(builtinModels[mid] / 1000)}K` : builtinModels[mid]}
+                                {builtinModels[mid].contextWindow >= 1000 ? `${Math.round(builtinModels[mid].contextWindow / 1000)}K` : builtinModels[mid].contextWindow}
                               </span>
                             </li>
                           ))}

@@ -573,9 +573,13 @@ export async function testProvider(config: { apiBase: string; apiKey: string; mo
 }
 
 // Builtin model table — merged from the embedded JSON + local override file.
-// Returns { modelId: contextWindow } for every known model. Used by the
-// models page for autocomplete suggestions.
-export async function getBuiltinModels(): Promise<Record<string, number>> {
+// Returns { modelId: { contextWindow, maxTokens } } for every known model.
+// Used by the models page for autocomplete suggestions and autofill.
+export interface BuiltinModelMeta {
+  contextWindow: number;
+  maxTokens: number;
+}
+export async function getBuiltinModels(): Promise<Record<string, BuiltinModelMeta>> {
   const r = await apiFetch("/api/models/builtin");
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();

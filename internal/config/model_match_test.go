@@ -2,75 +2,65 @@ package config
 
 import (
 	"os"
+	"reflect"
 	"testing"
 )
 
-func TestLookupModelMetaSubstringLongestFirst(t *testing.T) {
-	// 不设本地覆盖（用内置表）
+// TestLookupMetaSubstringLongestFirst exercises the unified matcher against
+// the builtin table (no local override): substring matching with
+// longest-first tiebreak, returning a full ModelMeta.
+func TestLookupMetaSubstringLongestFirst(t *testing.T) {
 	cases := []struct {
 		id     string
-		want   int
+		want   ModelMeta
 		reason string
 	}{
-		{"claude-opus-4-8-20250929", 1000000, "版本后缀 → claude-opus-4-8"},
-		{"anthropic/claude-sonnet-4-6", 1000000, "provider 前缀 → claude-sonnet-4-6"},
-		{"claude-3-5-sonnet", 200000, "无精确 → catch-all claude"},
-		{"gpt-5.4-mini", 400000, "gpt-5.4-mini 优先于 gpt-5.4 / gpt-5（longest-first）"},
-		{"gpt-5", 400000, "gpt-5 catch-all"},
-		{"some-unknown-model", 0, "无匹配 → matched=false"},
+		{"claude-opus-4-8", ModelMeta{ContextWindow: 1000000, MaxTokens: 128000}, "exact key"},
+		{"claude-opus-4-8-20250929", ModelMeta{ContextWindow: 1000000, MaxTokens: 128000}, "version suffix -> claude-opus-4-8"},
+		{"anthropic/claude-sonnet-4-6", ModelMeta{ContextWindow: 1000000, MaxTokens: 128000}, "provider prefix -> claude-sonnet-4-6"},
+		// longest-first: both claude-opus-4 and claude-opus-4-6 are substrings;
+		// the longer key (claude-opus-4-6, cw=1000000) wins over the shorter
+		// (claude-opus-4, cw=200000).
+		{"claude-opus-4-6-preview", ModelMeta{ContextWindow: 1000000, MaxTokens: 128000}, "longest-first -> claude-opus-4-6 beats claude-opus-4"},
+		{"openai/gpt-5-preview", ModelMeta{ContextWindow: 400000, MaxTokens: 128000}, "gpt-5 substring match"},
+		{"zzz-no-such-model-xyz", ModelMeta{}, "no match -> zero value + matched=false"},
 	}
 	for _, c := range cases {
-		got, ok := lookupModelMetaIn(c.id, "") // 用显式表入口测，避免读磁盘
-		if c.want == 0 {
+		got, ok := lookupMetaIn(c.id, "")
+		if c.reason == "no match -> zero value + matched=false" {
 			if ok {
-				t.Errorf("%s: expected no match, got %d", c.id, got)
+				t.Errorf("%s: expected no match, got %+v", c.id, got)
 			}
 			continue
 		}
-		if !ok || got != c.want {
-			t.Errorf("%s: got (%d,%v), want %d — %s", c.id, got, ok, c.want, c.reason)
+		if !ok || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: got (%+v,%v), want %+v — %s", c.id, got, ok, c.want, c.reason)
 		}
 	}
 }
 
-// ---------------------------------------------------------------------------
-// maxTokens lookup 测试（与 contextWindow lookup 平行）
-// ---------------------------------------------------------------------------
-
-func TestLookupMaxTokensEmptyBuiltin(t *testing.T) {
-	// 内置表为空 — 无本地覆盖时应 unmatched
-	_, ok := lookupMaxTokensIn("claude-sonnet-4-6", "")
-	if ok {
-		t.Error("expected no match on empty builtin + no local override")
-	}
-}
-
-func TestLookupMaxTokensLocalOverride(t *testing.T) {
-	tmp := t.TempDir() + "/model-maxtokens.json"
-	local := `{"claude-sonnet-4-6": 16384, "gpt-5": 32768, "claude": 8192}`
+// TestLookupMetaLocalOverride verifies the local override file participates
+// in the merged table + longest-first match (whole-object replacement).
+func TestLookupMetaLocalOverride(t *testing.T) {
+	tmp := t.TempDir() + "/model-meta.json"
+	local := `{"claude-opus-4-8": {"contextWindow": 999, "maxTokens": 111}, "claude-opus": {"contextWindow": 500, "maxTokens": 55}}`
 	if err := os.WriteFile(tmp, []byte(local), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
-		id     string
-		want   int
-		reason string
+		id   string
+		want ModelMeta
 	}{
-		{"anthropic/claude-sonnet-4-6", 16384, "longest-first → claude-sonnet-4-6 而非 catch-all claude"},
-		{"claude-opus-4-8", 8192, "catch-all claude"},
-		{"openai/gpt-5-preview", 32768, "gpt-5 子串匹配"},
-		{"unknown-model", 0, "无匹配 → matched=false"},
+		// Local override wins over builtin for the same key.
+		{"anthropic/claude-opus-4-8", ModelMeta{ContextWindow: 999, MaxTokens: 111}},
+		// longest-first between the two local keys.
+		{"claude-opus-4-8-preview", ModelMeta{ContextWindow: 999, MaxTokens: 111}},
+		{"claude-opus-mini", ModelMeta{ContextWindow: 500, MaxTokens: 55}},
 	}
 	for _, c := range cases {
-		got, ok := lookupMaxTokensIn(c.id, tmp)
-		if c.want == 0 {
-			if ok {
-				t.Errorf("%s: expected no match, got %d", c.id, got)
-			}
-			continue
-		}
-		if !ok || got != c.want {
-			t.Errorf("%s: got (%d,%v), want %d — %s", c.id, got, ok, c.want, c.reason)
+		got, ok := lookupMetaIn(c.id, tmp)
+		if !ok || !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: got (%+v,%v), want %+v", c.id, got, ok, c.want)
 		}
 	}
 }

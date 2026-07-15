@@ -261,8 +261,8 @@ func (s *Server) handleFetchModelsByConfig(w http.ResponseWriter, r *http.Reques
 	}
 	out := make([]item, 0, len(ids))
 	for _, id := range ids {
-		cw, _ := config.LookupModelMeta(id)
-		out = append(out, item{ID: id, ContextWindow: cw})
+		meta, _ := config.LookupModelMeta(id)
+		out = append(out, item{ID: id, ContextWindow: meta.ContextWindow})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
