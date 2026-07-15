@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -119,7 +120,16 @@ func executeCLI(ctx context.Context, agentID, cmdString, text string) (string, e
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "cmd", "/C", resolved)
+	// Dispatch through the platform shell so the CLI command string can
+	// carry arguments the same way on every OS. runtime.GOOS is a
+	// compile-time constant, so a cross-compiled linux binary takes the
+	// sh branch automatically.
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/C", resolved)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", resolved)
+	}
 	cmd.Stdin = strings.NewReader(text)
 
 	var stdout, stderr bytes.Buffer
