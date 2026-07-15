@@ -428,6 +428,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// Upstream unreachable / unsupported → 501.
 	mux.HandleFunc("POST /api/agents/{id}/models/fetch", auth(s.handleFetchProviderModels))
 
+	// Fetch live model list from a provider config supplied in the body
+	// (global /models page). Stored-key path resolves via providerId.
+	mux.HandleFunc("POST /api/models/fetch", auth(s.handleFetchModelsByConfig))
+
 	// Compaction threshold preview: returns contextWindow/maxTokens +
 	// per-mode (conservative/balanced/aggressive) threshold estimates so
 	// the context-page UI can show what each mode does before applying.

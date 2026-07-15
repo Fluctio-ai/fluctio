@@ -30,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Brain, Plus, Pencil, Trash2, Check, Cpu, Loader2 } from "lucide-react";
+import { Brain, Plus, Pencil, Trash2, Check, Cpu, Loader2, Download } from "lucide-react";
 import {
   getAgent,
   getConfig,
@@ -42,6 +42,7 @@ import {
   createProvider,
   updateProvider,
   deleteProvider,
+  fetchModelsByConfig,
   type ModelEntry,
   type ProviderRow,
 } from "@/lib/api";
@@ -143,6 +144,9 @@ export default function ModelsPage() {
   type ModelTestResult = { status: "idle" | "testing" | "success" | "error"; error?: string };
   const [modelTests, setModelTests] = useState<Record<number, ModelTestResult>>({});
   const [batchTesting, setBatchTesting] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [fetchResults, setFetchResults] = useState<{ id: string; contextWindow: number }[] | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const cleanModelRows = formModels
     .map((m, idx) => ({ idx, id: m.id.trim() }))
@@ -218,7 +222,8 @@ export default function ModelsPage() {
     setFormApi(PROVIDER_PRESETS["openai"].apiType);
     setFormAuthType(PROVIDER_PRESETS["openai"].authType);
     setFormApiKey(""); setFormModels(presetModelRows("openai"));
-    setModelTests({}); setDialogOpen(true);
+    setModelTests({}); setFetchResults(null); setFetchError(null);
+    setDialogOpen(true);
   };
 
   const openEditDialog = (provider: ProviderEntry) => {
@@ -238,6 +243,7 @@ export default function ModelsPage() {
         ? Object.fromEntries(provider.models.map((_m, idx) => [idx, { status: "success" as const }]))
         : {},
     );
+    setFetchResults(null); setFetchError(null);
     setDialogOpen(true);
   };
 
@@ -280,6 +286,36 @@ export default function ModelsPage() {
   };
 
   const handleAddModel = () => setFormModels((prev) => [...prev, emptyModel()]);
+
+  // "Fetch model list" — calls the upstream provider's list-models
+  // endpoint using the config currently in the form. Mirrors
+  // handleTestConnection's useStoredKey: if editing an existing provider
+  // and the key field is empty, pass providerId so the backend resolves
+  // the stored key server-side.
+  const handleFetchModels = async () => {
+    setFetching(true);
+    setFetchError(null);
+    setFetchResults(null);
+    try {
+      const editingRow = editingId ? providers.find((p) => p.id === editingId) : undefined;
+      const useStoredKey = !!editingRow && !formApiKey.trim();
+      const list = useStoredKey
+        ? await fetchModelsByConfig({ apiBase: formApiBase, apiType: formApiType, providerId: editingRow!.id })
+        : await fetchModelsByConfig({ apiBase: formApiBase, apiKey: formApiKey, apiType: formApiType });
+      setFetchResults(list);
+    } catch {
+      setFetchError(tt("models.fetchFailed"));
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const handlePickFetchedModel = (id: string, contextWindow: number) => {
+    setFormModels((prev) => [
+      ...prev,
+      { ...emptyModel(), id, name: id, contextWindow: contextWindow || 200000 },
+    ]);
+  };
 
   const handleUpdateModel = (index: number, field: string, value: unknown) => {
     setFormModels((prev) => {
@@ -573,10 +609,57 @@ export default function ModelsPage() {
             <div className="space-y-3 pt-2 border-t border-border">
               <div className="flex items-center justify-between">
                 <Label className="text-base">{tt("models.modelsLabel")}</Label>
-                <Button variant="outline" size="sm" onClick={handleAddModel}>
-                  <Plus className="h-3 w-3 mr-1.5" />{tt("models.addModel")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFetchModels}
+                    disabled={fetching || !formApiBase}
+                  >
+                    {fetching ? (
+                      <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3 w-3 mr-1.5" />
+                    )}
+                    {tt("models.fetchProviderList")}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleAddModel}>
+                    <Plus className="h-3 w-3 mr-1.5" />{tt("models.addModel")}
+                  </Button>
+                </div>
               </div>
+
+              {/* Fetched model list — click an item to add it as a model row. */}
+              {fetchError && (
+                <p className="text-xs text-destructive text-center py-1">{fetchError}</p>
+              )}
+              {fetchResults && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-1.5 max-h-56 overflow-y-auto">
+                  {fetchResults.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-2">
+                      {tt("models.noModelsReturned")}
+                    </p>
+                  ) : (
+                    fetchResults.map((fm) => {
+                      const exists = formModels.some((m) => m.id.trim() === fm.id);
+                      return (
+                        <button
+                          key={fm.id}
+                          type="button"
+                          disabled={exists}
+                          onClick={() => handlePickFetchedModel(fm.id, fm.contextWindow)}
+                          className="flex items-center justify-between w-full px-2.5 py-1.5 rounded text-xs hover:bg-accent font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <span>{fm.id}</span>
+                          <span className="text-muted-foreground text-[10px]">
+                            {fm.contextWindow >= 1000 ? `${Math.round(fm.contextWindow / 1000)}K` : fm.contextWindow || "—"}
+                          </span>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              )}
 
               {formModels.length === 0 && (
                 <p className="text-sm text-muted-foreground/60 text-center py-4">{tt("models.noModelsConfigured")}</p>

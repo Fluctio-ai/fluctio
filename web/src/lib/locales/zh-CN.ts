@@ -1215,6 +1215,7 @@ const zhCN: Record<string, string> = {
   "models.contextWindowLabel": "上下文窗口",
   "models.maxTokensLabel": "输出上限 (MaxTokens)",
   "models.fetchProviderList": "获取模型列表",
+  "models.fetchFailed": "获取模型列表失败",
 
   // Agent skills page extras
   "skills.agentSubtitle": "技能作用域为",

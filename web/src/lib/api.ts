@@ -595,6 +595,24 @@ export async function fetchProviderModels(
   return r.json();
 }
 
+// Fetch the live model list from a provider config (global /models page).
+// When apiKey is empty, pass providerId so the backend resolves the
+// stored key server-side (Edit dialog "useStoredKey" mode).
+export async function fetchModelsByConfig(body: {
+  apiBase: string;
+  apiKey?: string;
+  apiType: string;
+  providerId?: string;
+}): Promise<{ id: string; contextWindow: number }[]> {
+  const r = await apiFetch("/api/models/fetch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
 // Config — persisted system_settings block (super_admin only).
 export async function saveConfig(config: Record<string, unknown>) {
   const res = await apiFetch("/api/config", {

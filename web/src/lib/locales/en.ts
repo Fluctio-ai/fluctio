@@ -1215,6 +1215,7 @@ const en: Record<string, string> = {
   "models.contextWindowLabel": "Context Window",
   "models.maxTokensLabel": "Max Tokens",
   "models.fetchProviderList": "Fetch model list",
+  "models.fetchFailed": "Failed to fetch model list",
 
   // Agent skills page extras
   "skills.agentSubtitle": "Skills scoped to",
