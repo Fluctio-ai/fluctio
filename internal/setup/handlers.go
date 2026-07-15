@@ -370,8 +370,23 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	resp["role"] = ident.Role
 	resp["isAdmin"] = ident.Role == "super_admin"
 	if resp["isAdmin"].(bool) && s.accounts != nil {
-		if n, err := s.accounts.Count(r.Context()); err == nil {
-			resp["users"] = n
+		// Split the user count by role so the dashboard can show admins
+		// separately from IM chatters (channel_user rows created by
+		// EnsureChatter for each end-user on a bound channel). Count()
+		// alone lumped them together, which read as "3 admins" on a
+		// single-user install with 2 WeChat contacts.
+		if list, err := s.accounts.List(r.Context()); err == nil {
+			admins, chatters := 0, 0
+			for _, a := range list {
+				switch a.Role {
+				case users.RoleSuperAdmin:
+					admins++
+				case users.RoleChannelUser:
+					chatters++
+				}
+			}
+			resp["users"] = admins
+			resp["chatters"] = chatters
 		}
 	}
 

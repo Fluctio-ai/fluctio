@@ -1103,6 +1103,7 @@ const zhCN: Record<string, string> = {
   "overview.monitor": "平台运行状态与资源使用。",
   "overview.agents": "智能体",
   "overview.users": "用户",
+  "overview.imUsers": "IM 用户",
   "overview.chats": "对话",
   "overview.channels": "通道",
   "overview.connected": "已连接",

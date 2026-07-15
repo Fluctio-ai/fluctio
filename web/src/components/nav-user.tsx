@@ -29,15 +29,28 @@ import { useT } from "@/lib/i18n";
 export function NavUser({
   name = "Admin",
   subtitle = "Gateway running",
+  avatarUrl,
 }: {
   name?: string;
   subtitle?: string;
+  avatarUrl?: string;
 }) {
   const { isMobile } = useSidebar();
   const { resolvedTheme, toggleTheme } = useTheme();
   const t = useT();
 
   const initials = name.slice(0, 2).toUpperCase();
+  // Avatar image when one's been uploaded; otherwise fall back to the
+  // 2-char initials tile. Built once — rendered on the trigger and again
+  // inside the open dropdown.
+  const avatar = avatarUrl ? (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={avatarUrl} alt={name} className="aspect-square size-8 rounded-lg object-cover" />
+  ) : (
+    <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/20 text-primary text-xs font-bold">
+      {initials}
+    </div>
+  );
 
   return (
     <SidebarMenu>
@@ -52,7 +65,7 @@ export function NavUser({
             }
           >
             <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/20 text-primary text-xs font-bold">
-              {initials}
+              {avatar}
             </div>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{name}</span>
@@ -72,7 +85,7 @@ export function NavUser({
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                   <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/20 text-primary text-xs font-bold">
-                    {initials}
+                    {avatar}
                   </div>
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-medium">{name}</span>

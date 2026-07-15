@@ -322,10 +322,22 @@ func (a *Accounts) SetPassword(ctx context.Context, id, newPassword string) erro
 func (a *Accounts) EnsureChatter(ctx context.Context, ownerUserID, externalID, displayName string) (*Account, error) {
 	ownerUserID = strings.TrimSpace(ownerUserID)
 	externalID = strings.TrimSpace(externalID)
+	displayName = strings.TrimSpace(displayName)
 	if ownerUserID == "" || externalID == "" {
 		return nil, errors.New("users.EnsureChatter: ownerUserID and externalID are required")
 	}
 	if rec, err := a.store.GetUserByExternal(ctx, ownerUserID, externalID); err == nil {
+		// Refresh the display name when the channel now carries one and it
+		// differs. IM adapters populate SenderName opportunistically (the
+		// WeChat iLink bridge fills it with from_user_id since the protocol
+		// carries no nickname), and the first message may arrive before a
+		// name is resolvable, so an existing row can start empty.
+		if displayName != "" && displayName != rec.DisplayName {
+			rec.DisplayName = displayName
+			if err := a.store.UpdateUser(ctx, rec); err != nil {
+				return nil, err
+			}
+		}
 		return toAccount(rec), nil
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, err

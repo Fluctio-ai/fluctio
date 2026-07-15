@@ -18,6 +18,7 @@ import {
   Brain,
   Users,
   MessagesSquare,
+  Smartphone,
 } from "lucide-react";
 
 export default function OverviewPage() {
@@ -107,8 +108,8 @@ export default function OverviewPage() {
         className={`grid gap-4 grid-cols-2 ${
           isAdmin
             ? showChannels
-              ? "md:grid-cols-4"
-              : "md:grid-cols-3"
+              ? "md:grid-cols-5"
+              : "md:grid-cols-4"
             : "md:grid-cols-2"
         }`}
       >
@@ -137,6 +138,22 @@ export default function OverviewPage() {
             </div>
             <p className="text-3xl font-semibold tracking-tight">
               {status?.users ?? 0}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">{t("overview.registered")}</p>
+          </div>
+        )}
+
+        {/* IM users (channel chatters) — admin-only */}
+        {isAdmin && (
+          <div className="rounded-lg border border-border bg-card p-5">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm text-muted-foreground">{t("overview.imUsers")}</span>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
+                <Smartphone className="h-4 w-4 text-muted-foreground" />
+              </div>
+            </div>
+            <p className="text-3xl font-semibold tracking-tight">
+              {status?.chatters ?? 0}
             </p>
             <p className="text-xs text-muted-foreground mt-1">{t("overview.registered")}</p>
           </div>

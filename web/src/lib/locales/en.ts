@@ -1103,6 +1103,7 @@ const en: Record<string, string> = {
   "overview.monitor": "Real-time platform health and resource usage.",
   "overview.agents": "Agents",
   "overview.users": "Users",
+  "overview.imUsers": "IM users",
   "overview.chats": "Chats",
   "overview.channels": "Channels",
   "overview.connected": "Connected",

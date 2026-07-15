@@ -89,6 +89,9 @@ export default function AccountSettingsPage() {
     }
     setProfileSaved(true);
     setTimeout(() => setProfileSaved(false), 2000);
+    // Tell the sidebar (and any other listener) to refetch /api/me so the
+    // footer avatar/name picks up the new avatarUrl without a full reload.
+    window.dispatchEvent(new Event("me-changed"));
   }
 
   async function savePassword(e: React.FormEvent) {

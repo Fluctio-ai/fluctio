@@ -14,6 +14,7 @@ export interface StatusResponse {
   userId?: string;
   isAdmin?: boolean;
   users?: number;
+  chatters?: number;
 }
 
 export interface AgentInfo {

@@ -136,9 +136,14 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
     return () => clearInterval(iv);
   }, []);
 
-  // Fetch current user once so the footer can show their name + role.
+  // Fetch current user so the footer can show their name + role. Re-fetch
+  // on "me-changed" (dispatched by the account page after a profile/avatar
+  // save) so the footer avatar updates without a full page reload.
   React.useEffect(() => {
-    getMe().then(setMe).catch(() => {});
+    const refresh = () => getMe().then(setMe).catch(() => {});
+    refresh();
+    window.addEventListener("me-changed", refresh);
+    return () => window.removeEventListener("me-changed", refresh);
   }, []);
 
   // Agent list drives the switcher dropdown at the top of the sidebar.
@@ -333,6 +338,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
             (isAdmin ? "Admin" : "User")
           }
           subtitle={me?.user?.role || (isAdmin ? "super_admin" : "user")}
+          avatarUrl={me?.user?.avatarUrl}
         />
       </SidebarFooter>
       <SidebarRail />

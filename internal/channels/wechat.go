@@ -466,14 +466,15 @@ func (w *WeChat) dispatchInbound(m wechatMessage) {
 	}
 
 	w.bus.Inbound <- bus.InboundMessage{
-		Channel:   "wechat",
-		AccountID: w.accountID,
-		ChatID:    m.FromUserID, // 1:1 — sender is also the chat key
-		UserID:    m.FromUserID,
-		MessageID: strconv.FormatInt(m.MessageID, 10),
-		Text:      text,
-		PhotoURLs: imageURLs,
-		PeerKind:  "dm",
+		Channel:    "wechat",
+		AccountID:  w.accountID,
+		ChatID:     m.FromUserID, // 1:1 — sender is also the chat key
+		UserID:     m.FromUserID,
+		SenderName: m.FromUserID, // iLink carries no nickname; use the stable user id so chatters get a readable display name instead of a blank
+		MessageID:  strconv.FormatInt(m.MessageID, 10),
+		Text:       text,
+		PhotoURLs:  imageURLs,
+		PeerKind:   "dm",
 	}
 }
 
