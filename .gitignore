@@ -89,3 +89,13 @@ run.err.*
 
 # Local agent outputs (generated files, not for repo)
 /outputs/
+
+# Local-only docs (references/notes, not shipped)
+/docs/
+
+# Private local CLI (self-use, not for repo)
+/cmd/ga-hook/
+
+# Local cross-compiled binaries for deployment testing
+/fluctio-linux
+/ga-hook-linux
