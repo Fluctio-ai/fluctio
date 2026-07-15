@@ -64,3 +64,21 @@ func TestLookupMetaLocalOverride(t *testing.T) {
 		}
 	}
 }
+
+// TestLookupMetaCaseInsensitive verifies the matcher compares lowercased:
+// a mixed-case modelID (LongCat-2.0, GPT-4) must match a lowercase key.
+// Uses a fictitious key absent from the builtin table to isolate behavior.
+func TestLookupMetaCaseInsensitive(t *testing.T) {
+	tmp := t.TempDir() + "/model-meta.json"
+	local := `{"acme-pro": {"contextWindow": 200000, "maxTokens": 8192}}`
+	if err := os.WriteFile(tmp, []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := ModelMeta{ContextWindow: 200000, MaxTokens: 8192}
+	for _, id := range []string{"Acme-Pro-Max", "ACME-PRO", "vendor/acme-pro-1"} {
+		got, ok := lookupMetaIn(id, tmp)
+		if !ok || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: got (%+v,%v), want %+v", id, got, ok, want)
+		}
+	}
+}
