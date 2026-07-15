@@ -2286,23 +2286,6 @@ export function ChatScreen() {
                       msg.role === "user" ? "max-w-[80%] order-1" : "max-w-full"
                     }`}
                   >
-                    {msg.role === "user" && msg.sender && (
-                      <div className="mb-1 flex items-center justify-end gap-2 text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground/80">{msg.sender.name}</span>
-                        {msg.sender.avatarUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={msg.sender.avatarUrl}
-                            alt={msg.sender.name}
-                            className="h-5 w-5 rounded-lg object-cover ring-1 ring-border"
-                          />
-                        ) : (
-                          <span className="flex h-5 w-5 items-center justify-center rounded-lg bg-primary/20 text-[10px] font-semibold uppercase text-foreground">
-                            {msg.sender.name.slice(0, 1)}
-                          </span>
-                        )}
-                      </div>
-                    )}
                     <div
                       className={`rounded-2xl px-4 py-2.5 break-words ${
                         msg.role === "user"
