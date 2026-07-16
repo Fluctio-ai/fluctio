@@ -288,6 +288,23 @@ export async function apiFetch(url: string, init?: RequestInit): Promise<Respons
   return fetch(url, { credentials: "same-origin", ...init, headers });
 }
 
+// In-flight dedup for shared GETs. When the sidebar's status poll, a page's
+// mount effect, and a child component's effect all call getStatus() (or
+// getMe/getConfig/getTools) within the same tick, they share one network
+// request instead of firing N identical ones. The entry is cleared on
+// settle, so the next call — e.g. the sidebar's next 15s poll tick — fetches
+// fresh data. No staleness, just fewer redundant round-trips over a slow link.
+const inflightGets = new Map<string, Promise<unknown>>();
+function dedupGet<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const existing = inflightGets.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  const p = run().finally(() => {
+    if (inflightGets.get(key) === p) inflightGets.delete(key);
+  });
+  inflightGets.set(key, p);
+  return p;
+}
+
 // Login + logout + me
 
 export interface MeResponse {
@@ -326,8 +343,10 @@ export async function logout(): Promise<void> {
 }
 
 export async function getMe(): Promise<MeResponse> {
-  const res = await apiFetch("/api/me");
-  return res.json();
+  return dedupGet("/api/me", async () => {
+    const res = await apiFetch("/api/me");
+    return res.json();
+  });
 }
 
 export async function updateMe(req: { displayName: string; avatarUrl: string }) {
@@ -559,8 +578,10 @@ export async function deleteScopedChannel(id: string) {
 
 // Status
 export async function getStatus(): Promise<StatusResponse> {
-  const res = await apiFetch("/api/status");
-  return res.json();
+  return dedupGet("/api/status", async () => {
+    const res = await apiFetch("/api/status");
+    return res.json();
+  });
 }
 
 // Provider
@@ -629,8 +650,10 @@ export async function saveConfig(config: Record<string, unknown>) {
 }
 
 export async function getConfig(): Promise<ConfigResponse> {
-  const res = await apiFetch("/api/config");
-  return res.json();
+  return dedupGet("/api/config", async () => {
+    const res = await apiFetch("/api/config");
+    return res.json();
+  });
 }
 
 export async function updateConfig(config: Record<string, unknown>) {
@@ -1908,8 +1931,10 @@ export interface ToolsConfig {
 }
 
 export async function getTools(): Promise<ToolsConfig> {
-  const res = await apiFetch("/api/tools");
-  return res.json();
+  return dedupGet("/api/tools", async () => {
+    const res = await apiFetch("/api/tools");
+    return res.json();
+  });
 }
 
 export async function saveTools(payload: {
