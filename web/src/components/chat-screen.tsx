@@ -290,7 +290,7 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
       // content. Folded, the body reads as preamble to a collapsed tool
       // block; split, the model's actual answer stands as a first-class
       // reply.
-      if (h.content) {
+      if (h.content && h.content.trim()) {
         msgs.push({ id: `h-pre-${i}`, role: "agent", content: h.content, timestamp: h.timestamp || 0, metadata: h.metadata });
       }
       msgs.push({
@@ -321,7 +321,12 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
       msgs.push({ id: `h-${i}`, role: "notice", kind: "compaction_notice", content: h.content || "", timestamp: h.timestamp || 0 });
       i++;
     } else if (h.role === "assistant") {
-      msgs.push({ id: `h-${i}`, role: "agent", content: h.content || "", timestamp: h.timestamp || 0, metadata: h.metadata });
+      // Skip whitespace-only / empty assistant turns — they'd render as
+      // phantom blank bubbles. Pure tool-call turns are mapped to
+      // tool-groups above.
+      if (h.content && h.content.trim()) {
+        msgs.push({ id: `h-${i}`, role: "agent", content: h.content, timestamp: h.timestamp || 0, metadata: h.metadata });
+      }
       i++;
     } else {
       i++; // skip unexpected
@@ -1574,15 +1579,20 @@ export function ChatScreen() {
             if (streamingMsgIdRef.current) {
               const id = streamingMsgIdRef.current;
               streamingMsgIdRef.current = null;
-              if (meta) {
-                setMessages((prev) => {
-                  const idx = prev.findIndex((m) => m.id === id);
-                  if (idx < 0) return prev;
-                  const updated = [...prev];
-                  updated[idx] = { ...updated[idx], metadata: { ...updated[idx].metadata, ...meta } };
-                  return updated;
-                });
-              }
+              // Seal the streamed bubble. If it only collected whitespace
+              // deltas this round (no real text), drop it instead of
+              // leaving a phantom blank bubble.
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === id);
+                if (idx < 0) return prev;
+                if (!((prev[idx].content || "").trim())) {
+                  return prev.filter((m) => m.id !== id);
+                }
+                if (!meta) return prev;
+                const updated = [...prev];
+                updated[idx] = { ...updated[idx], metadata: { ...updated[idx].metadata, ...meta } };
+                return updated;
+              });
               curContent = content;
               break;
             }
@@ -1624,7 +1634,24 @@ export function ChatScreen() {
             // ID so a subsequent content_delta on the next round
             // spawns a fresh bubble instead of writing into the
             // now-defunct ID.
+            //
+            // Some providers (longcat) emit a whitespace-only delta
+            // right before a tool_call, leaving a streaming bubble whose
+            // content is only whitespace; the tool-group is appended
+            // below as a separate entry, so that empty bubble would
+            // otherwise linger as a phantom blank. Drop it to match the
+            // refresh path, which folds tool-only turns into a group.
+            const tcSid = streamingMsgIdRef.current;
             streamingMsgIdRef.current = null;
+            if (tcSid) {
+              setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === tcSid);
+                if (idx >= 0 && !((prev[idx].content || "").trim())) {
+                  return prev.filter((m) => m.id !== tcSid);
+                }
+                return prev;
+              });
+            }
             // New round starts if every tool in the current group has
             // already resolved. Without this, two assistant turns that
             // happen back-to-back with no intervening content event get
