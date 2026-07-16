@@ -38,15 +38,20 @@ RUN apt-get update \
 # Debian Bookworm enforces PEP 668 on the system Python;
 # `--break-system-packages` is the documented escape hatch and safe
 # inside a container.
-# Pin playwright<1.61: camoufox-cli declares `playwright` with no upper
-# bound, so pip otherwise pulls 1.61+ which sends an `isMobile` field in
-# the Juggler `Browser.setDefaultViewport` call. Camoufox's patched
-# Firefox rejects it ("not described in this scheme") and every
-# `camoufox-cli open` dies on Browser.new_page. camoufox 0.5+ upstream
-# also pins <1.61 for the same reason.
+# Pin the whole camoufox stack. camoufox-cli declares `playwright` and
+# `camoufox[geoip]` with NO version bounds, so pip pulls the newest combo
+# (camoufox 0.5.3 + camoufox-cli 0.7.0) whose install step crashes with
+# `ModuleNotFoundError: No module named 'camoufox.locale'` — 0.5.x dropped
+# the locale submodule camoufox-cli still imports. It also pulls
+# playwright 1.61+, whose `setDefaultViewport` sends an `isMobile` field
+# the Camoufox Firefox patch rejects ("not described in this scheme"),
+# killing every `camoufox-cli open` at Browser.new_page. Lock to the last
+# known-good combo (the fcd343d :latest image shipped this): camoufox
+# 0.4.11 + camoufox-cli 0.6.0 + playwright<1.50.
 RUN pip install --break-system-packages --no-cache-dir \
-        'playwright<1.61' \
-        camoufox-cli \
+        'camoufox==0.4.11' \
+        'camoufox-cli==0.6.0' \
+        'playwright<1.50' \
         uv \
         requests \
         pillow \
