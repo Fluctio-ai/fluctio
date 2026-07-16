@@ -76,14 +76,21 @@ export function NavMain({
                   router.push(item.url!);
                   // Static export occasionally drops client-side nav
                   // silently — the URL doesn't change and no error
-                  // surfaces (seen on /admin/* targets). Fall back to a
-                  // full page load when the soft nav didn't take within
-                  // one frame.
-                  requestAnimationFrame(() => {
+                  // surfaces (seen on /admin/* targets). Soft nav is
+                  // async, though — the router must fetch the target
+                  // route's RSC payload before it updates the URL, which
+                  // takes a few hundred ms over the network. One rAF
+                  // frame (~16ms) is far too short: the fetch hadn't
+                  // even started, so pathname was still unchanged and
+                  // every click got downgraded to a full reload (the
+                  // "click any link → ~2s spinner" bug). 2s covers the
+                  // slowest normal nav while still catching genuine
+                  // /admin/* stalls.
+                  setTimeout(() => {
                     if (window.location.pathname === before) {
                       window.location.href = item.url!;
                     }
-                  });
+                  }, 2000);
                 }
               : undefined;
           return (
