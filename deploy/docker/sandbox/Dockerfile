@@ -38,7 +38,14 @@ RUN apt-get update \
 # Debian Bookworm enforces PEP 668 on the system Python;
 # `--break-system-packages` is the documented escape hatch and safe
 # inside a container.
+# Pin playwright<1.61: camoufox-cli declares `playwright` with no upper
+# bound, so pip otherwise pulls 1.61+ which sends an `isMobile` field in
+# the Juggler `Browser.setDefaultViewport` call. Camoufox's patched
+# Firefox rejects it ("not described in this scheme") and every
+# `camoufox-cli open` dies on Browser.new_page. camoufox 0.5+ upstream
+# also pins <1.61 for the same reason.
 RUN pip install --break-system-packages --no-cache-dir \
+        'playwright<1.61' \
         camoufox-cli \
         uv \
         requests \
