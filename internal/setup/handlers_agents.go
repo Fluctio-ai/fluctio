@@ -993,6 +993,37 @@ func (s *Server) workspaceSessionScope(ctx context.Context, agentID, urlToken st
 	return chatID
 }
 
+// remapSessionPath translates the leading sessions/<X>/ segment of a
+// workspace file path from the URL's session_key (s-...) to the chat_id
+// the artifact was actually stored under. The agent runtime namespaces
+// workspace writes by chat_id, but the chat client renders model-emitted
+// /workspace/<name> links against the current session_key — for IM
+// sessions those differ (session_key is s-..., chat_id is e.g.
+// "<openid>@im.wechat"), so a /files/sessions/<session_key>/<file>
+// request would 404 without this remap. Mirrors the session_key→chat_id
+// step fileScopeForRequest already does for the list/zip endpoints.
+//
+// No-op when <X> isn't a session_key this caller owns (already a
+// chat_id, foreign session, anonymous caller, or a non-session path);
+// the path-escape / ownership checks below still run on the result.
+func (s *Server) remapSessionPath(ctx context.Context, agentID, rel string) string {
+	const prefix = "sessions/"
+	if !strings.HasPrefix(rel, prefix) {
+		return rel
+	}
+	rest := rel[len(prefix):]
+	i := strings.IndexByte(rest, '/')
+	if i <= 0 {
+		return rel
+	}
+	seg := rest[:i]
+	chatID := s.workspaceSessionScope(ctx, agentID, seg)
+	if chatID == "" || chatID == seg {
+		return rel
+	}
+	return prefix + chatID + rest[i:]
+}
+
 func (s *Server) handleAgentFileList(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.workspaceStore == nil {
@@ -1351,6 +1382,14 @@ func (s *Server) handleAgentFile(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAgentReadable(w, r, id) {
 		return
 	}
+	// IM sessions carry the URL session_key (s-...) but store workspace
+	// files under sessions/<chat_id>/ (e.g. <openid>@im.wechat). The chat
+	// client renders /workspace/<name> links with the session_key, so
+	// remap the path's leading session segment to the storage chat_id —
+	// same session_key→chat_id translation fileScopeForRequest does for
+	// list/zip. No-op for webchat (session_key == chat_id) and for
+	// foreign or anonymous callers (translation returns "").
+	rel = s.remapSessionPath(r.Context(), id, rel)
 	// Never serve a file named SKILL.md as a downloadable artifact. Skill
 	// manifests are the agent's IP and never legitimately land in the
 	// workspace (skill-creator writes them to the skills bucket, not here),
