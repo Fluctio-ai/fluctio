@@ -245,6 +245,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/logout", auth(s.handleLogout))
 	mux.HandleFunc("GET /api/me", auth(s.handleMe))
 	mux.HandleFunc("PUT /api/me", auth(s.handleUpdateMe))
+	mux.HandleFunc("GET /api/me/avatar", auth(s.handleMyAvatar))
 	mux.HandleFunc("POST /api/me/avatar", auth(s.handleUploadMyAvatar))
 	mux.HandleFunc("POST /api/me/password", auth(s.handleChangeMyPassword))
 	mux.HandleFunc("POST /api/push/devices", auth(s.handleSavePushDevice))

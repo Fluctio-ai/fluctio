@@ -84,6 +84,9 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	if buildinfo.IsHostedDeploy() {
 		deployMode = "hosted"
 	}
+	// Ship the avatar as a cacheable image URL, not the base64 blob — keeps
+	// /api/me small on every page load.
+	acct.AvatarURL = publicAvatarURL(acct)
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"ok":          true,
 		"user":        acct,
@@ -120,21 +123,35 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
 		return
 	}
-	if req.AvatarURL != "" {
-		if !strings.HasPrefix(req.AvatarURL, "data:image/") {
-			jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "avatar must be a data:image/* URL"})
-			return
-		}
+	// Resolve the avatar to persist. Three cases:
+	//   - "data:image/..." → new upload (validate size)
+	//   - "" → clear avatar
+	//   - anything else (our own "/api/me/avatar?v=..." URL echoed back from
+	//     the settings page's unchanged state) → keep the existing avatar
+	current, gerr := s.accounts.Get(r.Context(), ident.UserID)
+	if gerr != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": gerr.Error()})
+		return
+	}
+	avatarURL := ""
+	switch {
+	case req.AvatarURL == "":
+		avatarURL = ""
+	case strings.HasPrefix(req.AvatarURL, "data:image/"):
 		if len(req.AvatarURL) > maxAvatarBytes {
 			jsonResponse(w, http.StatusRequestEntityTooLarge, map[string]any{"ok": false, "error": "avatar too large (max 256KB)"})
 			return
 		}
+		avatarURL = req.AvatarURL
+	default:
+		avatarURL = current.AvatarURL
 	}
-	acct, err := s.accounts.UpdateProfile(r.Context(), ident.UserID, req.DisplayName, req.AvatarURL)
+	acct, err := s.accounts.UpdateProfile(r.Context(), ident.UserID, req.DisplayName, avatarURL)
 	if err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	acct.AvatarURL = publicAvatarURL(acct)
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "user": acct})
 }
 
@@ -185,7 +202,61 @@ func (s *Server) handleUploadMyAvatar(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	acct.AvatarURL = publicAvatarURL(acct)
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "user": acct})
+}
+
+// publicAvatarURL rewrites the stored base64 data URL into a stable image
+// endpoint URL for clients. We never ship the (up to 256KB) base64 blob in
+// /api/me — it bloats the JSON fetched on every page load. The ?v= suffix
+// uses UpdatedAt so a freshly uploaded avatar busts the browser cache while
+// unchanged ones stay cached.
+func publicAvatarURL(acct *users.Account) string {
+	if acct == nil || acct.AvatarURL == "" || !strings.HasPrefix(acct.AvatarURL, "data:") {
+		return ""
+	}
+	return "/api/me/avatar?v=" + strconv.FormatInt(acct.UpdatedAt.Unix(), 10)
+}
+
+// handleMyAvatar serves the stored avatar as raw image bytes. /api/me hands
+// the client this URL instead of the base64 blob, so profile fetches stay
+// small and the image is browser-cacheable. 404 when no avatar is set; the
+// <img> falls back to the initials tile.
+func (s *Server) handleMyAvatar(w http.ResponseWriter, r *http.Request) {
+	ident, ok := auth.FromContext(r.Context())
+	if !ok {
+		jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "read-only"})
+		return
+	}
+	acct, err := s.accounts.Get(r.Context(), ident.UserID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	raw := acct.AvatarURL
+	const dataPrefix = "data:"
+	if !strings.HasPrefix(raw, dataPrefix) {
+		http.NotFound(w, r)
+		return
+	}
+	rest := raw[len(dataPrefix):]
+	head, data, found := strings.Cut(rest, ",")
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	mediaType := strings.SplitN(head, ";", 2)[0]
+	if mediaType == "" {
+		mediaType = "image/png"
+	}
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	w.Write(decoded)
 }
 
 type changePasswordReq struct {
