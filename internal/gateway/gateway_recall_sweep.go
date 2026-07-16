@@ -55,6 +55,18 @@ func (g *Gateway) sweepAllAgentsImplicitFeedback(ctx context.Context) {
 		if !mem.Embedding.Enabled {
 			continue
 		}
+		// Failure-driven gate: skip the embedder probe + sweep when no
+		// recall events are awaiting feedback. The probe is a real
+		// embedding API call, so on an idle agent this avoids a pointless
+		// round-trip every tick. Mirrors memoryindex's failure-driven style.
+		pending, perr := db.HasPendingImplicitFeedback(ctx, ag.ID, cfg.MaxAgeMinutes)
+		if perr != nil {
+			slog.Warn("implicit feedback: pending check", "agent", ag.ID, "error", perr)
+			continue
+		}
+		if !pending {
+			continue
+		}
 		ec := mem.Embedding
 		emb := embedding.ProbeEmbedder(ctx,
 			embedding.NewOpenAICompatEmbedder(ec.APIBase, ec.APIKey, ec.Model, ec.Dim, ec.DimEnabled))

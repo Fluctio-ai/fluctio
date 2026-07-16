@@ -385,3 +385,59 @@ func TestSweepImplicitFeedbackRecordsUpDown(t *testing.T) {
 		t.Errorf("rc-down feedback up=%d, want 0", upVal)
 	}
 }
+
+func TestHasPendingImplicitFeedback(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	// Empty → nothing pending.
+	if got, _ := db.HasPendingImplicitFeedback(ctx, "a1", 5); got {
+		t.Errorf("empty DB: pending = true, want false")
+	}
+
+	// Helper to insert an explored event with a pinned age.
+	ageAgo := func(recallID string, ageMin int) {
+		ev := RecallEvent{
+			RecallID: recallID, AgentID: "a1", UserID: "u1", SessionKey: "s-" + recallID,
+			Lambda: 0.6, Explored: true, SummaryIDs: []int64{100},
+		}
+		if err := db.InsertRecallEvent(ctx, ev); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.db.ExecContext(ctx, `UPDATE memory_recall_events SET created_at = ? WHERE recall_id = ?`,
+			time.Now().Add(-time.Duration(ageMin)*time.Minute), recallID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Older than the 5-min cutoff → pending.
+	ageAgo("rc-old", 30)
+	got, err := db.HasPendingImplicitFeedback(ctx, "a1", 5)
+	if err != nil {
+		t.Fatalf("after old event: %v", err)
+	}
+	if !got {
+		t.Errorf("old pending event: got false, want true")
+	}
+
+	// Other agent unaffected.
+	if got, _ := db.HasPendingImplicitFeedback(ctx, "other", 5); got {
+		t.Errorf("other agent: got true, want false")
+	}
+
+	// Fresh event (within cutoff) does NOT count as pending.
+	ageAgo("rc-fresh", 1)
+	// Recording feedback on rc-old drops it out; rc-fresh is still in-window,
+	// so the agent should now have nothing pending.
+	if err := db.InsertRecallFeedback(ctx, "rc-old", true); err != nil {
+		t.Fatal(err)
+	}
+	got, err = db.HasPendingImplicitFeedback(ctx, "a1", 5)
+	if err != nil {
+		t.Fatalf("after feedback: %v", err)
+	}
+	if got {
+		t.Errorf("after feedback + fresh-in-window: got true, want false")
+	}
+}

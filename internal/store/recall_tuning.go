@@ -408,6 +408,31 @@ var DefaultImplicitFeedbackConfig = ImplicitFeedbackConfig{
 	BatchLimit:     50,
 }
 
+// HasPendingImplicitFeedback reports whether this agent has at least one
+// explored recall event whose feedback is still pending — i.e. whether
+// SweepImplicitFeedback would have any work to do this tick. It is a cheap
+// EXISTS query so the periodic sweep loop can skip the embedder probe (a
+// real embedding API call) and the full sweep when nothing is pending,
+// matching memoryindex's failure-driven style. maxAgeMinutes mirrors the
+// sweep's own cutoff; <=0 falls back to the default.
+func (d *DBStore) HasPendingImplicitFeedback(ctx context.Context, agentID string, maxAgeMinutes int) (bool, error) {
+	if maxAgeMinutes <= 0 {
+		maxAgeMinutes = DefaultImplicitFeedbackConfig.MaxAgeMinutes
+	}
+	cutoff := time.Now().Add(-time.Duration(maxAgeMinutes) * time.Minute)
+	q := `SELECT EXISTS(SELECT 1 FROM memory_recall_events
+		WHERE explored = 1 AND agent_id = ? AND session_key != '' AND user_id != '' AND created_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id))`
+	if d.dialect == "postgres" {
+		q = `SELECT EXISTS(SELECT 1 FROM memory_recall_events
+			WHERE explored = 1 AND agent_id = $1 AND session_key != '' AND user_id != '' AND created_at < $2
+			  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id))`
+	}
+	var exists bool
+	err := d.db.QueryRowContext(ctx, q, agentID, cutoff).Scan(&exists)
+	return exists, err
+}
+
 // SweepImplicitFeedback is the implicit signal source for the bandit: for
 // each explored recall whose conversation has progressed and has no
 // feedback yet, it embeds the messages that followed and compares (max
