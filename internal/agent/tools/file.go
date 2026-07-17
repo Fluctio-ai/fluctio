@@ -476,6 +476,31 @@ func binaryRefusal(path string, size int) string {
 	return fmt.Sprintf("[read_file refused: %q is a binary file (%d bytes). Binary bytes don't decode as text — loading them would blow past the context window. Don't probe with `file`, `identify`, `ls`, `python`, or any inline script — pass the path directly to whichever skill in your toolset handles this format (e.g. an image-editing skill for images). If your toolset doesn't have a skill for this format, tell the user instead of trying to inline-process the bytes.]", path, size)
 }
 
+// maxReadFileBytes caps how much read_file returns to the model in one
+// call. A larger file is returned truncated with a pointer to use exec
+// (head/wc/python) — loading a multi-hundred-KB tool result into the next
+// turn's context pushes the model past its output budget and surfaces as
+// an empty response that ends the turn (the user then has to nudge
+// "continue"). 32KB is comfortably under every supported model's
+// per-turn output budget while still letting the agent read a real
+// source/config file in full; genuinely large data (logs, JSON dumps,
+// transcripts) belongs in exec, not the context window.
+const maxReadFileBytes = 32 * 1024
+
+// truncateReadFileResult returns the file content, capping it to
+// maxReadFileBytes and appending a hint when truncation happened. Used at
+// every read_file return site so neither the host nor the sandbox variant
+// can dump an oversized result into the LLM context.
+func truncateReadFileResult(path string, data []byte) string {
+	if len(data) <= maxReadFileBytes {
+		return string(data)
+	}
+	return string(data[:maxReadFileBytes]) + fmt.Sprintf(
+		"\n\n[... file truncated: showing the first %d bytes of %d total. Reading the rest via read_file would overflow the model's context and yield an empty response. Process the full file with `exec` instead — e.g. `head -c 65536 %s`, `wc -l %s`, or a python/node script that streams it.]",
+		maxReadFileBytes, len(data), path, path,
+	)
+}
+
 func makeReadFile(r *Registry) ToolFunc {
 	return func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
 		var args readFileArgs
@@ -509,7 +534,7 @@ func makeReadFile(r *Registry) ToolFunc {
 			if looksBinary(data) {
 				return binaryRefusal(args.Path, len(data)), nil
 			}
-			return string(data), nil
+			return truncateReadFileResult(args.Path, data), nil
 		}
 
 		// Identity file reads always go through the durable store first
@@ -522,7 +547,7 @@ func makeReadFile(r *Registry) ToolFunc {
 		if r.systemFileStore != nil && r.agentID != "" && basenameIsSystemFile(args.Path) {
 			name := filepath.Base(filepath.Clean(args.Path))
 			if data, err := r.readSystemFileForUser(ctx, r.systemFileUserID(name), name); err == nil {
-				return string(data), nil
+				return truncateReadFileResult(args.Path, data), nil
 			}
 			// Store miss: try the agent's systemRoot on disk directly,
 			// bypassing resolvePathSandboxed. systemRoot is the agent
@@ -537,7 +562,7 @@ func makeReadFile(r *Registry) ToolFunc {
 			// system prompt.
 			if r.systemRoot != "" {
 				if data, err := os.ReadFile(filepath.Join(r.systemRoot, name)); err == nil {
-					return string(data), nil
+					return truncateReadFileResult(args.Path, data), nil
 				}
 			}
 			return "", nil
@@ -565,7 +590,7 @@ func makeReadFile(r *Registry) ToolFunc {
 		if looksBinary(data) {
 			return binaryRefusal(args.Path, len(data)), nil
 		}
-		return string(data), nil
+		return truncateReadFileResult(args.Path, data), nil
 	}
 }
 
@@ -931,7 +956,7 @@ func registerSandboxedFile(r *Registry, ex sandbox.Executor) {
 		if r.systemFileStore != nil && r.agentID != "" && basenameIsSystemFile(args.Path) {
 			name := filepath.Base(filepath.Clean(args.Path))
 			if data, err := r.readSystemFileForUser(ctx, r.systemFileUserID(name), name); err == nil {
-				return string(data), nil
+				return truncateReadFileResult(args.Path, data), nil
 			}
 			return "", nil // miss → treat as unset (fresh agent)
 		}
@@ -945,7 +970,7 @@ func registerSandboxedFile(r *Registry, ex sandbox.Executor) {
 					if looksBinary(data) {
 						return binaryRefusal(args.Path, len(data)), nil
 					}
-					return string(data), nil
+					return truncateReadFileResult(args.Path, data), nil
 				}
 			}
 			// Fall through to sandbox on store miss so a freshly-written
@@ -962,7 +987,7 @@ func registerSandboxedFile(r *Registry, ex sandbox.Executor) {
 				if looksBinary(data) {
 					return binaryRefusal(args.Path, len(data)), nil
 				}
-				return string(data), nil
+				return truncateReadFileResult(args.Path, data), nil
 			}
 			// Fall through to sandbox so pre-mounted skills under
 			// /skills/<name>/ inside the container are still reachable.
@@ -983,7 +1008,7 @@ func registerSandboxedFile(r *Registry, ex sandbox.Executor) {
 			if looksBinary(data) {
 				return binaryRefusal(args.Path, len(data)), nil
 			}
-			return string(data), nil
+			return truncateReadFileResult(args.Path, data), nil
 		case RouteRefuseSuggestSandbox:
 			return "", fmt.Errorf("%s", errSandboxRequiredMessage)
 		default: // RouteSandbox (and RouteSystemStore handled above out-of-band)
