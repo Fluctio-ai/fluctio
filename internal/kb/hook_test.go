@@ -73,3 +73,22 @@ func TestClipUTF8DoesNotSplitRune(t *testing.T) {
 		t.Fatalf("clipUTF8 under the limit must return the full string")
 	}
 }
+
+func TestSoftClipUTF8BreaksAtPunctuation(t *testing.T) {
+	// 30 字节窗口内有逗号；softClip 应在最近的逗号/句号处断，而不是切在字中间。
+	s := "这是一段中文内容，然后继续到这里。后面还有"
+	got := softClipUTF8(s, 30)
+	last := []rune(got)
+	if len(last) == 0 {
+		t.Fatalf("softClipUTF8 returned empty")
+	}
+	r := last[len(last)-1]
+	if r != '，' && r != '。' && r != ',' && r != '.' {
+		t.Fatalf("softClipUTF8 should end at punctuation, got last rune %q in %q", r, got)
+	}
+	// 无标点时退回字符边界（不劈开汉字）。
+	got2 := softClipUTF8("无标点长文本内容到这里", 8)
+	if got2 != "无标" { // 8 字节 → 退到 6 字节边界（2 字）
+		t.Fatalf("softClipUTF8 no-punct fallback = %q, want \"无标\"", got2)
+	}
+}

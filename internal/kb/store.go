@@ -27,6 +27,30 @@ func clipUTF8(s string, maxBytes int) string {
 	return s[:end]
 }
 
+// softClipUTF8 truncates s near maxBytes, preferring to break at a natural
+// boundary (newline, sentence-end punctuation, or a comma) found while
+// scanning backward over the latter half of the window, so a snippet ends
+// cleanly at a clause/sentence edge instead of mid-sentence. Falls back to
+// a plain rune boundary when no punctuation is nearby.
+func softClipUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	end := maxBytes
+	for end > 0 && s[end]&0xC0 == 0x80 {
+		end--
+	}
+	floor := end / 2
+	// LastIndexAny is rune-aware: it returns the byte offset of the last
+	// punctuation/newline rune in the window. Cut just past it (inclusive).
+	if idx := strings.LastIndexAny(s[floor:end], "\n。！？；，、.!?;,"); idx >= 0 {
+		absIdx := floor + idx
+		rl := utf8.RuneLen([]rune(s[absIdx:])[0])
+		return s[:absIdx+rl]
+	}
+	return s[:end]
+}
+
 type KBStore struct {
 	db      *sql.DB
 	dialect string
@@ -182,7 +206,7 @@ func scoredToResults(scored []scoredPage) []KBResult {
 		}
 		snippet := content
 		if len(snippet) > 300 {
-			snippet = clipUTF8(snippet, 300)
+			snippet = softClipUTF8(snippet, 300)
 		}
 		results[i] = KBResult{
 			SourceID:    s.ID,
@@ -447,7 +471,7 @@ func formatResults(results []KBResult, query string) string {
 		} else {
 			content := r.Content
 			if len(content) > 500 {
-				content = clipUTF8(content, 500) + "..."
+				content = softClipUTF8(content, 500) + "..."
 			}
 			sb.WriteString(content)
 		}
