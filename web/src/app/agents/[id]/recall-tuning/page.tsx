@@ -9,6 +9,7 @@ import { Database, Sparkles, FlaskConical, Search, Loader2 } from "lucide-react"
 import {
   getAgentRecallTuning,
   setAgentRecallTuning,
+  setAgentRecallMinRelevance,
   getRecentRecalls,
   sendRecallFeedback,
   previewRecall,
@@ -31,6 +32,8 @@ export default function AgentRecallTuningPage() {
   // manual lambda override
   const [lambdaInput, setLambdaInput] = useState("");
   const [savingLambda, setSavingLambda] = useState(false);
+  const [minRelevance, setMinRelevance] = useState(0);
+  const [savingMinRelevance, setSavingMinRelevance] = useState(false);
 
   // test box
   const [testQuery, setTestQuery] = useState("");
@@ -59,7 +62,8 @@ export default function AgentRecallTuningPage() {
 
   useEffect(() => {
     if (state?.mmr_lambda != null) setLambdaInput(state.mmr_lambda.toFixed(2));
-  }, [state?.mmr_lambda]);
+    if (state?.min_relevance != null) setMinRelevance(state.min_relevance);
+  }, [state?.mmr_lambda, state?.min_relevance]);
 
   const saveLambda = async () => {
     const v = parseFloat(lambdaInput);
@@ -70,6 +74,18 @@ export default function AgentRecallTuningPage() {
       await refresh();
     } finally {
       setSavingLambda(false);
+    }
+  };
+
+  const saveMinRelevance = async (v: number) => {
+    const clamped = Math.max(0, Math.min(1, v));
+    setMinRelevance(clamped);
+    setSavingMinRelevance(true);
+    try {
+      await setAgentRecallMinRelevance(agentId, clamped);
+      await refresh();
+    } finally {
+      setSavingMinRelevance(false);
     }
   };
 
@@ -148,6 +164,30 @@ export default function AgentRecallTuningPage() {
           </Button>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">{t("recallTuning.lambdaHint")}</p>
+      </div>
+
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-sm font-medium">{t("recallTuning.minRelevance")}</h3>
+          <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
+            {savingMinRelevance ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : null}
+            {(minRelevance * 100).toFixed(0)}%
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={Math.round(minRelevance * 100)}
+          onChange={(e) => setMinRelevance(Number(e.target.value) / 100)}
+          onPointerUp={() => saveMinRelevance(minRelevance)}
+          onBlur={() => saveMinRelevance(minRelevance)}
+          className="w-full accent-primary"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">{t("recallTuning.minRelevanceHint")}</p>
       </div>
 
       <div>

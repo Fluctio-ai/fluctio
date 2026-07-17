@@ -95,6 +95,8 @@ const en: Record<string, string> = {
   "recallTuning.setLambda": "Manual Lambda Override",
   "recallTuning.save": "Save",
   "recallTuning.lambdaHint": "Sets a new starting point; the bandit keeps tuning from here.",
+  "recallTuning.minRelevance": "Memory relevance threshold",
+  "recallTuning.minRelevanceHint": "Filters memory_search results: hits below this similarity are dropped. 0% = no filter (more recall, some irrelevant); higher = stricter (more relevant, may miss some). Vector uses 1/(1+distance); reranker uses its normalized score.",
   "recallTuning.testBox": "Test a Query",
   "recallTuning.testPlaceholder": "Type a query to preview recalls…",
   "recallTuning.noResults": "No matching summaries.",

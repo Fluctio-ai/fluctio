@@ -95,6 +95,8 @@ const zhCN: Record<string, string> = {
   "recallTuning.setLambda": "手动覆盖 Lambda",
   "recallTuning.save": "保存",
   "recallTuning.lambdaHint": "设置新的起点；bandit 会从此继续调优。",
+  "recallTuning.minRelevance": "记忆相关性阈值",
+  "recallTuning.minRelevanceHint": "过滤 memory_search 的结果：相似度低于此值的记忆会被丢弃。0% = 不过滤（召回更多，含不相关）；调高则更严格（更相关，但可能漏召回）。向量用 1/(1+距离) 近似、reranker 用其归一化分数。",
   "recallTuning.testBox": "测试查询",
   "recallTuning.testPlaceholder": "输入查询预览召回…",
   "recallTuning.noResults": "没有匹配的摘要。",

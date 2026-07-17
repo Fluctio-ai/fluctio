@@ -87,6 +87,11 @@ func (s *Server) handleGetRecallTuning(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	minRelevance, err := db.GetAgentMinRelevance(ctx, id)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	stats, err := db.GetRecallStats(ctx, id)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
@@ -99,6 +104,7 @@ func (s *Server) handleGetRecallTuning(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"ok":               true,
 		"mmr_lambda":       lambda,
+		"min_relevance":    minRelevance,
 		"total_recalls":    stats.TotalRecalls,
 		"explored_recalls": stats.ExploredRecalls,
 		"feedback_stats":   fbStats,
@@ -235,14 +241,19 @@ func (s *Server) handlePutRecallTuning(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		MmrLambda float64 `json:"mmr_lambda"`
+		MmrLambda   *float64 `json:"mmr_lambda,omitempty"`
+		MinRelevance *float64 `json:"min_relevance,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
 		return
 	}
-	if req.MmrLambda < 0 || req.MmrLambda > 1 {
+	if req.MmrLambda != nil && (*req.MmrLambda < 0 || *req.MmrLambda > 1) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "mmr_lambda must be in [0,1]"})
+		return
+	}
+	if req.MinRelevance != nil && (*req.MinRelevance < 0 || *req.MinRelevance > 1) {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "min_relevance must be in [0,1]"})
 		return
 	}
 	db, ok := s.dataStore.(*store.DBStore)
@@ -250,11 +261,19 @@ func (s *Server) handlePutRecallTuning(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "store not available"})
 		return
 	}
-	if err := db.SetAgentMMRLambda(r.Context(), id, req.MmrLambda); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-		return
+	if req.MmrLambda != nil {
+		if err := db.SetAgentMMRLambda(r.Context(), id, *req.MmrLambda); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "mmr_lambda": req.MmrLambda})
+	if req.MinRelevance != nil {
+		if err := db.SetAgentMinRelevance(r.Context(), id, *req.MinRelevance); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "mmr_lambda": req.MmrLambda, "min_relevance": req.MinRelevance})
 }
 
 // handleListRecallEvents returns the agent's recent recalls with summary

@@ -1652,6 +1652,7 @@ export type RecallFeedbackStat = { lambda: number; ups: number; downs: number };
 export type RecallTuningState = {
   ok?: boolean;
   mmr_lambda?: number;
+  min_relevance?: number;
   total_recalls?: number;
   explored_recalls?: number;
   feedback_stats?: RecallFeedbackStat[];
@@ -1705,6 +1706,21 @@ export async function setAgentRecallTuning(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mmr_lambda: mmrLambda }),
+  });
+  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: false }));
+}
+
+// setAgentRecallMinRelevance sets the memory-recall relevance threshold
+// (0..1; 0 = no filter). Drops hits whose similarity is below it.
+export async function setAgentRecallMinRelevance(
+  agentId: string,
+  minRelevance: number,
+): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/recall-tuning`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ min_relevance: minRelevance }),
   });
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
   return res.json().catch(() => ({ ok: false }));
