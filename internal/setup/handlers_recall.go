@@ -154,9 +154,21 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 			hits, err := db.SearchConversationSummariesFTS(ctx, id, req.Query, limit*3)
 			if err == nil {
 				if vecs, e := emb.Embed(ctx, []string{req.Query}); e == nil && len(vecs) == 1 {
-					if vecIDs, ve := db.SearchConversationSummariesVector(ctx, vecs[0], limit*3); ve == nil && len(vecIDs) > 0 {
-						if vecHits, fe := db.GetConversationSummariesByIDs(ctx, vecIDs); fe == nil {
-							hits = mergeRecallPool(hits, vecHits, id, limit*3)
+					// Apply the same min_relevance vector-distance filter the
+					// live memory_search tool uses, so the test box reflects reality.
+					minRel, _ := db.GetAgentMinRelevance(ctx, id)
+					if vecScored, ve := db.SearchConversationSummariesVectorScored(ctx, vecs[0], limit*3); ve == nil && len(vecScored) > 0 {
+						var scopedIDs []int64
+						for _, sh := range vecScored {
+							if minRel > 0 && (1/(1+sh.Distance)) < minRel {
+								continue
+							}
+							scopedIDs = append(scopedIDs, sh.ID)
+						}
+						if len(scopedIDs) > 0 {
+							if vecHits, fe := db.GetConversationSummariesByIDs(ctx, scopedIDs); fe == nil {
+								hits = mergeRecallPool(hits, vecHits, id, limit*3)
+							}
 						}
 					}
 					if len(hits) > limit {

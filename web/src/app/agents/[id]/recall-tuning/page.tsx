@@ -180,13 +180,18 @@ export default function AgentRecallTuningPage() {
           type="range"
           min={0}
           max={100}
-          step={5}
+          step={1}
           value={Math.round(minRelevance * 100)}
           onChange={(e) => setMinRelevance(Number(e.target.value) / 100)}
           onPointerUp={() => saveMinRelevance(minRelevance)}
           onBlur={() => saveMinRelevance(minRelevance)}
           className="w-full accent-primary"
         />
+        <div className="mt-2 space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+          <div className="font-mono">{t("recallTuning.formulaVec")}</div>
+          <div className="font-mono">{t("recallTuning.formulaRerank")}</div>
+          <div>{t("recallTuning.formulaThreshold")}</div>
+        </div>
         <p className="mt-1 text-xs text-muted-foreground">{t("recallTuning.minRelevanceHint")}</p>
       </div>
 
