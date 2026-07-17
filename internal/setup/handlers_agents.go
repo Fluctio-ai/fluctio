@@ -1491,13 +1491,22 @@ func (s *Server) handleAgentFileUpload(w http.ResponseWriter, r *http.Request) {
 	// sees. We resolve the session to find its project_id so uploads in
 	// a project chat land in projects/<pid>/ alongside the agent's own
 	// writes; loose chats keep the legacy sessions/<chat>/ subdir.
-	sessionKey := r.URL.Query().Get("sessionId")
-	sessionID := s.workspaceSessionScope(r.Context(), id, sessionKey)
-	projectID := s.resolveSessionProject(r.Context(), r, id, sessionKey)
-	if projectID != "" {
-		// Project sessions don't use the per-chat subdir — clear it so
-		// the workspace store routes to projects/<pid>/.
-		sessionID = ""
+	// Scope the upload to the exact directory the sandbox will mount, using
+	// the IDs the client already has in hand (urlToken sessionKey + optional
+	// projectId hint) instead of reverse-looking them up from the session
+	// record. That lookup failed when the upload fired before the session
+	// was minted — the web client uploads attachments BEFORE sending the
+	// first message, so the session row didn't exist yet and files landed
+	// in the agent root while the sandbox later mounted sessions/<sid>/ or
+	// projects/<pid>/. Web's session_key equals the urlToken (see
+	// resolveOrMintKey), so this matches the sandbox view without needing
+	// the session to exist first.
+	projectID := r.URL.Query().Get("projectId")
+	sessionID := ""
+	if projectID == "" {
+		// Loose chat: the mount target is sessions/<sessionKey>/, and for
+		// web the sessionKey IS the urlToken the client just sent.
+		sessionID = r.URL.Query().Get("sessionId")
 	}
 	saved := make([]map[string]any, 0, len(headers))
 	for _, h := range headers {

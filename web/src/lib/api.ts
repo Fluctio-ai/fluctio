@@ -1247,10 +1247,18 @@ export async function uploadAgentFiles(
   agentId: string,
   sessionId: string,
   files: File[],
+  projectId?: string,
 ): Promise<UploadedFile[]> {
   const fd = new FormData();
   for (const f of files) fd.append("file", f, f.name);
-  const qs = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
+  // Scope the upload to the exact dir the sandbox will mount. projectId is
+  // required for project chats (files must land in projects/<pid>/), which
+  // the session lookup can't resolve until the session is minted on the
+  // first message — and the client uploads before that fires.
+  const params = new URLSearchParams();
+  if (sessionId) params.set("sessionId", sessionId);
+  if (projectId) params.set("projectId", projectId);
+  const qs = params.toString() ? `?${params.toString()}` : "";
   const res = await apiFetch(`/api/agents/${encodeURIComponent(agentId)}/files${qs}`, {
     method: "POST",
     body: fd,

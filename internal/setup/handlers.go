@@ -1078,8 +1078,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		// Resolve the chat's project so attachments land in
 		// projects/<pid>/ when the session belongs to one. Best-effort:
 		// failure → empty pid → loose-chat scope (the historical
-		// behavior).
+		// behavior). Fall back to the client's project hint when the
+		// session isn't minted yet (first message) so attachments still
+		// land in projects/<pid>/ instead of the agent root.
 		projectID := s.resolveSessionProject(r.Context(), r, ag.Name(), req.SessionID)
+		if projectID == "" {
+			projectID = req.ProjectID
+		}
 		paths := ag.WriteSessionAttachments(r.Context(), req.SessionID, projectID, atts)
 		msgText = annotateMessageWithAttachments(req.Message, paths)
 	}
@@ -1164,6 +1169,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	msgText := req.Message
 	if !req.preMaterialized() {
 		projectID := s.resolveSessionProject(r.Context(), r, ag.Name(), req.SessionID)
+		if projectID == "" {
+			projectID = req.ProjectID
+		}
 		paths := ag.WriteSessionAttachments(r.Context(), req.SessionID, projectID, atts)
 		msgText = annotateMessageWithAttachments(req.Message, paths)
 	}

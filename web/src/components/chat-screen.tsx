@@ -1417,7 +1417,7 @@ export function ChatScreen() {
       }));
 
       try {
-        await uploadAgentFiles(selectedAgent, sessionId, filesToUpload);
+        await uploadAgentFiles(selectedAgent, sessionId, filesToUpload, projectIdHint || undefined);
       } catch (err) {
         setMessages((prev) => [
           ...prev,
