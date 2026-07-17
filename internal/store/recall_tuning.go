@@ -16,6 +16,11 @@ import (
 // before any bandit tuning has selected a better value for an agent.
 const DefaultMMRLambda = 0.6
 
+// DefaultMinRelevance is the lowest similarity/rerank score a memory recall
+// hit must clear to be returned. 0 = no filtering (current behavior); a
+// higher value drops irrelevant hits.
+const DefaultMinRelevance = 0.0
+
 // migrateRecallTuning creates the tables that back the bandit-style MMR
 // lambda optimization:
 //   - agent_recall_tuning: one row per agent holding the current best
@@ -30,9 +35,10 @@ const DefaultMMRLambda = 0.6
 func (d *DBStore) migrateRecallTuning(ctx context.Context) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS agent_recall_tuning (
-			agent_id   TEXT PRIMARY KEY,
-			mmr_lambda REAL NOT NULL DEFAULT 0.6,
-			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			agent_id      TEXT PRIMARY KEY,
+			mmr_lambda    REAL NOT NULL DEFAULT 0.6,
+			min_relevance REAL NOT NULL DEFAULT 0,
+			updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS memory_recall_events (
 			id          INTEGER PRIMARY KEY,
@@ -57,6 +63,13 @@ func (d *DBStore) migrateRecallTuning(ctx context.Context) error {
 	}
 	for _, s := range stmts {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {
+			return err
+		}
+	}
+	// Old DBs predate the min_relevance column; new DBs get it from the
+	// CREATE above. tableHasColumn keeps the ALTER idempotent.
+	if has, err := d.tableHasColumn(ctx, "agent_recall_tuning", "min_relevance"); err == nil && !has {
+		if _, err := d.db.ExecContext(ctx, `ALTER TABLE agent_recall_tuning ADD COLUMN min_relevance REAL NOT NULL DEFAULT 0`); err != nil {
 			return err
 		}
 	}
@@ -153,6 +166,40 @@ func (d *DBStore) SetAgentMMRLambda(ctx context.Context, agentID string, lambda 
 		`INSERT INTO agent_recall_tuning (agent_id, mmr_lambda) VALUES (?, ?)
 		 ON CONFLICT(agent_id) DO UPDATE SET mmr_lambda = excluded.mmr_lambda, updated_at = CURRENT_TIMESTAMP`,
 		agentID, lambda)
+	return err
+}
+
+// GetAgentMinRelevance returns the agent's memory-recall relevance threshold
+// (the lowest rerank/similarity score a hit must clear), or DefaultMinRelevance.
+func (d *DBStore) GetAgentMinRelevance(ctx context.Context, agentID string) (float64, error) {
+	var v float64
+	q := `SELECT min_relevance FROM agent_recall_tuning WHERE agent_id = ?`
+	if d.dialect == "postgres" {
+		q = `SELECT min_relevance FROM agent_recall_tuning WHERE agent_id = $1`
+	}
+	err := d.db.QueryRowContext(ctx, q, agentID).Scan(&v)
+	if err == sql.ErrNoRows {
+		return DefaultMinRelevance, nil
+	}
+	if err != nil {
+		return DefaultMinRelevance, err
+	}
+	return v, nil
+}
+
+// SetAgentMinRelevance upserts the agent's memory-recall relevance threshold.
+func (d *DBStore) SetAgentMinRelevance(ctx context.Context, agentID string, v float64) error {
+	if d.dialect == "postgres" {
+		_, err := d.db.ExecContext(ctx,
+			`INSERT INTO agent_recall_tuning (agent_id, min_relevance) VALUES ($1, $2)
+			 ON CONFLICT (agent_id) DO UPDATE SET min_relevance = EXCLUDED.min_relevance, updated_at = CURRENT_TIMESTAMP`,
+			agentID, v)
+		return err
+	}
+	_, err := d.db.ExecContext(ctx,
+		`INSERT INTO agent_recall_tuning (agent_id, min_relevance) VALUES (?, ?)
+		 ON CONFLICT(agent_id) DO UPDATE SET min_relevance = excluded.min_relevance, updated_at = CURRENT_TIMESTAMP`,
+		agentID, v)
 	return err
 }
 
