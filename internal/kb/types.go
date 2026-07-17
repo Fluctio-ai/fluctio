@@ -1,6 +1,9 @@
 package kb
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type KBSource struct {
 	ID              string     `json:"id"`
@@ -61,4 +64,22 @@ type KBCfg struct {
 	ShowIndicator     *bool    `json:"showIndicator,omitempty"`
 	IndicatorFound    string   `json:"indicatorFound,omitempty"`
 	IndicatorNotFound string   `json:"indicatorNotFound,omitempty"`
+}
+
+// sourcesAccumulatorKey is the context key for a *[]KnowledgeSource that the
+// agent threads through tool calls so every KB entry point numbers [K#]
+// citations continuing from one counter — no duplicate [K1]/[K2] across
+// multiple tool calls in one turn.
+type sourcesAccumulatorKey struct{}
+
+// WithSourcesAccumulator returns ctx carrying acc so KB tool calls can append
+// citation sources to the shared per-turn accumulator.
+func WithSourcesAccumulator(ctx context.Context, acc *[]KnowledgeSource) context.Context {
+	return context.WithValue(ctx, sourcesAccumulatorKey{}, acc)
+}
+
+// SourcesFromCtx returns the shared accumulator, or nil if none is set.
+func SourcesFromCtx(ctx context.Context) *[]KnowledgeSource {
+	acc, _ := ctx.Value(sourcesAccumulatorKey{}).(*[]KnowledgeSource)
+	return acc
 }

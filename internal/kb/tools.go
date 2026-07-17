@@ -61,8 +61,34 @@ func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceR
 		if len(results) == 0 {
 			return "No matching entries found in the knowledge base.", nil
 		}
-		return formatResults(results, args.Query), nil
+		baseID := numberAndAccumulate(ctx, results)
+		return formatResults(results, args.Query, baseID), nil
 	})
+}
+
+// numberAndAccumulate assigns [K#] ids continuing from the ctx accumulator
+// (len+1) so multiple KB tool calls in one turn don't collide, appends the
+// sources, and returns the base id for formatResults.
+func numberAndAccumulate(ctx context.Context, results []KBResult) int {
+	baseID := 1
+	acc := SourcesFromCtx(ctx)
+	if acc != nil {
+		baseID = len(*acc) + 1
+	}
+	var sources []KnowledgeSource
+	for i, r := range results {
+		sources = append(sources, KnowledgeSource{
+			ID:       fmt.Sprintf("K%d", baseID+i),
+			File:     r.SourceTitle,
+			Kind:     r.SourceKind,
+			PageType: r.PageType,
+			Chunk:    r.ChunkIndex,
+		})
+	}
+	if acc != nil && len(sources) > 0 {
+		*acc = append(*acc, sources...)
+	}
+	return baseID
 }
 
 // resolveRatio reads the agent's configured source ratio, defaulting to 0.5.
@@ -111,7 +137,8 @@ func registerKBSearchRaw(r *tools.Registry, store *KBStore, agentID string) {
 		if len(results) == 0 {
 			return "No matching raw entries found in the knowledge base.", nil
 		}
-		return formatResults(results, args.Query), nil
+		baseID := numberAndAccumulate(ctx, results)
+		return formatResults(results, args.Query, baseID), nil
 	})
 }
 
