@@ -57,9 +57,6 @@ export default function AgentKnowledgePage() {
   const [maxResults, setMaxResults] = useState(5);
   const [searchMode, setSearchMode] = useState("augment");
   const [emptyAction, setEmptyAction] = useState("llm");
-  const [showIndicator, setShowIndicator] = useState(true);
-  const [indicatorFound, setIndicatorFound] = useState("");
-  const [indicatorNotFound, setIndicatorNotFound] = useState("");
   const [wikiRatio, setWikiRatio] = useState(0.5);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -104,9 +101,6 @@ export default function AgentKnowledgePage() {
           setMaxResults(kb.maxResults || 5);
           setSearchMode(kb.searchMode ?? "augment");
           setEmptyAction(kb.emptyAction ?? "llm");
-          setShowIndicator(kb.showIndicator ?? true);
-          setIndicatorFound(kb.indicatorFound ?? "");
-          setIndicatorNotFound(kb.indicatorNotFound ?? "");
           setWikiRatio(kb.wikiRatio ?? 0.5);
         }
         setConfigLoaded(true);
@@ -126,15 +120,12 @@ export default function AgentKnowledgePage() {
           maxResults,
           searchMode,
           emptyAction,
-          showIndicator,
-          indicatorFound: indicatorFound || undefined,
-          indicatorNotFound: indicatorNotFound || undefined,
           wikiRatio,
         },
       } as any);
     } catch {}
     setSaving(false);
-  }, [agentId, kbEnabled, autoMode, keywords, maxResults, searchMode, emptyAction, showIndicator, indicatorFound, indicatorNotFound, wikiRatio]);
+  }, [agentId, kbEnabled, autoMode, keywords, maxResults, searchMode, emptyAction, wikiRatio]);
 
   const handleIngestText = useCallback(async () => {
     if (!agentId || !textContent.trim()) return;
@@ -292,37 +283,6 @@ export default function AgentKnowledgePage() {
                 </Select>
               </div>
             </div>
-
-            <div className="flex items-center justify-between pt-1">
-              <Label className="text-xs">{t("knowledge.showIndicator")}</Label>
-              <Switch checked={showIndicator} onCheckedChange={setShowIndicator} />
-            </div>
-
-            {showIndicator && (
-              <div className="space-y-2 pt-1">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("knowledge.foundIndicator")}</Label>
-                  <Input
-                    value={indicatorFound}
-                    onChange={(e) => setIndicatorFound(e.target.value)}
-                    placeholder='[KB] {kbCount} 条知识库, {wikiCount} 条百科'
-                    className="h-8 text-xs"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("knowledge.notFoundIndicator")}</Label>
-                  <Input
-                    value={indicatorNotFound}
-                    onChange={(e) => setIndicatorNotFound(e.target.value)}
-                    placeholder='[KB] 知识库中未找到相关信息'
-                    className="h-8 text-xs"
-                  />
-                </div>
-                <p className="text-[10px] text-muted-foreground">
-                  {"{count}"} = total, {"{kbCount}"} = KB count, {"{wikiCount}"} = Wiki count, {"{query}"} = query
-                </p>
-              </div>
-            )}
           </div>
         )}
       </div>

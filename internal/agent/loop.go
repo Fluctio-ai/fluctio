@@ -16,11 +16,11 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/agent/goal"
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
-	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/embedding"
+	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/mcp"
 	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -36,21 +36,21 @@ import (
 
 // Agent is the ReAct agent loop.
 type Agent struct {
-	name                 string
-	provider             provider.Provider
-	registry             *tools.Registry
-	sessions             *session.Manager
-	memory               *Memory
-	ctxBuilder           *ContextBuilder
-	mcpMgr               *mcp.Manager
-	hooks                *HookRegistry
-	model                string
+	name       string
+	provider   provider.Provider
+	registry   *tools.Registry
+	sessions   *session.Manager
+	memory     *Memory
+	ctxBuilder *ContextBuilder
+	mcpMgr     *mcp.Manager
+	hooks      *HookRegistry
+	model      string
 	// summaryModel overrides model for conversation-summary extraction;
 	// empty falls back to model. Set by the manager from memory config.
-	summaryModel         string
+	summaryModel string
 	// embedder generates vectors for conversation-summary recall; nil
 	// (or !Available) → vector path skipped, FTS-only recall.
-	embedder             embedding.Embedder
+	embedder embedding.Embedder
 	// authGate enforces the per-agent write/exec authorization policy
 	// (hardline commands + workspace boundary + dangerous-pattern tier).
 	// nil when the agent has no relational store; evaluateCall is a no-op
@@ -58,8 +58,8 @@ type Agent struct {
 	authGate *authGate
 	// authMode is the session-authorization mode (ask/auto/yolo). Empty
 	// defaults to ask. /yolo /auto slash commands flip it at runtime.
-	authMode  string
-	maxTokens int
+	authMode             string
+	maxTokens            int
 	temperature          float64
 	maxToolIterations    int
 	maxParallelToolCalls int // 0 = unlimited
@@ -2286,8 +2286,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// channels.SplitMessageMarker at return time; manager.dispatchOutbound
 	// splits on it (AllowSplit=true) or collapses to newlines otherwise.
 	var replyParts []string
-	var kbIndicator string
-	var kbSources []kb.KnowledgeSource // cached [K#] citation sources from this turn's KB retrieval
+	var kbSources []kb.KnowledgeSource               // cached [K#] citation sources from this turn's KB retrieval
 	ctx = kb.WithSourcesAccumulator(ctx, &kbSources) // KB tool calls append their citation sources here
 	citedMemos := make(map[int64]bool)
 	ctx = tools.WithCitedSummaries(ctx, &citedMemos) // memory_search dedups against this across calls
@@ -2314,9 +2313,6 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// into the transcript, honor strict-mode SkipLLM (emit the
 		// prebuilt answer and end the turn), and adopt the hook's
 		// rewritten messages (augment mode injects a [KB] context block).
-		if hcBefore.IndicatorText != "" && kbIndicator == "" {
-			kbIndicator = hcBefore.IndicatorText
-		}
 		if len(kbSources) == 0 && len(hcBefore.KnowledgeSources) > 0 {
 			kbSources = hcBefore.KnowledgeSources
 		}
@@ -2433,7 +2429,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			}
 			emitEvent(ctx, ChatEvent{Type: "done"})
 			a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
-			return joinReplyPartsWithIndicator(kbIndicator, replyParts)
+			return joinReplyParts(replyParts)
 		}
 
 		// Emit assistant content before tool calls if present
@@ -2733,7 +2729,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	}
 	emitEvent(ctx, ChatEvent{Type: "done"})
 	a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
-	return joinReplyPartsWithIndicator(kbIndicator, replyParts)
+	return joinReplyParts(replyParts)
 }
 
 // joinReplyParts joins accumulated assistant text segments with
@@ -2742,18 +2738,6 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 // without AllowSplit collapse the marker to a newline at dispatch
 // time, so users still see every segment in one message instead of
 // dropping all but the last.
-// joinReplyPartsWithIndicator prepends the KB auto-query indicator line
-// (e.g. "[KB] 已引用 3 条知识库") to the first reply part, matching the
-// source's replyParts[0] = kbIndicator + "\n\n" + replyParts[0] shape so
-// the indicator rides on the same OutboundMessage as the first answer
-// segment instead of becoming its own bubble. No-op when empty/no parts.
-func joinReplyPartsWithIndicator(kbIndicator string, parts []string) string {
-	if kbIndicator != "" && len(parts) > 0 {
-		parts[0] = kbIndicator + "\n\n" + parts[0]
-	}
-	return joinReplyParts(parts)
-}
-
 func joinReplyParts(parts []string) string {
 	out := parts[:0:0]
 	for _, p := range parts {

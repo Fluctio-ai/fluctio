@@ -46,7 +46,7 @@ func TestInjectKBContextMarksCitationsAndInstruction(t *testing.T) {
 	results := []KBResult{
 		{SourceTitle: "产品手册", ChunkIndex: 0, Content: "全文内容"},
 	}
-	injectKBContext(hc, results, []string{"K1"}, AutoQueryCfg{SearchMode: "augment"})
+	injectKBContext(hc, results, []string{"K1"})
 
 	// Expect [system, kb-block]: the [KB] user message is inserted after system.
 	if len(hc.Messages) != 2 {

@@ -320,25 +320,18 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			}
 			kbCfg := rc.KB
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
-				showIndicator := true
-				if kbCfg.ShowIndicator != nil {
-					showIndicator = *kbCfg.ShowIndicator
-				}
 				wikiRatio := 0.5
 				if kbCfg.WikiRatio != nil {
 					wikiRatio = *kbCfg.WikiRatio
 				}
 				return kb.AutoQueryCfg{
-					Enabled:           kbCfg.Enabled,
-					AutoMode:          kbCfg.AutoMode,
-					Keywords:          kbCfg.Keywords,
-					MaxResults:        kbCfg.MaxResults,
-					SearchMode:        kbCfg.SearchMode,
-					EmptyAction:       kbCfg.EmptyAction,
-					ShowIndicator:     showIndicator,
-					WikiRatio:         wikiRatio,
-					IndicatorFound:    kbCfg.IndicatorFound,
-					IndicatorNotFound: kbCfg.IndicatorNotFound,
+					Enabled:     kbCfg.Enabled,
+					AutoMode:    kbCfg.AutoMode,
+					Keywords:    kbCfg.Keywords,
+					MaxResults:  kbCfg.MaxResults,
+					SearchMode:  kbCfg.SearchMode,
+					EmptyAction: kbCfg.EmptyAction,
+					WikiRatio:   wikiRatio,
 				}
 			})
 			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {
@@ -351,7 +344,6 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					hc.SkipLLM = true
 					hc.PrebuiltContent = kbHC.PrebuiltContent
 				}
-				hc.IndicatorText = kbHC.IndicatorText
 				hc.Messages = kbHC.Messages
 				for _, stc := range kbHC.SyntheticToolCalls {
 					hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{

@@ -13,8 +13,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"time"
 	"strings"
+	"time"
 )
 
 type userIDKey struct{}
@@ -674,15 +674,12 @@ type AgentFileConfig struct {
 // Stored as the agent's "kb" config sub-object and mapped to kb.AutoQueryCfg
 // at BeforeModelCall hook wiring time.
 type AgentKBCfg struct {
-	Enabled           bool     `json:"enabled"`
-	AutoMode          string   `json:"autoMode,omitempty"`
-	Keywords          []string `json:"keywords,omitempty"`
-	MaxResults        int      `json:"maxResults,omitempty"`
-	SearchMode        string   `json:"searchMode,omitempty"`
-	EmptyAction       string   `json:"emptyAction,omitempty"`
-	ShowIndicator     *bool    `json:"showIndicator,omitempty"`
-	IndicatorFound    string   `json:"indicatorFound,omitempty"`
-	IndicatorNotFound string   `json:"indicatorNotFound,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	AutoMode    string   `json:"autoMode,omitempty"`
+	Keywords    []string `json:"keywords,omitempty"`
+	MaxResults  int      `json:"maxResults,omitempty"`
+	SearchMode  string   `json:"searchMode,omitempty"`
+	EmptyAction string   `json:"emptyAction,omitempty"`
 	// WikiRatio is the fraction [0,1] of result slots given to wiki pages
 	// vs raw kb_entries. nil = 0.5 (default 50/50). 0 = kb only, 1 = wiki only.
 	WikiRatio *float64 `json:"wikiRatio,omitempty"`
@@ -723,18 +720,18 @@ type ResolvedAgent struct {
 	// operator gave the agent ("Bob", "tdj", "Sonny"). Used as a
 	// fallback identity line in the system prompt when IDENTITY.md
 	// is empty so the model doesn't introduce itself as "Claude".
-	DisplayName          string
-	Home                 string
-	Workspace            string
-	Model                string
-	MaxTokens            int
+	DisplayName string
+	Home        string
+	Workspace   string
+	Model       string
+	MaxTokens   int
 	// ContextWindow is the agent's effective context window (tokens), used
 	// by Phase 2 to derive a model-aware compaction threshold. 0 = unknown
 	// (operator hasn't set it AND no builtin-table match). Priority at
 	// resolve time: ModelEntry.ContextWindow (future, P1-T7) → builtin table
 	// (LookupModelMeta) → 0. The table fallback is applied in
 	// MergedAgentConfig when this field is still 0 after entry merge.
-	ContextWindow        int
+	ContextWindow int
 	// CompactionMode and CompactionThreshold are the operator-set
 	// compaction controls, propagated from AgentFileConfig at resolve
 	// time. See AgentFileConfig docs for semantics.

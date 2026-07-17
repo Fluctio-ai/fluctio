@@ -28,8 +28,8 @@ type KBEntry struct {
 type KBResult struct {
 	SourceID    string  `json:"source_id"`
 	SourceTitle string  `json:"source_title"`
-	SourceKind  string  `json:"source_kind"`          // "wiki" or "kb"
-	PageType    string  `json:"page_type,omitempty"`  // wiki page type: source/concept/entity/query
+	SourceKind  string  `json:"source_kind"`         // "wiki" or "kb"
+	PageType    string  `json:"page_type,omitempty"` // wiki page type: source/concept/entity/query
 	ChunkIndex  int     `json:"chunk_index"`
 	Content     string  `json:"content"`
 	Snippet     string  `json:"snippet"`
@@ -55,15 +55,12 @@ type KBStats struct {
 }
 
 type KBCfg struct {
-	Enabled           bool     `json:"enabled"`
-	AutoMode          string   `json:"autoMode,omitempty"`    // "always", "keyword", "disabled"
-	Keywords          []string `json:"keywords,omitempty"`    // trigger words for keyword mode
-	MaxResults        int      `json:"maxResults,omitempty"`  // default 5
-	SearchMode        string   `json:"searchMode,omitempty"`  // "augment" (default), "strict"
-	EmptyAction       string   `json:"emptyAction,omitempty"` // "llm" (default), "stop"
-	ShowIndicator     *bool    `json:"showIndicator,omitempty"`
-	IndicatorFound    string   `json:"indicatorFound,omitempty"`
-	IndicatorNotFound string   `json:"indicatorNotFound,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	AutoMode    string   `json:"autoMode,omitempty"`    // "always", "keyword", "disabled"
+	Keywords    []string `json:"keywords,omitempty"`    // trigger words for keyword mode
+	MaxResults  int      `json:"maxResults,omitempty"`  // default 5
+	SearchMode  string   `json:"searchMode,omitempty"`  // "augment" (default), "strict"
+	EmptyAction string   `json:"emptyAction,omitempty"` // "llm" (default), "stop"
 }
 
 // sourcesAccumulatorKey is the context key for a *[]KnowledgeSource that the

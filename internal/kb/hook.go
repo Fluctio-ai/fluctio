@@ -15,7 +15,6 @@ type HookContext struct {
 	Source             string
 	SkipLLM            bool
 	PrebuiltContent    string
-	IndicatorText      string
 	SyntheticToolCalls []SyntheticToolCall
 	// KnowledgeSources carries the [K#]-numbered sources for this turn's
 	// retrieval so the agent loop can attach them to the assistant message
@@ -33,19 +32,15 @@ type SyntheticToolCall struct {
 // AutoQueryCfg is the config the auto-query hook reads. Mirrors the
 // fields from config.KBCfg to avoid importing the config package.
 type AutoQueryCfg struct {
-	Enabled       bool
-	AutoMode      string
-	Keywords      []string
-	MaxResults    int
-	SearchMode    string // "augment" (default), "strict"
-	EmptyAction   string // "llm" (default), "stop"
-	ShowIndicator bool   // default true
+	Enabled     bool
+	AutoMode    string
+	Keywords    []string
+	MaxResults  int
+	SearchMode  string // "augment" (default), "strict"
+	EmptyAction string // "llm" (default), "stop"
 	// WikiRatio is the resolved fraction [0,1] of result slots for wiki
 	// pages vs kb_entries (nil config → 0.5).
-	WikiRatio         float64
-	// Custom indicator texts. {count} and {query} are replaced.
-	IndicatorFound    string
-	IndicatorNotFound string
+	WikiRatio float64
 }
 
 // AutoQueryHook returns a function suitable for use as a BeforeModelCall
@@ -150,19 +145,19 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			}}
 			switch cfg.SearchMode {
 			case "strict":
-				content := buildKBAnswer(results, query, cfg)
+				content := buildKBAnswer(results, query)
 				hc.PrebuiltContent = content
 				hc.SkipLLM = true
 				return
 			default: // augment
-				injectKBContext(hc, results, citations, cfg)
+				injectKBContext(hc, results, citations)
 				return
 			}
 		}
 
 		// No results — apply emptyAction.
 		if cfg.EmptyAction == "stop" {
-			content := indicatorNotFoundMsg(cfg)
+			content := indicatorNotFoundMsg()
 			hc.PrebuiltContent = content
 			hc.SkipLLM = true
 		}
@@ -202,48 +197,6 @@ func numberKBResults(results []KBResult) (citations []string, sources []Knowledg
 	return citations, sources
 }
 
-func isWikiSourceID(id string) bool {
-	return strings.Contains(id, ":")
-}
-
-func countSources(results []KBResult) (kbCount int, wikiCount int) {
-	for _, r := range results {
-		if isWikiSourceID(r.SourceID) {
-			wikiCount++
-		} else {
-			kbCount++
-		}
-	}
-	return
-}
-
-func formatIndicatorFoundV2(cfg AutoQueryCfg, results []KBResult, query string) string {
-	if !cfg.ShowIndicator {
-		return ""
-	}
-	kbCount, wikiCount := countSources(results)
-	total := len(results)
-	indicator := cfg.IndicatorFound
-	if indicator == "" {
-		indicator = "[百科] 已引用 {count} 条百科"
-	}
-	indicator = strings.ReplaceAll(indicator, "{count}", fmt.Sprintf("%d", total))
-	indicator = strings.ReplaceAll(indicator, "{kbCount}", fmt.Sprintf("%d", kbCount))
-	indicator = strings.ReplaceAll(indicator, "{wikiCount}", fmt.Sprintf("%d", wikiCount))
-	indicator = strings.ReplaceAll(indicator, "{query}", query)
-	return indicator
-}
-
-func formatIndicatorNotFound(cfg AutoQueryCfg) string {
-	if !cfg.ShowIndicator {
-		return ""
-	}
-	if cfg.IndicatorNotFound != "" {
-		return cfg.IndicatorNotFound
-	}
-	return "[KB] 知识库中未找到相关信息"
-}
-
 func extractLastUserMessage(msgs []provider.Message) string {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == "user" {
@@ -277,18 +230,8 @@ func containsAnyKeyword(text string, keywords []string) bool {
 	return false
 }
 
-func buildKBAnswer(results []KBResult, query string, cfg AutoQueryCfg) string {
+func buildKBAnswer(results []KBResult, query string) string {
 	var sb strings.Builder
-	if cfg.ShowIndicator {
-		indicator := cfg.IndicatorFound
-		if indicator == "" {
-			indicator = "[KB] Found {count} result(s) for: {query}"
-		}
-		indicator = strings.ReplaceAll(indicator, "{count}", fmt.Sprintf("%d", len(results)))
-		indicator = strings.ReplaceAll(indicator, "{query}", query)
-		sb.WriteString(indicator)
-		sb.WriteString("\n\n")
-	}
 	for i, r := range results {
 		fmt.Fprintf(&sb, "--- Source: %s (chunk %d) ---\n", r.SourceTitle, r.ChunkIndex)
 		sb.WriteString(r.Content)
@@ -299,18 +242,11 @@ func buildKBAnswer(results []KBResult, query string, cfg AutoQueryCfg) string {
 	return sb.String()
 }
 
-func injectKBContext(hc *HookContext, results []KBResult, citations []string, cfg AutoQueryCfg) {
+func injectKBContext(hc *HookContext, results []KBResult, citations []string) {
 	var sb strings.Builder
-	if cfg.ShowIndicator {
-		indicator := cfg.IndicatorFound
-		if indicator == "" {
-			indicator = "[KB] Retrieved {count} relevant knowledge item(s)"
-		}
-		indicator = strings.ReplaceAll(indicator, "{count}", fmt.Sprintf("%d", len(results)))
-		sb.WriteString(indicator)
-		sb.WriteString("\n\n")
-	}
-	sb.WriteString("The following information was retrieved from the knowledge base and may be relevant to the user's question. Use it to enhance your response if relevant.\n\n")
+	// Fixed [KB] marker prefix so messagesContainKBContext's cache-hit
+	// check still recognizes this injection across ReAct iterations.
+	sb.WriteString("[KB] The following information was retrieved from the knowledge base and may be relevant to the user's question. Use it to enhance your response if relevant.\n\n")
 	for i, r := range results {
 		fmt.Fprintf(&sb, "--- [%s] Source: %s (chunk %d) ---\n", citations[i], r.SourceTitle, r.ChunkIndex)
 		content := r.Content
@@ -346,12 +282,6 @@ func injectKBContext(hc *HookContext, results []KBResult, citations []string, cf
 	hc.Messages = append(hc.Messages, tail...)
 }
 
-func indicatorNotFoundMsg(cfg AutoQueryCfg) string {
-	if cfg.ShowIndicator {
-		if cfg.IndicatorNotFound != "" {
-			return cfg.IndicatorNotFound
-		}
-		return "[Knowledge Base]\nNo matching information found in the knowledge base for your query."
-	}
-	return "I couldn't find any relevant information in the knowledge base."
+func indicatorNotFoundMsg() string {
+	return "[KB] 知识库中未找到相关信息。"
 }
