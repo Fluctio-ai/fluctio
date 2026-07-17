@@ -1851,7 +1851,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	if catalog != "" {
 		messages = append(messages, provider.Message{Role: "system", Content: catalog})
 	}
-	messages = append(messages, a.withMessageTimestampsForChatter(sess.GetMessages(), chatterUID)...)
+	messages = append(messages, withConversationGapContext(sess.GetMessages())...)
 	if a.piiScrubEnabled {
 		messages = privacy.ScrubMessages(messages)
 	}
@@ -2255,7 +2255,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	if msg.Source == bus.SourceCron {
 		messages = append(messages, provider.Message{Role: "system", Content: cronTriggerGuidance})
 	}
-	messages = append(messages, a.withMessageTimestampsForChatter(sessionMsgs, chatterUID)...)
+	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 
 	toolDefs := a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
 
@@ -3135,7 +3135,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	if msg.Source == bus.SourceCron {
 		messages = append(messages, provider.Message{Role: "system", Content: cronTriggerGuidance})
 	}
-	messages = append(messages, a.withMessageTimestampsForChatter(sessionMsgs, chatterUID)...)
+	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 
 	toolDefs := a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
 
@@ -3646,36 +3646,65 @@ func (a *Agent) chatterLocation(chatterUID string) *time.Location {
 	return scope.LoadLocationOrLocal(tz)
 }
 
-// withMessageTimestamps returns a COPY of msgs where each user message is
-// prefixed with its send time in the chatter's timezone, e.g.
-// "[2026-06-13 22:15 Fri] …". This is what lets the model reason about
-// time across a conversation — tell today from earlier days, and not say
-// "good night" at midday. The originals are never mutated (the prefix is
-// a read-time view for the LLM, not stored history), so the session store
-// stays clean and the next turn doesn't double-prefix. The system prompt
-// (context.go dateLine) tells the model what the bracketed prefix means.
-func (a *Agent) withMessageTimestampsForChatter(msgs []provider.Message, chatterUID string) []provider.Message {
-	if len(msgs) == 0 {
-		return msgs
-	}
-	loc := a.chatterLocation(chatterUID)
-	out := make([]provider.Message, 0, len(msgs))
+const conversationGapThreshold = 24 * time.Hour
+
+// withConversationGapContext keeps message bodies clean while still telling
+// the model when the latest turn resumes a stale conversation. Timestamps stay
+// in message metadata and are never rendered as user-visible text.
+//
+// It also filters out compaction-notice bubbles (UI-only assistant turns whose
+// text would otherwise reach the LLM as a fake assistant turn and pollute
+// context); Metadata itself is stripped by provider serializers, but the
+// Content would still leak.
+func withConversationGapContext(msgs []provider.Message) []provider.Message {
+	filtered := make([]provider.Message, 0, len(msgs))
 	for _, m := range msgs {
-		// Compaction notices are UI-only bubbles (role=assistant + visible
-		// Content text). If we let them through, the notice text reaches
-		// the LLM as a fake assistant turn and pollutes context. Skip the
-		// whole message — Metadata itself is stripped by provider
-		// serializers, but the Content would still leak.
 		if _, ok := m.Metadata["compactionNotice"]; ok {
 			continue
 		}
-		if m.Role == "user" && m.Timestamp > 0 && m.Content != "" {
-			t := time.UnixMilli(m.Timestamp).In(loc)
-			m.Content = "[" + t.Format("2006-01-02 15:04 Mon") + "] " + m.Content
-		}
-		out = append(out, m)
+		filtered = append(filtered, m)
 	}
+	msgs = filtered
+
+	if len(msgs) < 2 {
+		return msgs
+	}
+	latest := msgs[len(msgs)-1]
+	if latest.Role != "user" || latest.Timestamp <= 0 {
+		return msgs
+	}
+
+	var previousTimestamp int64
+	for i := len(msgs) - 2; i >= 0; i-- {
+		if msgs[i].Timestamp > 0 && (msgs[i].Role == "user" || msgs[i].Role == "assistant") {
+			previousTimestamp = msgs[i].Timestamp
+			break
+		}
+	}
+	gap := time.Duration(latest.Timestamp-previousTimestamp) * time.Millisecond
+	if previousTimestamp == 0 || gap < conversationGapThreshold {
+		return msgs
+	}
+
+	note := fmt.Sprintf(
+		"Conversation timing context: the latest user message arrived after %s of inactivity. "+
+			"Treat it as a resumed conversation in the current moment. Use earlier messages as background, "+
+			"but do not assume their time-sensitive situation is still current and do not repeat an earlier answer unless the user asks for it. "+
+			"Keep this timing context silent; do not mention the gap or report timestamps.",
+		formatConversationGap(gap),
+	)
+	out := make([]provider.Message, 0, len(msgs)+1)
+	out = append(out, provider.Message{Role: "system", Content: note})
+	out = append(out, msgs...)
 	return out
+}
+
+func formatConversationGap(gap time.Duration) string {
+	days := int(gap / (24 * time.Hour))
+	if days >= 2 {
+		return fmt.Sprintf("about %d days", days)
+	}
+	return "more than a day"
 }
 
 // UpdateConfig updates the agent's runtime config (model, temperature, etc.)
