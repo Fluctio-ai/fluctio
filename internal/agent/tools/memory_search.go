@@ -88,6 +88,12 @@ type SummarySearcher interface {
 // SetSummarySearcher on the registry after Agent construction (the
 // relational store isn't available at registration time). Until wired,
 // the tool falls back to the legacy JSONL scan / FTS5 index.
+// Cross-session recall via conversation_summaries is enabled by calling
+// SetSummarySearcher on the registry after Agent construction (the
+// relational store isn't available at registration time). Until wired,
+// the tool falls back to the legacy JSONL scan / FTS5 index.
+// The relevance threshold is wired post-construction via
+// SetMemoryMinRelevance (same pattern — DBStore isn't available here).
 func RegisterMemorySearch(r *Registry, workspace string, fts ...FTSSearcher) {
 	var searcher FTSSearcher
 	if len(fts) > 0 {
@@ -198,6 +204,17 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 					}
 					scored, rerankErr := r.reranker.Rerank(ctx, args.Query, docs, limit)
 					if rerankErr == nil {
+						// Relevance threshold: drop hits whose cross-encoder
+						// score is below the agent's configured min. 0 = off.
+						if minRel := r.memoryMinRelevance(); minRel > 0 {
+							kept := scored[:0]
+							for _, s := range scored {
+								if s.Score >= minRel {
+									kept = append(kept, s)
+								}
+							}
+							scored = kept
+						}
 						hits = reorderByRerank(hits, scored)
 					}
 				}

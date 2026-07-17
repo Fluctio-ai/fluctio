@@ -264,6 +264,12 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			ag.registry.SetMessageFetcher(db)
 			ag.registry.SetSummarySearcher(db)
 			ag.registry.SetVectorSearcher(db)
+			// Recall relevance threshold: read fresh per call so config
+			// changes take effect without rebuild.
+			ag.registry.SetMemoryMinRelevance(func() float64 {
+				v, _ := db.GetAgentMinRelevance(context.Background(), ag.agentID)
+				return v
+			})
 			// Build embedder + reranker from the agent's merged memory config
 			// (system→owner→agent). ProbeEmbedder pings once so a misconfigured
 			// endpoint degrades to nilEmbedder (vector recall skipped) instead

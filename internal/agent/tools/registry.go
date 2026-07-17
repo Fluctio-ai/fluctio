@@ -187,6 +187,10 @@ type Registry struct {
 	// reranker is the cross-encoder for stage-3 re-rank.
 	// nil or !Available() → reranker path skipped.
 	reranker Reranker
+	// minRelevanceFn returns the agent's recall relevance threshold (lowest
+	// rerank/vector similarity a hit must clear); nil or <=0 → no filter.
+	// Wired post-construction by the manager.
+	minRelevanceFn func() float64
 	// sessionID scopes workspace.Store reads/writes so concurrent sessions
 	// of the same agent don't collide on `report.md` etc. Set per-turn by
 	// the agent loop via SetSessionID; an empty value falls back to
@@ -391,6 +395,21 @@ func (r *Registry) SetSummarySearcher(db SummarySearcher) {
 // SetVectorSearcher wires the vector search handle.
 func (r *Registry) SetVectorSearcher(db VectorSearcher) {
 	r.vecDB = db
+}
+
+// SetMemoryMinRelevance wires the agent's recall relevance threshold getter
+// (returns 0..1; 0 or negative disables filtering). Called by the manager
+// after Agent construction.
+func (r *Registry) SetMemoryMinRelevance(fn func() float64) {
+	r.minRelevanceFn = fn
+}
+
+// memoryMinRelevance resolves the current threshold; 0 = no filter.
+func (r *Registry) memoryMinRelevance() float64 {
+	if r.minRelevanceFn != nil {
+		return r.minRelevanceFn()
+	}
+	return 0
 }
 
 // SetEmbedder wires the embedder for query vectorization.
