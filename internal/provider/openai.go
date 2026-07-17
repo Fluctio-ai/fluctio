@@ -60,7 +60,8 @@ type chatRequest struct {
 	Temperature         *float64          `json:"temperature,omitempty"`
 	Stream              bool              `json:"stream"`
 	StreamOptions       *streamOptions    `json:"stream_options,omitempty"`
-	Thinking            *thinkingControl  `json:"thinking,omitempty"` // LongCat-2.0: {"type":"disabled"} turns reasoning off
+	Thinking            *thinkingControl  `json:"thinking,omitempty"`        // LongCat-2.0: {"type":"disabled"} turns reasoning off
+	ResponseFormat      *responseFormat   `json:"response_format,omitempty"` // {type:json_object} forces valid JSON
 }
 
 // thinkingControl is LongCat-2.0's reasoning toggle on its OpenAI-
@@ -70,6 +71,13 @@ type chatRequest struct {
 // field ignore it.
 type thinkingControl struct {
 	Type string `json:"type"` // "enabled" | "disabled"
+}
+
+// responseFormat is OpenAI's response_format toggle. {type:"json_object"}
+// forces valid JSON (the model escapes embedded quotes) so a summary
+// containing literal quotes — e.g. 命名为"卷毛" — doesn't break parsing.
+type responseFormat struct {
+	Type string `json:"type"` // "json_object" | "text"
 }
 
 // streamOptions.include_usage tells OpenAI-compat APIs to emit one final
@@ -296,6 +304,9 @@ func (p *OpenAIProvider) buildRequest(ctx context.Context, messages []Message, t
 	if NoThinkingRequested(ctx) {
 		req.Thinking = &thinkingControl{Type: "disabled"}
 	}
+	if JSONModeRequested(ctx) {
+		req.ResponseFormat = &responseFormat{Type: "json_object"}
+	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -331,6 +342,24 @@ func WithNoThinking(ctx context.Context) context.Context {
 // disable thinking on this call.
 func NoThinkingRequested(ctx context.Context) bool {
 	v, _ := ctx.Value(noThinkingCtxKey{}).(bool)
+	return v
+}
+
+// jsonModeCtxKey is the context key for the per-call "force JSON output"
+// preference. Background extractive calls set it so a model that doesn't
+// escape quotes inside string values still emits parseable JSON.
+type jsonModeCtxKey struct{}
+
+// WithJSONMode returns a derived context asking the provider to force
+// valid JSON output (OpenAI response_format json_object). Providers that
+// don't recognize the flag ignore it.
+func WithJSONMode(ctx context.Context) context.Context {
+	return context.WithValue(ctx, jsonModeCtxKey{}, true)
+}
+
+// JSONModeRequested reports whether the caller asked for forced JSON output.
+func JSONModeRequested(ctx context.Context) bool {
+	v, _ := ctx.Value(jsonModeCtxKey{}).(bool)
 	return v
 }
 

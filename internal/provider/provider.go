@@ -26,12 +26,14 @@ import (
 // mutating DefaultTransport would affect every other consumer in the
 // process (it's a documented global shared resource).
 //
-// 60s is conservative for LLM APIs: response headers come back well
-// under 1s on a healthy path; 60s catches a hung connection without
-// false-positives on a slow but live network.
+// 120s is generous for LLM APIs: response headers come back well under
+// 1s on a healthy path, but the long tail (e.g. LongCat occasionally
+// parking a request before the first byte) needs the headroom so a big
+// conversation-summary extraction isn't cut off at 60s. Normal calls are
+// unaffected — they return headers in well under a second.
 func newLLMHTTPClient() *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.ResponseHeaderTimeout = 60 * time.Second
+	tr.ResponseHeaderTimeout = 120 * time.Second
 	return &http.Client{Transport: tr}
 }
 

@@ -107,12 +107,15 @@ func callExtractTopics(
 	// Disable the model's thinking/reasoning for this extractive call:
 	// thinking tokens would eat the output budget and slow the call, and
 	// a structured topic list gains nothing from chain-of-thought.
-	ctx, cancel := context.WithTimeout(provider.WithNoThinking(ctx), 90*time.Second)
+	// JSON mode forces the model to escape embedded quotes so a summary
+	// like 命名为"卷毛" doesn't break JSON parsing.
+	ctx, cancel := context.WithTimeout(provider.WithJSONMode(provider.WithNoThinking(ctx)), 150*time.Second)
 	defer cancel()
 
-	// 4096 fits the multi-topic JSON a large window distills. The old
-	// 1200/1500 truncated big conversations mid-JSON → parse failures.
-	maxTokens := 4096
+	// 8192 fits the multi-topic JSON a large window distills, including
+	// Chinese summaries — a 96-message session produced 6+ topics that
+	// overflowed 4096 mid-character and failed to parse.
+	maxTokens := 8192
 	resp, err := prov.Chat(ctx, []provider.Message{
 		{Role: "user", Content: prompt},
 	}, nil, model, maxTokens, 0.3)
@@ -508,7 +511,7 @@ func (a *Agent) maybeExtractSummary(sess *session.Session, trigger string) {
 	emb := a.embedder
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
 		slog.Debug("summary extraction: background goroutine started",
 			"agent", agentID, "session", sessionKey, "trigger", trigger)
