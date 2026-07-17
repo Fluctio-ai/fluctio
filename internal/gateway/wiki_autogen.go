@@ -229,7 +229,20 @@ func (g *Gateway) idleSummaryTicker(ctx context.Context, interval, idleAfter tim
 	}
 	slog.Info("idle summary sweep started",
 		"interval", interval, "idle_after", idleAfter, "min_messages", minMessages)
-	// Run once at boot so a backlog clears without waiting a full interval.
+	// Boot run. This ticker goroutine can start before the gateway has
+	// finished loading user spaces (startup is concurrent), in which case
+	// g.users is still empty and the first cycle would summarize nothing —
+	// wasting a full interval before the backlog clears. Wait briefly for
+	// at least one user space to register before the boot pass.
+	bootDeadline := time.Now().Add(30 * time.Second)
+	for len(g.users.all()) == 0 && time.Now().Before(bootDeadline) {
+		select {
+		case <-ctx.Done():
+			slog.Info("idle summary sweep stopped")
+			return
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 	g.runIdleSummaryCycle(ctx, idleAfter, minMessages)
 	t := time.NewTicker(interval)
 	defer t.Stop()

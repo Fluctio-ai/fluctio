@@ -333,7 +333,7 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
 		sb.String(),
 	)
 
-	resp, err := prov.Chat(provider.WithNoThinking(ctx), []provider.Message{
+	resp, err := prov.Chat(provider.WithJSONMode(provider.WithNoThinking(ctx)), []provider.Message{
 		{Role: "user", Content: extractPrompt},
 	}, nil, model, 200, 0.3)
 	if err != nil {

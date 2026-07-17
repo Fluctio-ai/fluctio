@@ -17,7 +17,7 @@ type SkillsLearner struct {
 	workspace    string
 	provider     provider.Provider
 	model        string
-	minToolCalls int    // minimum tool calls to consider extracting (default: 3)
+	minToolCalls int      // minimum tool calls to consider extracting (default: 3)
 	skillDirs    []string // directories to search for the skill-learner skill
 }
 
@@ -141,7 +141,7 @@ func (sl *SkillsLearner) extractSkill(ctx context.Context, messages []provider.M
 		{Role: "user", Content: sb.String()},
 	}
 
-	resp, err := sl.provider.Chat(provider.WithNoThinking(ctx), extractMsgs, nil, sl.model, 1024, 0.3)
+	resp, err := sl.provider.Chat(provider.WithJSONMode(provider.WithNoThinking(ctx)), extractMsgs, nil, sl.model, 1024, 0.3)
 	if err != nil {
 		return nil, err
 	}
