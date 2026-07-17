@@ -60,3 +60,16 @@ func TestInjectKBContextMarksCitationsAndInstruction(t *testing.T) {
 		t.Fatalf("kb block missing citation instruction: %q", kbBlock)
 	}
 }
+
+func TestClipUTF8DoesNotSplitRune(t *testing.T) {
+	// 中文每字 3 字节；在 4 字节处截断会劈开第二个字 → 必须回退到 3 字节边界。
+	s := "中文测试内容"
+	got := clipUTF8(s, 4)
+	if got != "中" {
+		t.Fatalf("clipUTF8(s, 4) = %q (%d bytes), want \"中\" (back up to rune boundary)", got, len(got))
+	}
+	// 低于上限原样返回。
+	if clipUTF8(s, 100) != s {
+		t.Fatalf("clipUTF8 under the limit must return the full string")
+	}
+}

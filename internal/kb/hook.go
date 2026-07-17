@@ -174,7 +174,7 @@ func buildToolResultSummary(results []KBResult, citations []string) string {
 	for i, r := range results {
 		fmt.Fprintf(&sb, "%d. **[%s] %s**", i+1, citations[i], r.SourceTitle)
 		if len(r.Content) > 200 {
-			sb.WriteString("\n" + r.Content[:200] + "...")
+			sb.WriteString("\n" + clipUTF8(r.Content, 200) + "...")
 		} else {
 			sb.WriteString("\n" + r.Content)
 		}
@@ -309,7 +309,7 @@ func injectKBContext(hc *HookContext, results []KBResult, citations []string, cf
 		fmt.Fprintf(&sb, "--- [%s] Source: %s (chunk %d) ---\n", citations[i], r.SourceTitle, r.ChunkIndex)
 		content := r.Content
 		if len(content) > 500 {
-			content = content[:500] + "..."
+			content = clipUTF8(content, 500) + "..."
 		}
 		sb.WriteString(content)
 		sb.WriteString("\n\n")

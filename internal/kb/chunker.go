@@ -132,12 +132,15 @@ func splitSentences(text string) []string {
 	for i, r := range text {
 		buf.WriteRune(r)
 		if r == '.' || r == '。' || r == '?' || r == '！' || r == '？' {
-			// End of sentence if followed by space or end of text
-			next := ' '
-			if i+1 < len(text) {
-				next = rune(text[i+1])
+			// End of sentence if followed by space or end of text. i is a
+			// byte offset (range over string), so peek the next byte directly —
+			// rune(text[i+1]) mis-decodes when i+1 lands inside a CJK char.
+			ended := i+1 >= len(text)
+			if !ended {
+				nb := text[i+1]
+				ended = nb == ' ' || nb == '\n'
 			}
-			if next == ' ' || next == '\n' || i+1 >= len(text) {
+			if ended {
 				s := strings.TrimSpace(buf.String())
 				if s != "" {
 					sentences = append(sentences, s)
@@ -159,8 +162,12 @@ func splitSentences(text string) []string {
 				sentences = append(sentences, t)
 				break
 			}
-			sentences = append(sentences, t[:defaultChunkSize])
-			t = t[defaultChunkSize:]
+			end := defaultChunkSize
+			for end > 0 && t[end]&0xC0 == 0x80 {
+				end--
+			}
+			sentences = append(sentences, t[:end])
+			t = t[end:]
 		}
 	}
 	return sentences

@@ -7,9 +7,25 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
+
+// clipUTF8 returns s trimmed to at most maxBytes without splitting a
+// multi-byte UTF-8 rune — it backs end up to the last rune-start byte so a
+// naive s[:maxBytes] (which can cleave a CJK character and render as �) is
+// avoided. The caller decides whether to append an ellipsis.
+func clipUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	end := maxBytes
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end]
+}
 
 type KBStore struct {
 	db      *sql.DB
@@ -166,7 +182,7 @@ func scoredToResults(scored []scoredPage) []KBResult {
 		}
 		snippet := content
 		if len(snippet) > 300 {
-			snippet = snippet[:300]
+			snippet = clipUTF8(snippet, 300)
 		}
 		results[i] = KBResult{
 			SourceID:    s.ID,
@@ -431,7 +447,7 @@ func formatResults(results []KBResult, query string) string {
 		} else {
 			content := r.Content
 			if len(content) > 500 {
-				content = content[:500] + "..."
+				content = clipUTF8(content, 500) + "..."
 			}
 			sb.WriteString(content)
 		}

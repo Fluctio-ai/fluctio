@@ -552,7 +552,13 @@ func firstParagraph(body string, maxChars int) string {
 	}
 	text := strings.Join(lines, " ")
 	if len(text) > maxChars {
-		text = text[:maxChars-1] + "…"
+		// Back up to a UTF-8 rune boundary so we don't cleave a CJK
+		// character and store a trailing U+FFFD in wiki_pages.summary.
+		end := maxChars - 1
+		for end > 0 && text[end]&0xC0 == 0x80 {
+			end--
+		}
+		text = text[:end] + "…"
 	}
 	return text
 }
