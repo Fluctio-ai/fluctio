@@ -164,6 +164,12 @@ export default function AgentRecallTuningPage() {
           </Button>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">{t("recallTuning.lambdaHint")}</p>
+        <div className="mt-2 space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+          <div className="font-mono">{t("recallTuning.formulaMmrRel")}</div>
+          <div className="font-mono">{t("recallTuning.formulaMmrMaxSim")}</div>
+          <div className="font-mono">{t("recallTuning.formulaMmrScore")}</div>
+          <div>{t("recallTuning.formulaMmrBalance")}</div>
+        </div>
       </div>
 
       <div>
