@@ -318,6 +318,10 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				if kbCfg.ShowIndicator != nil {
 					showIndicator = *kbCfg.ShowIndicator
 				}
+				wikiRatio := 0.5
+				if kbCfg.WikiRatio != nil {
+					wikiRatio = *kbCfg.WikiRatio
+				}
 				return kb.AutoQueryCfg{
 					Enabled:           kbCfg.Enabled,
 					AutoMode:          kbCfg.AutoMode,
@@ -326,6 +330,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					SearchMode:        kbCfg.SearchMode,
 					EmptyAction:       kbCfg.EmptyAction,
 					ShowIndicator:     showIndicator,
+					WikiRatio:         wikiRatio,
 					IndicatorFound:    kbCfg.IndicatorFound,
 					IndicatorNotFound: kbCfg.IndicatorNotFound,
 				}

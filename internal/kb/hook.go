@@ -40,6 +40,9 @@ type AutoQueryCfg struct {
 	SearchMode    string // "augment" (default), "strict"
 	EmptyAction   string // "llm" (default), "stop"
 	ShowIndicator bool   // default true
+	// WikiRatio is the resolved fraction [0,1] of result slots for wiki
+	// pages vs kb_entries (nil config → 0.5).
+	WikiRatio         float64
 	// Custom indicator texts. {count} and {query} are replaced.
 	IndicatorFound    string
 	IndicatorNotFound string
@@ -120,7 +123,7 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			cfg.EmptyAction = "llm"
 		}
 
-		results, err := store.Search(ctx, agentID, query, maxResults, 0)
+		results, err := store.Search(ctx, agentID, query, maxResults, 0, cfg.WikiRatio)
 		slog.Info("kb auto-query search", "agent", agentID, "query", query, "results", len(results), "err", err)
 
 		if err != nil {

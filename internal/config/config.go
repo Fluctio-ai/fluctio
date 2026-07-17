@@ -679,6 +679,9 @@ type AgentKBCfg struct {
 	ShowIndicator     *bool    `json:"showIndicator,omitempty"`
 	IndicatorFound    string   `json:"indicatorFound,omitempty"`
 	IndicatorNotFound string   `json:"indicatorNotFound,omitempty"`
+	// WikiRatio is the fraction [0,1] of result slots given to wiki pages
+	// vs raw kb_entries. nil = 0.5 (default 50/50). 0 = kb only, 1 = wiki only.
+	WikiRatio *float64 `json:"wikiRatio,omitempty"`
 }
 
 type SkillsConfig struct {

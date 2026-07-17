@@ -60,6 +60,7 @@ export default function AgentKnowledgePage() {
   const [showIndicator, setShowIndicator] = useState(true);
   const [indicatorFound, setIndicatorFound] = useState("");
   const [indicatorNotFound, setIndicatorNotFound] = useState("");
+  const [wikiRatio, setWikiRatio] = useState(0.5);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -106,6 +107,7 @@ export default function AgentKnowledgePage() {
           setShowIndicator(kb.showIndicator ?? true);
           setIndicatorFound(kb.indicatorFound ?? "");
           setIndicatorNotFound(kb.indicatorNotFound ?? "");
+          setWikiRatio(kb.wikiRatio ?? 0.5);
         }
         setConfigLoaded(true);
       })
@@ -127,11 +129,12 @@ export default function AgentKnowledgePage() {
           showIndicator,
           indicatorFound: indicatorFound || undefined,
           indicatorNotFound: indicatorNotFound || undefined,
+          wikiRatio,
         },
       } as any);
     } catch {}
     setSaving(false);
-  }, [agentId, kbEnabled, autoMode, keywords, maxResults, searchMode, emptyAction, showIndicator, indicatorFound, indicatorNotFound]);
+  }, [agentId, kbEnabled, autoMode, keywords, maxResults, searchMode, emptyAction, showIndicator, indicatorFound, indicatorNotFound, wikiRatio]);
 
   const handleIngestText = useCallback(async () => {
     if (!agentId || !textContent.trim()) return;
@@ -233,6 +236,22 @@ export default function AgentKnowledgePage() {
                   className="h-8 text-xs"
                 />
               </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">{t("knowledge.wikiRatio")}</Label>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  Wiki {Math.round(wikiRatio * 100)}% · {t("knowledge.kbLabel")} {100 - Math.round(wikiRatio * 100)}%
+                </span>
+              </div>
+              <input
+                type="range" min={0} max={100} step={10}
+                value={Math.round(wikiRatio * 100)}
+                onChange={(e) => setWikiRatio(Number(e.target.value) / 100)}
+                className="w-full accent-primary"
+              />
+              <p className="text-[11px] text-muted-foreground">{t("knowledge.wikiRatioDesc")}</p>
             </div>
 
             {autoMode === "keyword" && (

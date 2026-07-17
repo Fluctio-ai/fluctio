@@ -1511,6 +1511,8 @@ export interface AgentKBCfg {
   showIndicator?: boolean;
   indicatorFound?: string;
   indicatorNotFound?: string;
+  /** Fraction [0,1] of result slots for wiki pages vs kb_entries. Default 0.5. */
+  wikiRatio?: number;
 }
 
 // --- Knowledge base types + API (slice 4a REST handlers) ---

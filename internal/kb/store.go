@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -115,25 +116,38 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 
 // Search searches both kb_entries (FTS5/LIKE) and wiki_pages (bigram scorer).
 // preFilterLimit: number of SQL candidates for wiki search (default 30).
-func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, preFilterLimit int) ([]KBResult, error) {
+func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, preFilterLimit int, wikiRatio float64) ([]KBResult, error) {
 	if limit <= 0 {
 		limit = 5
 	}
+	// wikiRatio in [0,1]: fraction of slots reserved for wiki pages. The
+	// rest go to kb_entries. Out-of-range falls back to 0.5.
+	if wikiRatio < 0 || wikiRatio > 1 {
+		wikiRatio = 0.5
+	}
+	wikiLimit := int(math.Round(float64(limit) * wikiRatio))
+	kbLimit := limit - wikiLimit
 
+	var entries []KBResult
 	// L1: kb_entries — FTS5 + LIKE fallback for raw chunk matching.
-	entries, err := s.searchFTS(ctx, agentID, query, limit)
-	if err != nil || len(entries) == 0 {
-		entries, err = s.searchLike(ctx, agentID, query, limit)
-		if err != nil {
-			return nil, err
+	if kbLimit > 0 {
+		var err error
+		entries, err = s.searchFTS(ctx, agentID, query, kbLimit)
+		if err != nil || len(entries) == 0 {
+			entries, err = s.searchLike(ctx, agentID, query, kbLimit)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	// L2: wiki_pages — bigram scorer with Redis cache or SQL pre-filter.
-	wikiResults := s.searchWiki(ctx, agentID, query, limit, preFilterLimit)
-	entries = append(entries, wikiResults...)
-	if len(entries) > limit {
-		entries = entries[:limit]
+	// kb may return fewer than kbLimit (FTS is strict); we do NOT top up
+	// from wiki so the user-chosen ratio is respected rather than defeated
+	// by kb's strictness filling the whole limit with wiki.
+	if wikiLimit > 0 {
+		wikiResults := s.searchWiki(ctx, agentID, query, wikiLimit, preFilterLimit)
+		entries = append(entries, wikiResults...)
 	}
 	return entries, nil
 }

@@ -53,7 +53,7 @@ func registerKBSearch(r *tools.Registry, store *KBStore, agentID string) {
 		if limit <= 0 {
 			limit = 5
 		}
-		results, err := store.Search(ctx, agentID, args.Query, limit, 0)
+		results, err := store.Search(ctx, agentID, args.Query, limit, 0, 0.5)
 		if err != nil {
 			return "", err
 		}
