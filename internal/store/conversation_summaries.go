@@ -693,6 +693,58 @@ func (d *DBStore) ConversationSummaryVectorShape(ctx context.Context, agentID st
 // SearchConversationSummariesVector runs KNN over vec0 and returns the
 // matching summary IDs with distances. Does NOT join to the main table —
 // callers should batch-fetch summaries by ID.
+// VecSummaryHit is a KNN result with its raw distance (smaller = more
+// similar). Distance semantics depend on dialect: postgres cosine distance
+// (0..2), sqlite-vec L2.
+type VecSummaryHit struct {
+	ID       int64
+	Distance float64
+}
+
+// SearchConversationSummariesVectorScored is like
+// SearchConversationSummariesVector but also returns the KNN distance so the
+// caller can apply a relevance threshold. Used by memory_search.
+func (d *DBStore) SearchConversationSummariesVectorScored(ctx context.Context, embedding []float32, limit int) ([]VecSummaryHit, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if len(embedding) == 0 {
+		return nil, nil
+	}
+	var rows *sql.Rows
+	var err error
+	switch d.dialect {
+	case "postgres":
+		rows, err = d.db.QueryContext(ctx,
+			`SELECT id, (embedding <=> $1::vector) AS distance
+			 FROM conversation_summaries
+			 ORDER BY distance
+			 LIMIT $2`,
+			float32ToPGVector(embedding), limit)
+	default:
+		rows, err = d.db.QueryContext(ctx,
+			`SELECT summary_id, distance
+			 FROM conversation_summaries_vec
+			 WHERE embedding MATCH ?
+			 ORDER BY distance
+			 LIMIT ?`,
+			float32ToBlob(embedding), limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []VecSummaryHit
+	for rows.Next() {
+		var h VecSummaryHit
+		if err := rows.Scan(&h.ID, &h.Distance); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func (d *DBStore) SearchConversationSummariesVector(ctx context.Context, embedding []float32, limit int) ([]int64, error) {
 	if limit <= 0 {
 		limit = 10

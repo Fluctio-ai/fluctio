@@ -39,6 +39,7 @@ type FTSSearcher interface {
 // VectorSearcher is the subset of *store.DBStore needed for vector recall.
 type VectorSearcher interface {
 	SearchConversationSummariesVector(ctx context.Context, embedding []float32, limit int) ([]int64, error)
+	SearchConversationSummariesVectorScored(ctx context.Context, embedding []float32, limit int) ([]store.VecSummaryHit, error)
 	GetConversationSummariesByIDs(ctx context.Context, ids []int64) ([]store.ConversationSummary, error)
 	GetConversationSummaryEmbeddings(ctx context.Context, ids []int64) (map[int64][]float32, error)
 }
@@ -157,24 +158,37 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 				}
 
 				// Vector recall: embed query → KNN → fetch by ID → merge.
-				// SearchConversationSummariesVector is a GLOBAL KNN (vec0
+				// SearchConversationSummariesVectorScored is a GLOBAL KNN (vec0
 				// can't filter by metadata), so the fetched rows MUST be
 				// re-scoped to agent here — keep only this agent's summaries.
+				// The distance also drives the relevance threshold (1/(1+d)
+				// is monotonic in distance, a coarse far-hit gate; the
+				// cross-encoder reranker does the precise gate downstream).
 				if r.vecDB != nil && r.embedder != nil && r.embedder.Available() {
 					vecs, embErr := r.embedder.Embed(ctx, []string{args.Query})
 					if embErr == nil && len(vecs) == 1 {
 						queryEmb = vecs[0]
-						vecIDs, vecErr := r.vecDB.SearchConversationSummariesVector(ctx, vecs[0], poolSize)
-						if vecErr == nil && len(vecIDs) > 0 {
-							vecHits, fetchErr := r.vecDB.GetConversationSummariesByIDs(ctx, vecIDs)
-							if fetchErr == nil {
-								scoped := make([]store.ConversationSummary, 0, len(vecHits))
-								for _, h := range vecHits {
-									if h.AgentID == r.agentID {
-										scoped = append(scoped, h)
-									}
+						vecScored, vecErr := r.vecDB.SearchConversationSummariesVectorScored(ctx, vecs[0], poolSize)
+						if vecErr == nil && len(vecScored) > 0 {
+							minRel := r.memoryMinRelevance()
+							var scopedIDs []int64
+							for _, sh := range vecScored {
+								if minRel > 0 && (1/(1+sh.Distance)) < minRel {
+									continue
 								}
-								hits = mergeSummaryResults(hits, scoped, poolSize)
+								scopedIDs = append(scopedIDs, sh.ID)
+							}
+							if len(scopedIDs) > 0 {
+								vecHits, fetchErr := r.vecDB.GetConversationSummariesByIDs(ctx, scopedIDs)
+								if fetchErr == nil {
+									scoped := make([]store.ConversationSummary, 0, len(vecHits))
+									for _, h := range vecHits {
+										if h.AgentID == r.agentID {
+											scoped = append(scoped, h)
+										}
+									}
+									hits = mergeSummaryResults(hits, scoped, poolSize)
+								}
 							}
 						}
 					}
