@@ -17,6 +17,20 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
+// citedSummariesKey carries a *map[int64]bool of conversation-summary IDs
+// already surfaced this turn, so repeated memory_search calls don't re-feed
+// the LLM the same summary.
+type citedSummariesKey struct{}
+
+func WithCitedSummaries(ctx context.Context, cited *map[int64]bool) context.Context {
+	return context.WithValue(ctx, citedSummariesKey{}, cited)
+}
+
+func citedSummariesFromCtx(ctx context.Context) *map[int64]bool {
+	m, _ := ctx.Value(citedSummariesKey{}).(*map[int64]bool)
+	return m
+}
+
 // FTSSearcher is the interface for FTS5-based memory search.
 type FTSSearcher interface {
 	Search(query string, limit int) ([]store.FTSResult, error)
@@ -160,6 +174,18 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 					}
 				}
 
+				// Drop summaries already surfaced earlier this turn so repeat
+				// memory_search calls don't re-feed the LLM the same content.
+				if cited := citedSummariesFromCtx(ctx); cited != nil {
+					fresh := make([]store.ConversationSummary, 0, len(hits))
+					for _, h := range hits {
+						if !(*cited)[h.ID] {
+							fresh = append(fresh, h)
+						}
+					}
+					hits = fresh
+				}
+
 				if len(hits) == 0 {
 					return "No matching conversation summaries found. Try different keywords, or call fetch_messages directly if you know the session_key.", nil
 				}
@@ -227,6 +253,11 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 					_ = r.summaryDB.IncrementConversationSummaryAccess(ctx, summaryIDs(hits))
 				}
 
+				if cited := citedSummariesFromCtx(ctx); cited != nil {
+					for _, h := range hits {
+						(*cited)[h.ID] = true
+					}
+				}
 				return formatSummaryResults(hits, args.Query), nil
 			}
 		}

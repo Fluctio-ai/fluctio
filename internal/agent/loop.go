@@ -2289,6 +2289,8 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	var kbIndicator string
 	var kbSources []kb.KnowledgeSource // cached [K#] citation sources from this turn's KB retrieval
 	ctx = kb.WithSourcesAccumulator(ctx, &kbSources) // KB tool calls append their citation sources here
+	citedMemos := make(map[int64]bool)
+	ctx = tools.WithCitedSummaries(ctx, &citedMemos) // memory_search dedups against this across calls
 
 	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop
 	// so their results are in `messages` when the LLM picks up the turn.
@@ -3156,6 +3158,8 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	totalToolCalls := 0
 	var kbSources []kb.KnowledgeSource // cached [K#] citation sources from this turn's KB retrieval
 	ctx = kb.WithSourcesAccumulator(ctx, &kbSources)
+	citedMemos := make(map[int64]bool)
+	ctx = tools.WithCitedSummaries(ctx, &citedMemos)
 
 	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop.
 	totalToolCalls += a.drainApprovedPending(ctx, sess, &messages)
