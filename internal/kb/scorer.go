@@ -86,11 +86,12 @@ type wikiPageRow struct {
 
 // scoredPage is a wiki page with its bigram score against a query.
 type scoredPage struct {
-	ID      string
-	Title   string
-	Summary string
-	Body    string
-	Score   float64
+	ID       string
+	Title    string
+	Summary  string
+	Body     string
+	PageType string
+	Score    float64
 }
 
 // scoreCandidates re-ranks pre-filtered wiki pages using bigram scoring.
@@ -120,11 +121,12 @@ func scoreCandidates(pages []wikiPageRow, query string, topK int) []scoredPage {
 		}
 
 		results = append(results, scoredPage{
-			ID:      p.ID,
-			Title:   p.Title,
-			Summary: p.Summary,
-			Body:    p.Body,
-			Score:   score,
+			ID:       p.ID,
+			Title:    p.Title,
+			Summary:  p.Summary,
+			Body:     p.Body,
+			PageType: p.PageType,
+			Score:    score,
 		})
 	}
 

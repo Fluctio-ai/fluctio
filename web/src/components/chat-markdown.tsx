@@ -32,6 +32,25 @@ const code = createCodePlugin({ themes: ["github-light", "github-dark"] });
 const cjkWithBreaks = { ...cjk, remarkPluginsAfter: [...cjk.remarkPluginsAfter, remarkBreaks] };
 const streamdownPlugins = { code, mermaid, math, cjk: cjkWithBreaks };
 
+// knowledgeSourceLabel renders the tooltip for a [K#] citation badge: the
+// origin ("Wiki"/"知识库"), the wiki page type when applicable (来源/概念/实体/总览),
+// and the source title. The chunk index is omitted — it's a retrieval
+// artifact, not meaningful to users.
+function knowledgeSourceLabel(source: KnowledgeSource): string {
+  const parts: string[] = [source.kind === "wiki" ? "Wiki" : "知识库"];
+  if (source.kind === "wiki" && source.pageType) {
+    const typeMap: Record<string, string> = {
+      source: "来源",
+      concept: "概念",
+      entity: "实体",
+      query: "总览",
+    };
+    if (typeMap[source.pageType]) parts.push(typeMap[source.pageType]);
+  }
+  parts.push(source.file);
+  return parts.join(" · ");
+}
+
 // Prose typography tuned for chat density (heading sizes, tight spacing),
 // mirroring the former CHAT_PROSE_CLASS. The bulky overrides that flatten
 // Streamdown's card chrome live in globals.css under the `.chat-md` class.
@@ -171,7 +190,7 @@ export function ChatMarkdown({
           <button
             type="button"
             className="rounded bg-primary/10 px-1 font-medium text-primary hover:bg-primary/15"
-            title={source ? (source.chunk != null ? `${source.file} · chunk ${source.chunk}` : source.file) : id}
+            title={source ? knowledgeSourceLabel(source) : id}
             onClick={(e) => {
               e.preventDefault();
               if (source) onKnowledgeCitationClick?.(source);

@@ -191,7 +191,13 @@ func numberKBResults(results []KBResult) (citations []string, sources []Knowledg
 	for i, r := range results {
 		id := fmt.Sprintf("K%d", i+1)
 		citations[i] = id
-		sources = append(sources, KnowledgeSource{ID: id, File: r.SourceTitle, Chunk: r.ChunkIndex})
+		sources = append(sources, KnowledgeSource{
+			ID:       id,
+			File:     r.SourceTitle,
+			Kind:     r.SourceKind,
+			PageType: r.PageType,
+			Chunk:    r.ChunkIndex,
+		})
 	}
 	return citations, sources
 }

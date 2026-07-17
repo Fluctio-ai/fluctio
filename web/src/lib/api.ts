@@ -1070,6 +1070,8 @@ export async function steerChat(
 export interface KnowledgeSource {
   id: string; // "K1"
   file: string; // source title
+  kind?: "wiki" | "kb";
+  pageType?: "source" | "concept" | "entity" | "query";
   chunk?: number; // 0-based chunk index
 }
 

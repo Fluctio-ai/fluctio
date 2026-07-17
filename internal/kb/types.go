@@ -23,12 +23,14 @@ type KBEntry struct {
 }
 
 type KBResult struct {
-	SourceID   string  `json:"source_id"`
-	SourceTitle string `json:"source_title"`
-	ChunkIndex int     `json:"chunk_index"`
-	Content    string  `json:"content"`
-	Snippet    string  `json:"snippet"`
-	Rank       float64 `json:"rank"`
+	SourceID    string  `json:"source_id"`
+	SourceTitle string  `json:"source_title"`
+	SourceKind  string  `json:"source_kind"`          // "wiki" or "kb"
+	PageType    string  `json:"page_type,omitempty"`  // wiki page type: source/concept/entity/query
+	ChunkIndex  int     `json:"chunk_index"`
+	Content     string  `json:"content"`
+	Snippet     string  `json:"snippet"`
+	Rank        float64 `json:"rank"`
 }
 
 // KnowledgeSource is one [K#]-citable KB source attached to an assistant
@@ -36,9 +38,11 @@ type KBResult struct {
 // badges that open the source. ID is the bracket marker ("K1"), File is
 // the source title, Chunk is the 0-based chunk index.
 type KnowledgeSource struct {
-	ID    string `json:"id"`
-	File  string `json:"file"`
-	Chunk int    `json:"chunk,omitempty"`
+	ID       string `json:"id"`
+	File     string `json:"file"`               // source title (display name)
+	Kind     string `json:"kind,omitempty"`     // "wiki" or "kb"
+	PageType string `json:"pageType,omitempty"` // wiki page type: source/concept/entity/query
+	Chunk    int    `json:"chunk,omitempty"`
 }
 
 type KBStats struct {

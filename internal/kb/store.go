@@ -211,6 +211,8 @@ func scoredToResults(scored []scoredPage) []KBResult {
 		results[i] = KBResult{
 			SourceID:    s.ID,
 			SourceTitle: s.Title,
+			SourceKind:  "wiki",
+			PageType:    s.PageType,
 			Content:     content,
 			Snippet:     snippet,
 			Rank:        s.Score,
@@ -244,6 +246,7 @@ func (s *KBStore) searchFTS(ctx context.Context, agentID, query string, limit in
 		if err := rows.Scan(&r.SourceID, &r.SourceTitle, &r.ChunkIndex, &r.Content, &r.Snippet, &r.Rank); err != nil {
 			continue
 		}
+		r.SourceKind = "kb"
 		results = append(results, r)
 	}
 	return results, nil
@@ -272,6 +275,7 @@ func (s *KBStore) searchLike(ctx context.Context, agentID, query string, limit i
 		if err := rows.Scan(&r.SourceID, &r.SourceTitle, &r.ChunkIndex, &r.Content, &r.Snippet, &r.Rank); err != nil {
 			continue
 		}
+		r.SourceKind = "kb"
 		results = append(results, r)
 	}
 	return results, nil
