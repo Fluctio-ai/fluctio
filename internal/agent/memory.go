@@ -333,7 +333,7 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
 		sb.String(),
 	)
 
-	resp, err := prov.Chat(ctx, []provider.Message{
+	resp, err := prov.Chat(provider.WithNoThinking(ctx), []provider.Message{
 		{Role: "user", Content: extractPrompt},
 	}, nil, model, 200, 0.3)
 	if err != nil {
@@ -533,7 +533,7 @@ func (a *Agent) maybeAutoTitle(sessionKey string, messages []provider.Message, h
 			"Constraints: at most %d characters, no quotes, no trailing period, "+
 			"no emoji. Respond with the title and nothing else.\n\n%s",
 		maxChars, sb.String())
-	resp, err := a.provider.Chat(ctx, []provider.Message{
+	resp, err := a.provider.Chat(provider.WithNoThinking(ctx), []provider.Message{
 		{Role: "user", Content: prompt},
 	}, nil, model, 4096, 0.3)
 	if err != nil {

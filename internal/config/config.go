@@ -304,6 +304,10 @@ type MemorySettingsCfg struct {
 	// to backfill summaries lacking vectors. 0 = default (10 min). The
 	// loop also runs once shortly after boot so a backlog clears fast.
 	ReindexIntervalMin int `json:"reindexIntervalMin,omitempty"`
+	// IdleSummaryIdleMin is how long a session must be quiet before the
+	// idle-summary sweep picks it up. 0 = default (120 min). Lowering it
+	// catches conversations the user closed without /compact or /new.
+	IdleSummaryIdleMin int `json:"idleSummaryIdleMin,omitempty"`
 }
 
 type EmbeddingCfg struct {

@@ -60,6 +60,16 @@ type chatRequest struct {
 	Temperature         *float64          `json:"temperature,omitempty"`
 	Stream              bool              `json:"stream"`
 	StreamOptions       *streamOptions    `json:"stream_options,omitempty"`
+	Thinking            *thinkingControl  `json:"thinking,omitempty"` // LongCat-2.0: {"type":"disabled"} turns reasoning off
+}
+
+// thinkingControl is LongCat-2.0's reasoning toggle on its OpenAI-
+// compatible endpoint: {"type":"disabled"} turns thinking off,
+// {"type":"enabled"} turns it on. Emitted only when the caller asks for
+// no-thinking via WithNoThinking; providers that don't recognize the
+// field ignore it.
+type thinkingControl struct {
+	Type string `json:"type"` // "enabled" | "disabled"
 }
 
 // streamOptions.include_usage tells OpenAI-compat APIs to emit one final
@@ -283,6 +293,9 @@ func (p *OpenAIProvider) buildRequest(ctx context.Context, messages []Message, t
 	if len(tools) > 0 {
 		req.Tools = tools
 	}
+	if NoThinkingRequested(ctx) {
+		req.Thinking = &thinkingControl{Type: "disabled"}
+	}
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -298,6 +311,27 @@ func (p *OpenAIProvider) buildRequest(ctx context.Context, messages []Message, t
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 	return httpReq, nil
+}
+
+// noThinkingCtxKey is the context key for the per-call "disable the
+// model's thinking/reasoning" preference. Background extractive calls
+// (conversation-summary distillation) set it so thinking tokens don't
+// eat the limited output budget and slow the call.
+type noThinkingCtxKey struct{}
+
+// WithNoThinking returns a derived context in which the caller asks the
+// provider to disable thinking/reasoning for this call only. On the
+// OpenAI-compatible endpoint this emits thinking:{"type":"disabled"}
+// (LongCat-2.0); providers that don't recognize the flag ignore it.
+func WithNoThinking(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noThinkingCtxKey{}, true)
+}
+
+// NoThinkingRequested reports whether the caller asked the provider to
+// disable thinking on this call.
+func NoThinkingRequested(ctx context.Context) bool {
+	v, _ := ctx.Value(noThinkingCtxKey{}).(bool)
+	return v
 }
 
 func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message, tools []Tool, model string, maxTokens int, temperature float64) (*Response, error) {

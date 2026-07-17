@@ -4867,6 +4867,7 @@ func (d *DBStore) ListIdleSessions(ctx context.Context, userID, agentID string, 
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT session_key, COALESCE(NULLIF(chatter_user_id, ''), user_id), message_count, updated_at FROM sessions
 			WHERE user_id = %s AND agent_id = %s AND updated_at < %s AND message_count >= %s
+			AND last_summarized_seq < message_count - 1
 			ORDER BY updated_at ASC`,
 			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
 		userID, agentID, cutoff, minMessages)

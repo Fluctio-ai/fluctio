@@ -753,12 +753,20 @@ func (g *Gateway) Run() error {
 	}()
 	// Idle session summary sweep: summarize sessions the user ended by
 	// walking away (never /compact, never /new) so their content still
-	// enters cross-session recall. Default 10min interval, 24h idle
-	// threshold, >=4 messages.
+	// enters cross-session recall. Default 10min interval, 2h idle
+	// threshold (overridable via memory.settings.idleSummaryIdleMin),
+	// >=4 messages.
+	idleAfter := 2 * time.Hour
+	{
+		var mem config.MemoryCfg
+		if err := scope.SettingInto(context.Background(), g.store, NSMemory, "", "", &mem); err == nil && mem.Settings.IdleSummaryIdleMin > 0 {
+			idleAfter = time.Duration(mem.Settings.IdleSummaryIdleMin) * time.Minute
+		}
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		g.idleSummaryTicker(ctx, 10*time.Minute, 24*time.Hour, 4)
+		g.idleSummaryTicker(ctx, 10*time.Minute, idleAfter, 4)
 	}()
 	wg.Wait()
 	if g.taskQueue != nil {

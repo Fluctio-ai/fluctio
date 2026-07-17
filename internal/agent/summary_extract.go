@@ -104,13 +104,15 @@ func callExtractTopics(
 		prompt = buildFullPrompt(transcript.String())
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// Disable the model's thinking/reasoning for this extractive call:
+	// thinking tokens would eat the output budget and slow the call, and
+	// a structured topic list gains nothing from chain-of-thought.
+	ctx, cancel := context.WithTimeout(provider.WithNoThinking(ctx), 90*time.Second)
 	defer cancel()
 
-	maxTokens := 1200
-	if incremental {
-		maxTokens = 1500
-	}
+	// 4096 fits the multi-topic JSON a large window distills. The old
+	// 1200/1500 truncated big conversations mid-JSON → parse failures.
+	maxTokens := 4096
 	resp, err := prov.Chat(ctx, []provider.Message{
 		{Role: "user", Content: prompt},
 	}, nil, model, maxTokens, 0.3)
@@ -377,6 +379,13 @@ func persistConversationSummary(
 		return
 	}
 	if len(topics) == 0 {
+		// Nothing worth saving, but advance last_summarized_seq anyway so
+		// the idle sweep stops re-scanning this session every tick — the
+		// LLM already decided everything up to maxSeq is forgettable.
+		if serr := db.SetSessionLastSummarizedSeq(ctx, userID, agentID, sessionKey, maxSeq); serr != nil {
+			slog.Warn("conversation summary: advance last_summarized_seq (empty) failed",
+				"agent", agentID, "session", sessionKey, "error", serr)
+		}
 		slog.Debug("conversation summary: nothing to save",
 			"agent", agentID, "session", sessionKey, "incremental", incremental)
 		return

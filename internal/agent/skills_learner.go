@@ -141,7 +141,7 @@ func (sl *SkillsLearner) extractSkill(ctx context.Context, messages []provider.M
 		{Role: "user", Content: sb.String()},
 	}
 
-	resp, err := sl.provider.Chat(ctx, extractMsgs, nil, sl.model, 1024, 0.3)
+	resp, err := sl.provider.Chat(provider.WithNoThinking(ctx), extractMsgs, nil, sl.model, 1024, 0.3)
 	if err != nil {
 		return nil, err
 	}
