@@ -2453,6 +2453,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			Content:      resp.Content,
 			ToolCalls:    resp.ToolCalls,
 			Thinking:     resp.Thinking,
+			Metadata:     kbSourcesMetadata(kbSources),
 			Timestamp:    time.Now().UnixMilli(),
 			RawAssistant: resp.RawAssistant,
 		}
@@ -3281,6 +3282,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			Content:      resp.Content,
 			ToolCalls:    resp.ToolCalls,
 			Thinking:     resp.Thinking,
+			Metadata:     kbSourcesMetadata(kbSources),
 			Timestamp:    time.Now().UnixMilli(),
 			RawAssistant: resp.RawAssistant,
 		}

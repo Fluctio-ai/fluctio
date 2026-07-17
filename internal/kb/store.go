@@ -146,14 +146,9 @@ func (s *KBStore) SearchRawKB(ctx context.Context, agentID, query string, limit 
 	if limit <= 0 {
 		limit = 5
 	}
-	results, err := s.searchFTS(ctx, agentID, query, limit)
-	if err != nil || len(results) == 0 {
-		results, err = s.searchLike(ctx, agentID, query, limit)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return results, nil
+	// kb_entries_fts was never created (see migrateKBWiki), so searchFTS is a
+	// dead always-error path — go straight to searchLike.
+	return s.searchLike(ctx, agentID, query, limit)
 }
 
 // searchWikiByType scores wiki pages in two buckets — source pages
@@ -289,17 +284,40 @@ func (s *KBStore) searchFTS(ctx context.Context, agentID, query string, limit in
 }
 
 func (s *KBStore) searchLike(ctx context.Context, agentID, query string, limit int) ([]KBResult, error) {
-	pattern := "%" + query + "%"
+	// Token-based LIKE: match any query token (word or CJK bigram) in content
+	// or title. A whole-query LIKE barely matched because user/model queries
+	// are rarely verbatim substrings of the stored chunks.
+	tokens := tokenize(query)
+	if len(tokens) == 0 {
+		tokens = []string{query}
+	}
+	var clauses []string
+	var args []interface{}
+	phIdx := 0
+	for _, t := range tokens {
+		pat := "%" + t + "%"
+		phIdx++
+		cPH := s.ph(phIdx)
+		phIdx++
+		tPH := s.ph(phIdx)
+		clauses = append(clauses, fmt.Sprintf("(e.content LIKE %s OR s.title LIKE %s)", cPH, tPH))
+		args = append(args, pat, pat)
+	}
+	phIdx++
+	agentPH := s.ph(phIdx)
+	phIdx++
+	limitPH := s.ph(phIdx)
+	args = append(args, agentID, limit)
 	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT e.source_id, COALESCE(s.title, s.source_ref, ''), e.chunk_index, e.content,
 			'' AS snippet, 0.0 AS rank
 		FROM kb_entries e
 		JOIN kb_sources s ON s.id = e.source_id
-		WHERE (e.content LIKE %s OR s.title LIKE %s) AND e.agent_id = %s
+		WHERE (%s) AND e.agent_id = %s
 		ORDER BY e.chunk_index
 		LIMIT %s`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4)),
-		pattern, pattern, agentID, limit)
+			strings.Join(clauses, " OR "), agentPH, limitPH),
+		args...)
 	if err != nil {
 		return nil, fmt.Errorf("kb search: %w", err)
 	}
