@@ -349,6 +349,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 						Result: stc.Result,
 					})
 				}
+				hc.KnowledgeSources = kbHC.KnowledgeSources
 			})
 			// Register KB tools so the agent can search/add/list/delete
 			// knowledge-base entries during chat turns.

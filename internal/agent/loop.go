@@ -16,6 +16,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/agent/goal"
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
@@ -2286,6 +2287,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// splits on it (AllowSplit=true) or collapses to newlines otherwise.
 	var replyParts []string
 	var kbIndicator string
+	var kbSources []kb.KnowledgeSource // cached [K#] citation sources from this turn's KB retrieval
 
 	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop
 	// so their results are in `messages` when the LLM picks up the turn.
@@ -2311,6 +2313,9 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// rewritten messages (augment mode injects a [KB] context block).
 		if hcBefore.IndicatorText != "" && kbIndicator == "" {
 			kbIndicator = hcBefore.IndicatorText
+		}
+		if len(kbSources) == 0 && len(hcBefore.KnowledgeSources) > 0 {
+			kbSources = hcBefore.KnowledgeSources
 		}
 		for _, stc := range hcBefore.SyntheticToolCalls {
 			tcID := "synth-" + stc.Name
@@ -2400,9 +2405,10 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 				emitEvent(ctx, ChatEvent{Type: "done"})
 				return emptyMsg
 			}
-			asst := provider.Message{Role: "assistant", Content: resp.Content, Thinking: resp.Thinking, Timestamp: time.Now().UnixMilli(), RawAssistant: resp.RawAssistant}
+			kbMeta := kbSourcesMetadata(kbSources)
+			asst := provider.Message{Role: "assistant", Content: resp.Content, Thinking: resp.Thinking, Metadata: kbMeta, Timestamp: time.Now().UnixMilli(), RawAssistant: resp.RawAssistant}
 			sess.Append(asst)
-			emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": resp.Content}})
+			emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": resp.Content, "metadata": kbMeta}})
 			if resp.Content != "" {
 				replyParts = append(replyParts, resp.Content)
 			}
@@ -3146,6 +3152,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	var lastSig toolCallSig
 	consecutiveCount := 0
 	totalToolCalls := 0
+	var kbSources []kb.KnowledgeSource // cached [K#] citation sources from this turn's KB retrieval
 
 	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop.
 	totalToolCalls += a.drainApprovedPending(ctx, sess, &messages)
@@ -3154,6 +3161,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	for i := 0; i < a.maxToolIterations; i++ {
 		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Source: msg.Source, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID}
 		a.hooks.Run(ctx, hcBefore)
+		if len(kbSources) == 0 && len(hcBefore.KnowledgeSources) > 0 {
+			kbSources = hcBefore.KnowledgeSources
+		}
 
 		// KB auto-query hook: strict-mode SkipLLM short-circuit (stream
 		// the prebuilt answer) + adopt rewritten messages (augment mode).
@@ -3235,7 +3245,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 					}
 				}
 				a.meterTokens(ctx, sess.Key(), streamUsage, 0)
-				msg := provider.Message{Role: "assistant", Content: full.String(), Thinking: thinking}
+				msg := provider.Message{Role: "assistant", Content: full.String(), Thinking: thinking, Metadata: kbSourcesMetadata(kbSources)}
 				switch {
 				case len(rawAssistant) > 0:
 					// Provider already serialized the assistant message

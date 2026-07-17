@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
@@ -85,6 +86,20 @@ type HookContext struct {
 	PrebuiltContent    string
 	IndicatorText      string
 	SyntheticToolCalls []SyntheticToolCall
+	// KnowledgeSources carries the [K#]-numbered KB sources for this
+	// turn's retrieval; the loop attaches them to the assistant message
+	// so the web UI can render citations as clickable badges.
+	KnowledgeSources []kb.KnowledgeSource
+}
+
+// kbSourcesMetadata wraps KB citation sources into the assistant message
+// metadata shape the web UI reads ("knowledgeSources"). Returns nil when
+// empty so the field is omitted entirely.
+func kbSourcesMetadata(sources []kb.KnowledgeSource) map[string]any {
+	if len(sources) == 0 {
+		return nil
+	}
+	return map[string]any{"knowledgeSources": sources}
 }
 
 // HookFunc is a function that runs at a hook point.

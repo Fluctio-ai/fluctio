@@ -31,6 +31,16 @@ type KBResult struct {
 	Rank       float64 `json:"rank"`
 }
 
+// KnowledgeSource is one [K#]-citable KB source attached to an assistant
+// message's metadata so the web UI can render citations as clickable
+// badges that open the source. ID is the bracket marker ("K1"), File is
+// the source title, Chunk is the 0-based chunk index.
+type KnowledgeSource struct {
+	ID    string `json:"id"`
+	File  string `json:"file"`
+	Chunk int    `json:"chunk,omitempty"`
+}
+
 type KBStats struct {
 	SourceCount int `json:"source_count"`
 	EntryCount  int `json:"entry_count"`

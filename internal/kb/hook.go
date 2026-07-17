@@ -17,6 +17,10 @@ type HookContext struct {
 	PrebuiltContent    string
 	IndicatorText      string
 	SyntheticToolCalls []SyntheticToolCall
+	// KnowledgeSources carries the [K#]-numbered sources for this turn's
+	// retrieval so the agent loop can attach them to the assistant message
+	// and the web UI can render citations as clickable badges.
+	KnowledgeSources []KnowledgeSource
 }
 
 // SyntheticToolCall mirrors agent.SyntheticToolCall without importing agent.
@@ -131,12 +135,17 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 		lastQuery = query
 
 		if len(results) > 0 {
+			// Results found — number them as [K#] citation sources and
+			// attach to the hook so the loop can carry them on the
+			// assistant message for the web UI's clickable badges.
+			citations, sources := numberKBResults(results)
+			hc.KnowledgeSources = sources
 			// Results found — apply searchMode.
 			hc.IndicatorText = formatIndicatorFoundV2(cfg, results, query)
 			hc.SyntheticToolCalls = []SyntheticToolCall{{
 				Name:   "knowledgebase_search",
 				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, query, maxResults),
-				Result: hc.IndicatorText + "\n\n" + buildToolResultSummary(results),
+				Result: hc.IndicatorText + "\n\n" + buildToolResultSummary(results, citations),
 			}}
 			switch cfg.SearchMode {
 			case "strict":
@@ -145,7 +154,7 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 				hc.SkipLLM = true
 				return
 			default: // augment
-				injectKBContext(hc, results, cfg)
+				injectKBContext(hc, results, citations, cfg)
 				return
 			}
 		}
@@ -160,10 +169,10 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 	}
 }
 
-func buildToolResultSummary(results []KBResult) string {
+func buildToolResultSummary(results []KBResult, citations []string) string {
 	var sb strings.Builder
 	for i, r := range results {
-		fmt.Fprintf(&sb, "%d. **[%s]**", i+1, r.SourceTitle)
+		fmt.Fprintf(&sb, "%d. **[%s] %s**", i+1, citations[i], r.SourceTitle)
 		if len(r.Content) > 200 {
 			sb.WriteString("\n" + r.Content[:200] + "...")
 		} else {
@@ -172,6 +181,19 @@ func buildToolResultSummary(results []KBResult) string {
 		sb.WriteString("\n\n")
 	}
 	return strings.TrimSpace(sb.String())
+}
+
+// numberKBResults assigns each result a stable [K#] citation id by result
+// order and builds the KnowledgeSource list the web UI renders as clickable
+// badges. citations[i] aligns with results[i].
+func numberKBResults(results []KBResult) (citations []string, sources []KnowledgeSource) {
+	citations = make([]string, len(results))
+	for i, r := range results {
+		id := fmt.Sprintf("K%d", i+1)
+		citations[i] = id
+		sources = append(sources, KnowledgeSource{ID: id, File: r.SourceTitle, Chunk: r.ChunkIndex})
+	}
+	return citations, sources
 }
 
 func isWikiSourceID(id string) bool {
@@ -271,7 +293,7 @@ func buildKBAnswer(results []KBResult, query string, cfg AutoQueryCfg) string {
 	return sb.String()
 }
 
-func injectKBContext(hc *HookContext, results []KBResult, cfg AutoQueryCfg) {
+func injectKBContext(hc *HookContext, results []KBResult, citations []string, cfg AutoQueryCfg) {
 	var sb strings.Builder
 	if cfg.ShowIndicator {
 		indicator := cfg.IndicatorFound
@@ -283,8 +305,8 @@ func injectKBContext(hc *HookContext, results []KBResult, cfg AutoQueryCfg) {
 		sb.WriteString("\n\n")
 	}
 	sb.WriteString("The following information was retrieved from the knowledge base and may be relevant to the user's question. Use it to enhance your response if relevant.\n\n")
-	for _, r := range results {
-		fmt.Fprintf(&sb, "--- Source: %s (chunk %d) ---\n", r.SourceTitle, r.ChunkIndex)
+	for i, r := range results {
+		fmt.Fprintf(&sb, "--- [%s] Source: %s (chunk %d) ---\n", citations[i], r.SourceTitle, r.ChunkIndex)
 		content := r.Content
 		if len(content) > 500 {
 			content = content[:500] + "..."
@@ -292,6 +314,7 @@ func injectKBContext(hc *HookContext, results []KBResult, cfg AutoQueryCfg) {
 		sb.WriteString(content)
 		sb.WriteString("\n\n")
 	}
+	sb.WriteString("When you use a fact from the sources above, cite it inline with the bracketed id, e.g. [K1]; if several sources support a point, cite all of them, e.g. [K1][K3].\n\n")
 
 	kbMsg := provider.Message{
 		Role:    "user",
