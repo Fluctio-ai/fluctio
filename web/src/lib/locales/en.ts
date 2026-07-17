@@ -739,7 +739,6 @@ const en: Record<string, string> = {
   "models.mineAgent": "Mine (agent)",
   "models.ownerShared": "Configured on this agent by its owner — shared with chatters.",
   "models.adminShared": "Configured by an admin and shared with all users.",
-  "models.shareConfig": "Share model config with chatters",
   "models.locale": "IM Reply Language",
   "models.localeDesc": "Language for slash-command replies on IM channels (web uses your browser language).",
 
@@ -1186,11 +1185,6 @@ const en: Record<string, string> = {
   // Agent models page extras
   "models.agentSubtitle1": "LLM providers and active model scoped to",
   "models.agentSubtitle2": "Agent-scope settings override the system default.",
-  "models.shareOnP1": "Chatters using",
-  "models.shareOnP2": "inherit your model and provider credentials. Your tokens are spent on their messages.",
-  "models.shareOffP1": "Only you use this configuration. Chatters bring their own model + providers under",
-  "models.shareOffEm": "User → Models",
-  "models.shareOffP2": ", otherwise the agent falls back to the system default.",
   "models.inheriting": "Inheriting",
   "models.override": "Override",
   "models.clearOverride": "Clear override",

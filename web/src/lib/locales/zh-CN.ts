@@ -739,7 +739,6 @@ const zhCN: Record<string, string> = {
   "models.mineAgent": "我的（智能体）",
   "models.ownerShared": "由智能体所有者配置 — 与对话者共享。",
   "models.adminShared": "由管理员配置并与所有用户共享。",
-  "models.shareConfig": "与对话者共享模型配置",
   "models.locale": "IM 回复语言",
   "models.localeDesc": "IM 渠道斜杠命令回复的语言（Web 端用你的浏览器语言）。",
 
@@ -1186,11 +1185,6 @@ const zhCN: Record<string, string> = {
   // Agent models page extras
   "models.agentSubtitle1": "LLM 提供商和当前模型，属于",
   "models.agentSubtitle2": "智能体级别的设置会覆盖系统默认。",
-  "models.shareOnP1": "对话者使用",
-  "models.shareOnP2": "将继承你的模型和提供商凭据。你的 token 会消耗在他们的消息上。",
-  "models.shareOffP1": "仅你使用此配置。对话者可在",
-  "models.shareOffEm": "用户 → 模型",
-  "models.shareOffP2": "下自带模型和提供商，否则智能体回退到系统默认。",
   "models.inheriting": "继承中",
   "models.override": "已覆盖",
   "models.clearOverride": "清除覆盖",

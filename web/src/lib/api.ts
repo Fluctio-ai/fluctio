@@ -49,12 +49,6 @@ export interface AgentDetail {
   // (Customize / Skills / Channels / Scheduler / Models). Backend
   // always sends one of these on /api/agents and /api/agents/{id}.
   role?: "owner" | "viewer";
-  // shareModelConfig: when true, chatters using this agent inherit the
-  // owner's user-scope + agent-scope model and provider configuration
-  // (current "fall back to owner's keys" behavior). When false (default),
-  // chatters see only their own user-scope + system — they bring their
-  // own model/providers or the agent doesn't work for them.
-  shareModelConfig?: boolean;
   model: string;
   workspace?: string;
   maxTokens?: number;
@@ -1374,9 +1368,6 @@ export interface AgentUpdatePayload {
   // Whole-map replace: omit to leave providers untouched, send {} to
   // clear them, or send the full desired map to replace.
   providers?: Record<string, ProviderData>;
-  // Toggle whether chatters using this agent inherit the owner's
-  // model + provider configuration. Omit to leave unchanged.
-  shareModelConfig?: boolean;
   // PromptMode selects how heavily the framework system prompt
   // participates: "agent" (full, default), "chatbot" (slim — drops
   // task-delegation / tool-use discipline / workspace-update so

@@ -117,7 +117,6 @@ export default function ModelsPage() {
   const inAgentContext = urlAgentId !== "default" && urlAgentId !== "";
   const [agentName, setAgentName] = useState("");
   const [agentScopeModel, setAgentScopeModel] = useState("");
-  const [agentShares, setAgentShares] = useState(false);
 
   const [providers, setProviders] = useState<ProviderEntry[]>([]);
   const [model, setModel] = useState("");
@@ -197,10 +196,9 @@ export default function ModelsPage() {
       setProviders(entries);
       setModel(cfg?.agents?.defaults?.model || "");
       setSystemDefault(cfg?.meta?.systemDefaultModel || "");
-      const ag = (agentRec as { agent?: { name?: string; model?: string; shareModelConfig?: boolean } } | null)?.agent;
+      const ag = (agentRec as { agent?: { name?: string; model?: string } } | null)?.agent;
       setAgentName(ag?.name || "");
       setAgentScopeModel(ag?.model || "");
-      setAgentShares(!!ag?.shareModelConfig);
     } finally {
       setLoading(false);
     }
@@ -427,8 +425,8 @@ export default function ModelsPage() {
       {(() => {
         const inheriting = !isSuperAdmin && !model.trim();
         const overridden = !isSuperAdmin && !inheriting;
-        const effectiveFallback = inAgentContext && agentShares && agentScopeModel ? agentScopeModel : systemDefault;
-        const fallbackSource = inAgentContext && agentShares && agentScopeModel ? "agent" : "system";
+        const effectiveFallback = inAgentContext && agentScopeModel ? agentScopeModel : systemDefault;
+        const fallbackSource = inAgentContext && agentScopeModel ? "agent" : "system";
         return (
       <div className="rounded-lg border border-border bg-card p-5">
         <div className="flex items-center justify-between gap-2 mb-3">

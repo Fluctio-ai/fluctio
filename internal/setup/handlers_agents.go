@@ -440,10 +440,9 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name              string    `json:"name,omitempty"`
-		Description       *string   `json:"description,omitempty"` // ptr so empty-string clears it
-		Model             *string   `json:"model,omitempty"`       // ptr so empty-string clears the agent-scope override
-		ShareModelConfig  *bool     `json:"shareModelConfig,omitempty"`
+		Name        string  `json:"name,omitempty"`
+		Description *string `json:"description,omitempty"` // ptr so empty-string clears it
+		Model       *string `json:"model,omitempty"`       // ptr so empty-string clears the agent-scope override
 		// PromptMode is a ptr so the caller can distinguish "leave
 		// unchanged" (omitted / null) from "clear override" (empty
 		// string). Allowed string values: "agent" | "chatbot" |
@@ -514,26 +513,6 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			delete(rec.Config, "description")
 		} else {
 			rec.Config["description"] = *req.Description
-		}
-	}
-	// shareModelConfig controls whether a chatter using this agent
-	// inherits the owner's model + provider configuration. Default
-	// true: sharing is on unless the owner explicitly opts out.
-	// Encoding: absent key = on (the new-agent default), explicit
-	// `false` = opt-out. We never store `true` — storing absence for
-	// the default keeps existing rows minimal and means a future
-	// default flip needs only one place to change (agentShareModelConfig
-	// above). Stored in the agent's config blob so we don't need a
-	// schema migration; runtime reads it back in EnsureAgent to gate
-	// the owner-fallback + agent-scope overlays.
-	if req.ShareModelConfig != nil {
-		if rec.Config == nil {
-			rec.Config = map[string]interface{}{}
-		}
-		if *req.ShareModelConfig {
-			delete(rec.Config, "shareModelConfig")
-		} else {
-			rec.Config["shareModelConfig"] = false
 		}
 	}
 	// MCP servers: whole-map replace into the agent config blob.
@@ -680,20 +659,18 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// own UserSpace also drop their stale rc.Model — without this they
 	// keep firing the previous model until the 30-min idle eviction.
 	s.invalidateAgent(rec.ID)
-	share := agentShareModelConfig(rec)
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"agent": map[string]any{
-			"id":               rec.ID,
-			"userId":           rec.UserID,
-			"name":             rec.Name,
-			"model":            s.agentScopeModel(r, rec.ID),
-			"promptMode":       s.agentScopePromptMode(r, rec.ID),
-			"splitReplies":     s.agentScopeSplitReplies(r, rec.ID),
-			"autoPersist":      s.agentScopeAutoPersist(r, rec.ID),
-			"sharedIdentity":   s.agentScopeSharedIdentity(r, rec.UserID, rec.ID),
-			"plugins":          s.agentScopePlugins(r, rec.ID),
-			"config":           rec.Config,
-			"shareModelConfig": share,
+			"id":             rec.ID,
+			"userId":         rec.UserID,
+			"name":           rec.Name,
+			"model":          s.agentScopeModel(r, rec.ID),
+			"promptMode":     s.agentScopePromptMode(r, rec.ID),
+			"splitReplies":   s.agentScopeSplitReplies(r, rec.ID),
+			"autoPersist":    s.agentScopeAutoPersist(r, rec.ID),
+			"sharedIdentity": s.agentScopeSharedIdentity(r, rec.UserID, rec.ID),
+			"plugins":        s.agentScopePlugins(r, rec.ID),
+			"config":         rec.Config,
 		},
 	})
 }
@@ -713,7 +690,6 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	desc, _ := rec.Config["description"].(string)
-	share := agentShareModelConfig(rec)
 	uid := s.effectiveUserID(r)
 	role := "owner"
 	if rec.UserID != uid {
@@ -721,20 +697,19 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"agent": map[string]any{
-			"id":               rec.ID,
-			"name":             rec.Name,
-			"description":      desc,
-			"userId":           rec.UserID,
-			"role":             role,
-			"model":            s.agentScopeModel(r, rec.ID),
-			"promptMode":       s.agentScopePromptMode(r, rec.ID),
-			"splitReplies":     s.agentScopeSplitReplies(r, rec.ID),
-			"autoPersist":      s.agentScopeAutoPersist(r, rec.ID),
-			"sharedIdentity":   s.agentScopeSharedIdentity(r, rec.UserID, rec.ID),
-			"plugins":          s.agentScopePlugins(r, rec.ID),
-			"avatarUrl":        "/api/agents/" + rec.ID + "/files/avatar.png",
-			"createdAt":        rec.CreatedAt,
-			"shareModelConfig": share,
+			"id":             rec.ID,
+			"name":           rec.Name,
+			"description":    desc,
+			"userId":         rec.UserID,
+			"role":           role,
+			"model":          s.agentScopeModel(r, rec.ID),
+			"promptMode":     s.agentScopePromptMode(r, rec.ID),
+			"splitReplies":   s.agentScopeSplitReplies(r, rec.ID),
+			"autoPersist":    s.agentScopeAutoPersist(r, rec.ID),
+			"sharedIdentity": s.agentScopeSharedIdentity(r, rec.UserID, rec.ID),
+			"plugins":        s.agentScopePlugins(r, rec.ID),
+			"avatarUrl":      "/api/agents/" + rec.ID + "/files/avatar.png",
+			"createdAt":      rec.CreatedAt,
 		},
 	})
 }
@@ -1061,15 +1036,15 @@ func (s *Server) handleAgentFileList(w http.ResponseWriter, r *http.Request) {
 // file browser / zip filter. acceptPath returns true for paths the
 // scope considers in-bounds:
 //
-//   loose chat:  paths under sessions/<chat_id>/
-//   project chat: paths under projects/<pid>/<chat_id>/ (the chat's
-//                 own files), PLUS files directly at projects/<pid>/
-//                 (project-root "shared/legacy" files — pre-subdir
-//                 layout still lives there, and operators may
-//                 deliberately drop shared files at the root). Other
-//                 chats' subdirs (projects/<pid>/<other-sid>/...)
-//                 are excluded — those belong to that chat's panel.
-//   no session:  everything (admin browser).
+//	loose chat:  paths under sessions/<chat_id>/
+//	project chat: paths under projects/<pid>/<chat_id>/ (the chat's
+//	              own files), PLUS files directly at projects/<pid>/
+//	              (project-root "shared/legacy" files — pre-subdir
+//	              layout still lives there, and operators may
+//	              deliberately drop shared files at the root). Other
+//	              chats' subdirs (projects/<pid>/<other-sid>/...)
+//	              are excluded — those belong to that chat's panel.
+//	no session:  everything (admin browser).
 //
 // archiveSuffix returns the human-readable scope id used in the zip
 // filename — chat_id for loose chats, "<pid>-<chat_id>" for project
