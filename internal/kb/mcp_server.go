@@ -253,7 +253,8 @@ func mcpExecSearch(ctx context.Context, store *KBStore, agentID string, args jso
 	if len(results) == 0 {
 		return "No matching entries found.", nil
 	}
-	return formatResults(results, p.Query, numberAndAccumulate(ctx, results)), nil
+	deduped, ids := numberAndAccumulate(ctx, results)
+	return formatResults(deduped, p.Query, ids), nil
 }
 
 func mcpExecIngestText(ctx context.Context, store *KBStore, agentID string, args json.RawMessage) (string, error) {

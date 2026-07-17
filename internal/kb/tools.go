@@ -61,34 +61,50 @@ func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceR
 		if len(results) == 0 {
 			return "No matching entries found in the knowledge base.", nil
 		}
-		baseID := numberAndAccumulate(ctx, results)
-		return formatResults(results, args.Query, baseID), nil
+		deduped, ids := numberAndAccumulate(ctx, results)
+		if len(deduped) == 0 {
+			return "All matching sources were already cited earlier; no new results.", nil
+		}
+		return formatResults(deduped, args.Query, ids), nil
 	})
 }
 
-// numberAndAccumulate assigns [K#] ids continuing from the ctx accumulator
-// (len+1) so multiple KB tool calls in one turn don't collide, appends the
-// sources, and returns the base id for formatResults.
-func numberAndAccumulate(ctx context.Context, results []KBResult) int {
-	baseID := 1
+// numberAndAccumulate dedups results by title against the ctx accumulator: a
+// source already cited earlier this turn (by auto-query or a prior tool call)
+// is dropped — NOT re-fed to the LLM — so wiki/raw overlap doesn't bloat the
+// context with repeated content. Fresh sources get continuing [K#] ids
+// (len(acc)+1) and are appended. Returns the deduped results + their ids.
+func numberAndAccumulate(ctx context.Context, results []KBResult) ([]KBResult, []string) {
 	acc := SourcesFromCtx(ctx)
+	cited := map[string]bool{}
 	if acc != nil {
-		baseID = len(*acc) + 1
+		for _, s := range *acc {
+			cited[s.File] = true
+		}
 	}
-	var sources []KnowledgeSource
-	for i, r := range results {
-		sources = append(sources, KnowledgeSource{
-			ID:       fmt.Sprintf("K%d", baseID+i),
-			File:     r.SourceTitle,
-			Kind:     r.SourceKind,
-			PageType: r.PageType,
-			Chunk:    r.ChunkIndex,
-		})
+	nextID := 1
+	if acc != nil {
+		nextID = len(*acc) + 1
 	}
-	if acc != nil && len(sources) > 0 {
-		*acc = append(*acc, sources...)
+	var deduped []KBResult
+	var ids []string
+	seen := map[string]bool{} // dedup within this batch too
+	for _, r := range results {
+		if seen[r.SourceTitle] || cited[r.SourceTitle] {
+			continue
+		}
+		seen[r.SourceTitle] = true
+		id := fmt.Sprintf("K%d", nextID)
+		nextID++
+		deduped = append(deduped, r)
+		ids = append(ids, id)
+		if acc != nil {
+			*acc = append(*acc, KnowledgeSource{
+				ID: id, File: r.SourceTitle, Kind: r.SourceKind, PageType: r.PageType, Chunk: r.ChunkIndex,
+			})
+		}
 	}
-	return baseID
+	return deduped, ids
 }
 
 // resolveRatio reads the agent's configured source ratio, defaulting to 0.5.
@@ -137,8 +153,11 @@ func registerKBSearchRaw(r *tools.Registry, store *KBStore, agentID string) {
 		if len(results) == 0 {
 			return "No matching raw entries found in the knowledge base.", nil
 		}
-		baseID := numberAndAccumulate(ctx, results)
-		return formatResults(results, args.Query, baseID), nil
+		deduped, ids := numberAndAccumulate(ctx, results)
+		if len(deduped) == 0 {
+			return "All matching sources were already cited earlier; no new results.", nil
+		}
+		return formatResults(deduped, args.Query, ids), nil
 	})
 }
 

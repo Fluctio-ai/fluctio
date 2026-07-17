@@ -519,11 +519,11 @@ func (s *KBStore) ListAllEntries(ctx context.Context, agentID, query string, lim
 	return entries, total, nil
 }
 
-func formatResults(results []KBResult, query string, startIdx int) string {
+func formatResults(results []KBResult, query string, ids []string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Found %d results for %q:\n\n", len(results), query))
 	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("--- [K%d] Result %d (source: %s, chunk %d) ---\n", startIdx+i, i+1, r.SourceTitle, r.ChunkIndex))
+		sb.WriteString(fmt.Sprintf("--- [%s] Result %d (source: %s, chunk %d) ---\n", ids[i], i+1, r.SourceTitle, r.ChunkIndex))
 		if r.Snippet != "" {
 			sb.WriteString(r.Snippet)
 		} else {
