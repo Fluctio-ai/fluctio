@@ -359,7 +359,12 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			// Register KB tools so the agent can search/add/list/delete
 			// knowledge-base entries during chat turns.
 			if kbStore != nil {
-				kb.RegisterKBTools(ag.registry, kbStore, rc.ID)
+				kb.RegisterKBTools(ag.registry, kbStore, rc.ID, func() float64 {
+					if kbCfg.WikiRatio != nil {
+						return *kbCfg.WikiRatio
+					}
+					return 0.5
+				})
 			}
 		}
 		// Date line in the chatter's timezone — needs dataStore for the

@@ -242,7 +242,7 @@ export default function AgentKnowledgePage() {
               <div className="flex items-center justify-between">
                 <Label className="text-xs">{t("knowledge.wikiRatio")}</Label>
                 <span className="text-xs text-muted-foreground tabular-nums">
-                  Wiki {Math.round(wikiRatio * 100)}% · {t("knowledge.kbLabel")} {100 - Math.round(wikiRatio * 100)}%
+                  {t("knowledge.sourceLabel")} {Math.round(wikiRatio * 100)}% · {t("knowledge.conceptLabel")} {100 - Math.round(wikiRatio * 100)}%
                 </span>
               </div>
               <input

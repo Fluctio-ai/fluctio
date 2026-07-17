@@ -116,55 +116,77 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 
 // Search searches both kb_entries (FTS5/LIKE) and wiki_pages (bigram scorer).
 // preFilterLimit: number of SQL candidates for wiki search (default 30).
-func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, preFilterLimit int, wikiRatio float64) ([]KBResult, error) {
+// sourceRatio in [0,1]: fraction of wiki slots for source pages (raw-content-
+// derived) vs concept/entity/query pages (conceptual). Strategy: search wiki
+// first (source + other, each bigram-scored within its bucket so the ratio
+// holds); if wiki doesn't fill the limit, fall back to kb_entries (raw chunks,
+// FTS) so exact-phrase queries still hit. kb_entries is a fallback only.
+func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, preFilterLimit int, sourceRatio float64) ([]KBResult, error) {
 	if limit <= 0 {
 		limit = 5
 	}
-	// wikiRatio in [0,1]: fraction of slots reserved for wiki pages. The
-	// rest go to kb_entries. Out-of-range falls back to 0.5.
-	if wikiRatio < 0 || wikiRatio > 1 {
-		wikiRatio = 0.5
+	if sourceRatio < 0 || sourceRatio > 1 {
+		sourceRatio = 0.5
 	}
-	wikiLimit := int(math.Round(float64(limit) * wikiRatio))
-	kbLimit := limit - wikiLimit
+	sourceLimit := int(math.Round(float64(limit) * sourceRatio))
+	otherLimit := limit - sourceLimit
 
-	var entries []KBResult
-	// L1: kb_entries — FTS5 + LIKE fallback for raw chunk matching.
-	if kbLimit > 0 {
-		var err error
-		entries, err = s.searchFTS(ctx, agentID, query, kbLimit)
-		if err != nil || len(entries) == 0 {
-			entries, err = s.searchLike(ctx, agentID, query, kbLimit)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	// L2: wiki_pages — bigram scorer with Redis cache or SQL pre-filter.
-	// kb may return fewer than kbLimit (FTS is strict); we do NOT top up
-	// from wiki so the user-chosen ratio is respected rather than defeated
-	// by kb's strictness filling the whole limit with wiki.
-	if wikiLimit > 0 {
-		wikiResults := s.searchWiki(ctx, agentID, query, wikiLimit, preFilterLimit)
-		entries = append(entries, wikiResults...)
-	}
-	return entries, nil
+	// Wiki-only: source pages (raw-content-derived) + concept/entity/query
+	// pages, each bigram-scored within its bucket. kb_entries is NOT searched
+	// here — it's exposed as a separate on-demand tool (SearchRawKB) the LLM
+	// calls when wiki's summary isn't detailed enough.
+	return s.searchWikiByType(ctx, agentID, query, sourceLimit, otherLimit, preFilterLimit), nil
 }
 
-func (s *KBStore) searchWiki(ctx context.Context, agentID, query string, limit int, preFilterLimit int) []KBResult {
+// SearchRawKB searches the raw kb_entries chunks (FTS5 + LIKE fallback) for
+// exact-phrase / verbatim matching. Exposed as a separate tool the LLM calls
+// on demand when wiki's conceptual summary isn't detailed enough and it needs
+// the original text. Not used by auto-query — that path stays wiki-only.
+func (s *KBStore) SearchRawKB(ctx context.Context, agentID, query string, limit int) ([]KBResult, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	results, err := s.searchFTS(ctx, agentID, query, limit)
+	if err != nil || len(results) == 0 {
+		results, err = s.searchLike(ctx, agentID, query, limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return results, nil
+}
+
+// searchWikiByType scores wiki pages in two buckets — source pages
+// (raw-content-derived) and everything else (concept/entity/query) — and
+// returns up to sourceLimit + otherLimit so the caller's ratio holds even
+// when one bucket has few matches.
+func (s *KBStore) searchWikiByType(ctx context.Context, agentID, query string, sourceLimit, otherLimit, preFilterLimit int) []KBResult {
+	if sourceLimit <= 0 && otherLimit <= 0 {
+		return nil
+	}
 	if preFilterLimit <= 0 {
 		preFilterLimit = 30
 	}
-
-	// SQL pre-filter: LIKE on title/body to get candidates, then bigram re-rank.
 	candidates := s.searchWikiPrefilter(ctx, agentID, query, preFilterLimit)
 	if len(candidates) == 0 {
 		return nil
 	}
-
-	scored := scoreCandidates(candidates, query, limit)
-	return scoredToResults(scored)
+	var sourcePages, otherPages []wikiPageRow
+	for _, p := range candidates {
+		if p.PageType == "source" {
+			sourcePages = append(sourcePages, p)
+		} else {
+			otherPages = append(otherPages, p)
+		}
+	}
+	var results []KBResult
+	if sourceLimit > 0 {
+		results = append(results, scoredToResults(scoreCandidates(sourcePages, query, sourceLimit))...)
+	}
+	if otherLimit > 0 {
+		results = append(results, scoredToResults(scoreCandidates(otherPages, query, otherLimit))...)
+	}
+	return results
 }
 
 // searchWikiPrefilter uses LIKE with individual query tokens to get candidate pages.

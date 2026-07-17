@@ -16,15 +16,16 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/httpclient"
 )
 
-func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string) {
-	registerKBSearch(r, store, agentID)
+func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64) {
+	registerKBSearch(r, store, agentID, sourceRatioFn)
+	registerKBSearchRaw(r, store, agentID)
 	registerKBAdd(r, store, agentID)
 	registerKBIngestURL(r, store, agentID)
 	registerKBList(r, store, agentID)
 	registerKBDelete(r, store, agentID)
 }
 
-func registerKBSearch(r *tools.Registry, store *KBStore, agentID string) {
+func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64) {
 	r.Register("knowledgebase_search", "Search the agent's knowledge base for relevant information. Returns matching text chunks with source references. Use this when the user's question might be answered from previously stored knowledge.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -53,12 +54,62 @@ func registerKBSearch(r *tools.Registry, store *KBStore, agentID string) {
 		if limit <= 0 {
 			limit = 5
 		}
-		results, err := store.Search(ctx, agentID, args.Query, limit, 0, 0.5)
+		results, err := store.Search(ctx, agentID, args.Query, limit, 0, resolveRatio(sourceRatioFn))
 		if err != nil {
 			return "", err
 		}
 		if len(results) == 0 {
 			return "No matching entries found in the knowledge base.", nil
+		}
+		return formatResults(results, args.Query), nil
+	})
+}
+
+// resolveRatio reads the agent's configured source ratio, defaulting to 0.5.
+func resolveRatio(fn func() float64) float64 {
+	if fn != nil {
+		if r := fn(); r >= 0 && r <= 1 {
+			return r
+		}
+	}
+	return 0.5
+}
+
+func registerKBSearchRaw(r *tools.Registry, store *KBStore, agentID string) {
+	r.Register("knowledgebase_search_raw", "Search the RAW original text chunks stored in the knowledge base (verbatim FTS match on kb_entries). Use this AFTER knowledgebase_search when the wiki-based summary is not detailed enough and you need the exact original wording/passages. Returns verbatim source chunks with [K#] citation ids.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"query": map[string]interface{}{
+				"type":        "string",
+				"description": "Search query — use distinctive exact phrases to get verbatim original-text matches",
+			},
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum number of raw chunks to return (default 5)",
+			},
+		},
+		"required": []string{"query"},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit,omitempty"`
+		}
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		if args.Query == "" {
+			return "", fmt.Errorf("query is required")
+		}
+		limit := args.Limit
+		if limit <= 0 {
+			limit = 5
+		}
+		results, err := store.SearchRawKB(ctx, agentID, args.Query, limit)
+		if err != nil {
+			return "", err
+		}
+		if len(results) == 0 {
+			return "No matching raw entries found in the knowledge base.", nil
 		}
 		return formatResults(results, args.Query), nil
 	})
