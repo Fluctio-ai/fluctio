@@ -1064,6 +1064,15 @@ export async function steerChat(
   return data?.buffered === true;
 }
 
+// KnowledgeSource is one [K#]-citable KB source the agent attached to an
+// assistant message (metadata.knowledgeSources). The chat renderer turns
+// [K#] markers in the reply into clickable badges.
+export interface KnowledgeSource {
+  id: string; // "K1"
+  file: string; // source title
+  chunk?: number; // 0-based chunk index
+}
+
 export interface ToolResultMetadata {
   sandbox?: boolean;
   // Stamped on the forced-final-delivery assistant message that the
@@ -1076,6 +1085,9 @@ export interface ToolResultMetadata {
   // The bubble is a plan, not an execution result — UI shows a distinct
   // badge so the user knows to review it and reply with "go" (or edits).
   planMode?: boolean;
+  // [K#]-numbered KB sources for this turn's retrieval; the chat renderer
+  // turns [K1]/[K2]… markers in the reply into clickable citation badges.
+  knowledgeSources?: KnowledgeSource[];
 }
 
 export interface ChatStreamEvent {

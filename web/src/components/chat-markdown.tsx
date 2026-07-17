@@ -12,7 +12,7 @@ import { mermaid } from "@streamdown/mermaid";
 import { math } from "@streamdown/math";
 import { cjk } from "@streamdown/cjk";
 import remarkBreaks from "remark-breaks";
-import { fileUrl } from "@/lib/api";
+import { fileUrl, type KnowledgeSource } from "@/lib/api";
 import { ExternalAnchor } from "@/components/markdown-link";
 
 // Streamdown 2.x splits rendering features into opt-in plugins. Without these,
@@ -31,15 +31,6 @@ const code = createCodePlugin({ themes: ["github-light", "github-dark"] });
 // via the prop → no <table>; via remarkPluginsAfter → <table> + <br> both render.)
 const cjkWithBreaks = { ...cjk, remarkPluginsAfter: [...cjk.remarkPluginsAfter, remarkBreaks] };
 const streamdownPlugins = { code, mermaid, math, cjk: cjkWithBreaks };
-
-// Strip the `node` prop Streamdown injects into custom components before it
-// reaches the DOM <a> (React warns on the unknown attribute), then defer to
-// ExternalAnchor for the cross-origin target="_blank" behavior.
-const components: Components = {
-  a: ({ node: _node, ...props }: ComponentProps<"a"> & { node?: unknown }) => (
-    <ExternalAnchor {...props} />
-  ),
-};
 
 // Prose typography tuned for chat density (heading sizes, tight spacing),
 // mirroring the former CHAT_PROSE_CLASS. The bulky overrides that flatten
@@ -76,6 +67,8 @@ export function ChatMarkdown({
   sessionId,
   baseDir,
   bareCode = false,
+  knowledgeSources,
+  onKnowledgeCitationClick,
 }: {
   text: string;
   agentId?: string;
@@ -90,6 +83,10 @@ export function ChatMarkdown({
   // File-viewer mode: hide the floating copy pill on code blocks (the .chat-md
   // strip already removes the card) so a source file reads as plain code.
   bareCode?: boolean;
+  // [K#] citation sources attached to the assistant message; the renderer
+  // turns [K1]/[K2]… markers in the text into clickable badges.
+  knowledgeSources?: KnowledgeSource[];
+  onKnowledgeCitationClick?: (source: KnowledgeSource) => void;
 }) {
   // Build the URL transform once per agent/session. A stable identity keeps
   // Streamdown (a memo component) from re-rendering on every streamed keystroke,
@@ -140,6 +137,54 @@ export function ChatMarkdown({
     });
   }, [text, agentId, baseDir]);
 
+  const knowledgeByID = useMemo(() => {
+    const map = new Map<string, KnowledgeSource>();
+    for (const s of knowledgeSources ?? []) {
+      if (s.id) map.set(s.id, s);
+    }
+    return map;
+  }, [knowledgeSources]);
+
+  // Turn [K1]/[K2]… markers into markdown links so the custom `a` renderer
+  // below can surface them as clickable citation badges. Unknown ids stay as
+  // literal text so a stale [K#] (e.g. from an older turn) degrades cleanly.
+  const renderedText = useMemo(() => {
+    if (knowledgeByID.size === 0) return processedText;
+    return processedText.replace(/\[(K\d+)\]/g, (match, id: string) => {
+      if (!knowledgeByID.has(id)) return match;
+      return `[${id}](#knowledge-${id})`;
+    });
+  }, [processedText, knowledgeByID]);
+
+  // components depends on knowledgeSources (badge rendering), so build it per
+  // render instead of as a module constant. The `a` renderer intercepts
+  // #knowledge- links → citation badge; everything else defers to
+  // ExternalAnchor (cross-origin target="_blank").
+  const components = useMemo<Components>(() => ({
+    a: ({ node: _node, ...props }: ComponentProps<"a"> & { node?: unknown }) => {
+      void _node;
+      const href = typeof props.href === "string" ? props.href : "";
+      if (href.startsWith("#knowledge-")) {
+        const id = href.slice("#knowledge-".length);
+        const source = knowledgeByID.get(id);
+        return (
+          <button
+            type="button"
+            className="rounded bg-primary/10 px-1 font-medium text-primary hover:bg-primary/15"
+            title={source ? (source.chunk != null ? `${source.file} · chunk ${source.chunk}` : source.file) : id}
+            onClick={(e) => {
+              e.preventDefault();
+              if (source) onKnowledgeCitationClick?.(source);
+            }}
+          >
+            {props.children}
+          </button>
+        );
+      }
+      return <ExternalAnchor {...props} />;
+    },
+  }), [knowledgeByID, onKnowledgeCitationClick]);
+
   // Click anywhere on a mermaid diagram → fullscreen. Streamdown renders a
   // hidden fullscreen toggle inside the block; we delegate the click to it.
   function onMermaidClick(e: ReactMouseEvent<HTMLDivElement>) {
@@ -176,7 +221,7 @@ export function ChatMarkdown({
           mermaid: { panZoom: false, copy: false, download: false, fullscreen: true },
         }}
       >
-        {processedText}
+        {renderedText}
       </Streamdown>
     </div>
   );

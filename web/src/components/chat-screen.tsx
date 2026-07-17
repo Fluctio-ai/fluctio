@@ -6,7 +6,7 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, revealAgentWorkspace, sendChatStream, steerChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
+import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, revealAgentWorkspace, sendChatStream, steerChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
 import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown } from "@/components/chat-markdown";
@@ -69,6 +69,7 @@ function renderContentWithDataImages(
   suppressAllInlineImages?: boolean,
   agentId?: string,
   sessionId?: string,
+  knowledgeSources?: KnowledgeSource[],
 ): React.ReactNode | null {
   const parts = splitDataImages(content);
   if (!parts.some((p) => p.type === "image")) return null;
@@ -82,7 +83,7 @@ function renderContentWithDataImages(
             <img key={i} src={p.src} alt={p.alt} className="rounded-lg max-w-full h-auto my-2" />
           );
         }
-        return <ChatMarkdown key={i} text={p.text} agentId={agentId} sessionId={sessionId} />;
+        return <ChatMarkdown key={i} text={p.text} agentId={agentId} sessionId={sessionId} knowledgeSources={knowledgeSources} />;
       })}
     </>
   );
@@ -2373,8 +2374,9 @@ export function ChatScreen() {
                           (attachedImages.get(msg.id)?.length ?? 0) > 0,
                           selectedAgent,
                           sessionId,
+                          msg.metadata?.knowledgeSources,
                         ) ?? (
-                          <ChatMarkdown text={msg.content} agentId={selectedAgent} sessionId={sessionId} />
+                          <ChatMarkdown text={msg.content} agentId={selectedAgent} sessionId={sessionId} knowledgeSources={msg.metadata?.knowledgeSources} />
                         )
                       )}
                       {msg.role === "agent" && msg.metadata?.iterationCapReached && (
@@ -3010,8 +3012,8 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
       {/* Content before tools */}
       {msg.content && (
         <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-2.5">
-          {renderContentWithDataImages(msg.content, surfacedSrcs, false, agentId, sessionId) ?? (
-            <ChatMarkdown text={msg.content} agentId={agentId} sessionId={sessionId} />
+          {renderContentWithDataImages(msg.content, surfacedSrcs, false, agentId, sessionId, msg.metadata?.knowledgeSources) ?? (
+            <ChatMarkdown text={msg.content} agentId={agentId} sessionId={sessionId} knowledgeSources={msg.metadata?.knowledgeSources} />
           )}
         </div>
       )}
