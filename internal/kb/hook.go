@@ -143,12 +143,10 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			// assistant message for the web UI's clickable badges.
 			citations, sources := numberKBResults(results)
 			hc.KnowledgeSources = sources
-			// Results found — apply searchMode.
-			hc.IndicatorText = formatIndicatorFoundV2(cfg, results, query)
 			hc.SyntheticToolCalls = []SyntheticToolCall{{
 				Name:   "knowledgebase_search",
 				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, query, maxResults),
-				Result: hc.IndicatorText + "\n\n" + buildToolResultSummary(results, citations),
+				Result: buildToolResultSummary(results, citations),
 			}}
 			switch cfg.SearchMode {
 			case "strict":
@@ -164,7 +162,6 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 
 		// No results — apply emptyAction.
 		if cfg.EmptyAction == "stop" {
-			hc.IndicatorText = formatIndicatorNotFound(cfg)
 			content := indicatorNotFoundMsg(cfg)
 			hc.PrebuiltContent = content
 			hc.SkipLLM = true
@@ -228,7 +225,7 @@ func formatIndicatorFoundV2(cfg AutoQueryCfg, results []KBResult, query string) 
 	total := len(results)
 	indicator := cfg.IndicatorFound
 	if indicator == "" {
-		indicator = "[KB] 已引用 {kbCount} 条知识库, {wikiCount} 条百科"
+		indicator = "[百科] 已引用 {count} 条百科"
 	}
 	indicator = strings.ReplaceAll(indicator, "{count}", fmt.Sprintf("%d", total))
 	indicator = strings.ReplaceAll(indicator, "{kbCount}", fmt.Sprintf("%d", kbCount))
