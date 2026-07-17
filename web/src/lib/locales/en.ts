@@ -528,6 +528,7 @@ const en: Record<string, string> = {
   "knowledge.wikiRatio": "Wiki / KB Ratio",
   "knowledge.wikiRatioDesc": "Share of results from Wiki concept pages vs raw KB text. Left = more raw text (precise), right = more Wiki (conceptual).",
   "knowledge.kbLabel": "KB",
+  "knowledge.sourcesLabel": "Sources",
   "knowledge.showIndicator": "Show status indicator",
   "knowledge.foundIndicator": "Found indicator",
   "knowledge.notFoundIndicator": "Not found indicator",

@@ -483,7 +483,7 @@ func formatResults(results []KBResult, query string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Found %d results for %q:\n\n", len(results), query))
 	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("--- Result %d (source: %s, chunk %d) ---\n", i+1, r.SourceTitle, r.ChunkIndex))
+		sb.WriteString(fmt.Sprintf("--- [K%d] Result %d (source: %s, chunk %d) ---\n", i+1, i+1, r.SourceTitle, r.ChunkIndex))
 		if r.Snippet != "" {
 			sb.WriteString(r.Snippet)
 		} else {
@@ -495,5 +495,6 @@ func formatResults(results []KBResult, query string) string {
 		}
 		sb.WriteString("\n\n")
 	}
+	sb.WriteString("When you use a fact from these results, cite it inline with the bracketed id, e.g. [K1]; multiple sources: [K1][K3].\n")
 	return sb.String()
 }

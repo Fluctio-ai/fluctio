@@ -528,6 +528,7 @@ const zhCN: Record<string, string> = {
   "knowledge.wikiRatio": "Wiki / 知识库 比例",
   "knowledge.wikiRatioDesc": "搜索结果里 Wiki 概念页 vs 知识库原文的占比。偏左=更多原文（精确），偏右=更多 Wiki（概念）。",
   "knowledge.kbLabel": "知识库",
+  "knowledge.sourcesLabel": "参考来源",
   "knowledge.showIndicator": "显示状态指示器",
   "knowledge.foundIndicator": "找到时的指示器",
   "knowledge.notFoundIndicator": "未找到时的指示器",

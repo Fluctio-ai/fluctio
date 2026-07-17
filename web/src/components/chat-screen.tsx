@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, revealAgentWorkspace, sendChatStream, steerChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
 import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
-import { ChatMarkdown } from "@/components/chat-markdown";
+import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
 
 // Split a string on `![alt](data:image/...;base64,...)` markdown.
 //
@@ -2378,6 +2378,20 @@ export function ChatScreen() {
                         ) ?? (
                           <ChatMarkdown text={msg.content} agentId={selectedAgent} sessionId={sessionId} knowledgeSources={msg.metadata?.knowledgeSources} />
                         )
+                      )}
+                      {msg.role === "agent" && msg.metadata?.knowledgeSources && msg.metadata.knowledgeSources.length > 0 && (
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] text-muted-foreground">{t("knowledge.sourcesLabel")}</span>
+                          {msg.metadata.knowledgeSources.map((src) => (
+                            <span
+                              key={src.id}
+                              className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+                              title={knowledgeSourceLabel(src)}
+                            >
+                              {src.id}
+                            </span>
+                          ))}
+                        </div>
                       )}
                       {msg.role === "agent" && msg.metadata?.iterationCapReached && (
                         <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">

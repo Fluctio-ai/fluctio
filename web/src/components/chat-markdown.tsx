@@ -36,7 +36,7 @@ const streamdownPlugins = { code, mermaid, math, cjk: cjkWithBreaks };
 // origin ("Wiki"/"知识库"), the wiki page type when applicable (来源/概念/实体/总览),
 // and the source title. The chunk index is omitted — it's a retrieval
 // artifact, not meaningful to users.
-function knowledgeSourceLabel(source: KnowledgeSource): string {
+export function knowledgeSourceLabel(source: KnowledgeSource): string {
   const parts: string[] = [source.kind === "wiki" ? "Wiki" : "知识库"];
   if (source.kind === "wiki" && source.pageType) {
     const typeMap: Record<string, string> = {
