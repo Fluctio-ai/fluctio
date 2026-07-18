@@ -36,22 +36,7 @@ const (
 	// skillsKeyPrefix scopes every skill object under the owner. Every
 	// caller must go through buildKey so this stays consistent.
 	skillsKeyPrefix = "skills"
-
-	// userSkillOwnerPrefix is the leading marker for per-user pseudo
-	// owner keys (`_user_<uid>`). Same leading-underscore convention as
-	// GlobalSkillOwner so it can never collide with a real agent ID.
-	userSkillOwnerPrefix = "_user_"
 )
-
-// UserSkillOwner returns the workspace.Store pseudo-owner key for a
-// chatter's per-user skills. Empty userID returns "" so callers can
-// short-circuit on legacy / single-user installs.
-func UserSkillOwner(userID string) string {
-	if userID == "" {
-		return ""
-	}
-	return userSkillOwnerPrefix + userID
-}
 
 func buildKey(skillName, relPath string) string {
 	// relPath is already normalised (filepath.Walk yields forward-slash-
@@ -113,63 +98,6 @@ func SyncSkillUp(ctx context.Context, ws workspace.Store, owner, skillName, root
 	}
 	slog.Info("skill mirrored to object store",
 		"owner", owner, "skill", skillName, "files", uploaded)
-	return nil
-}
-
-// MirrorSkillsUp uploads any local skill subdir under rootDir whose name
-// is absent from the object store under owner. Pairs with
-// HydrateSkillsDown: hydrate-down brings remote→local at LoadSkills
-// entry, mirror-up catches anything the agent just wrote locally
-// (typically `npx skills add -g -y` into the per-user bind-mount) and
-// pushes it so sibling pods see it on their next hydrate cycle.
-//
-// Skip-criterion is "skill name absent from remote", not per-file diff,
-// so a skill that already exists on remote is treated as authoritative-
-// remote (no re-upload, no overwrite). Half-installed dirs without
-// SKILL.md are skipped to avoid uploading partial state mid-install.
-func MirrorSkillsUp(ctx context.Context, ws workspace.Store, owner, rootDir string) error {
-	if ws == nil || owner == "" {
-		return nil
-	}
-	objs, err := ws.List(ctx, owner, "", "")
-	if err != nil {
-		return fmt.Errorf("list object store skills for %s: %w", owner, err)
-	}
-	prefix := skillsKeyPrefix + "/"
-	remoteSkills := make(map[string]bool)
-	for _, o := range objs {
-		if !strings.HasPrefix(o.Path, prefix) {
-			continue
-		}
-		rest := strings.TrimPrefix(o.Path, prefix)
-		if slash := strings.IndexByte(rest, '/'); slash > 0 {
-			remoteSkills[rest[:slash]] = true
-		}
-	}
-	entries, err := os.ReadDir(rootDir)
-	if err != nil {
-		// Missing local dir == nothing to mirror; not an error.
-		return nil
-	}
-	uploaded := 0
-	for _, e := range entries {
-		if !e.IsDir() || remoteSkills[e.Name()] {
-			continue
-		}
-		// Only upload dirs that look fully installed. Without this guard
-		// a concurrent npx install could push a half-written tree.
-		if _, statErr := os.Stat(filepath.Join(rootDir, e.Name(), "SKILL.md")); statErr != nil {
-			continue
-		}
-		if upErr := SyncSkillUp(ctx, ws, owner, e.Name(), rootDir); upErr != nil {
-			slog.Warn("mirror skill up failed", "owner", owner, "skill", e.Name(), "error", upErr)
-			continue
-		}
-		uploaded++
-	}
-	if uploaded > 0 {
-		slog.Info("mirrored new local skills to object store", "owner", owner, "count", uploaded)
-	}
 	return nil
 }
 
