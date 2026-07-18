@@ -1262,6 +1262,7 @@ const zhCN: Record<string, string> = {
   "skills.uploadDropHint": "拖放或点击上传",
   "skills.uploadFailed": "上传失败",
   "skills.installFailed": "安装失败",
+  "skills.installedButPathWarn": "技能已安装，但其 SKILL.md 引用了绝对路径，脚本可能绕过当前会话的隔离范围，建议改用相对路径：",
   "skills.installGithubTitle": "从 GitHub 仓库安装",
   "skills.githubRepoPlaceholder": "owner/repo 或 https://github.com/owner/repo",
   "skills.githubNameOptional": "子目录（可选）",

@@ -503,6 +503,10 @@ function InstallSkillDialog({
         setInstallError(resp.error || t("skills.installFailed"));
         return;
       }
+      if (resp.warnings && resp.warnings.length > 0) {
+        setInstallError(`⚠️ ${t("skills.installedButPathWarn")} ` + resp.warnings.join(", "));
+        return;
+      }
       onInstalled();
     } catch (e) {
       setInstallError(e instanceof Error ? e.message : t("skills.installFailed"));
@@ -528,6 +532,10 @@ function InstallSkillDialog({
       });
       if (!resp.ok) {
         setGhError(resp.error || t("skills.installFailed"));
+        return;
+      }
+      if (resp.warnings && resp.warnings.length > 0) {
+        setGhError(`⚠️ ${t("skills.installedButPathWarn")} ` + resp.warnings.join(", "));
         return;
       }
       onInstalled();

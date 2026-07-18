@@ -308,6 +308,10 @@ function InstallSkillDialog({
     try {
       const resp = await installSkill({ source: "skillssh", name: r.skillId });
       if (!resp.ok) { setInstallError(resp.error || tt("skills.installFailed")); return; }
+      if (resp.warnings && resp.warnings.length > 0) {
+        setInstallError(`⚠️ ${tt("skills.installedButPathWarn")} ` + resp.warnings.join(", "));
+        return;
+      }
       onInstalled();
     } catch (e) {
       setInstallError(e instanceof Error ? e.message : tt("skills.installFailed"));
@@ -326,6 +330,10 @@ function InstallSkillDialog({
     try {
       const resp = await installSkill({ source: "github", repo, name: ghName.trim() });
       if (!resp.ok) { setGhError(resp.error || tt("skills.installFailed")); return; }
+      if (resp.warnings && resp.warnings.length > 0) {
+        setGhError(`⚠️ ${tt("skills.installedButPathWarn")} ` + resp.warnings.join(", "));
+        return;
+      }
       onInstalled();
     } catch (e) {
       setGhError(e instanceof Error ? e.message : tt("skills.installFailed"));

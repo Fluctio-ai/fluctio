@@ -1892,6 +1892,7 @@ export interface InstallSkillResponse {
   installedAt?: string;
   files?: number;
   error?: string;
+  warnings?: string[];
 }
 
 export async function installSkill(req: InstallSkillRequest): Promise<InstallSkillResponse> {

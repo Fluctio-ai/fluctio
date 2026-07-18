@@ -1262,6 +1262,7 @@ const en: Record<string, string> = {
   "skills.uploadDropHint": "Drag and drop or click to upload",
   "skills.uploadFailed": "upload failed",
   "skills.installFailed": "install failed",
+  "skills.installedButPathWarn": "Skill installed, but its SKILL.md references absolute paths that may bypass the current session's scope; consider relative paths instead:",
   "skills.installGithubTitle": "Install from a GitHub repo",
   "skills.githubRepoPlaceholder": "owner/repo or https://github.com/owner/repo",
   "skills.githubNameOptional": "Subfolder (optional)",
