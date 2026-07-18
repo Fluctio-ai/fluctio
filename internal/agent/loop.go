@@ -316,13 +316,22 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, sessionID, 
 		}
 		a.mcpMgr = mcp.NewManager(a.mcpServers, scopeDir)
 		a.mcpSessionDir = scopeDir
+		// Build server prefix lookup once per rebuild so each tool def can
+		// be attributed back to its server config (needed to read Effect /
+		// ToolEffects). mcp.Manager.toolMap is unexported and the brief
+		// says don't touch the mcp pkg, so reverse-resolve via the same
+		// sanitization the mcp package applies when constructing prefixed
+		// tool names. Iterating a.mcpServers (config map) keeps this stable
+		// even if the manager silently skipped a server that failed to
+		// connect — its prefix just won't match any tool.
 		for _, td := range a.mcpMgr.ToolDefs() {
 			toolName := td.Name
-			a.registry.Register(toolName, td.Description, td.InputSchema,
+			srvName, srvCfg := lookupMCPServer(toolName, a.mcpServers)
+			effect := mcpDefaultEffect(srvName, toolName, srvCfg)
+			a.registry.RegisterFromWithEffect(toolName, td.Description, td.InputSchema,
 				func(ctx context.Context, args json.RawMessage) (string, error) {
 					return a.mcpMgr.CallTool(ctx, toolName, args)
-				},
-			)
+				}, tools.SourceMCP, effect)
 		}
 		if a.mcpMgr.HasTools() {
 			slog.Info("registered MCP tools (scoped)",
@@ -4047,5 +4056,76 @@ func (a *Agent) sendMediaFiles(msg bus.InboundMessage, mediaPaths []string) {
 	case a.messageBus.Outbound <- outMsg:
 	default:
 		slog.Warn("outbound channel full, dropping media message", "agent", a.name)
+	}
+}
+
+// mcpSafeName mirrors mcp.prefixToolName's server-name sanitization so the
+// agent loop can reverse-resolve a server config from a prefixed MCP tool
+// name without reaching into the mcp package's unexported helper. Keep in
+// sync with mcp.prefixToolName when changing that.
+func mcpSafeName(server string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' {
+			return r
+		}
+		return '_'
+	}, server)
+}
+
+// lookupMCPServer 反查 toolName（形如 mcp_<safeServer>_<raw>）所属的 server
+// 配置。返回 ("", 零值) 表示未匹配——调用方应回退到 SideExternal 默认启发式。
+// 由于 safeServer 把非字母数字字符也替换成 '_'，server 名本身包含 '_' 时理论
+// 上会有歧义；按 a.mcpServers 的 key 顺序取首个匹配前缀。生产配置中 server
+// 名通常唯一可识别（如 "Playwright"、"zread"），歧义极低。
+func lookupMCPServer(toolName string, servers map[string]config.MCPServerConfig) (string, config.MCPServerConfig) {
+	for name, cfg := range servers {
+		if strings.HasPrefix(toolName, "mcp_"+mcpSafeName(name)+"_") {
+			return name, cfg
+		}
+	}
+	return "", config.MCPServerConfig{}
+}
+
+// mcpDefaultEffect 决定一个 MCP 工具的副作用：
+//
+//	cfg.ToolEffects[rawToolName]  >  cfg.Effect  >  启发式
+//
+// 启发式：toolName 小写包含 "screenshot" / "browser_take"（Playwright 截图类）
+// 视为 SideWritesFile（annotateReachability 会检查其产物是否在可见域）；
+// 其余 MCP 工具默认 SideExternal。
+// rawToolName = 去掉 "mcp_<safeServer>_" 前缀。
+func mcpDefaultEffect(serverName, toolName string, cfg config.MCPServerConfig) tools.SideEffect {
+	raw := strings.TrimPrefix(toolName, "mcp_"+mcpSafeName(serverName)+"_")
+	if e, ok := cfg.ToolEffects[raw]; ok {
+		// 显式 "pure" 才生效；其他无法识别的值（parseSideEffect 默认 SidePure）
+		// 视为未配置，继续向后回退。
+		if se := parseSideEffect(e); se != tools.SidePure || e == "pure" {
+			return se
+		}
+	}
+	if cfg.Effect != "" {
+		return parseSideEffect(cfg.Effect)
+	}
+	low := strings.ToLower(toolName)
+	if strings.Contains(low, "screenshot") || strings.Contains(low, "browser_take") {
+		return tools.SideWritesFile
+	}
+	return tools.SideExternal
+}
+
+// parseSideEffect 把配置中的字符串副作用声明映射到 SideEffect 枚举。
+// 无法识别的值返回 SidePure（与零值一致；mcpDefaultEffect 会区分 "pure" 与
+// 未配置）。
+func parseSideEffect(s string) tools.SideEffect {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "writes_file":
+		return tools.SideWritesFile
+	case "emits_inline":
+		return tools.SideEmitsInline
+	case "external":
+		return tools.SideExternal
+	default:
+		return tools.SidePure
 	}
 }

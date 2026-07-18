@@ -796,6 +796,17 @@ func (r *Registry) RegisterWithEffect(name, description string, parameters inter
 	}
 }
 
+// RegisterFromWithEffect 注册工具并声明副作用类型 + 来源（供 MCP/Plugin 工具用，避免
+// RegisterWithEffect 硬编码 SourceBuiltin）。effect 通过 SideEffectOf 暴露，供
+// annotateReachability 等裁决逻辑查询。
+func (r *Registry) RegisterFromWithEffect(name, description string, parameters interface{}, fn ToolFunc, source ToolSource, effect SideEffect) {
+	r.RegisterFrom(name, description, parameters, fn, source)
+	if t, ok := r.tools[name]; ok {
+		t.effect = effect
+		r.tools[name] = t
+	}
+}
+
 // SideEffectOf 返回工具的副作用声明；未注册工具返回 SidePure。
 func (r *Registry) SideEffectOf(name string) SideEffect {
 	if t, ok := r.tools[name]; ok {

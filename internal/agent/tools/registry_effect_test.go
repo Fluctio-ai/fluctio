@@ -62,3 +62,16 @@ func TestReachabilityVerdict(t *testing.T) {
 		t.Fatalf("absolute path outside visibleRoot (%s) should not be visible", outsideAbs)
 	}
 }
+
+func TestRegisterFromWithEffect(t *testing.T) {
+	r := NewRegistry(t.TempDir(), t.TempDir())
+	fn := func(ctx context.Context, args json.RawMessage) (string, error) { return "ok", nil }
+	r.RegisterFromWithEffect("mcp_x_screenshot", "d", map[string]interface{}{"type": "object"}, fn, SourceMCP, SideWritesFile)
+	if got := r.SideEffectOf("mcp_x_screenshot"); got != SideWritesFile {
+		t.Fatalf("effect = %v, want SideWritesFile", got)
+	}
+	// source 也应是 SourceMCP（验证没误用 RegisterWithEffect 的 SourceBuiltin）
+	if t2, ok := r.tools["mcp_x_screenshot"]; !ok || t2.source != SourceMCP {
+		t.Fatalf("source not SourceMCP")
+	}
+}

@@ -61,6 +61,13 @@ type MCPServerConfig struct {
 	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
+	// Effect 是该 server 所有工具的默认副作用声明
+	//（writes_file/emits_inline/external/pure）。供 agent loop 的
+	// mcpDefaultEffect 读取，让 annotateReachability 等裁决覆盖 MCP 工具。
+	Effect string `json:"effect,omitempty"`
+	// ToolEffects 按"原始工具名"（不含 mcp_ 前缀）覆盖单工具的 effect，
+	// 优先级高于 Effect。
+	ToolEffects map[string]string `json:"tool_effects,omitempty"`
 }
 
 // CronJob defines a scheduled job loaded into the gateway's runtime.
