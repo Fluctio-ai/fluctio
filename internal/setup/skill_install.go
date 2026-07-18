@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -108,24 +109,54 @@ func (s *Server) handleInstallSkill(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// lintSkillScopeHints scans the installed skill's SKILL.md for hardcoded
-// absolute paths (/tmp, ~/, /home, /Users, C:\) that would bypass the
-// session scope when the skill's scripts run under host exec (cwd is
-// sessions/<sid>/). Best-effort: the skill is still installed; warnings
-// only flag that scripts may need relative-path fixes to respect per-
-// session isolation and the /yes approval boundary. Returns nil when
-// clean or when SKILL.md can't be read.
+// lintSkillScopeHints walks the installed skill tree and flags hardcoded
+// absolute paths / parent-escapes in SKILL.md and scripts (.py/.sh/.js/.ts)
+// that would bypass the session scope when the skill runs (host exec cwd
+// is sessions/<sid>/). Best-effort: the skill is still installed; warnings
+// only signal the scripts may need relative-path fixes to respect per-
+// session isolation and the /yes approval boundary. Capped at 6 hits so a
+// noisy skill doesn't flood the install dialog. Returns nil when clean.
 func lintSkillScopeHints(skillDir string) []string {
-	data, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
-	if err != nil {
-		return nil
+	pathPatterns := []string{
+		"/tmp/", "~/", "/home/", "/Users/", "/var/", "/opt/", "/etc/", "/root/",
+		`C:\`, `D:\`, `E:\`, "../",
 	}
-	body := string(data)
+	// Dangerous commands/scripts worth a heads-up even when relative
+	// (destructive, privilege escalation, or arbitrary code execution).
+	dangerPatterns := []string{
+		"rm -rf", "rm -fr", "| sh", "| bash", "chmod 777", "sudo ",
+		"mkfs", "dd if=", "> /dev/sd", "eval(", "os.system(", "shell=True",
+	}
+	patterns := append(append([]string{}, pathPatterns...), dangerPatterns...)
 	var warns []string
-	for _, pat := range []string{"/tmp/", "~/", "/home/", "/Users/", `C:\`} {
-		if strings.Contains(body, pat) {
-			warns = append(warns, pat)
+	seen := make(map[string]bool)
+	_ = filepath.WalkDir(skillDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
 		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".md", ".py", ".sh", ".js", ".mjs", ".cjs", ".ts":
+		default:
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(skillDir, path)
+		for _, pat := range patterns {
+			if strings.Contains(string(data), pat) {
+				key := rel + ":" + pat
+				if !seen[key] {
+					seen[key] = true
+					warns = append(warns, fmt.Sprintf("%s: %q", rel, pat))
+				}
+			}
+		}
+		return nil
+	})
+	if len(warns) > 8 {
+		warns = append(warns[:8], fmt.Sprintf("... (+%d more)", len(warns)-8))
 	}
 	return warns
 }
