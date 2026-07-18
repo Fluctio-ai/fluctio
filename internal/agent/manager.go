@@ -380,6 +380,9 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 	if m.opts.quotaStore != nil {
 		ag.SetQuotaStore(m.opts.quotaStore)
 	}
+	// deliver_file: let the LLM relocate artifacts that landed outside the
+	// visible workspace (e.g. screenshot/exec outputs) so the user can see them.
+	tools.RegisterDeliverTools(ag.registry)
 	return ag
 }
 
