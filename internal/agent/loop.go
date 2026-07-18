@@ -2732,6 +2732,9 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 					summary = firstNonEmptyLine(resultContent)
 				}
 				a.registry.RecordToolFailure(r.toolName, tc.Function.Arguments, summary)
+				if cat, hint := classifyToolError(resultContent); cat != "" {
+					resultContent = resultContent + "\n[失败类别: " + cat + "] [可恢复: " + hint + "]"
+				}
 			} else {
 				// One call in this round produced a real result —
 				// the round as a whole isn't "all failed".
@@ -3432,6 +3435,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			tc := resp.ToolCalls[idx]
 			resultContent, meta := extractToolMeta(r.result)
 			resultContent = annotateReachability(r.toolName, resultContent, a.registry)
+			if cat, hint := classifyToolError(resultContent); cat != "" {
+				resultContent = resultContent + "\n[失败类别: " + cat + "] [可恢复: " + hint + "]"
+			}
 			a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: AfterToolCall, ToolName: r.toolName, ToolResult: resultContent, Error: r.err, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, GoalSessionKey: a.registry.GoalSessionKey(), IsPlanMode: isPlanMode(msg.Params), Source: msg.Source})
 
 			if r.err != nil {
@@ -3563,6 +3569,36 @@ func extractToolMeta(result string) (string, map[string]any) {
 // The leading verb alternation keeps it permissive across phrasings while
 // the capture group is the raw path token.
 var writtenPathRE = regexp.MustCompile(`(?:to|→|->)\s+(\S+)`)
+
+// classifyToolError 对失败的工具结果文本做分类 + recovery 提示。
+// 非失败文本（无 error 信号）返回 ("", "")。纯函数，便于测试。
+func classifyToolError(content string) (category, hint string) {
+	c := strings.ToLower(content)
+	switch {
+	case strings.Contains(c, "command not found") ||
+		strings.Contains(c, "no such file or directory") ||
+		strings.Contains(c, "executable file not found") ||
+		strings.Contains(c, "not recognized as an internal or external command") ||
+		strings.Contains(c, "no such file"):
+		return "env_missing", "依赖的命令/文件在当前环境缺失；可换替代命令（如 Windows 用 powershell 替代 bash）、跳过该步并告知用户，或调 deliver_file 投递已有产物"
+	case strings.Contains(c, "permission denied") ||
+		strings.Contains(c, "access is denied") ||
+		strings.Contains(c, "access denied"):
+		return "permission", "权限不足；确认路径/权限，或换可见域内路径"
+	case strings.Contains(c, "service unavailable") ||
+		strings.Contains(c, "503") || strings.Contains(c, "500 internal") ||
+		strings.Contains(c, "upstream_error") || strings.Contains(c, "timeout") ||
+		strings.Contains(c, "context deadline exceeded") ||
+		strings.Contains(c, "http 5") || strings.Contains(c, "http 4"):
+		return "external", "外部服务错误；可退避重试、换备用服务，或告知用户稍后再试"
+	case strings.Contains(c, "invalid argument") ||
+		strings.Contains(c, "missing required") ||
+		strings.Contains(c, "parse args") || strings.Contains(c, "bad request"):
+		return "logic", "参数/逻辑错误；检查参数格式、路径合法性，或换实现方式"
+	default:
+		return "", ""
+	}
+}
 
 // annotateReachability 对落盘型工具产物判定可见性，不可见则追加裁决行。
 // 纯函数，便于测试。只在 SideWritesFile 工具上生效；其他工具原样返回。
