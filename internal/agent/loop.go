@@ -493,7 +493,7 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	// executor-pool failure would silently fall through to /bin/sh on the
 	// host, defeating the security boundary the user asked for.
 	skillDirs := loader.AllSkillDirs()
-	tools.RegisterLoadSkill(registry, skillDirs)
+	tools.RegisterLoadSkill(registry, skillDirs, buildSkillGate(skills))
 	// Wire the agent-private skill install tools so chat-initiated
 	// installs land in agents/<id>/agent/skills instead of the
 	// chatter's workspace. onReload=nil: SkillsLoader re-scans this
@@ -3937,6 +3937,30 @@ func (a *Agent) chatterUserID(msg bus.InboundMessage) string {
 	return a.ownerUserID
 }
 
+// buildSkillGate projects a loaded-skill slice into the gate map that
+// load_skill consumes. We build this from the SAME []Skill that
+// BuildSkillsSummary already read from — so load_skill's gating banner
+// always matches the system-prompt catalog (single source of truth:
+// SkillsLoader → CheckGating). Re-calling LoadSkills here would parse
+// frontmatter twice and could race with a concurrent OSS sync.
+func buildSkillGate(skills []Skill) map[string]tools.SkillGate {
+	if len(skills) == 0 {
+		return nil
+	}
+	out := make(map[string]tools.SkillGate, len(skills))
+	for _, s := range skills {
+		if !s.Gated && s.OnMissing == "" {
+			continue
+		}
+		out[s.Name] = tools.SkillGate{
+			Gated:     s.Gated,
+			Reason:    s.GateReason,
+			OnMissing: s.OnMissing,
+		}
+	}
+	return out
+}
+
 // refreshSkillsFromStore mirrors OSS-hosted skills (global, per-agent,
 // and per-user) to the local filesystem and rebuilds the skills summary
 // baked into the system prompt. No-op when no workspace store is
@@ -3964,7 +3988,7 @@ func (a *Agent) refreshSkillsFromStore(userID string) {
 	skills := loader.LoadSkills()
 	summary := loader.BuildSkillsSummary(skills)
 	a.ctxBuilder.SetSkillsSummary(summary)
-	tools.RegisterLoadSkill(a.registry, loader.AllSkillDirs())
+	tools.RegisterLoadSkill(a.registry, loader.AllSkillDirs(), buildSkillGate(skills))
 	// Per-turn fingerprint of the skill set the system prompt will
 	// ship. Lets us diff IM vs web for the same (agent, chatter) and
 	// confirm — or rule out — that agent-scope skills are reaching
@@ -3997,7 +4021,7 @@ func (a *Agent) ReloadWorkspaceFiles() {
 	}
 	skills := loader.LoadSkills()
 	skillsSummary := loader.BuildSkillsSummary(skills)
-	tools.RegisterLoadSkill(a.registry, loader.AllSkillDirs())
+	tools.RegisterLoadSkill(a.registry, loader.AllSkillDirs(), buildSkillGate(skills))
 	a.ctxBuilder = NewContextBuilder(a.homePath, a.memory, skillsSummary)
 	a.ctxBuilder.SetWorkspace(a.workspacePath)
 	a.ctxBuilder.SetPromptMode(a.promptMode)
