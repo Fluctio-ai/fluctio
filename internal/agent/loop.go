@@ -1948,6 +1948,17 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 // (persisted → late-join backfill + seq-dedup work for free).
 func (a *Agent) appendSteer(ctx context.Context, sess *session.Session, messages []provider.Message, steer []provider.Message) []provider.Message {
 	for _, sm := range steer {
+		// Approval replies (/yes or /no) tapped mid-stream: drain the
+		// now-authorized (or cleared) pending calls immediately so the
+		// user doesn't wait for the turn to end. Without this the steer
+		// would just fold "/yes" as a user message and the parked exec
+		// would never run this turn (flushLeftoverSteer only parks).
+		if c := strings.TrimSpace(sm.Content); c == "/yes" || c == "/no" {
+			if n := a.applyAuthReplySteer(ctx, sess, &messages, c == "/yes"); n > 0 {
+				slog.Info("approval steer drained pending mid-turn",
+					"agent", a.name, "approved", c == "/yes", "count", n)
+			}
+		}
 		sess.Append(sm)
 		messages = append(messages, sm)
 		emitEvent(ctx, ChatEvent{Type: "steer", Data: map[string]any{"content": sm.Content}})

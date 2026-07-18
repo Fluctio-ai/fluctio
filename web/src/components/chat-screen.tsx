@@ -1962,13 +1962,14 @@ export function ChatScreen() {
   // streams a "steer" echo on the existing SSE). On 409 (no active turn
   // — the turn just ended) it falls back to a normal send so nothing is
   // lost.
-  const handleSteer = useCallback(async () => {
-    const text = input.trim();
-    // Only ever called from handleKeyDown's `if (sending)` branch;
-    // within one render React state is snapshot-consistent, so `sending`
+  const handleSteer = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    // Called from handleKeyDown's `if (sending)` branch, or from an
+    // approval button tapped mid-stream (overrideText set to /yes etc.).
+    // Within one render React state is snapshot-consistent, so `sending`
     // is necessarily true here.
     if (!text || !selectedAgent || !sending) return;
-    setInput("");
+    if (!overrideText) setInput("");
     const optimisticId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setMessages((prev) => [
       ...prev,
@@ -2417,8 +2418,7 @@ export function ChatScreen() {
                               key={opt.cmd}
                               size="sm"
                               variant={opt.cmd === "/yes" ? "default" : "outline"}
-                              onClick={() => handleSend(opt.cmd)}
-                              disabled={sending}
+                              onClick={() => (sending ? handleSteer(opt.cmd) : handleSend(opt.cmd))}
                               className="h-8"
                             >
                               <span>{opt.label_zh}</span>

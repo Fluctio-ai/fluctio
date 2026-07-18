@@ -10,6 +10,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/session"
 	"github.com/fluctio-ai/fluctio/internal/usage"
 )
 
@@ -184,6 +185,21 @@ func (a *Agent) slashAuthReply(msg bus.InboundMessage, approved bool) slashResul
 		return slashResult{handled: true, continueToLoop: true, reply: slashTf(msg.Lang, "auth.approved", len(pending))}
 	}
 	return slashResult{handled: true, reply: slashTf(msg.Lang, "auth.denied", len(pending))}
+}
+
+// applyAuthReplySteer handles a /yes or /no that arrives as a steer
+// mid-turn (user tapped approve/deny while the stream is running). /yes
+// pops parked calls, marks them approved, and drains them into the
+// running turn immediately so the authorized exec runs without waiting
+// for the turn to end; /no just clears them. Mirrors slashAuthReply's
+// approve path but drains in-place (the turn is already running).
+func (a *Agent) applyAuthReplySteer(ctx context.Context, sess *session.Session, messages *[]provider.Message, approved bool) int {
+	pending := sess.PopPendingCalls()
+	if len(pending) == 0 || !approved {
+		return 0
+	}
+	sess.SetApprovedPending(pending)
+	return a.drainApprovedPending(ctx, sess, messages)
 }
 
 // slashSetAuthMode switches the authorization mode (ask/auto/yolo) and
