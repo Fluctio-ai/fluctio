@@ -3444,8 +3444,14 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			tc := resp.ToolCalls[idx]
 			resultContent, meta := extractToolMeta(r.result)
 			resultContent = annotateReachability(r.toolName, resultContent, a.registry)
-			if cat, hint := classifyToolError(resultContent); cat != "" {
-				resultContent = resultContent + "\n[失败类别: " + cat + "] [可恢复: " + hint + "]"
+			// Gate the structured-failure tag behind isFailedToolResult so that
+			// successful results containing broad classifier substrings
+			// ("port 5030", "timeout 5s config", "http 4xx docs") are NOT
+			// mis-tagged. Mirrors the main (non-streaming) path's gate at loop.go:2737.
+			if isFailedToolResult(r.err, resultContent) {
+				if cat, hint := classifyToolError(resultContent); cat != "" {
+					resultContent = resultContent + "\n[失败类别: " + cat + "] [可恢复: " + hint + "]"
+				}
 			}
 			a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: AfterToolCall, ToolName: r.toolName, ToolResult: resultContent, Error: r.err, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, GoalSessionKey: a.registry.GoalSessionKey(), IsPlanMode: isPlanMode(msg.Params), Source: msg.Source})
 
