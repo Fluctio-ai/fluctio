@@ -209,8 +209,19 @@ func (a *Agent) runSubagentLoop(ctx context.Context, task string, maxIterations 
 		roundAllFailed := true
 		for idx, r := range results {
 			tc := resp.ToolCalls[idx]
-			resultContent, _ := extractToolMeta(r.result)
-			if !isFailedToolResult(r.err, resultContent) {
+			// Mirror the streaming exit (loop.go ~:3443-3455):
+			// keep meta, annotate outside-root artifacts so the subagent
+			// learns to call deliver_file, and tag genuinely failed
+			// results with a structured category. Subagent internal
+			// tool results never return to the parent (by design), so
+			// the subagent MUST self-annotate.
+			resultContent, meta := extractToolMeta(r.result)
+			resultContent = annotateReachability(r.toolName, resultContent, a.registry)
+			if isFailedToolResult(r.err, resultContent) {
+				if cat, hint := classifyToolError(resultContent); cat != "" {
+					resultContent = resultContent + "\n[失败类别: " + cat + "] [可恢复: " + hint + "]"
+				}
+			} else {
 				roundAllFailed = false
 			}
 			messages = append(messages, provider.Message{
@@ -218,6 +229,7 @@ func (a *Agent) runSubagentLoop(ctx context.Context, task string, maxIterations 
 				Content:    resultContent,
 				ToolCallID: tc.ID,
 				Name:       r.toolName,
+				Metadata:   meta,
 			})
 		}
 		if roundAllFailed {
