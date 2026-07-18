@@ -23,6 +23,13 @@ type ContextBuilder struct {
 	workspace     string // working dir where agent creates user-facing files
 	memory        *Memory
 	skillsSummary string
+	// mcpServerSummary is a short, human-readable digest of the MCP servers
+	// bound to the current session (server name + cwd), surfaced to the model
+	// via the runtime_context prompt module so the LLM knows which external
+	// tool servers are live and where they drop their artifacts. Wired by
+	// Agent.bindSession from summarizeMCPServers; empty when no MCP server
+	// is configured for this agent.
+	mcpServerSummary string
 	// displayName is the operator-given name from agents.name. Used as
 	// a fallback identity line when IDENTITY.md is empty so the model
 	// doesn't introduce itself as "Claude" / its base-model name.

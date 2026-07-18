@@ -329,6 +329,11 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, sessionID, 
 				"agent", a.name, "scope", scopeDir)
 		}
 	}
+	// Surface MCP server names + their cwd to the runtime_context prompt
+	// module so the model knows which external tool servers are live and
+	// where they drop artifacts (may differ from the visible workspace).
+	// Placed after the per-session MCP rebuild so mcpSessionDir is current.
+	a.ctxBuilder.mcpServerSummary = summarizeMCPServers(a.mcpServers, a.mcpSessionDir)
 	// Coding agents (those with a project runtime wired) treat a project
 	// as ONE shared app tree: file tools address the project root so the
 	// agent's edits land where the dev server serves. Only when actually
@@ -363,6 +368,28 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, sessionID, 
 		return
 	}
 	a.registry.SetExecutor(ex)
+}
+
+// summarizeMCPServers renders a compact, human-readable digest of the MCP
+// servers bound to this session: "name (cwd: <dir>), name2 (cwd: <dir>)".
+// The sessionDir is the cwd the MCP manager was started with (set by
+// bindSession when it rebuilds the per-session MCP manager); servers fall
+// back to "<unset>" when no session scope is wired yet (e.g. gateway boot
+// before any chat). Returns "" when no MCP server is configured, which the
+// runtime_context prompt module collapses to "（无）".
+func summarizeMCPServers(servers map[string]config.MCPServerConfig, sessionDir string) string {
+	if len(servers) == 0 {
+		return ""
+	}
+	var parts []string
+	cwd := sessionDir
+	if cwd == "" {
+		cwd = "<unset>"
+	}
+	for name := range servers {
+		parts = append(parts, fmt.Sprintf("%s (cwd: %s)", name, cwd))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // NewAgent creates a new Agent from a resolved config.

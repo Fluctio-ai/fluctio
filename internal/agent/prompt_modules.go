@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"os/exec"
 	"runtime"
 	"strings"
 	"time"
@@ -93,6 +94,7 @@ var agentModules = []moduleEntry{
 	// ── Identity block (top) ──
 	{"identity_anchor", modIdentityAnchor},
 	{"agent_intro", modAgentIntro},
+	{"runtime_context", modRuntimeContext},
 	{"bootstrap_files", modBootstrapFiles}, // SOUL.md, IDENTITY.md, USER.md, ...
 	{"memory", modMemory},
 
@@ -114,6 +116,7 @@ var chatbotModules = []moduleEntry{
 	// ── Identity block (top) ──
 	{"identity_anchor", modIdentityAnchor},
 	{"chatbot_intro", modChatbotIntro},
+	{"runtime_context", modRuntimeContext},
 	{"bootstrap_files", modBootstrapFiles},
 	{"memory", modMemory},
 
@@ -284,6 +287,38 @@ new files or full rewrites. This matters most for MEMORY.md / SOUL.md /
 USER.md, which grow over time and would lose context if rewritten in full.`,
 		p.dateLine, fluctioLine,
 		runtime.GOOS, runtime.GOARCH, workdir, homeDesc)
+}
+
+// modRuntimeContext is the "situated context" layer: it tells the LLM the
+// real boundaries it operates in BEFORE it acts, so it doesn't discover them
+// by hitting a wall. The module surfaces (1) the platform it runs on, (2) bash
+// availability (probed at prompt-build time via exec.LookPath), (3) the
+// user-visible workspace root (so files the model writes go where the user can
+// see them), (4) the live MCP tool servers with their cwd — because MCP tools
+// like Playwright typically land artifacts in their own cwd, not the visible
+// workspace — and (5) the deliver_file escape hatch that pulls an
+// out-of-scope file back into the visible workspace. Sibling to modAgentIntro,
+// which covers identity/files; this module covers capabilities + reachability.
+func modRuntimeContext(p *promptCtx) string {
+	bash := "不可用"
+	if _, err := exec.LookPath("bash"); err == nil {
+		bash = "可用"
+	}
+	mcp := p.cb.mcpServerSummary
+	if mcp == "" {
+		mcp = "（无）"
+	}
+	return fmt.Sprintf(`# 运行时处境（你正在操作的真实环境）
+
+- 操作系统：%s/%s
+- bash：%s
+- 用户可见域（前端能看到的文件范围）：当前 session/project 的 workspace 根
+- MCP 工具服务器：%s
+  注意：部分 MCP 工具（如截图）可能把产物写到可见域之外（例如自己的 cwd 子目录）。若你产出文件后用户看不到，该文件很可能落在了可见域外。
+- 投递手段：调用 deliver_file(src=<产物绝对路径>) 可把任意路径文件复制进可见域供用户查看。
+
+原则：凡是你产出文件后，先确认文件在可见域内；不在就主动 deliver_file，不要等用户催。`,
+		runtime.GOOS, runtime.GOARCH, bash, mcp)
 }
 
 // modChatbotIntro builds the Chatbot-mode identity scaffolding: slim
