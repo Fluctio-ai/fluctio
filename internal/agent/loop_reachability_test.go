@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,9 +33,19 @@ func TestAnnotateReachability(t *testing.T) {
 		t.Fatalf("visible artifact should not trigger verdict, got:\n%s", got2)
 	}
 
+	// 产物是 INSIDE visibleRoot 的绝对路径（deliver_file 的真实落点）→ 不追加
+	// 该回归 case 覆盖原 ReachabilityVerdict 的 bug：绝对路径被一律判为不可见，
+	// 导致 deliver_file 后 annotateReachability 仍提示"再调 deliver_file"→ 死循环。
+	insideAbs := filepath.Join(root, "inside.png")
+	got3 := annotateReachability("write_file",
+		"Written 3 bytes to "+insideAbs, reg)
+	if got3 != "Written 3 bytes to "+insideAbs {
+		t.Fatalf("inside-root absolute path should pass through unchanged, got:\n%s", got3)
+	}
+
 	// 非 writes_file 工具 → 不处理
-	got3 := annotateReachability("read_file", "file contents...", reg)
-	if got3 != "file contents..." {
-		t.Fatalf("non-writes_file result should pass through, got: %s", got3)
+	got4 := annotateReachability("read_file", "file contents...", reg)
+	if got4 != "file contents..." {
+		t.Fatalf("non-writes_file result should pass through, got: %s", got4)
 	}
 }

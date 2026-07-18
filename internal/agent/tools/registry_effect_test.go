@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestReachabilityVerdict(t *testing.T) {
 	r := NewRegistry(root, root)
 	r.SetUserRoot(root)
 
-	// 相对路径（workspace 内）→ 可见
+	// Case 1: 相对路径（workspace 内）→ 可见
 	vis, vr := r.ReachabilityVerdict("notes/x.txt")
 	if !vis {
 		t.Fatalf("relative path should be visible")
@@ -40,10 +41,24 @@ func TestReachabilityVerdict(t *testing.T) {
 		t.Fatalf("visibleRoot = %q, want %q", vr, root)
 	}
 
-	// 绝对路径 → 不可见（跨平台：t.TempDir() 在 Windows/Linux 均返回绝对路径）
-	absPath := filepath.Join(t.TempDir(), "shot.png")
-	vis, _ = r.ReachabilityVerdict(absPath)
+	// Case 2: 绝对路径 INSIDE visibleRoot → 可见（deliver_file 的产物落点）
+	insideAbs := filepath.Join(root, "shot.png")
+	vis, vr = r.ReachabilityVerdict(insideAbs)
+	if !vis {
+		t.Fatalf("absolute path inside visibleRoot (%s) should be visible", insideAbs)
+	}
+	if vr != root {
+		t.Fatalf("visibleRoot = %q, want %q", vr, root)
+	}
+
+	// Case 3: 绝对路径 OUTSIDE visibleRoot → 不可见（跨平台：t.TempDir() 在 Windows/Linux 均返回绝对路径）
+	outsideAbs := filepath.Join(t.TempDir(), "other.png")
+	// Guard against the unlikely case where t.TempDir() returns the same dir twice.
+	if strings.HasPrefix(filepath.ToSlash(outsideAbs)+"/", filepath.ToSlash(root)+"/") {
+		t.Skipf("outsideAbs %s unexpectedly inside root %s; cannot verify outside case", outsideAbs, root)
+	}
+	vis, _ = r.ReachabilityVerdict(outsideAbs)
 	if vis {
-		t.Fatalf("absolute path %s should not be visible", absPath)
+		t.Fatalf("absolute path outside visibleRoot (%s) should not be visible", outsideAbs)
 	}
 }

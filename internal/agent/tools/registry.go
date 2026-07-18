@@ -675,9 +675,24 @@ func (r *Registry) UserRoot() string {
 }
 
 // ReachabilityVerdict 判定一个产物路径是否对前端用户可见，返回是否可见及可见域根。
-// 供 agent loop（agent 包）调用——isWorkspacePath 未导出，故提供此公开封装。
+// 供 agent loop（agent 包）调用——使用 containment 逻辑（与 deliver_file 的 dest 校验一致），
+// 而非 isWorkspacePath 的"绝对路径=磁盘路由"语义：后者会把 deliver_file 落在可见域内的绝对
+// 产物（filepath.Join(visibleRoot, name)）误判为不可见，触发 annotateReachability 循环。
+// 语义：路径（相对或绝对）解析后落在 visibleRoot 内 → 可见；否则不可见。
 func (r *Registry) ReachabilityVerdict(path string) (visible bool, visibleRoot string) {
-	return r.isWorkspacePath(path), r.UserRoot()
+	visibleRoot = r.UserRoot()
+	if visibleRoot == "" {
+		return false, ""
+	}
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(visibleRoot, abs)
+	}
+	rel, err := filepath.Rel(visibleRoot, abs)
+	if err != nil {
+		return false, visibleRoot
+	}
+	return !strings.HasPrefix(filepath.ToSlash(rel), ".."), visibleRoot
 }
 
 // SetCodingSubdir redirects the file tools into a subfolder of the scope

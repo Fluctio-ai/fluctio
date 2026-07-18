@@ -357,7 +357,7 @@ func registerFile(r *Registry) {
 		"required": []string{"path"},
 	}, makeReadFile(r))
 
-	r.Register("write_file", "Write content to a file (creates directories as needed)", map[string]interface{}{
+	r.RegisterWithEffect("write_file", "Write content to a file (creates directories as needed)", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"path": map[string]interface{}{
@@ -370,7 +370,7 @@ func registerFile(r *Registry) {
 			},
 		},
 		"required": []string{"path", "content"},
-	}, makeWriteFile(r))
+	}, makeWriteFile(r), SideWritesFile)
 
 	r.Register("list_dir", "List files and directories in a path", map[string]interface{}{
 		"type": "object",
@@ -383,7 +383,7 @@ func registerFile(r *Registry) {
 		"required": []string{"path"},
 	}, makeListDir(r))
 
-	r.Register("edit_file", editDescription, editSchema, makeEditFile(r))
+	r.RegisterWithEffect("edit_file", editDescription, editSchema, makeEditFile(r), SideWritesFile)
 }
 
 func resolvePath(root, path string) string {
@@ -1031,7 +1031,7 @@ func registerSandboxedFile(r *Registry, ex sandbox.Executor) {
 		}
 	})
 
-	r.Register("write_file", "Write content to a file (creates directories as needed)", map[string]interface{}{
+	r.RegisterWithEffect("write_file", "Write content to a file (creates directories as needed)", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"path": map[string]interface{}{
@@ -1099,7 +1099,7 @@ func registerSandboxedFile(r *Registry, ex sandbox.Executor) {
 			out, err := ex.WriteFile(ctx, args.Path, args.Content)
 			return MetaSandboxPrefix + out, err
 		}
-	})
+	}, SideWritesFile)
 
 	r.Register("list_dir", "List files and directories in a path", map[string]interface{}{
 		"type": "object",
@@ -1182,7 +1182,7 @@ func registerSandboxedFile(r *Registry, ex sandbox.Executor) {
 		}
 	})
 
-	r.Register("edit_file", editDescription, editSchema, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+	r.RegisterWithEffect("edit_file", editDescription, editSchema, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
 		var args editFileArgs
 		if err := json.Unmarshal(rawArgs, &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
@@ -1293,5 +1293,5 @@ func registerSandboxedFile(r *Registry, ex sandbox.Executor) {
 		default: // RouteSandbox
 			return editSandboxRMW()
 		}
-	})
+	}, SideWritesFile)
 }

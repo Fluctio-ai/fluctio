@@ -650,7 +650,7 @@ func (r *Registry) deleteForPatchSandbox(ctx context.Context, ex sandbox.Executo
 // -----------------------------------------------------------------------------
 
 func registerApplyPatch(r *Registry) {
-	r.Register("apply_patch", applyPatchDescription, applyPatchSchema, func(ctx context.Context, raw json.RawMessage) (string, error) {
+	r.RegisterWithEffect("apply_patch", applyPatchDescription, applyPatchSchema, func(ctx context.Context, raw json.RawMessage) (string, error) {
 		var args applyPatchArgs
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return "", fmt.Errorf("apply_patch: parse args: %w", err)
@@ -660,11 +660,11 @@ func registerApplyPatch(r *Registry) {
 			func(ctx context.Context, p, c string) error { return r.writeForPatch(ctx, p, c) },
 			func(ctx context.Context, p string) error { return r.deleteForPatch(ctx, p) },
 		)
-	})
+	}, SideWritesFile)
 }
 
 func registerSandboxedApplyPatch(r *Registry, ex sandbox.Executor) {
-	r.Register("apply_patch", applyPatchDescription, applyPatchSchema, func(ctx context.Context, raw json.RawMessage) (string, error) {
+	r.RegisterWithEffect("apply_patch", applyPatchDescription, applyPatchSchema, func(ctx context.Context, raw json.RawMessage) (string, error) {
 		var args applyPatchArgs
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return "", fmt.Errorf("apply_patch: parse args: %w", err)
@@ -678,7 +678,7 @@ func registerSandboxedApplyPatch(r *Registry, ex sandbox.Executor) {
 			return "", err
 		}
 		return MetaSandboxPrefix + out, nil
-	})
+	}, SideWritesFile)
 }
 
 // runApplyPatch is the storage-agnostic engine. Phase 1: parse and compute
