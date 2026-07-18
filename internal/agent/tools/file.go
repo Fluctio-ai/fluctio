@@ -622,7 +622,14 @@ func makeWriteFile(r *Registry) ToolFunc {
 				}
 				return "", fmt.Errorf("workspace put: %w", err)
 			}
-			return fmt.Sprintf("Written %d bytes to %s", len(args.Content), args.Path), nil
+			// Report the on-disk path (LocalFS scope dir + path) so the
+			// model can tell the user where the file actually landed.
+			// Cloud stores have no host path; keep the relative key there.
+			writtenAt := args.Path
+			if dir := r.localFSScopeDir(); dir != "" {
+				writtenAt = filepath.Join(dir, r.wsPath(args.Path))
+			}
+			return fmt.Sprintf("Written %d bytes to %s", len(args.Content), writtenAt), nil
 		}
 
 		// Identity files (SOUL.md / IDENTITY.md / ...) need to land in the
@@ -733,7 +740,11 @@ func makeEditFile(r *Registry) ToolFunc {
 				}
 				return "", fmt.Errorf("workspace put: %w", err)
 			}
-			return fmt.Sprintf("Edited %s (%d replacement(s))", args.Path, count), nil
+			editedAt := args.Path
+			if dir := r.localFSScopeDir(); dir != "" {
+				editedAt = filepath.Join(dir, r.wsPath(args.Path))
+			}
+			return fmt.Sprintf("Edited %s (%d replacement(s))", editedAt, count), nil
 		}
 
 		if r.systemFileStore != nil && r.agentID != "" && isSingleSegmentSystemFile(args.Path) {

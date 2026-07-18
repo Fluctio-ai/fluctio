@@ -629,13 +629,20 @@ func (r *Registry) scopeSessionID() string {
 func (r *Registry) hostWorkspaceDir() string {
 	// bindSession's SetUserRoot already points userRoot at the session/
 	// project scope dir; host exec cwds there so generated files land in
-	// the same place write_file does. Preferred over the LocalFS path
-	// below, which would otherwise re-scope (sessions/<sid>/sessions/<sid>/).
+	// the same place write_file does.
 	if r.userRoot != "" {
 		return r.userRoot
 	}
 	// Fallback for the pre-scope path (no session bound yet, or legacy
 	// callers): derive from a LocalFS-backed store.
+	return r.localFSScopeDir()
+}
+
+// localFSScopeDir returns the on-disk scope dir when the workspace store
+// backs onto the local filesystem, else "". Used to report accurate host
+// paths back to the model (write_file etc.) — cloud stores (S3/R2) have
+// no host path, so callers fall back to the relative key.
+func (r *Registry) localFSScopeDir() string {
 	if r.workspaceStore == nil || r.agentID == "" {
 		return ""
 	}
