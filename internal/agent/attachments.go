@@ -103,10 +103,20 @@ func (a *Agent) WriteSessionAttachments(ctx context.Context, sessionID, projectI
 		name := buildAttachmentName(att.Name, token, i, ext, used)
 		used[name] = struct{}{}
 
-		// 1. Host workspace dir (covers no-sandbox + docker via bind mount)
-		if a.workspacePath != "" {
-			full := filepath.Join(a.workspacePath, name)
-			if mkErr := os.MkdirAll(a.workspacePath, 0o755); mkErr == nil {
+		// 1. Host workspace dir — the session/project scope (same place
+		// write_file lands via SetUserRoot), not the shared agent root.
+		// Covers no-sandbox + docker (bind mount). Falls back to the
+		// agent root only before any session is bound.
+		hostDir := ""
+		if a.registry != nil {
+			hostDir = a.registry.UserRoot()
+		}
+		if hostDir == "" {
+			hostDir = a.workspacePath
+		}
+		if hostDir != "" {
+			full := filepath.Join(hostDir, name)
+			if mkErr := os.MkdirAll(hostDir, 0o755); mkErr == nil {
 				if wErr := os.WriteFile(full, data, 0o644); wErr != nil {
 					slog.Warn("attachment host write failed", "agent", a.name, "session", sessionID, "path", full, "error", wErr)
 				}

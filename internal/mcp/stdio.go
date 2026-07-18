@@ -16,6 +16,7 @@ type StdioClient struct {
 	command string
 	args    []string
 	env     map[string]string
+	dir     string // working dir for the subprocess (per-session scope)
 	cmd     *exec.Cmd
 	stdin   io.WriteCloser
 	scanner *bufio.Scanner
@@ -23,12 +24,16 @@ type StdioClient struct {
 	nextID  int
 }
 
-// NewStdioClient creates a new stdio MCP client.
-func NewStdioClient(command string, args []string, env map[string]string) *StdioClient {
+// NewStdioClient creates a new stdio MCP client. dir is the subprocess's
+// working directory — set to the agent's session/project scope dir so
+// MCP tools (Playwright screenshots, file-backed servers) land in the
+// workspace, not the gateway's launch dir. Empty inherits the parent's cwd.
+func NewStdioClient(command string, args []string, env map[string]string, dir string) *StdioClient {
 	return &StdioClient{
 		command: command,
 		args:    args,
 		env:     env,
+		dir:     dir,
 		nextID:  1,
 	}
 }
@@ -36,6 +41,12 @@ func NewStdioClient(command string, args []string, env map[string]string) *Stdio
 // Connect starts the subprocess and initializes the MCP session.
 func (c *StdioClient) Connect() error {
 	c.cmd = exec.Command(c.command, c.args...)
+	// cwd into the session/project scope dir so MCP tools write into the
+	// agent's workspace (sessions/<sid>/ or projects/<pid>/), not the
+	// gateway's launch directory.
+	if c.dir != "" {
+		c.cmd.Dir = c.dir
+	}
 
 	// Set environment variables
 	c.cmd.Env = os.Environ()

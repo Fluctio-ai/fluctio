@@ -43,6 +43,11 @@ type Agent struct {
 	memory     *Memory
 	ctxBuilder *ContextBuilder
 	mcpMgr     *mcp.Manager
+	// mcpServers holds the agent's MCP server config; the MCP manager is
+	// built/rebuilt per-session in bindSession (cwd = scopeDir) because a
+	// stdio subprocess's working dir can't change after start.
+	mcpServers    map[string]config.MCPServerConfig
+	mcpSessionDir string
 	hooks      *HookRegistry
 	model      string
 	// summaryModel overrides model for conversation-summary extraction;
@@ -275,6 +280,54 @@ func (a *Agent) SetSandboxPool(p sandbox.ExecutorPool) {
 func (a *Agent) bindSession(ctx context.Context, channel, accountID, sessionID, projectID string) {
 	a.registry.SetSessionID(sessionID)
 	a.registry.SetProjectID(projectID)
+	// Scope the on-disk user root to this session/project so host-mode
+	// file tools (write_file/read_file/edit_file/list_dir via rootForPath)
+	// and host exec land in sessions/<sid>/ (per-chat isolation) or
+	// projects/<pid>/ (shared across the project's chats) — matching
+	// runtime.scopeFor and docker's per-session /workspace/<sid>. Without
+	// it host files pile up at the agent root, shared across every chat
+	// (the host-vs-docker scope mismatch that made /yes's scope meaningless).
+	scopeDir := ""
+	if a.workspacePath != "" && (sessionID != "" || projectID != "") {
+		seg := "sessions/" + sessionID
+		if projectID != "" {
+			seg = "projects/" + projectID
+		}
+		scopeDir = filepath.Join(a.workspacePath, seg)
+		if err := os.MkdirAll(scopeDir, 0o755); err != nil {
+			slog.Warn("bindSession: mkdir scope dir failed",
+				"agent", a.name, "dir", scopeDir, "error", err)
+		} else {
+			a.registry.SetUserRoot(scopeDir)
+		}
+	}
+
+	// MCP per-session: a stdio subprocess's cwd is fixed at start, so
+	// when the chat's scope changes we rebuild the manager (Close old,
+	// start new with cwd = scopeDir) so MCP tools (Playwright screenshots,
+	// file-backed MCP servers) land in this session's dir instead of the
+	// gateway's launch dir. Re-registering overwrites the old closures;
+	// the loop serializes per-agent turns so the swap can't race an
+	// in-flight MCP call.
+	if len(a.mcpServers) > 0 && scopeDir != "" && a.mcpSessionDir != scopeDir {
+		if a.mcpMgr != nil {
+			a.mcpMgr.Close()
+		}
+		a.mcpMgr = mcp.NewManager(a.mcpServers, scopeDir)
+		a.mcpSessionDir = scopeDir
+		for _, td := range a.mcpMgr.ToolDefs() {
+			toolName := td.Name
+			a.registry.Register(toolName, td.Description, td.InputSchema,
+				func(ctx context.Context, args json.RawMessage) (string, error) {
+					return a.mcpMgr.CallTool(ctx, toolName, args)
+				},
+			)
+		}
+		if a.mcpMgr.HasTools() {
+			slog.Info("registered MCP tools (scoped)",
+				"agent", a.name, "scope", scopeDir)
+		}
+	}
 	// Coding agents (those with a project runtime wired) treat a project
 	// as ONE shared app tree: file tools address the project root so the
 	// agent's edits land where the dev server serves. Only when actually
@@ -517,24 +570,13 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	// pre-Agent block. Self-disables when runner is nil.
 	tools.RegisterDelegateTask(registry, ag)
 
-	// Connect MCP servers and register their tools
-	if len(rc.MCPServers) > 0 {
-		mcpMgr := mcp.NewManager(rc.MCPServers)
-		ag.mcpMgr = mcpMgr
-
-		for _, td := range mcpMgr.ToolDefs() {
-			toolName := td.Name
-			ag.registry.Register(toolName, td.Description, td.InputSchema,
-				func(ctx context.Context, args json.RawMessage) (string, error) {
-					return mcpMgr.CallTool(ctx, toolName, args)
-				},
-			)
-		}
-
-		if mcpMgr.HasTools() {
-			slog.Info("registered MCP tools", "agent", rc.ID)
-		}
-	}
+	// MCP server config is stashed for bindSession, which builds (and
+	// rebuilds) the MCP manager per-session with cwd = scopeDir. A stdio
+	// subprocess's working dir can't change after start, so per-session
+	// scope — Playwright screenshots landing in sessions/<sid>/ instead
+	// of the gateway's launch dir — requires restarting the MCP server
+	// whenever the chat's scope changes.
+	ag.mcpServers = rc.MCPServers
 
 	return ag
 }

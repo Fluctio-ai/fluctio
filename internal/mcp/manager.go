@@ -23,8 +23,10 @@ type toolRoute struct {
 }
 
 // NewManager creates an MCP manager and connects to all configured servers.
-// Servers that fail to connect are logged as warnings but don't block startup.
-func NewManager(servers map[string]config.MCPServerConfig) *Manager {
+// dir is passed as the working directory for stdio subprocesses so MCP
+// tools land in the agent's session/project scope. Servers that fail to
+// connect are logged as warnings but don't block startup.
+func NewManager(servers map[string]config.MCPServerConfig, dir string) *Manager {
 	m := &Manager{
 		servers: make(map[string]Client),
 		toolMap: make(map[string]toolRoute),
@@ -36,7 +38,7 @@ func NewManager(servers map[string]config.MCPServerConfig) *Manager {
 		case "http":
 			client = NewHTTPClient(cfg.URL, cfg.Headers)
 		case "stdio":
-			client = NewStdioClient(cfg.Command, cfg.Args, cfg.Env)
+			client = NewStdioClient(cfg.Command, cfg.Args, cfg.Env, dir)
 		default:
 			slog.Warn("unknown MCP server type, skipping", "server", name, "type", cfg.Type)
 			continue

@@ -358,6 +358,18 @@ func (r *Registry) SetWorkspaceStore(ws workspace.Store, agentID string) {
 	r.agentID = agentID
 }
 
+// SetUserRoot overrides the on-disk root for user-facing artifacts
+// (write_file / read_file / edit_file / list_dir via rootForPath, and
+// host-mode exec cwd). bindSession sets this per-turn to the session/
+// project scope dir (workspaces/<agent>/sessions/<sid>/ for per-chat
+// isolation, or .../projects/<pid>/ to share across a project's chats) —
+// matching runtime.scopeFor and docker's per-session /workspace/<sid>.
+// Without it, host-mode files pile up at the agent root shared across
+// every chat (the host-vs-docker scope mismatch).
+func (r *Registry) SetUserRoot(dir string) {
+	r.userRoot = dir
+}
+
 // SetSystemFileStore installs a durable store for identity files so the
 // agent's write_file / read_file tools share a single source of truth
 // with the admin UI (Customize page). Also records agentID so the store
@@ -615,6 +627,15 @@ func (r *Registry) scopeSessionID() string {
 // Returns "" for cloud stores (S3/R2 have no host path) or when no store
 // is wired; callers leave cmd.Dir unset and inherit the gateway's cwd.
 func (r *Registry) hostWorkspaceDir() string {
+	// bindSession's SetUserRoot already points userRoot at the session/
+	// project scope dir; host exec cwds there so generated files land in
+	// the same place write_file does. Preferred over the LocalFS path
+	// below, which would otherwise re-scope (sessions/<sid>/sessions/<sid>/).
+	if r.userRoot != "" {
+		return r.userRoot
+	}
+	// Fallback for the pre-scope path (no session bound yet, or legacy
+	// callers): derive from a LocalFS-backed store.
 	if r.workspaceStore == nil || r.agentID == "" {
 		return ""
 	}
@@ -627,6 +648,13 @@ func (r *Registry) hostWorkspaceDir() string {
 		return ""
 	}
 	return dir
+}
+
+// UserRoot returns the on-disk root for user-facing artifacts in the
+// current session/project scope (set per-turn by bindSession via
+// SetUserRoot). Empty before any session is bound.
+func (r *Registry) UserRoot() string {
+	return r.userRoot
 }
 
 // SetCodingSubdir redirects the file tools into a subfolder of the scope
