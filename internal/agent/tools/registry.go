@@ -674,6 +674,12 @@ func (r *Registry) UserRoot() string {
 	return r.userRoot
 }
 
+// ReachabilityVerdict 判定一个产物路径是否对前端用户可见，返回是否可见及可见域根。
+// 供 agent loop（agent 包）调用——isWorkspacePath 未导出，故提供此公开封装。
+func (r *Registry) ReachabilityVerdict(path string) (visible bool, visibleRoot string) {
+	return r.isWorkspacePath(path), r.UserRoot()
+}
+
 // SetCodingSubdir redirects the file tools into a subfolder of the scope
 // workspace — the folder a project runtime scaffolds its app into, so the
 // template doesn't litter the workspace root AND the agent's edits land

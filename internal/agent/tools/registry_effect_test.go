@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 )
 
@@ -22,5 +23,27 @@ func TestSideEffectRegistration(t *testing.T) {
 	}
 	if got := r.SideEffectOf("nonexistent"); got != SidePure {
 		t.Fatalf("nonexistent effect = %v, want SidePure", got)
+	}
+}
+
+func TestReachabilityVerdict(t *testing.T) {
+	root := t.TempDir()
+	r := NewRegistry(root, root)
+	r.SetUserRoot(root)
+
+	// 相对路径（workspace 内）→ 可见
+	vis, vr := r.ReachabilityVerdict("notes/x.txt")
+	if !vis {
+		t.Fatalf("relative path should be visible")
+	}
+	if vr != root {
+		t.Fatalf("visibleRoot = %q, want %q", vr, root)
+	}
+
+	// 绝对路径 → 不可见（跨平台：t.TempDir() 在 Windows/Linux 均返回绝对路径）
+	absPath := filepath.Join(t.TempDir(), "shot.png")
+	vis, _ = r.ReachabilityVerdict(absPath)
+	if vis {
+		t.Fatalf("absolute path %s should not be visible", absPath)
 	}
 }
