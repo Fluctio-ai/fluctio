@@ -153,6 +153,16 @@ const (
 	SourcePlugin                    // plugin-provided tool
 )
 
+// SideEffect 声明工具的副作用类型，供 agent loop 判定是否需要可达性裁决。
+type SideEffect int
+
+const (
+	SidePure SideEffect = iota // 默认：无副作用或纯查询（read_file/list_dir）
+	SideWritesFile             // 产生落盘文件（write_file/deliver_file/apply_patch）
+	SideEmitsInline            // 产生内联产物（image_gen 的 base64/url）
+	SideExternal               // 外部副作用（exec/MCP 截图等）
+)
+
 // Registry holds all registered tools.
 type Registry struct {
 	tools       map[string]registeredTool
@@ -730,6 +740,7 @@ type registeredTool struct {
 	def    provider.Tool
 	fn     ToolFunc
 	source ToolSource
+	effect SideEffect
 }
 
 // NewRegistry creates a new tool registry with built-in tools.
@@ -779,6 +790,23 @@ func (r *Registry) RegisterFrom(name, description string, parameters interface{}
 		fn:     fn,
 		source: source,
 	}
+}
+
+// RegisterWithEffect 注册工具并声明其副作用类型。
+func (r *Registry) RegisterWithEffect(name, description string, parameters interface{}, fn ToolFunc, effect SideEffect) {
+	r.RegisterFrom(name, description, parameters, fn, SourceBuiltin)
+	if t, ok := r.tools[name]; ok {
+		t.effect = effect
+		r.tools[name] = t
+	}
+}
+
+// SideEffectOf 返回工具的副作用声明；未注册工具返回 SidePure。
+func (r *Registry) SideEffectOf(name string) SideEffect {
+	if t, ok := r.tools[name]; ok {
+		return t.effect
+	}
+	return SidePure
 }
 
 // RegisterSerial registers a tool that must never have two invocations
