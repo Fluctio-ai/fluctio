@@ -64,7 +64,15 @@ func makeDeliverFile(r *Registry) ToolFunc {
 		// Verify dst stays inside visibleRoot: a relative dest like "../../etc/passwd"
 		// is rejected by IsAbs but resolves outside visibleRoot after Join.
 		rel, err := filepath.Rel(visibleRoot, dst)
-		if err != nil || strings.HasPrefix(filepath.ToSlash(rel), "..") {
+		// Reject real parent traversal only (".." exactly or "../...").
+		// A legitimate filename that happens to start with ".." (e.g. "..foo")
+		// must NOT be flagged — filepath.Rel returns "..foo" for those, which
+		// a naive HasPrefix(..) check would wrongly reject.
+		if err != nil {
+			return "", fmt.Errorf("deliver_file: dest must stay within the visible workspace")
+		}
+		r := filepath.ToSlash(rel)
+		if r == ".." || strings.HasPrefix(r, "../") {
 			return "", fmt.Errorf("deliver_file: dest must stay within the visible workspace")
 		}
 

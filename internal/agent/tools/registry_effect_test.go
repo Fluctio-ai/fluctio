@@ -61,6 +61,28 @@ func TestReachabilityVerdict(t *testing.T) {
 	if vis {
 		t.Fatalf("absolute path outside visibleRoot (%s) should not be visible", outsideAbs)
 	}
+
+	// Case 4: "..foo" — a legitimate filename that happens to start with "..".
+	// Must NOT be flagged as parent traversal.
+	vis, vr = r.ReachabilityVerdict("..foo")
+	if !vis {
+		t.Fatalf("\"..foo\" should be visible (legal filename starting with '..')")
+	}
+	if vr != root {
+		t.Fatalf("visibleRoot for '..foo' = %q, want %q", vr, root)
+	}
+
+	// Case 5: real parent traversal "../etc/passwd" must remain invisible.
+	vis, _ = r.ReachabilityVerdict("../etc/passwd")
+	if vis {
+		t.Fatalf("\"../etc/passwd\" should not be visible (parent traversal)")
+	}
+
+	// Case 6: ".." exactly must remain invisible (resolves to parent dir).
+	vis, _ = r.ReachabilityVerdict("..")
+	if vis {
+		t.Fatalf("\"..\" should not be visible (parent traversal)")
+	}
 }
 
 func TestRegisterFromWithEffect(t *testing.T) {

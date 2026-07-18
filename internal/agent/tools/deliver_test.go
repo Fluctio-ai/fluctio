@@ -130,3 +130,66 @@ func TestDeliverFileAbsoluteDestRejection(t *testing.T) {
 		t.Fatalf("expected error mentioning visible workspace, got: %v", err)
 	}
 }
+
+// TestDeliverFileDotDotFilename verifies that a legitimate filename starting
+// with ".." (e.g. "..foo") is accepted, while real parent-traversal paths
+// ("..", "../etc/passwd") are still rejected. Regression guard for the
+// HasPrefix(ToSlash(rel), "..") false-positive that flagged "..foo" as escape.
+func TestDeliverFileDotDotFilename(t *testing.T) {
+	root := t.TempDir()
+	r := NewRegistry(root, root)
+	r.SetUserRoot(root)
+	RegisterDeliverTools(r)
+
+	srcDir := t.TempDir()
+	src := filepath.Join(srcDir, "payload.bin")
+	if err := os.WriteFile(src, []byte("DOTDOTFOO"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Case 1: "..foo" is a legal filename that happens to start with "..";
+	// it must be delivered into the visible root, NOT rejected as traversal.
+	got, err := r.Execute(context.Background(), "deliver_file",
+		`{"src":"`+filepath.ToSlash(src)+`","dest":"..foo"}`)
+	if err != nil {
+		t.Fatalf("\"..foo\" should be accepted as a filename, got error: %v", err)
+	}
+	deliveredPath := filepath.Join(root, "..foo")
+	if _, statErr := os.Stat(deliveredPath); statErr != nil {
+		t.Fatalf("\"..foo\" was not delivered under root: %v (output=%s)", statErr, got)
+	}
+	// Sanity: the delivered bytes match.
+	b, err := os.ReadFile(deliveredPath)
+	if err != nil {
+		t.Fatalf("read delivered ..foo: %v", err)
+	}
+	if string(b) != "DOTDOTFOO" {
+		t.Fatalf("..foo content = %q, want %q", string(b), "DOTDOTFOO")
+	}
+
+	// Case 2: real parent traversal "../<sibling>" must still be rejected.
+	escapeName := "evil-" + strings.ReplaceAll(t.Name(), "/", "-") + ".txt"
+	escapeTarget := filepath.Join(filepath.Dir(root), escapeName)
+	_ = os.Remove(escapeTarget)
+	_, err = r.Execute(context.Background(), "deliver_file",
+		`{"src":"`+filepath.ToSlash(src)+`","dest":"../`+escapeName+`"}`)
+	if err == nil {
+		t.Fatalf("../escape dest should be rejected")
+	}
+	if !strings.Contains(err.Error(), "within the visible workspace") {
+		t.Fatalf("expected visible-workspace error for ../escape, got: %v", err)
+	}
+	if _, statErr := os.Stat(escapeTarget); statErr == nil {
+		t.Fatalf("../escape succeeded: file created at %s", escapeTarget)
+	}
+
+	// Case 3: ".." exactly must also be rejected (resolves to parent dir).
+	_, err = r.Execute(context.Background(), "deliver_file",
+		`{"src":"`+filepath.ToSlash(src)+`","dest":".."}`)
+	if err == nil {
+		t.Fatalf("\"..\" dest should be rejected as parent traversal")
+	}
+	if !strings.Contains(err.Error(), "within the visible workspace") {
+		t.Fatalf("expected visible-workspace error for \"..\", got: %v", err)
+	}
+}

@@ -666,7 +666,12 @@ func (r *Registry) ReachabilityVerdict(path string) (visible bool, visibleRoot s
 	if err != nil {
 		return false, visibleRoot
 	}
-	return !strings.HasPrefix(filepath.ToSlash(rel), ".."), visibleRoot
+	// Reject real parent traversal only (".." exactly or "../..."); a
+	// legitimate filename starting with ".." (e.g. "..foo") is NOT an escape.
+	// Keep this predicate identical to deliver_file's containment check so
+	// annotateReachability and deliver_file agree on visibility.
+	relSlash := filepath.ToSlash(rel)
+	return relSlash != ".." && !strings.HasPrefix(relSlash, "../"), visibleRoot
 }
 
 // SetCodingSubdir redirects the file tools into a subfolder of the scope
