@@ -92,6 +92,11 @@ func (s *Server) handleInstallSkill(w http.ResponseWriter, r *http.Request) {
 	slog.Info("skill installed",
 		"source", result.Source, "name", result.Name,
 		"version", result.Version, "path", result.InstalledAt, "agent", req.Agent)
+	warnings := lintSkillScopeHints(result.InstalledAt)
+	if len(warnings) > 0 {
+		slog.Warn("skill has absolute-path hints; scripts may bypass session scope",
+			"skill", result.Name, "hints", warnings)
+	}
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"ok":          true,
 		"source":      result.Source,
@@ -99,7 +104,30 @@ func (s *Server) handleInstallSkill(w http.ResponseWriter, r *http.Request) {
 		"version":     result.Version,
 		"installedAt": result.InstalledAt,
 		"files":       result.FilesWritten,
+		"warnings":    warnings,
 	})
+}
+
+// lintSkillScopeHints scans the installed skill's SKILL.md for hardcoded
+// absolute paths (/tmp, ~/, /home, /Users, C:\) that would bypass the
+// session scope when the skill's scripts run under host exec (cwd is
+// sessions/<sid>/). Best-effort: the skill is still installed; warnings
+// only flag that scripts may need relative-path fixes to respect per-
+// session isolation and the /yes approval boundary. Returns nil when
+// clean or when SKILL.md can't be read.
+func lintSkillScopeHints(skillDir string) []string {
+	data, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
+	if err != nil {
+		return nil
+	}
+	body := string(data)
+	var warns []string
+	for _, pat := range []string{"/tmp/", "~/", "/home/", "/Users/", `C:\`} {
+		if strings.Contains(body, pat) {
+			warns = append(warns, pat)
+		}
+	}
+	return warns
 }
 
 // authorizeSkillInstallTarget enforces the mutation and target-scope rules
