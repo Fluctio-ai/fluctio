@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -2667,6 +2668,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			totalToolCalls++
 			tc := resp.ToolCalls[idx]
 			resultContent, meta := extractToolMeta(r.result)
+			resultContent = annotateReachability(r.toolName, resultContent, a.registry)
 
 			// Hook: AfterToolCall
 			a.hooks.Run(ctx, &HookContext{
@@ -3402,6 +3404,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		for idx, r := range results {
 			tc := resp.ToolCalls[idx]
 			resultContent, meta := extractToolMeta(r.result)
+			resultContent = annotateReachability(r.toolName, resultContent, a.registry)
 			a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: AfterToolCall, ToolName: r.toolName, ToolResult: resultContent, Error: r.err, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, GoalSessionKey: a.registry.GoalSessionKey(), IsPlanMode: isPlanMode(msg.Params), Source: msg.Source})
 
 			if r.err != nil {
@@ -3526,6 +3529,35 @@ func extractToolMeta(result string) (string, map[string]any) {
 		return strings.TrimPrefix(result, tools.MetaSandboxPrefix), map[string]any{"sandbox": true}
 	}
 	return result, nil
+}
+
+// writtenPathRE matches the path token in write_file / deliver_file result
+// strings ("Written N bytes to <path>" / "Delivered N bytes to <path>").
+// The leading verb alternation keeps it permissive across phrasings while
+// the capture group is the raw path token.
+var writtenPathRE = regexp.MustCompile(`(?:to|→|->)\s+(\S+)`)
+
+// annotateReachability 对落盘型工具产物判定可见性，不可见则追加裁决行。
+// 纯函数，便于测试。只在 SideWritesFile 工具上生效；其他工具原样返回。
+func annotateReachability(toolName, resultContent string, reg *tools.Registry) string {
+	if reg.SideEffectOf(toolName) != tools.SideWritesFile {
+		return resultContent
+	}
+	visibleRoot := reg.UserRoot()
+	var notes []string
+	for _, m := range writtenPathRE.FindAllStringSubmatch(resultContent, -1) {
+		p := strings.TrimRight(m[1], ".,;:\"'")
+		visible, _ := reg.ReachabilityVerdict(p)
+		if !visible {
+			notes = append(notes, fmt.Sprintf(
+				"[产物 %s 不在用户可见域 %s；可调 deliver_file(src=%q) 投递到可见域供用户查看]",
+				p, visibleRoot, p))
+		}
+	}
+	if len(notes) == 0 {
+		return resultContent
+	}
+	return resultContent + "\n" + strings.Join(notes, "\n")
 }
 
 // capReachedNudge is the system message we append before the forced
