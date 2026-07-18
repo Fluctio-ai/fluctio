@@ -316,6 +316,7 @@ func modRuntimeContext(p *promptCtx) string {
 - MCP 工具服务器：%s
   注意：部分 MCP 工具（如截图）可能把产物写到可见域之外（例如自己的 cwd 子目录）。若你产出文件后用户看不到，该文件很可能落在了可见域外。
 - 投递手段：调用 deliver_file(src=<产物绝对路径>) 可把任意路径文件复制进可见域供用户查看。
+- 技能（skill）默认位置：新建或修改技能一律用相对前缀 write_file("skills/<name>/SKILL.md", ...) ——runtime 会自动路由到**该 agent 的专属技能目录**，下一条消息即可 load_skill 调用。技能只有两层：基础层（预装 + web 管理端安装，对 chat 只读）和 agent 专属层（chat 中写的技能都落这里），都由 runtime 透明合并加载，你只需认准 skills/<name>/ 这一个相对前缀，**不要**用 list_dir / read_file 去 ~/.fluctio、/workspace/skills 之类的绝对路径里"找"skills 目录（浪费轮次，且物理路径随部署而变）；沙箱内的 /skills/ 是只读挂载，更不要往那里写。
 
 原则：凡是你产出文件后，先确认文件在可见域内；不在就主动 deliver_file，不要等用户催。`,
 		runtime.GOOS, runtime.GOARCH, bash, mcp)

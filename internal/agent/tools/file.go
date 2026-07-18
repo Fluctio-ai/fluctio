@@ -246,23 +246,16 @@ func (r *Registry) isSkillPath(path string) bool {
 }
 
 // skillRoot returns the host parent of the `skills/` subdir that
-// chat-time skill writes should land in. Per-user when configured
-// (the chatter's personal bucket), agent home otherwise.
+// chat-time skill writes should land in — always the agent home
+// (skills/ writes route to the agent layer: agents/<aid>/agent/skills/).
 func (r *Registry) skillRoot() string {
-	if r.userSkillsRoot != "" {
-		return r.userSkillsRoot
-	}
 	return r.systemRoot
 }
 
 // skillStoreOwner returns the workspace.Store pseudo-owner key the
-// chat-created skill should mirror to. Per-user when userSkillsRoot
-// is set (so the skill follows the chatter across agents); agent ID
-// otherwise (legacy / single-user mode).
+// chat-created skill should mirror to — always the agent ID (skills
+// live in the agent layer now).
 func (r *Registry) skillStoreOwner() string {
-	if r.userSkillsRoot != "" && r.userID != "" {
-		return skills.UserSkillOwner(r.userID)
-	}
 	return r.agentID
 }
 
@@ -311,14 +304,10 @@ func (r *Registry) writeSkillToHost(ctx context.Context, path, content string) (
 }
 
 // rootForPath returns the root a relative path should resolve against:
-//   - systemRoot (agent home) for identity files (SOUL.md, IDENTITY.md, …);
-//   - userSkillsRoot (~/.fluctio/users/<uid>/skills/) for `skills/...`
-//     writes when the chatter's user-skills dir is wired (default in
-//     multi-user installs). Routes here so chat-created skills accumulate
-//     in the chatter's personal bucket — shared across every agent they
-//     chat with, isolated from the agent owner's official skills and from
-//     other users on the same shared agent. Falls back to systemRoot when
-//     userSkillsRoot is empty (legacy / single-user installs);
+//   - systemRoot (agent home) for identity files (SOUL.md, IDENTITY.md, …)
+//     AND for `skills/...` writes — chat-created skills land in the agent
+//     layer (agents/<aid>/agent/skills/), so the leading `skills/` prefix
+//     resolves against agent home, where SkillsLoader's scan picks it up;
 //   - userRoot (agent workspace) for everything else, which is user-facing
 //     artifact territory.
 //
@@ -329,12 +318,9 @@ func (r *Registry) rootForPath(path string) string {
 	}
 	clean := filepath.Clean(path)
 	if clean == "skills" || strings.HasPrefix(clean, "skills"+string(filepath.Separator)) {
-		// Per-user bucket when configured, otherwise the agent home
-		// (legacy behavior). The leading `skills/` prefix is preserved
-		// in either case so SkillsLoader's scan picks it up.
-		if r.userSkillsRoot != "" {
-			return r.userSkillsRoot
-		}
+		// `skills/...` writes land in the agent layer (agent home +
+		// "skills/"). The leading `skills/` prefix is preserved so
+		// SkillsLoader's scan picks it up next turn.
 		return r.systemRoot
 	}
 	// Single-segment system files (SOUL.md, IDENTITY.md, ...) also route

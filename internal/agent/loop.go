@@ -429,7 +429,7 @@ func NewAgentWithFullCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bu
 		if model == "" {
 			model = rc.Model
 		}
-		learnerLoader := NewSkillsLoaderWithGlobal(homeDir, rc.Home, "", rc.Skills, fullCfg.Skills)
+		learnerLoader := NewSkillsLoaderWithGlobal(homeDir, rc.Home, rc.Skills, fullCfg.Skills)
 		learnerLoader.agentID = rc.ID
 		ag.skillsLearner = NewSkillsLearner(rc.Home, prov, model, learnerLoader.AllSkillDirs()...)
 		if fullCfg.SkillsLearner.MinToolCalls > 0 {
@@ -472,7 +472,7 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	// workspaceStore. The manager will call ReloadWorkspaceFiles after
 	// wiring to refresh the summary with OSS-hosted skills, and runOnce
 	// re-hydrates on every turn to pick up later uploads.
-	loader := NewSkillsLoaderWithGlobal(homeDir, rc.Home, "", rc.Skills, globalSkillsCfg)
+	loader := NewSkillsLoaderWithGlobal(homeDir, rc.Home, rc.Skills, globalSkillsCfg)
 	loader.agentID = rc.ID
 	skills := loader.LoadSkills()
 	skillsSummary := loader.BuildSkillsSummary(skills)
@@ -3914,9 +3914,8 @@ func (a *Agent) refreshSkillsFromStore(userID string) {
 			"agent", a.name, "agentID", a.agentID, "user", userID)
 		return
 	}
-	loader := NewSkillsLoaderWithGlobal(a.homeDir, a.homePath, "", a.skillsCfg, a.globalSkillsCfg).
-		WithObjectStore(a.workspaceStore, a.agentID).
-		WithUserID(userID)
+	loader := NewSkillsLoaderWithGlobal(a.homeDir, a.homePath, a.skillsCfg, a.globalSkillsCfg).
+		WithObjectStore(a.workspaceStore, a.agentID)
 	skills := loader.LoadSkills()
 	summary := loader.BuildSkillsSummary(skills)
 	a.ctxBuilder.SetSkillsSummary(summary)
@@ -3947,8 +3946,7 @@ func (a *Agent) ReloadWorkspaceFiles() {
 	// LoadSkills first hydrates global + per-agent + per-user skill dirs
 	// from object storage so skills uploaded on another replica (or
 	// post-boot on this one) become visible.
-	loader := NewSkillsLoaderWithGlobal(a.homeDir, a.homePath, "", a.skillsCfg, a.globalSkillsCfg).
-		WithUserID(a.ownerUserID)
+	loader := NewSkillsLoaderWithGlobal(a.homeDir, a.homePath, a.skillsCfg, a.globalSkillsCfg)
 	if a.workspaceStore != nil {
 		loader.WithObjectStore(a.workspaceStore, a.agentID)
 	}

@@ -106,7 +106,6 @@ type SkillRequires struct {
 type SkillsLoader struct {
 	homeDir   string
 	agentDir  string
-	teamDir   string
 	skillsCfg config.SkillsConfig
 	globalCfg config.SkillsCfg
 	// workspaceStore is optional: when set, LoadSkills hydrates the global
@@ -116,27 +115,20 @@ type SkillsLoader struct {
 	// completely invisible on replicas that didn't handle the upload.
 	workspaceStore workspace.Store
 	agentID        string
-	// userID is the chatter. When set, LoadSkills also scans the
-	// per-user skills dir (~/.fluctio/users/<uid>/skills/) so skills
-	// the user creates while chatting any agent are reusable on every
-	// other agent they chat with. Empty disables this layer (legacy /
-	// single-user installs that pre-date per-user skills).
-	userID string
 }
 
 // NewSkillsLoader creates a new skills loader.
-func NewSkillsLoader(homeDir, agentDir, teamDir string, skillsCfg config.SkillsConfig) *SkillsLoader {
+func NewSkillsLoader(homeDir, agentDir string, skillsCfg config.SkillsConfig) *SkillsLoader {
 	return &SkillsLoader{
 		homeDir:   homeDir,
 		agentDir:  agentDir,
-		teamDir:   teamDir,
 		skillsCfg: skillsCfg,
 	}
 }
 
 // NewSkillsLoaderWithGlobal creates a skills loader with global SkillsCfg for env injection and entries.
-func NewSkillsLoaderWithGlobal(homeDir, agentDir, teamDir string, skillsCfg config.SkillsConfig, globalCfg config.SkillsCfg) *SkillsLoader {
-	sl := NewSkillsLoader(homeDir, agentDir, teamDir, skillsCfg)
+func NewSkillsLoaderWithGlobal(homeDir, agentDir string, skillsCfg config.SkillsConfig, globalCfg config.SkillsCfg) *SkillsLoader {
+	sl := NewSkillsLoader(homeDir, agentDir, skillsCfg)
 	sl.globalCfg = globalCfg
 	return sl
 }
@@ -150,17 +142,8 @@ func (sl *SkillsLoader) WithObjectStore(ws workspace.Store, agentID string) *Ski
 	return sl
 }
 
-// WithUserID enables the per-user skill layer (~/.fluctio/users/<uid>/skills).
-// When set together with WithObjectStore, hydrate also pulls the user's
-// pseudo-owner namespace so skills created on another pod are mirrored to
-// this pod's disk. Empty userID disables the layer.
-func (sl *SkillsLoader) WithUserID(userID string) *SkillsLoader {
-	sl.userID = userID
-	return sl
-}
-
 // LoadSkills discovers skills from all layers and returns them merged.
-// Precedence: agent workspace > user installed > managed > extra dirs.
+// Precedence: agent workspace > managed (host-shared) > extra dirs.
 func (sl *SkillsLoader) LoadSkills() []Skill {
 	// Mirror object-store skills to the local filesystem so a skill
 	// uploaded to OSS (or installed on another replica) is visible here
@@ -179,23 +162,6 @@ func (sl *SkillsLoader) LoadSkills() []Skill {
 			agentSkills := filepath.Join(sl.agentDir, "skills")
 			if err := skills.HydrateSkillsDown(ctx, sl.workspaceStore, sl.agentID, agentSkills); err != nil {
 				slog.Warn("agent skill hydrate failed", "error", err)
-			}
-		}
-		// Per-user skill bucket: shared across every agent the chatter
-		// uses, isolated from other chatters. Lets utility skills the
-		// user sinks on agent A be available on agent B without
-		// polluting the agent owner's official skill set.
-		if userDir := sl.userSkillsDir(); userDir != "" {
-			owner := skills.UserSkillOwner(sl.userID)
-			if err := skills.HydrateSkillsDown(ctx, sl.workspaceStore, owner, userDir); err != nil {
-				slog.Warn("user skill hydrate failed", "user", sl.userID, "error", err)
-			}
-			// Anything the agent installed mid-chat into the bind-mounted
-			// per-user dir (e.g. via `npx skills add -g -y`) is local-only
-			// at this point. Push it up so sibling pods pick it up on their
-			// next hydrate cycle. Cheap when nothing's new.
-			if err := skills.MirrorSkillsUp(ctx, sl.workspaceStore, owner, userDir); err != nil {
-				slog.Warn("user skill mirror-up failed", "user", sl.userID, "error", err)
 			}
 		}
 	}
@@ -228,36 +194,6 @@ func (sl *SkillsLoader) LoadSkills() []Skill {
 	for name, skill := range discoverSkillsEnhanced(managedDir, "managed") {
 		if !disabled[name] {
 			skillsMap[name] = skill
-		}
-	}
-
-	// Layer 2: user installed (~/.fluctio/skills/)
-	userDir := filepath.Join(sl.homeDir, "skills")
-	for name, skill := range discoverSkillsEnhanced(userDir, "user") {
-		if !disabled[name] {
-			skillsMap[name] = skill
-		}
-	}
-
-	// Layer 1.5: team skills
-	if sl.teamDir != "" {
-		teamSkillsDir := filepath.Join(sl.teamDir, "skills")
-		for name, skill := range discoverSkillsEnhanced(teamSkillsDir, "team") {
-			if !disabled[name] {
-				skillsMap[name] = skill
-			}
-		}
-	}
-
-	// Layer 1.3: per-user skills (this chatter's personal bucket).
-	// Sits below agent (owner-curated) so an agent's official skill
-	// can override a user's same-named utility, but above team / host
-	// so the user's own skills always trump generic installs.
-	if userDir := sl.userSkillsDir(); userDir != "" {
-		for name, skill := range discoverSkillsEnhanced(userDir, "personal") {
-			if !disabled[name] {
-				skillsMap[name] = skill
-			}
 		}
 	}
 
@@ -466,47 +402,9 @@ func (sl *SkillsLoader) AllSkillDirs() []string {
 func (sl *SkillsLoader) allSkillDirs() []string {
 	var dirs []string
 	dirs = append(dirs, filepath.Join(sl.agentDir, "skills"))
-	if sl.teamDir != "" {
-		dirs = append(dirs, filepath.Join(sl.teamDir, "skills"))
-	}
-	if userDir := sl.userSkillsDir(); userDir != "" {
-		dirs = append(dirs, userDir)
-	}
-	dirs = append(dirs, filepath.Join(sl.homeDir, "skills"))
 	dirs = append(dirs, fluctioManagedDir())
 	dirs = append(dirs, sl.globalCfg.Load.ExtraDirs...)
 	return dirs
-}
-
-// userSkillsDir returns ~/.fluctio/users/<uid>/skills (FLUCTIO_HOME-aware).
-// Empty when no userID is set so the loader skips the layer entirely on
-// single-user installs / legacy paths.
-func (sl *SkillsLoader) userSkillsDir() string {
-	if sl.userID == "" {
-		return ""
-	}
-	base := fluctioBaseDir()
-	if base == "" {
-		return ""
-	}
-	return filepath.Join(base, "users", sl.userID, "skills")
-}
-
-// userSkillsRootDir is the host parent dir of the per-user skills/
-// subtree (~/.fluctio/users/<uid>/). Returned form leaves "skills/"
-// off the end so file.go's path resolver can join a relative
-// "skills/foo/SKILL.md" against it the same way it handles agent
-// home; the SkillsLoader layer reaches the actual subdir via
-// userSkillsDir (which appends "skills/").
-func userSkillsRootDir(userID string) string {
-	if userID == "" {
-		return ""
-	}
-	base := fluctioBaseDir()
-	if base == "" {
-		return ""
-	}
-	return filepath.Join(base, "users", userID)
 }
 
 // discoverSkillsEnhanced scans a directory for skill subdirectories with SKILL.md,

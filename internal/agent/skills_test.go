@@ -10,8 +10,8 @@ import (
 )
 
 func TestBuildSkillsSummaryUsesProgressiveDisclosureByDefault(t *testing.T) {
-	t.Setenv("FLUCTIO_HOME", t.TempDir())
 	home := t.TempDir()
+	t.Setenv("FLUCTIO_HOME", home)
 	skillDir := filepath.Join(home, "skills", "chart-maker")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ Run scripts/render.py with JSON input.`
 		t.Fatal(err)
 	}
 
-	loader := NewSkillsLoaderWithGlobal(home, t.TempDir(), "", config.SkillsConfig{}, config.SkillsCfg{})
+	loader := NewSkillsLoaderWithGlobal(home, t.TempDir(), config.SkillsConfig{}, config.SkillsCfg{})
 	summary := loader.BuildSkillsSummary(loader.LoadSkills())
 
 	if !strings.Contains(summary, "chart-maker") {
@@ -45,8 +45,8 @@ Run scripts/render.py with JSON input.`
 }
 
 func TestLoadSkillsDoesNotKeepBodyContentByDefault(t *testing.T) {
-	t.Setenv("FLUCTIO_HOME", t.TempDir())
 	home := t.TempDir()
+	t.Setenv("FLUCTIO_HOME", home)
 	skillDir := filepath.Join(home, "skills", "chart-maker")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ BODY_SHOULD_STAY_ON_DISK_UNTIL_LOAD_SKILL`
 		t.Fatal(err)
 	}
 
-	loader := NewSkillsLoaderWithGlobal(home, t.TempDir(), "", config.SkillsConfig{}, config.SkillsCfg{})
+	loader := NewSkillsLoaderWithGlobal(home, t.TempDir(), config.SkillsConfig{}, config.SkillsCfg{})
 	skills := loader.LoadSkills()
 
 	if len(skills) != 1 {
@@ -73,8 +73,8 @@ BODY_SHOULD_STAY_ON_DISK_UNTIL_LOAD_SKILL`
 }
 
 func TestBuildSkillsSummaryKeepsAlwaysLoadSkillsInline(t *testing.T) {
-	t.Setenv("FLUCTIO_HOME", t.TempDir())
 	home := t.TempDir()
+	t.Setenv("FLUCTIO_HOME", home)
 	skillDir := filepath.Join(home, "skills", "always-inline")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -92,7 +92,6 @@ ALWAYS_LOAD_BODY_SHOULD_APPEAR`
 	loader := NewSkillsLoaderWithGlobal(
 		home,
 		t.TempDir(),
-		"",
 		config.SkillsConfig{AlwaysLoad: []string{"always-inline"}},
 		config.SkillsCfg{},
 	)
@@ -104,8 +103,8 @@ ALWAYS_LOAD_BODY_SHOULD_APPEAR`
 }
 
 func TestGatedSkillsStayInCatalogWithUnavailableReason(t *testing.T) {
-	t.Setenv("FLUCTIO_HOME", t.TempDir())
 	home := t.TempDir()
+	t.Setenv("FLUCTIO_HOME", home)
 	skillDir := filepath.Join(home, "skills", "deepcoin-trade")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -124,7 +123,7 @@ BODY_SHOULD_NOT_INLINE_WHEN_GATED`
 		t.Fatal(err)
 	}
 
-	loader := NewSkillsLoaderWithGlobal(home, t.TempDir(), "", config.SkillsConfig{}, config.SkillsCfg{})
+	loader := NewSkillsLoaderWithGlobal(home, t.TempDir(), config.SkillsConfig{}, config.SkillsCfg{})
 	skills := loader.LoadSkills()
 	if len(skills) != 1 {
 		t.Fatalf("skills len = %d, want 1", len(skills))
