@@ -28,6 +28,7 @@ type Skill struct {
 	Metadata    *SkillMetadata // parsed OpenClaw metadata
 	Gated       bool           // true if gating requirements not met
 	GateReason  string         // reason gating failed
+	OnMissing   string         // frontmatter hint shown next to the unavailable annotation
 }
 
 // SkillFrontmatter represents the YAML frontmatter of a SKILL.md file.
@@ -76,6 +77,11 @@ type OpenClawMeta struct {
 	// image-tool list everything here.
 	Env     []SkillEnvSpec  `json:"env,omitempty"`
 	Install json.RawMessage `json:"install"`
+	// OnMissing is an optional frontmatter hint shown next to the
+	// "currently unavailable" annotation when a skill is gated. Authors
+	// use it to suggest a manual fallback ("use powershell", "install
+	// ffmpeg", …). Empty means no fallback surfaced.
+	OnMissing string `json:"on_missing"`
 }
 
 // SkillEnvSpec describes one configurable env var. All fields except
@@ -251,7 +257,11 @@ func (sl *SkillsLoader) BuildSkillsSummary(skills []Skill) string {
 			desc = "(no description)"
 		}
 		if skill.Gated {
-			fmt.Fprintf(&sb, "- %s — %s (currently unavailable: %s)\n", skill.Name, desc, skill.GateReason)
+			if skill.OnMissing != "" {
+				fmt.Fprintf(&sb, "- %s — %s (currently unavailable: %s) → fallback: %s\n", skill.Name, desc, skill.GateReason, skill.OnMissing)
+			} else {
+				fmt.Fprintf(&sb, "- %s — %s (currently unavailable: %s)\n", skill.Name, desc, skill.GateReason)
+			}
 		} else {
 			fmt.Fprintf(&sb, "- %s — %s\n", skill.Name, desc)
 		}
@@ -444,12 +454,18 @@ func discoverSkillsEnhanced(dir string, layer string) map[string]Skill {
 		}
 
 		// Apply gating
-		gated, gateReason := checkGating(meta)
+		gated, gateReason := CheckGating(meta)
 
 		name := entry.Name()
 		if fm != nil && fm.Name != "" {
 			// Use directory name as the key, but store the frontmatter name
 			_ = fm.Name
+		}
+
+		// Surface on_missing hint when the author declared one.
+		onMissing := ""
+		if meta != nil && meta.Meta() != nil {
+			onMissing = meta.Meta().OnMissing
 		}
 
 		result[name] = Skill{
@@ -460,6 +476,7 @@ func discoverSkillsEnhanced(dir string, layer string) map[string]Skill {
 			Metadata:    meta,
 			Gated:       gated,
 			GateReason:  gateReason,
+			OnMissing:   onMissing,
 		}
 	}
 
@@ -612,9 +629,11 @@ func convertYAMLToJSON(v interface{}) interface{} {
 	}
 }
 
-// checkGating validates whether a skill's requirements are met.
-// Returns (gated, reason). gated=true means the skill should be skipped.
-func checkGating(meta *SkillMetadata) (bool, string) {
+// CheckGating validates whether a skill's requirements are met.
+// Returns (gated, reason). gated=true means the skill's requirements are
+// not satisfied on the current host. Exported so the load_skill tool can
+// re-evaluate gating on demand against the same engine (Task 4).
+func CheckGating(meta *SkillMetadata) (bool, string) {
 	if meta == nil || meta.Meta() == nil {
 		return false, ""
 	}
