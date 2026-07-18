@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
@@ -54,6 +55,13 @@ type ContextBuilder struct {
 	// available; nil (or a nil return) falls back to server-local time,
 	// which preserves the legacy single-tenant behavior.
 	tzResolver func(chatterUID string) *time.Location
+	// bashAvailable (cached once via bashOnce) records whether exec.LookPath
+	// found bash at startup. PATH is fixed for the process lifetime, so we
+	// avoid re-probing on every prompt build. Read after bashOnce.Do has
+	// run at least once; safe to read concurrently thereafter (writes only
+	// happen inside the once).
+	bashAvailable bool
+	bashOnce      sync.Once
 }
 
 // ctx returns a context tagged with this builder's user, used when reading

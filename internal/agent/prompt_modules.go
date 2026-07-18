@@ -300,8 +300,13 @@ USER.md, which grow over time and would lose context if rewritten in full.`,
 // out-of-scope file back into the visible workspace. Sibling to modAgentIntro,
 // which covers identity/files; this module covers capabilities + reachability.
 func modRuntimeContext(p *promptCtx) string {
+	p.cb.bashOnce.Do(func() {
+		if _, err := exec.LookPath("bash"); err == nil {
+			p.cb.bashAvailable = true
+		}
+	})
 	bash := "不可用"
-	if _, err := exec.LookPath("bash"); err == nil {
+	if p.cb.bashAvailable {
 		bash = "可用"
 	}
 	mcp := p.cb.mcpServerSummary

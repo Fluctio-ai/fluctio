@@ -160,6 +160,9 @@ func TestLoadSkillOnMissingFallback(t *testing.T) {
 	if !strings.Contains(got, "[SKILL FALLBACK: use powershell]") {
 		t.Fatalf("load_skill output missing OnMissing fallback banner:\n%s", got)
 	}
+	if !strings.Contains(got, `原因：required binary "bash" not found on PATH`) {
+		t.Fatalf("load_skill output missing Reason in fallback banner:\n%s", got)
+	}
 	// OnMissing takes priority over the bare unavailable banner per the
 	// gate-banner spec; verify the priority holds (no UNAVAILABLE line).
 	if strings.Contains(got, "SKILL CURRENTLY UNAVAILABLE") {

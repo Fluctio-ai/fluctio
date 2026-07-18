@@ -92,7 +92,7 @@ func gatedBanner(gate map[string]SkillGate, name string) string {
 		return ""
 	}
 	if g.OnMissing != "" {
-		return "[SKILL FALLBACK: " + g.OnMissing + "]\n\n"
+		return "[SKILL FALLBACK: " + g.OnMissing + "]（原因：" + g.Reason + "）\n\n"
 	}
 	return "[SKILL CURRENTLY UNAVAILABLE: " + g.Reason +
 		". Explain this to the user and ask an administrator to configure the missing requirement before using authenticated operations.]\n\n"

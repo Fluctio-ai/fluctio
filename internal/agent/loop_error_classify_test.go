@@ -1,6 +1,9 @@
 package agent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestClassifyToolError(t *testing.T) {
 	cases := []struct{ in, wantCat, wantHintSub string }{
@@ -20,8 +23,8 @@ func TestClassifyToolError(t *testing.T) {
 		if gotCat != c.wantCat {
 			t.Errorf("classifyToolError(%q) category = %q, want %q", c.in, gotCat, c.wantCat)
 		}
-		if c.wantHintSub != "" && gotHint == "" {
-			t.Errorf("classifyToolError(%q) hint empty, want containing %q", c.in, c.wantHintSub)
+		if c.wantHintSub != "" && !strings.Contains(gotHint, c.wantHintSub) {
+			t.Errorf("classifyToolError(%q) hint = %q, want containing %q", c.in, gotHint, c.wantHintSub)
 		}
 	}
 }
