@@ -260,7 +260,7 @@ func (p *DockerExecutorPool) Get(ctx context.Context, agentID, projectID, sessio
 	// subdir, so relative writes default to the chat's files but
 	// reads/walks see the whole project. Mirrors workspace.LocalFS:
 	//
-	//   pid="p", sid="s" → mount projects/p/, workdir /workspace/s/
+	//   pid="p", sid="s" → mount projects/p/, workdir /workspace  (project root, shared across chats)
 	//   pid="",  sid="s" → mount sessions/s/,  workdir /workspace
 	//   pid="p", sid=""  → mount projects/p/,  workdir /workspace
 	//   both empty       → mount agent root,   workdir /workspace
@@ -273,13 +273,14 @@ func (p *DockerExecutorPool) Get(ctx context.Context, agentID, projectID, sessio
 	switch {
 	case projectID != "" && sessionID != "":
 		workspace = filepath.Join(workspace, "projects", projectID)
-		workdir = "/workspace/" + sessionID
-		// Pre-create the per-chat subdir on disk so docker's `-w` lands
-		// in an existing path; Docker creates missing workdirs but
-		// only as root, leaving the agent unable to write later.
-		if err := os.MkdirAll(filepath.Join(workspace, sessionID), 0o755); err != nil {
-			return nil, fmt.Errorf("create chat workspace subdir: %w", err)
-		}
+		// Project chat: cwd at the project root (shared across the
+		// project's chats) to match host-mode bindSession (A-plan:
+		// SetUserRoot → projects/<pid>/). Per-chat isolation is the
+		// container's (one container per chat), not a cwd subdir —
+		// a subdir here would make docker files land in projects/<pid>/<sid>/
+		// while host write_file lands in projects/<pid>/, so they
+		// couldn't see each other.
+		workdir = "/workspace"
 	case projectID != "":
 		workspace = filepath.Join(workspace, "projects", projectID)
 	case sessionID != "":
