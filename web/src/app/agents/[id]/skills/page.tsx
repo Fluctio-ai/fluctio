@@ -449,6 +449,11 @@ function InstallSkillDialog({
   const [searching, setSearching] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  // GitHub direct install: repo URL + optional subfolder name.
+  const [ghRepo, setGhRepo] = useState("");
+  const [ghName, setGhName] = useState("");
+  const [installingGh, setInstallingGh] = useState(false);
+  const [ghError, setGhError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -456,6 +461,9 @@ function InstallSkillDialog({
       setQuery("");
       setResults([]);
       setInstallError(null);
+      setGhRepo("");
+      setGhName("");
+      setGhError(null);
     }
   }, [open]);
 
@@ -500,6 +508,33 @@ function InstallSkillDialog({
       setInstallError(e instanceof Error ? e.message : t("skills.installFailed"));
     } finally {
       setInstallingId(null);
+    }
+  };
+
+  // Direct GitHub install: clones a public repo (or a subfolder inside
+  // it) into this agent's skills dir via the backend's source=github
+  // path — the skills.sh search above doesn't cover arbitrary repos.
+  const handleInstallGithub = async () => {
+    const repo = ghRepo.trim();
+    if (!repo) return;
+    setGhError(null);
+    setInstallingGh(true);
+    try {
+      const resp = await installSkill({
+        source: "github",
+        repo,
+        name: ghName.trim(),
+        agent: agentId,
+      });
+      if (!resp.ok) {
+        setGhError(resp.error || t("skills.installFailed"));
+        return;
+      }
+      onInstalled();
+    } catch (e) {
+      setGhError(e instanceof Error ? e.message : t("skills.installFailed"));
+    } finally {
+      setInstallingGh(false);
     }
   };
 
@@ -614,6 +649,44 @@ function InstallSkillDialog({
         {installError && (
           <p className="text-xs text-destructive break-all">{installError}</p>
         )}
+
+        {/* Direct GitHub install: clones a public repo into this agent's
+            skills dir. skills.sh search above doesn't cover arbitrary
+            GitHub repos, so this is the path for "install X from GitHub". */}
+        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+          <div>
+            <p className="text-xs font-medium">{t("skills.installGithubTitle")}</p>
+            <p className="text-[11px] text-muted-foreground">{t("skills.githubHint")}</p>
+          </div>
+          <div className="flex gap-2">
+            <Input
+              placeholder={t("skills.githubRepoPlaceholder")}
+              value={ghRepo}
+              onChange={(e) => setGhRepo(e.target.value)}
+              className="flex-1"
+            />
+            <Input
+              placeholder={t("skills.githubNameOptional")}
+              value={ghName}
+              onChange={(e) => setGhName(e.target.value)}
+              className="w-44"
+            />
+            <Button
+              size="sm"
+              disabled={!ghRepo.trim() || installingGh}
+              onClick={handleInstallGithub}
+            >
+              {installingGh ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
+          {ghError && (
+            <p className="text-xs text-destructive break-all">{ghError}</p>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

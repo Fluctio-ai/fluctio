@@ -613,6 +613,7 @@ func (sp *UserSpace) EnsureAgent(ctx context.Context, st store.Store, mb *bus.Me
 	if sp.PluginMgr != nil {
 		if ag := sp.Agents.AgentByID(rc.ID); ag != nil {
 			registerHookPluginsForAgent(ctx, sp.PluginMgr, st, ag)
+			registerToolPluginsForAgent(ctx, sp.PluginMgr, st, ag)
 		}
 	}
 	slog.Info("agent injected into foreign user space",
@@ -811,6 +812,7 @@ func loadUserSpace(ctx context.Context, userID string, mb *bus.MessageBus, st st
 	if pluginMgr != nil {
 		for _, ag := range agentMgr.All() {
 			registerHookPluginsForAgent(ctx, pluginMgr, st, ag)
+			registerToolPluginsForAgent(ctx, pluginMgr, st, ag)
 		}
 	}
 
@@ -867,6 +869,36 @@ func registerHookPluginsForAgent(ctx context.Context, pluginMgr *plugin.Manager,
 		}
 		if err := plugin.RegisterPluginHooks(ctx, pluginMgr, id, ag.HookRegistry(), ag.Name()); err != nil {
 			slog.Warn("plugin: hook register failed",
+				"plugin", id, "agent", ag.Name(), "error", err)
+		}
+	}
+}
+
+// registerToolPluginsForAgent is the tool-plugin counterpart of
+// registerHookPluginsForAgent: it walks every running tool-type plugin
+// this agent opted in to and registers its tools onto the agent's tool
+// registry so the model can call them. Without this, tool plugins load
+// and run but their tools never reach the agent (RegisterPluginTools
+// was previously never called).
+func registerToolPluginsForAgent(ctx context.Context, pluginMgr *plugin.Manager, st store.Store, ag *agent.Agent) {
+	overrides := readAgentScopePluginsEnabled(ctx, st, ag.Name())
+	if len(overrides) == 0 {
+		return // fast path: no opt-ins for this agent
+	}
+	for _, inst := range pluginMgr.ToolPlugins() {
+		id := inst.Manifest.ID
+		// Same opt-in rule as hooks: only attach if this agent
+		// explicitly set true.
+		if !overrides[id] {
+			continue
+		}
+		if inst.Process == nil || !inst.Process.IsRunning() {
+			slog.Warn("plugin: agent opted in but plugin not running",
+				"plugin", id, "agent", ag.Name())
+			continue
+		}
+		if err := plugin.RegisterPluginTools(ctx, pluginMgr, id, ag.Registry()); err != nil {
+			slog.Warn("plugin: tool register failed",
 				"plugin", id, "agent", ag.Name(), "error", err)
 		}
 	}

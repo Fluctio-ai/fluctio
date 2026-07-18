@@ -279,10 +279,15 @@ function InstallSkillDialog({
   const [searching, setSearching] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  // GitHub direct install: repo URL + optional subfolder name.
+  const [ghRepo, setGhRepo] = useState("");
+  const [ghName, setGhName] = useState("");
+  const [installingGh, setInstallingGh] = useState(false);
+  const [ghError, setGhError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!open) { setQuery(""); setResults([]); setInstallError(null); }
+    if (!open) { setQuery(""); setResults([]); setInstallError(null); setGhRepo(""); setGhName(""); setGhError(null); }
   }, [open]);
 
   useEffect(() => {
@@ -308,6 +313,24 @@ function InstallSkillDialog({
       setInstallError(e instanceof Error ? e.message : tt("skills.installFailed"));
     } finally {
       setInstallingId(null);
+    }
+  };
+
+  // Direct GitHub install: clones a public repo (or a subfolder inside
+  // it) into the global skills dir via the backend's source=github
+  // path — skills.sh search doesn't cover arbitrary GitHub repos.
+  const handleInstallGithub = async () => {
+    const repo = ghRepo.trim();
+    if (!repo) return;
+    setGhError(null); setInstallingGh(true);
+    try {
+      const resp = await installSkill({ source: "github", repo, name: ghName.trim() });
+      if (!resp.ok) { setGhError(resp.error || tt("skills.installFailed")); return; }
+      onInstalled();
+    } catch (e) {
+      setGhError(e instanceof Error ? e.message : tt("skills.installFailed"));
+    } finally {
+      setInstallingGh(false);
     }
   };
 
@@ -381,6 +404,24 @@ function InstallSkillDialog({
         </div>
 
         {installError && (<p className="text-xs text-destructive break-all">{installError}</p>)}
+
+        {/* Direct GitHub install: clones a public repo into the global
+            skills dir. skills.sh search above doesn't cover arbitrary
+            GitHub repos, so this is the path for "install X from GitHub". */}
+        <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+          <div>
+            <p className="text-xs font-medium">{tt("skills.installGithubTitle")}</p>
+            <p className="text-[11px] text-muted-foreground">{tt("skills.githubHint")}</p>
+          </div>
+          <div className="flex gap-2">
+            <Input placeholder={tt("skills.githubRepoPlaceholder")} value={ghRepo} onChange={(e) => setGhRepo(e.target.value)} className="flex-1" />
+            <Input placeholder={tt("skills.githubNameOptional")} value={ghName} onChange={(e) => setGhName(e.target.value)} className="w-44" />
+            <Button size="sm" disabled={!ghRepo.trim() || installingGh} onClick={handleInstallGithub}>
+              {installingGh ? (<Loader2 className="h-4 w-4 animate-spin" />) : (<Download className="h-4 w-4" />)}
+            </Button>
+          </div>
+          {ghError && (<p className="text-xs text-destructive break-all">{ghError}</p>)}
+        </div>
       </DialogContent>
     </Dialog>
   );

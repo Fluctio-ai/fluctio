@@ -404,6 +404,11 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	// host, defeating the security boundary the user asked for.
 	skillDirs := loader.AllSkillDirs()
 	tools.RegisterLoadSkill(registry, skillDirs)
+	// Wire the agent-private skill install tools so chat-initiated
+	// installs land in agents/<id>/agent/skills instead of the
+	// chatter's workspace. onReload=nil: SkillsLoader re-scans this
+	// dir on every turn, so the new skill is picked up next turn.
+	tools.RegisterSkillInstall(registry, filepath.Join(rc.Home, "skills"), nil)
 	var sbCfg *tools.SandboxConfig
 	if rc.Sandbox.Enabled {
 		sbCfg = &tools.SandboxConfig{Enabled: true}
@@ -916,6 +921,13 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 // HookRegistry returns the agent's hook registry for external hook registration.
 func (a *Agent) HookRegistry() *HookRegistry {
 	return a.hooks
+}
+
+// Registry returns the agent's tool registry. Used by plugin wiring to
+// register plugin-provided tools (RegisterPluginTools) onto the agent —
+// the same role HookRegistry plays for hook plugins.
+func (a *Agent) Registry() *tools.Registry {
+	return a.registry
 }
 
 // WireGoals turns the /goal feature on for this Agent. Side effects:
