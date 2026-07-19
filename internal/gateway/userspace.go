@@ -421,55 +421,7 @@ func (sp *UserSpace) EnsureAgent(ctx context.Context, st store.Store, mb *bus.Me
 	// pinned today — fields like MaxTokens / Temp / Thinking still
 	// fall through the owner/agent overlays since the chatter doesn't
 	// have UI to set them per-agent.
-	chatterPin := readUserScopeAgentDefaults(ctx, st, sp.UserID)
-	isForeign := rec.UserID != "" && rec.UserID != sp.UserID
-	// Default true when the key is absent — keep aligned with
-	// setup.agentShareModelConfig.
-	shareCfg := true
-	if v, ok := rec.Config["shareModelConfig"].(bool); ok {
-		shareCfg = v
-	}
-	applyOwnerOverlays := !isForeign || shareCfg
-	if isForeign && applyOwnerOverlays {
-		if ownerCfg, err := assembleConfig(ctx, st, rec.UserID, ""); err == nil && ownerCfg != nil {
-			ovr := ownerCfg.Agents.Defaults
-			if ovr.Model != "" {
-				rc.Model = ovr.Model
-			}
-			if ovr.MaxTokens > 0 {
-				rc.MaxTokens = ovr.MaxTokens
-			}
-			if ovr.Temperature > 0 {
-				rc.Temperature = ovr.Temperature
-			}
-			if ovr.MaxToolIterations > 0 {
-				rc.MaxToolIterations = ovr.MaxToolIterations
-			}
-			if ovr.MaxParallelToolCalls > 0 {
-				rc.MaxParallelToolCalls = ovr.MaxParallelToolCalls
-			}
-			if ovr.Thinking != "" {
-				rc.Thinking = ovr.Thinking
-			}
-			if ovr.PolicyPreset != "" {
-				rc.PolicyPreset = ovr.PolicyPreset
-			}
-		}
-		// Pull only the owner's user-scope provider rows (not the
-		// owner's full merged view) so we don't re-apply system rows
-		// over the viewer's already-merged set. Owner's user-scope
-		// keys then sit between viewer's user-scope and the
-		// agent-scope overlay below — same precedence the owner's
-		// own UserSpace would have built.
-		if ownerProvs, err := scope.UserScopeProviders(ctx, st, rec.UserID); err == nil {
-			for k, v := range ownerProvs {
-				if rc.Providers == nil {
-					rc.Providers = make(map[string]config.ProviderConfig)
-				}
-				rc.Providers[k] = v
-			}
-		}
-	}
+	applyOwnerOverlays := true
 	if applyOwnerOverlays {
 		if cfgRec, err := st.GetConfigByName(ctx, store.KindSetting, "", rc.ID, "agents.defaults"); err == nil && cfgRec != nil {
 			var ovr config.AgentDefaults
@@ -514,9 +466,6 @@ func (sp *UserSpace) EnsureAgent(ctx context.Context, st store.Store, mb *bus.Me
 				rc.AutoPersist = &v
 			}
 		}
-	}
-	if chatterPin.Model != "" {
-		rc.Model = chatterPin.Model
 	}
 	// Overlay agent-scope providers — sp.Config.Providers carries only
 	// system+user rows (assembleConfig in loadUserSpace runs with
