@@ -197,6 +197,14 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateRecallEventUser(ctx); err != nil {
 		return fmt.Errorf("migrate recall event user_id: %w", err)
 	}
+	// Flatten per-user / per-chatter rows BEFORE the DROP COLUMN
+	// migrations (added in Phase 1.2–1.5) so the drops can't trip a
+	// PK / UNIQUE collision when multiple rows collapse onto the same
+	// post-drop key. Idempotent — no-op on fresh installs and
+	// already-flat databases.
+	if err := d.migrateFlattenUserData(ctx); err != nil {
+		return fmt.Errorf("migrate flatten user data: %w", err)
+	}
 	return nil
 }
 
@@ -1049,6 +1057,107 @@ func (d *DBStore) migrateCronJobsAddUserID(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx,
 		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_user ON cron_jobs (user_id, agent_id)`); err != nil {
 		return fmt.Errorf("index cron_jobs.user_id: %w", err)
+	}
+	return nil
+}
+
+// migrateFlattenUserData collapses per-user / per-chatter rows onto a
+// single row per natural key, for every table whose PRIMARY KEY or UNIQUE
+// constraint still includes user_id. This is the data-preserving half of
+// the single-user flattening (spec §4.7, plan Phase 1 task 1.1): it runs
+// before the DROP COLUMN migrations so a drop can never trip a key
+// collision when multiple rows collapse onto the same post-drop key.
+//
+// Strategy per group is "newest row wins" (ORDER BY updated_at DESC, with
+// the physical row id as a stable tiebreaker) — matches the spec's
+// "conflict → latest" resolution. Idempotent: once every group is a
+// singleton the DELETE matches nothing, so re-running on an already-flat
+// database (or a fresh install with empty tables) is a no-op.
+//
+// Tables covered:
+//
+//   - agent_files      PK (agent_id, user_id, filename) — real per-chatter
+//                      overrides live here (USER.md / MEMORY.md), so this
+//                      is where collapsing actually preserves content.
+//   - sessions         PK (user_id, agent_id, session_key) — session_key
+//   - session_messages PK (..., session_key, seq)          is an opaque
+//   - session_events   PK (..., session_key, seq)          unique id, so
+//                      cross-user dups shouldn't exist in practice; the
+//                      collapse here is purely defensive.
+//   - configs          UNIQUE (kind, user_id, agent_id, name) — only when
+//                      the install has been through the scope→user_id
+//                      migration; fresh installs on the (scope, scope_id)
+//                      shape have no user_id to flatten.
+//
+// conversation_summaries already has its own de-dup pass
+// (migrateConversationSummariesUniqueIndex) and im_claims has no user_id
+// column, so neither is touched here.
+func (d *DBStore) migrateFlattenUserData(ctx context.Context) error {
+	rid := "rowid"
+	if d.dialect == "postgres" {
+		rid = "ctid"
+	}
+	// agent_files — collapse to (agent_id, filename). This is the table
+	// with real per-chatter overrides, so collapsing matters here.
+	if err := d.flattenDuplicateRows(ctx, "agent_files",
+		"agent_id, filename", "updated_at DESC, "+rid+" DESC", rid); err != nil {
+		return err
+	}
+	// sessions / session_messages / session_events — defensive collapse
+	// onto (agent_id, session_key[, seq]).
+	if err := d.flattenDuplicateRows(ctx, "sessions",
+		"agent_id, session_key", "updated_at DESC, "+rid+" DESC", rid); err != nil {
+		return err
+	}
+	if err := d.flattenDuplicateRows(ctx, "session_messages",
+		"agent_id, session_key, seq", rid+" DESC", rid); err != nil {
+		return err
+	}
+	if err := d.flattenDuplicateRows(ctx, "session_events",
+		"agent_id, session_key, seq", rid+" DESC", rid); err != nil {
+		return err
+	}
+	// configs — only when the user_id column exists (installs that ran
+	// the scope→user_id migration). Fresh installs on the legacy
+	// (scope, scope_id) shape have nothing to flatten here.
+	hasUID, err := d.tableHasColumn(ctx, "configs", "user_id")
+	if err != nil {
+		return fmt.Errorf("flatten configs: check user_id: %w", err)
+	}
+	if hasUID {
+		if err := d.flattenDuplicateRows(ctx, "configs",
+			"kind, COALESCE(agent_id, ''), name", "updated_at DESC, "+rid+" DESC", rid); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// flattenDuplicateRows deletes every row whose (partBy) group contains
+// more than one row, keeping only the newest per group (orderBy). rid is
+// the physical row identifier — "rowid" on SQLite, "ctid" on Postgres —
+// used both to address individual rows for deletion and to break ties
+// when orderBy leaves two rows equal. The table's existence is checked
+// first so this is safe against a table a fresh install hasn't created.
+func (d *DBStore) flattenDuplicateRows(ctx context.Context, table, partBy, orderBy, rid string) error {
+	exists, err := d.tableExists(ctx, table)
+	if err != nil {
+		return fmt.Errorf("flatten %s: check existence: %w", table, err)
+	}
+	if !exists {
+		return nil
+	}
+	q := fmt.Sprintf(`DELETE FROM %s WHERE %s IN (
+		SELECT %s FROM (
+			SELECT %s, ROW_NUMBER() OVER (
+				PARTITION BY %s
+				ORDER BY %s
+			) AS rn
+			FROM %s
+		) WHERE rn > 1
+	)`, table, rid, rid, rid, partBy, orderBy, table)
+	if _, err := d.db.ExecContext(ctx, q); err != nil {
+		return fmt.Errorf("flatten %s: %w\nSQL: %s", table, err, q)
 	}
 	return nil
 }
