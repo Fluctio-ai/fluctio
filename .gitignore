@@ -94,6 +94,9 @@ run.err.*
 # Local-only docs (references/notes, not shipped)
 /docs/
 
+# Local specs/plans (private design notes, not for repo)
+/specs/
+
 # Private local CLI (self-use, not for repo)
 /cmd/ga-hook/
 
