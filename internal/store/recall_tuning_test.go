@@ -275,8 +275,8 @@ func TestSweepStepsProbe(t *testing.T) {
 
 	for i := 0; i < 3; i++ {
 		if _, err := db.db.ExecContext(ctx,
-			`INSERT INTO session_messages (user_id, agent_id, session_key, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			"u1", "a1", "s1", i, "user", fmt.Sprintf("alpha %d", i), old.Add(time.Duration(i+1)*time.Minute)); err != nil {
+			`INSERT INTO session_messages (agent_id, session_key, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			"a1", "s1", i, "user", fmt.Sprintf("alpha %d", i), old.Add(time.Duration(i+1)*time.Minute)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -298,7 +298,7 @@ func TestSweepStepsProbe(t *testing.T) {
 	rows.Close()
 	t.Logf("events queried: %d", count)
 
-	msgs, err := db.ListSessionMessagesAfterTime(ctx, "u1", "a1", "s1", old, 3)
+	msgs, err := db.ListSessionMessagesAfterTime(ctx, "a1", "s1", old, 3)
 	t.Logf("messages listed: %d err=%v", len(msgs), err)
 
 	embs, err := db.GetConversationSummaryEmbeddings(ctx, []int64{100})
@@ -356,8 +356,8 @@ func TestSweepImplicitFeedbackRecordsUpDown(t *testing.T) {
 		}
 		for i, c := range msgs {
 			if _, err := db.db.ExecContext(ctx,
-				`INSERT INTO session_messages (user_id, agent_id, session_key, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-				"u1", "a1", "s-"+recallID, i, "user", c, old.Add(time.Duration(i+1)*time.Minute)); err != nil {
+				`INSERT INTO session_messages (agent_id, session_key, seq, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+				"a1", "s-"+recallID, i, "user", c, old.Add(time.Duration(i+1)*time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 		}

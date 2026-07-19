@@ -75,7 +75,7 @@ Examples:
 				return err
 			}
 
-			msgs, err := st.ListSessionMessages(ctx, userID, agentID, sessionKey)
+			msgs, err := st.ListSessionMessages(ctx, agentID, sessionKey)
 			if err != nil {
 				return fmt.Errorf("list messages: %w", err)
 			}

@@ -40,7 +40,7 @@ func TestDeleteAgentRemovesScopedRows(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
-	if err := db.AppendSessionMessage(ctx, ownerID, agentID, sessionKey, SessionMessage{
+	if err := db.AppendSessionMessage(ctx, agentID, sessionKey, SessionMessage{
 		Role:      "assistant",
 		Content:   "hi",
 		Timestamp: now,

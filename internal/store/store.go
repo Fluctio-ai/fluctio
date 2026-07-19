@@ -185,14 +185,13 @@ type Store interface {
 	// so callers don't pass a seq. ListSessionMessages returns all rows
 	// for one session in ascending seq order — that's the full history,
 	// untouched by compaction. DeleteSession cascades to clean these up.
-	AppendSessionMessage(ctx context.Context, userID, agentID, sessionKey string, msg SessionMessage) error
-	ListSessionMessages(ctx context.Context, userID, agentID, sessionKey string) ([]SessionMessage, error)
+	AppendSessionMessage(ctx context.Context, agentID, sessionKey string, msg SessionMessage) error
+	ListSessionMessages(ctx context.Context, agentID, sessionKey string) ([]SessionMessage, error)
 	// ListSessionMessagesBySeq returns messages whose seq falls in any of
 	// the supplied [start,end] ranges (inclusive), ordered by seq. Used by
 	// the fetch_messages tool to retrieve the verbatim messages of a topic.
-	// Scoped by (owner, agent, session) — single-user: an agent's memory is
-	// shared across its chatters, so chatter_user_id is not a filter here.
-	ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey string, ranges [][2]int) ([]SessionMessage, error)
+	// Scoped by (agent, session).
+	ListSessionMessagesBySeq(ctx context.Context, agentID, sessionKey string, ranges [][2]int) ([]SessionMessage, error)
 	// CountChatterUserMessages returns how many role='user' rows this
 	// chatter has accumulated under the agent — across all sessions,
 	// all channels. Used by the autoPersist gate as a *durable* "every

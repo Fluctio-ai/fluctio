@@ -18,7 +18,7 @@ type MessageFetcher interface {
 	// ascending by seq. Fluctio is single-user: an agent's memory is
 	// shared across its chatters, so chatter_user_id is not a filter here.
 	// Empty slice when no rows match.
-	ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey string, ranges [][2]int) ([]store.SessionMessage, error)
+	ListSessionMessagesBySeq(ctx context.Context, agentID, sessionKey string, ranges [][2]int) ([]store.SessionMessage, error)
 }
 
 // fetchMessagesArgs is the JSON schema for fetch_messages.
@@ -107,7 +107,7 @@ func makeFetchMessages(r *Registry) ToolFunc {
 			return "", fmt.Errorf("fetch_messages not available: store not wired")
 		}
 
-		msgs, err := r.msgFetcher.ListSessionMessagesBySeq(ctx, ownerID, agentID, args.SessionKey, ranges)
+		msgs, err := r.msgFetcher.ListSessionMessagesBySeq(ctx, agentID, args.SessionKey, ranges)
 		if err != nil {
 			return "", fmt.Errorf("fetch messages: %w", err)
 		}

@@ -378,7 +378,7 @@ func (d *DBStore) PreviewRecall(ctx context.Context, agentID, query string, limi
 // ListSessionMessagesAfterTime returns up to limit messages in a session
 // created after `after`, ascending by created_at. Used by the implicit-
 // feedback sweep to read what the user said following a recall.
-func (d *DBStore) ListSessionMessagesAfterTime(ctx context.Context, userID, agentID, sessionKey string, after time.Time, limit int) ([]SessionMessage, error) {
+func (d *DBStore) ListSessionMessagesAfterTime(ctx context.Context, agentID, sessionKey string, after time.Time, limit int) ([]SessionMessage, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -388,16 +388,16 @@ func (d *DBStore) ListSessionMessagesAfterTime(ctx context.Context, userID, agen
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
 			 FROM session_messages
-			 WHERE user_id = $1 AND agent_id = $2 AND session_key = $3 AND created_at > $4
-			 ORDER BY created_at ASC LIMIT $5`,
-			userID, agentID, sessionKey, after, limit)
+			 WHERE agent_id = $1 AND session_key = $2 AND created_at > $3
+			 ORDER BY created_at ASC LIMIT $4`,
+			agentID, sessionKey, after, limit)
 	} else {
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
 			 FROM session_messages
-			 WHERE user_id = ? AND agent_id = ? AND session_key = ? AND created_at > ?
+			 WHERE agent_id = ? AND session_key = ? AND created_at > ?
 			 ORDER BY created_at ASC LIMIT ?`,
-			userID, agentID, sessionKey, after, limit)
+			agentID, sessionKey, after, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -549,7 +549,7 @@ func (d *DBStore) SweepImplicitFeedback(ctx context.Context, agentID string, emb
 
 	processed := 0
 	for _, ev := range events {
-		msgs, err := d.ListSessionMessagesAfterTime(ctx, ev.userID, ev.agentID, ev.sessionKey, ev.created, cfg.WindowMessages)
+		msgs, err := d.ListSessionMessagesAfterTime(ctx, ev.agentID, ev.sessionKey, ev.created, cfg.WindowMessages)
 		if err != nil || len(msgs) < cfg.WindowMessages {
 			continue
 		}

@@ -16,7 +16,7 @@ func TestSessionMessageOriginRoundTrip(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 
-	uid, agent, key := "user-1", "agent-A", "s-origin-test"
+	agent, key := "agent-A", "s-origin-test"
 
 	// One real user turn, one runtime-injected goal_context, one
 	// assistant reply — the canonical interleaving once /goal is
@@ -27,12 +27,12 @@ func TestSessionMessageOriginRoundTrip(t *testing.T) {
 		{Role: "assistant", Content: "translation done"},
 	}
 	for _, m := range msgs {
-		if err := db.AppendSessionMessage(ctx, uid, agent, key, m); err != nil {
+		if err := db.AppendSessionMessage(ctx, agent, key, m); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
 
-	got, err := db.ListSessionMessages(ctx, uid, agent, key)
+	got, err := db.ListSessionMessages(ctx, agent, key)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

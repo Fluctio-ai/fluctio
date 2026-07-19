@@ -218,6 +218,12 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionsDropUserAndChatter(ctx); err != nil {
 		return fmt.Errorf("migrate sessions drop user/chatter: %w", err)
 	}
+	// Drop session_messages.user_id (chatter_user_id stays until phase 2.4
+	// — CountChatterUserMessages still reads it). PK becomes
+	// (agent_id, session_key, seq).
+	if err := d.migrateSessionMessagesDropUserID(ctx); err != nil {
+		return fmt.Errorf("migrate session_messages drop user_id: %w", err)
+	}
 	return nil
 }
 
@@ -1294,6 +1300,72 @@ func (d *DBStore) migrateSessionsDropUserAndChatter(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_chat_active ON sessions (agent_id, channel, account_id, chat_id, updated_at DESC)`); err != nil {
 		return fmt.Errorf("recreate idx_sessions_chat_active: %w", err)
+	}
+	return nil
+}
+
+// migrateSessionMessagesDropUserID rebuilds session_messages without the
+// user_id column so the primary key becomes (agent_id, session_key, seq).
+// chatter_user_id is KEPT — CountChatterUserMessages still reads it and
+// is only removed in phase 2.4 alongside the chatter mechanism. The
+// idx_session_messages_lookup index is dropped + recreated because it
+// references user_id. Idempotent.
+func (d *DBStore) migrateSessionMessagesDropUserID(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "session_messages", "user_id")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_session_messages_lookup`); err != nil {
+		return fmt.Errorf("drop idx_session_messages_lookup: %w", err)
+	}
+	if d.dialect == "postgres" {
+		for _, s := range []string{
+			`ALTER TABLE session_messages DROP CONSTRAINT IF EXISTS session_messages_pkey`,
+			`ALTER TABLE session_messages ADD PRIMARY KEY (agent_id, session_key, seq)`,
+			`ALTER TABLE session_messages DROP COLUMN IF EXISTS user_id`,
+		} {
+			if _, err := d.db.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("postgres drop session_messages.user_id: %w\nSQL: %s", err, s)
+			}
+		}
+	} else {
+		for _, s := range []string{
+			`CREATE TABLE session_messages_new (
+				agent_id TEXT NOT NULL,
+				session_key TEXT NOT NULL,
+				seq INTEGER NOT NULL,
+				role TEXT NOT NULL,
+				content TEXT NOT NULL DEFAULT '',
+				content_parts TEXT NOT NULL DEFAULT '',
+				tool_calls TEXT NOT NULL DEFAULT '',
+				tool_call_id TEXT NOT NULL DEFAULT '',
+				name TEXT NOT NULL DEFAULT '',
+				metadata TEXT NOT NULL DEFAULT '',
+				thinking TEXT NOT NULL DEFAULT '',
+				raw_assistant TEXT NOT NULL DEFAULT '',
+				origin TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				chatter_user_id TEXT NOT NULL DEFAULT '',
+				provider TEXT NOT NULL DEFAULT '',
+				model TEXT NOT NULL DEFAULT '',
+				PRIMARY KEY (agent_id, session_key, seq)
+			)`,
+			`INSERT INTO session_messages_new (agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model)
+				SELECT agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model FROM session_messages`,
+			`DROP TABLE session_messages`,
+			`ALTER TABLE session_messages_new RENAME TO session_messages`,
+		} {
+			if _, err := d.db.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("sqlite rebuild session_messages: %w\nSQL: %s", err, s)
+			}
+		}
+	}
+	if _, err := d.db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_session_messages_lookup ON session_messages (agent_id, session_key, seq)`); err != nil {
+		return fmt.Errorf("recreate idx_session_messages_lookup: %w", err)
 	}
 	return nil
 }
@@ -3112,10 +3184,17 @@ func (d *DBStore) DeleteSession(ctx context.Context, agentID, sessionKey string)
 // reads MAX after the first commits. Multi-pod safety relies on the
 // engine's write serialization (sqlite global, postgres MVCC + the
 // composite PK uniqueness check on commit).
-func (d *DBStore) AppendSessionMessage(ctx context.Context, userID, agentID, sessionKey string, msg SessionMessage) error {
-	if userID == "" {
-		return errors.New("store: AppendSessionMessage requires user_id")
-	}
+// AppendSessionMessage writes one message to the per-session archive.
+// seq is computed atomically inside the INSERT via
+// `COALESCE(MAX(seq), -1) + 1`, so two concurrent appenders racing on
+// the same session can't collide on the unique key — the second insert
+// reads MAX after the first commits. Multi-pod safety relies on the
+// engine's write serialization (sqlite global, postgres MVCC + the
+// composite PK uniqueness check on commit).
+//
+// chatter_user_id is still written from ctx until phase 2.4 removes the
+// chatter dimension; user_id is gone post-flatten.
+func (d *DBStore) AppendSessionMessage(ctx context.Context, agentID, sessionKey string, msg SessionMessage) error {
 	contentParts, _ := json.Marshal(msg.ContentParts)
 	toolCalls, _ := json.Marshal(msg.ToolCalls)
 	metadata, _ := json.Marshal(msg.Metadata)
@@ -3128,11 +3207,11 @@ func (d *DBStore) AppendSessionMessage(ctx context.Context, userID, agentID, ses
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
 			`INSERT INTO session_messages
-				(user_id, agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model)
-			SELECT $1, $2, $3, COALESCE(MAX(seq), -1) + 1, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+				(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model)
+			SELECT $1, $2, COALESCE(MAX(seq), -1) + 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 				FROM session_messages
-				WHERE user_id = $1 AND agent_id = $2 AND session_key = $3`,
-			userID, agentID, sessionKey,
+				WHERE agent_id = $1 AND session_key = $2`,
+			agentID, sessionKey,
 			msg.Role, msg.Content, string(contentParts), string(toolCalls),
 			msg.ToolCallID, msg.Name, string(metadata), msg.Thinking, rawAssistant, msg.Origin, ts, chatterID,
 			msg.Provider, msg.Model)
@@ -3140,15 +3219,15 @@ func (d *DBStore) AppendSessionMessage(ctx context.Context, userID, agentID, ses
 	}
 	_, err := d.db.ExecContext(ctx,
 		`INSERT INTO session_messages
-			(user_id, agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model)
-		SELECT ?, ?, ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model)
+		SELECT ?, ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 			FROM session_messages
-			WHERE user_id = ? AND agent_id = ? AND session_key = ?`,
-		userID, agentID, sessionKey,
+			WHERE agent_id = ? AND session_key = ?`,
+		agentID, sessionKey,
 		msg.Role, msg.Content, string(contentParts), string(toolCalls),
 		msg.ToolCallID, msg.Name, string(metadata), msg.Thinking, rawAssistant, msg.Origin, ts, chatterID,
 		msg.Provider, msg.Model,
-		userID, agentID, sessionKey)
+		agentID, sessionKey)
 	return err
 }
 
@@ -3256,13 +3335,13 @@ func (d *DBStore) LatestSessionEventSeq(ctx context.Context, userID, agentID, se
 // ascending seq order. Empty slice on a session that has no archive
 // yet (e.g. rows pre-dating the table). Callers that want a fallback
 // to sessions.messages should check len() and decide.
-func (d *DBStore) ListSessionMessages(ctx context.Context, userID, agentID, sessionKey string) ([]SessionMessage, error) {
+func (d *DBStore) ListSessionMessages(ctx context.Context, agentID, sessionKey string) ([]SessionMessage, error) {
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model
 			FROM session_messages
-			WHERE user_id = %s AND agent_id = %s AND session_key = %s
-			ORDER BY seq ASC`, d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, sessionKey)
+			WHERE agent_id = %s AND session_key = %s
+			ORDER BY seq ASC`, d.ph(1), d.ph(2)),
+		agentID, sessionKey)
 	if err != nil {
 		return nil, err
 	}
@@ -4709,7 +4788,7 @@ func (d *DBStore) ReorderRegexHooks(ctx context.Context, agentID string, hookIDs
 // the supplied [start,end] ranges (inclusive), ordered by seq. Used by
 // the fetch_messages tool to retrieve the verbatim messages of a topic,
 // which may span several disjoint ranges in an interleaved conversation.
-func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID, sessionKey string, ranges [][2]int) ([]SessionMessage, error) {
+func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, agentID, sessionKey string, ranges [][2]int) ([]SessionMessage, error) {
 	if len(ranges) == 0 {
 		return nil, nil
 	}
@@ -4717,9 +4796,9 @@ func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID,
 	// placeholders, OR'd together. Caller is expected to have merged
 	// overlaps (fetch_messages.normalizeSegments does).
 	orClauses := make([]string, len(ranges))
-	args := make([]any, 0, len(ranges)+5)
-	args = append(args, userID, agentID, sessionKey)
-	ph := 4
+	args := make([]any, 0, len(ranges)+3)
+	args = append(args, agentID, sessionKey)
+	ph := 3
 	for i, rg := range ranges {
 		orClauses[i] = fmt.Sprintf("(seq >= %s AND seq <= %s)", d.ph(ph), d.ph(ph+1))
 		args = append(args, rg[0], rg[1])
@@ -4728,10 +4807,10 @@ func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, userID, agentID,
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
 			FROM session_messages
-			WHERE user_id = %s AND agent_id = %s AND session_key = %s
+			WHERE agent_id = %s AND session_key = %s
 			  AND (%s)
 			ORDER BY seq ASC`,
-			d.ph(1), d.ph(2), d.ph(3), strings.Join(orClauses, " OR ")),
+			d.ph(1), d.ph(2), strings.Join(orClauses, " OR ")),
 		args...)
 	if err != nil {
 		return nil, err

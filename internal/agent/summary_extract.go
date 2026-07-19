@@ -336,7 +336,7 @@ func persistConversationSummary(
 	if db == nil || prov == nil {
 		return
 	}
-	allMsgs, err := db.ListSessionMessages(ctx, userID, agentID, sessionKey)
+	allMsgs, err := db.ListSessionMessages(ctx, agentID, sessionKey)
 	if err != nil {
 		slog.Warn("conversation summary: load messages failed",
 			"agent", agentID, "session", sessionKey, "error", err)

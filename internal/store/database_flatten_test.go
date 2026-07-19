@@ -15,63 +15,14 @@ import (
 // TestFlattenUserDataMigration_sessionMessages below, and TestAgentFilesFlatSchema
 // asserts the agent_files schema post-flatten.)
 
-// TestFlattenUserDataMigration_sessionMessages covers the (agent,
-// session_key, seq) collapse on session_messages — the seq dimension
-// means two users contributing the same seq to the same session is the
-// only way dups form here, and only the newer physical row should remain.
-func TestFlattenUserDataMigration_sessionMessages(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-	ctx := context.Background()
-
-	const agentID = "agt_demo"
-	const sessKey = "sess_M"
-	if _, err := db.db.ExecContext(ctx,
-		`INSERT INTO agents (id, user_id, name, config) VALUES (?, ?, 'demo', '{}')`,
-		agentID, "u_owner"); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
-	// Two rows at the same (agent, session_key, seq=0) under different
-	// users — the chatter row inserted second wins on rowid tiebreak.
-	msgs := []struct {
-		userID, role, content string
-	}{
-		{"u_owner", "user", "owner-msg"},
-		{"u_chatter", "user", "chatter-msg"},
-	}
-	for _, m := range msgs {
-		if _, err := db.db.ExecContext(ctx,
-			`INSERT INTO session_messages (user_id, agent_id, session_key, seq, role, content)
-			 VALUES (?, ?, ?, 0, ?, ?)`,
-			m.userID, agentID, sessKey, m.role, m.content); err != nil {
-			t.Fatalf("seed session_message %+v: %v", m, err)
-		}
-	}
-
-	if err := db.Migrate(ctx); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	var n int
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM session_messages WHERE agent_id = ? AND session_key = ?`,
-		agentID, sessKey).Scan(&n); err != nil {
-		t.Fatalf("count session_messages: %v", err)
-	}
-	if n != 1 {
-		t.Errorf("session_messages rows = %d; want 1 (collapsed)", n)
-	}
-	// Winner is the second-inserted (chatter) row — higher rowid.
-	var content string
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT content FROM session_messages WHERE agent_id = ? AND session_key = ?`,
-		agentID, sessKey).Scan(&content); err != nil {
-		t.Fatalf("scan session_messages: %v", err)
-	}
-	if content != "chatter-msg" {
-		t.Errorf("session_messages winner content = %q; want chatter-msg (newest rowid)", content)
-	}
-}
+// (TestFlattenUserDataMigration_sessionMessages used to seed two rows at
+// the same (agent, session_key, seq) under different users and assert the
+// newest survived. After task 1.3b dropped session_messages.user_id the
+// PK became (agent_id, session_key, seq), so duplicates can no longer
+// exist and that branch of the flatten is a permanent no-op. With sessions
+// + session_messages both flattened, the only remaining dup-collapse case
+// is configs — covered by migrateFlattenUserData's configs branch when the
+// column exists, exercised on legacy-install upgrade paths.)
 
 // TestAgentFilesFlatSchema verifies task 1.2's flattened agent_files
 // schema: PK is (agent_id, filename), SaveAgentFile upserts on conflict,

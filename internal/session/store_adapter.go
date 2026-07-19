@@ -16,46 +16,12 @@ import (
 // scoping is implicit at the call site instead of getting plumbed through
 // every agent loop call.
 type StoreAdapter struct {
-	st             store.Store
-	userID         string
-	ownerCache     map[string]string // sessionKey → resolved owner userID
+	st     store.Store
+	userID string
 }
 
 func NewStoreAdapter(st store.Store, userID string) *StoreAdapter {
 	return &StoreAdapter{st: st, userID: userID}
-}
-
-// resolveSessionOwner returns the actual user_id that owns a session row,
-// but ONLY if it belongs to the caller or one of the caller's child users.
-// Falls back to a.userID when the lookup fails or the owner is not a
-// permitted user. This prevents cross-user data leakage: knowing a
-// session_key on a shared/public agent cannot read another user's chat.
-func (a *StoreAdapter) resolveSessionOwner(ctx context.Context, agentID, sessionKey string) string {
-	// Check cache first to avoid repeated DB lookups for the same session.
-	if a.ownerCache != nil {
-		if cached, ok := a.ownerCache[sessionKey]; ok {
-			return cached
-		}
-	}
-	result := a.userID // default: deny / self
-	owner, err := a.st.LookupSessionOwner(ctx, agentID, sessionKey)
-	if err == nil && owner != "" {
-		if owner == a.userID {
-			result = owner
-		} else {
-			// Check if the owner is a child of the caller (app_user whose
-			// owner_user_id == a.userID). If not, deny by returning a.userID
-			// so the downstream query simply returns no rows.
-			if u, err := a.st.GetUser(ctx, owner); err == nil && u != nil && u.OwnerUserID == a.userID {
-				result = owner
-			}
-		}
-	}
-	if a.ownerCache == nil {
-		a.ownerCache = make(map[string]string)
-	}
-	a.ownerCache[sessionKey] = result
-	return result
 }
 
 func (a *StoreAdapter) GetSession(ctx context.Context, agentID, sessionKey string) ([]provider.Message, error) {
@@ -166,14 +132,14 @@ func (a *StoreAdapter) LookupSessionProject(ctx context.Context, agentID, sessio
 // archive parallel to the sessions blob. Called from Session.Append on
 // every Append, in addition to SaveSession.
 func (a *StoreAdapter) AppendMessage(ctx context.Context, agentID, sessionKey string, m provider.Message) error {
-	return a.st.AppendSessionMessage(ctx, a.userID, agentID, sessionKey, sessionMessageFromProvider(m))
+	return a.st.AppendSessionMessage(ctx, agentID, sessionKey, sessionMessageFromProvider(m))
 }
 
 // ListMessages reads the full archive for one session, in turn order.
 // Used by the chat history UI so users see the original conversation
 // even after compaction has shrunk the LLM-facing working set.
 func (a *StoreAdapter) ListMessages(ctx context.Context, agentID, sessionKey string) ([]provider.Message, error) {
-	sms, err := a.st.ListSessionMessages(ctx, a.resolveSessionOwner(ctx, agentID, sessionKey), agentID, sessionKey)
+	sms, err := a.st.ListSessionMessages(ctx, agentID, sessionKey)
 	if err != nil {
 		return nil, err
 	}
@@ -294,11 +260,7 @@ func (a *StoreAdapter) BuildWebSession(ctx context.Context, m store.SessionMeta)
 	}
 	preview := ""
 	thumb := ""
-	sessionOwner := m.UserID
-	if sessionOwner == "" {
-		sessionOwner = a.userID
-	}
-	archive, _ := a.st.ListSessionMessages(ctx, sessionOwner, agentID, m.Key)
+	archive, _ := a.st.ListSessionMessages(ctx, agentID, m.Key)
 	var source []store.SessionMessage
 	if len(archive) > 0 {
 		source = archive
