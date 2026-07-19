@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fluctio-ai/fluctio/internal/auth"
 	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -78,44 +77,10 @@ func (s *Server) resolveChannelBindingScope(w http.ResponseWriter, r *http.Reque
 		jsonResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return "", "", false
 	}
-	ident, _ := auth.FromContext(r.Context())
-	if rec.UserID == uid || (ident.AuthMethod != "" && ident.CanAdminPlatform()) {
-		return uid, agentID, true
-	}
-	// Non-owner: must be able to at least read the agent.
-	if ident.AuthMethod == "apikey" && ident.CanAccessAgent(agentID) {
-		return uid, agentID, true
-	}
-	jsonResponse(w, http.StatusForbidden, map[string]any{"error": "not your agent"})
-	return "", "", false
+	// Single-user: every authenticated caller owns every agent.
+	return uid, agentID, true
 }
 
-// ownsAgent gates channel-management calls. Returns (callerUID, true)
-// when the caller is the agent owner OR a platform admin (super_admin
-// session, type=admin apikey). Bindings/channel rows are agent-keyed so
-// the returned uid is the caller's, not the owner's — that matters for
-// per-caller flows like the WeChat QR session whose poll-side equality
-// check needs to match the start-side that stored it.
-func (s *Server) ownsAgent(r *http.Request, agentID string) (string, bool) {
-	if agentID == "" {
-		return "", false
-	}
-	uid := s.effectiveUserID(r)
-	if uid == "" {
-		return "", false
-	}
-	rec, err := s.dataStore.GetAgent(r.Context(), agentID)
-	if err != nil || rec == nil {
-		return "", false
-	}
-	if rec.UserID == uid {
-		return uid, true
-	}
-	if ident, ok := auth.FromContext(r.Context()); ok && ident.CanAdminPlatform() {
-		return uid, true
-	}
-	return "", false
-}
 
 func (s *Server) handleListAgentChannels(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
