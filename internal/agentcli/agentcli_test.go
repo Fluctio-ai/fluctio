@@ -355,14 +355,14 @@ func TestPutGetListFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if err := PutFile(context.Background(), st, res.Agent.ID, res.Agent.UserID, "SOUL.md", []byte("hi")); err != nil {
+	if err := PutFile(context.Background(), st, res.Agent.ID, "SOUL.md", []byte("hi")); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	got, err := GetFile(context.Background(), st, res.Agent.ID, res.Agent.UserID, "SOUL.md")
+	got, err := GetFile(context.Background(), st, res.Agent.ID, "SOUL.md")
 	if err != nil || string(got) != "hi" {
 		t.Fatalf("get: data=%q err=%v", got, err)
 	}
-	files, err := ListFiles(context.Background(), st, res.Agent.ID, res.Agent.UserID)
+	files, err := ListFiles(context.Background(), st, res.Agent.ID)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestPutFileRejectsUnsupportedFilename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	err = PutFile(context.Background(), st, res.Agent.ID, res.Agent.UserID, "NOTES.md", []byte("x"))
+	err = PutFile(context.Background(), st, res.Agent.ID, "NOTES.md", []byte("x"))
 	if err == nil {
 		t.Fatal("expected rejection of NOTES.md")
 	}
@@ -392,7 +392,7 @@ func TestRemoveDeletesAgentAndFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if err := PutFile(context.Background(), st, res.Agent.ID, res.Agent.UserID, "SOUL.md", []byte("x")); err != nil {
+	if err := PutFile(context.Background(), st, res.Agent.ID, "SOUL.md", []byte("x")); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	if _, err := Remove(context.Background(), st, "alpha"); err != nil {
@@ -401,7 +401,7 @@ func TestRemoveDeletesAgentAndFiles(t *testing.T) {
 	if _, err := Remove(context.Background(), st, "alpha"); err == nil {
 		t.Fatal("expected error removing missing agent")
 	}
-	files, _ := st.ListAgentFiles(context.Background(), res.Agent.ID, res.Agent.UserID)
+	files, _ := st.ListAgentFiles(context.Background(), res.Agent.ID)
 	if len(files) != 0 {
 		t.Fatalf("files leak after remove: %#v", files)
 	}

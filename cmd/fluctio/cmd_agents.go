@@ -264,7 +264,7 @@ func agentsFilesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			files, err := agentcli.ListFiles(ctx, st, rec.ID, rec.UserID)
+			files, err := agentcli.ListFiles(ctx, st, rec.ID)
 			if err != nil {
 				return err
 			}
@@ -293,7 +293,7 @@ func agentsFilesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := agentcli.PutFile(ctx, st, rec.ID, rec.UserID, args[1], data); err != nil {
+			if err := agentcli.PutFile(ctx, st, rec.ID, args[1], data); err != nil {
 				return err
 			}
 			fmt.Printf("Wrote %s\n", args[1])
@@ -316,7 +316,7 @@ func agentsFilesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, err := agentcli.GetFile(ctx, st, rec.ID, rec.UserID, args[1])
+			data, err := agentcli.GetFile(ctx, st, rec.ID, args[1])
 			if err != nil {
 				return err
 			}
@@ -347,7 +347,7 @@ func agentsFilesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := st.DeleteAgentFile(ctx, rec.ID, rec.UserID, args[1]); err != nil {
+			if err := st.DeleteAgentFile(ctx, rec.ID, args[1]); err != nil {
 				return err
 			}
 			fmt.Printf("Deleted %s\n", args[1])

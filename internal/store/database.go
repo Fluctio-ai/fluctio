@@ -205,6 +205,11 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateFlattenUserData(ctx); err != nil {
 		return fmt.Errorf("migrate flatten user data: %w", err)
 	}
+	// Drop agent_files.user_id now that flatten has collapsed any
+	// per-user duplicate rows onto a single winner.
+	if err := d.migrateAgentFilesDropUserID(ctx); err != nil {
+		return fmt.Errorf("migrate agent_files drop user_id: %w", err)
+	}
 	return nil
 }
 
@@ -1158,6 +1163,56 @@ func (d *DBStore) flattenDuplicateRows(ctx context.Context, table, partBy, order
 	)`, table, rid, rid, rid, partBy, orderBy, table)
 	if _, err := d.db.ExecContext(ctx, q); err != nil {
 		return fmt.Errorf("flatten %s: %w\nSQL: %s", table, err, q)
+	}
+	return nil
+}
+
+// migrateAgentFilesDropUserID rebuilds agent_files without the user_id
+// column so the primary key becomes (agent_id, filename). migrateFlattenUserData
+// has already collapsed any per-user duplicate rows onto a single winner,
+// so the row-copy below is collision-free. Idempotent — skips the rebuild
+// when user_id is already gone (already-flat install / re-run).
+//
+// The CREATE TABLE in migrationSQL still emits the legacy (agent_id,
+// user_id, filename) shape, so a fresh install flows through here once
+// to flatten it; that's cheap and keeps migrateAgentFilesUserID a no-op
+// (which in turn avoids reviving user_id on a fresh schema).
+func (d *DBStore) migrateAgentFilesDropUserID(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "agent_files", "user_id")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	if d.dialect == "postgres" {
+		for _, s := range []string{
+			`ALTER TABLE agent_files DROP CONSTRAINT IF EXISTS agent_files_pkey`,
+			`ALTER TABLE agent_files ADD PRIMARY KEY (agent_id, filename)`,
+			`ALTER TABLE agent_files DROP COLUMN user_id`,
+		} {
+			if _, err := d.db.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("postgres drop agent_files.user_id: %w\nSQL: %s", err, s)
+			}
+		}
+		return nil
+	}
+	for _, s := range []string{
+		`CREATE TABLE agent_files_new (
+			agent_id   TEXT NOT NULL,
+			filename   TEXT NOT NULL,
+			content    TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (agent_id, filename)
+		)`,
+		`INSERT INTO agent_files_new (agent_id, filename, content, updated_at)
+			SELECT agent_id, filename, content, updated_at FROM agent_files`,
+		`DROP TABLE agent_files`,
+		`ALTER TABLE agent_files_new RENAME TO agent_files`,
+	} {
+		if _, err := d.db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("sqlite drop agent_files.user_id: %w\nSQL: %s", err, s)
+		}
 	}
 	return nil
 }
@@ -3253,29 +3308,17 @@ func (d *DBStore) MoveSession(ctx context.Context, userID, agentID, sessionKey, 
 // falls through to a local FS file at <agent_home>/<name> for installs
 // that want a global default for an agent.
 
-// GetAgentFile returns the file for (agent_id, filename), preferring
-// the caller's own row and falling back to the agent owner's row.
-// userID is required.
-func (d *DBStore) GetAgentFile(ctx context.Context, agentID, userID, filename string) ([]byte, error) {
+// GetAgentFile returns the (agent_id, filename) row, or ErrNotFound.
+// Flattened: one row per (agent, filename); the per-user overlay is gone.
+func (d *DBStore) GetAgentFile(ctx context.Context, agentID, filename string) ([]byte, error) {
 	if agentID == "" {
 		return nil, errors.New("store: GetAgentFile requires agent_id")
 	}
-	if userID == "" {
-		return nil, errors.New("store: GetAgentFile requires user_id")
-	}
-	// Single round-trip: pick caller's row if present (sort key 0),
-	// else owner's (sort key 1). LIMIT 1 returns the winning row.
-	// The subselect resolves the agent's owner; if the agent is gone
-	// it just produces NULL and the IN ignores it — caller's row is
-	// still returned when present, otherwise NoRows.
 	row := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT content FROM agent_files
-			WHERE agent_id = %s AND filename = %s
-			  AND user_id IN (%s, COALESCE((SELECT user_id FROM agents WHERE id = %s), ''))
-			ORDER BY CASE WHEN user_id = %s THEN 0 ELSE 1 END
-			LIMIT 1`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5)),
-		agentID, filename, userID, agentID, userID)
+			WHERE agent_id = %s AND filename = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, filename)
 	var content string
 	if err := row.Scan(&content); err != nil {
 		return nil, scanErr(err)
@@ -3283,86 +3326,50 @@ func (d *DBStore) GetAgentFile(ctx context.Context, agentID, userID, filename st
 	return []byte(content), nil
 }
 
-// GetAgentFileExact bypasses the owner-fallback overlay and returns
-// only the (agent_id, user_id, filename) row, or ErrNotFound. Used
-// when a caller explicitly needs to know whether *their own* override
-// row exists (e.g. a Customize page that distinguishes "you've
-// authored an override" from "you're seeing the owner's content").
-func (d *DBStore) GetAgentFileExact(ctx context.Context, agentID, userID, filename string) ([]byte, error) {
-	if agentID == "" {
-		return nil, errors.New("store: GetAgentFileExact requires agent_id")
-	}
-	if userID == "" {
-		return nil, errors.New("store: GetAgentFileExact requires user_id")
-	}
-	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT content FROM agent_files
-			WHERE agent_id = %s AND user_id = %s AND filename = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		agentID, userID, filename)
-	var content string
-	if err := row.Scan(&content); err != nil {
-		return nil, scanErr(err)
-	}
-	return []byte(content), nil
-}
-
-// SaveAgentFile writes to the (agent_id, user_id, filename) row exactly.
-// userID is required — every write is per-user. Use a local FS file
-// at <agent_home>/<name> if you want one shared default for the agent.
-func (d *DBStore) SaveAgentFile(ctx context.Context, agentID, userID, filename string, data []byte) error {
+// SaveAgentFile writes the (agent_id, filename) row (upsert).
+func (d *DBStore) SaveAgentFile(ctx context.Context, agentID, filename string, data []byte) error {
 	if agentID == "" {
 		return errors.New("store: SaveAgentFile requires agent_id")
-	}
-	if userID == "" {
-		return errors.New("store: SaveAgentFile requires user_id")
 	}
 	now := time.Now().UTC()
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO agent_files (agent_id, user_id, filename, content, updated_at)
-				VALUES ($1, $2, $3, $4, $5)
-				ON CONFLICT (agent_id, user_id, filename) DO UPDATE SET content=$4, updated_at=$5`,
-			agentID, userID, filename, string(data), now)
+			`INSERT INTO agent_files (agent_id, filename, content, updated_at)
+				VALUES ($1, $2, $3, $4)
+				ON CONFLICT (agent_id, filename) DO UPDATE SET content=$3, updated_at=$4`,
+			agentID, filename, string(data), now)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO agent_files (agent_id, user_id, filename, content, updated_at)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT (agent_id, user_id, filename) DO UPDATE SET
+		`INSERT INTO agent_files (agent_id, filename, content, updated_at)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT (agent_id, filename) DO UPDATE SET
 			  content=excluded.content, updated_at=excluded.updated_at`,
-		agentID, userID, filename, string(data), now)
+		agentID, filename, string(data), now)
 	return err
 }
 
-func (d *DBStore) DeleteAgentFile(ctx context.Context, agentID, userID, filename string) error {
+func (d *DBStore) DeleteAgentFile(ctx context.Context, agentID, filename string) error {
 	if agentID == "" {
 		return errors.New("store: DeleteAgentFile requires agent_id")
 	}
-	if userID == "" {
-		return errors.New("store: DeleteAgentFile requires user_id")
-	}
 	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM agent_files WHERE agent_id = %s AND user_id = %s AND filename = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		agentID, userID, filename)
+		fmt.Sprintf(`DELETE FROM agent_files WHERE agent_id = %s AND filename = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, filename)
 	return err
 }
 
-// ListAgentFiles returns the filenames stored for (agent_id, user_id).
-// userID is required — there is no shared template fallback.
-func (d *DBStore) ListAgentFiles(ctx context.Context, agentID, userID string) ([]string, error) {
+// ListAgentFiles returns the filenames stored for agent_id.
+func (d *DBStore) ListAgentFiles(ctx context.Context, agentID string) ([]string, error) {
 	if agentID == "" {
 		return nil, errors.New("store: ListAgentFiles requires agent_id")
 	}
-	if userID == "" {
-		return nil, errors.New("store: ListAgentFiles requires user_id")
-	}
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT filename FROM agent_files
-			WHERE agent_id = %s AND user_id = %s ORDER BY filename`,
-			d.ph(1), d.ph(2)),
-		agentID, userID)
+			WHERE agent_id = %s ORDER BY filename`,
+			d.ph(1)),
+		agentID)
 	if err != nil {
 		return nil, err
 	}

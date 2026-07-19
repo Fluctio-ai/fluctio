@@ -2,15 +2,22 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
 // TestFlattenUserDataMigration verifies migrateFlattenUserData collapses
 // per-user rows onto a single row per natural key, keeping the newest
-// content per group. It seeds duplicate (agent, filename) / (agent,
-// session_key) rows across two users, runs the full Migrate (which now
-// includes the flatten step), and asserts only the newest row per group
-// survives. Idempotency is checked by running Migrate a second time.
+// content per group. It seeds duplicate (agent, session_key) rows across
+// two users, runs the full Migrate (which now includes the flatten step),
+// and asserts only the newest row per group survives. Idempotency is
+// checked by running Migrate a second time.
+//
+// Note: agent_files used to be covered here too, but task 1.2 dropped its
+// user_id column (PK is now (agent_id, filename), so duplicates can't
+// exist) and the agent_files branch of the flatten is therefore a
+// permanent no-op. The sessions / session_messages cases below still
+// exercise the same flattenDuplicateRows code path end-to-end.
 func TestFlattenUserDataMigration(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -21,26 +28,6 @@ func TestFlattenUserDataMigration(t *testing.T) {
 		`INSERT INTO agents (id, user_id, name, config) VALUES (?, ?, 'demo', '{}')`,
 		agentID, "u_owner"); err != nil {
 		t.Fatalf("seed agent: %v", err)
-	}
-
-	// agent_files: USER.md exists under both users — the chatter row is
-	// newer so it must win. IDENTITY.md / MEMORY.md are singletons under
-	// the owner and must survive untouched (proves we don't over-delete).
-	files := []struct {
-		userID, filename, content, updatedAt string
-	}{
-		{"u_owner", "IDENTITY.md", "owner-identity", "2026-07-01 10:00:00"},
-		{"u_owner", "USER.md", "owner-user", "2026-07-01 10:00:00"},
-		{"u_chatter", "USER.md", "chatter-user-v2", "2026-07-02 10:00:00"}, // dup of USER.md, newest → wins
-		{"u_owner", "MEMORY.md", "owner-memory", "2026-07-01 10:00:00"},
-	}
-	for _, f := range files {
-		if _, err := db.db.ExecContext(ctx,
-			`INSERT INTO agent_files (agent_id, user_id, filename, content, updated_at)
-			 VALUES (?, ?, ?, ?, ?)`,
-			agentID, f.userID, f.filename, f.content, f.updatedAt); err != nil {
-			t.Fatalf("seed agent_file %+v: %v", f, err)
-		}
 	}
 
 	// sessions: two rows share (agent, session_key='sess_X') across users
@@ -66,36 +53,6 @@ func TestFlattenUserDataMigration(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	// agent_files: 3 distinct filenames remain; USER.md keeps the v2 content.
-	rows, err := db.db.QueryContext(ctx,
-		`SELECT filename, content FROM agent_files WHERE agent_id = ? ORDER BY filename`, agentID)
-	if err != nil {
-		t.Fatalf("query agent_files: %v", err)
-	}
-	type afRow struct{ filename, content string }
-	var got []afRow
-	for rows.Next() {
-		var r afRow
-		if err := rows.Scan(&r.filename, &r.content); err != nil {
-			t.Fatalf("scan agent_files: %v", err)
-		}
-		got = append(got, r)
-	}
-	rows.Close()
-	wantAF := []afRow{
-		{"IDENTITY.md", "owner-identity"},
-		{"MEMORY.md", "owner-memory"},
-		{"USER.md", "chatter-user-v2"},
-	}
-	if len(got) != len(wantAF) {
-		t.Fatalf("agent_files rows = %+v; want %+v", got, wantAF)
-	}
-	for i, w := range wantAF {
-		if got[i] != w {
-			t.Errorf("agent_files[%d] = %+v; want %+v", i, got[i], w)
-		}
-	}
-
 	// sessions: sess_X collapsed to 1 row, sess_Y kept → 2 rows total.
 	var sessCount int
 	if err := db.db.QueryRowContext(ctx,
@@ -118,14 +75,6 @@ func TestFlattenUserDataMigration(t *testing.T) {
 	// Idempotency: a second Migrate must not delete anything further.
 	if err := db.Migrate(ctx); err != nil {
 		t.Fatalf("migrate (2nd): %v", err)
-	}
-	var afCount2 int
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM agent_files WHERE agent_id = ?`, agentID).Scan(&afCount2); err != nil {
-		t.Fatalf("count agent_files after 2nd migrate: %v", err)
-	}
-	if afCount2 != 3 {
-		t.Errorf("agent_files not idempotent: count after 2nd migrate = %d; want 3", afCount2)
 	}
 	var sessCount2 int
 	if err := db.db.QueryRowContext(ctx,
@@ -192,5 +141,71 @@ func TestFlattenUserDataMigration_sessionMessages(t *testing.T) {
 	}
 	if content != "chatter-msg" {
 		t.Errorf("session_messages winner content = %q; want chatter-msg (newest rowid)", content)
+	}
+}
+
+// TestAgentFilesFlatSchema verifies task 1.2's flattened agent_files
+// schema: PK is (agent_id, filename), SaveAgentFile upserts on conflict,
+// and GetAgentFile / ListAgentFiles / DeleteAgentFile work without a
+// user_id. Also asserts the user_id column is actually gone post-migrate.
+func TestAgentFilesFlatSchema(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	const agentID = "agt_flat"
+	if _, err := db.db.ExecContext(ctx,
+		`INSERT INTO agents (id, user_id, name, config) VALUES (?, ?, 'flat', '{}')`,
+		agentID, "u_owner"); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+
+	// Save twice on the same filename — upsert, not duplicate.
+	if err := db.SaveAgentFile(ctx, agentID, "SOUL.md", []byte("v1")); err != nil {
+		t.Fatalf("SaveAgentFile v1: %v", err)
+	}
+	if err := db.SaveAgentFile(ctx, agentID, "SOUL.md", []byte("v2")); err != nil {
+		t.Fatalf("SaveAgentFile v2: %v", err)
+	}
+	if err := db.SaveAgentFile(ctx, agentID, "IDENTITY.md", []byte("id")); err != nil {
+		t.Fatalf("SaveAgentFile IDENTITY: %v", err)
+	}
+
+	got, err := db.GetAgentFile(ctx, agentID, "SOUL.md")
+	if err != nil {
+		t.Fatalf("GetAgentFile: %v", err)
+	}
+	if string(got) != "v2" {
+		t.Errorf("SOUL.md = %q; want v2 (upsert overwrote v1)", string(got))
+	}
+
+	files, err := db.ListAgentFiles(ctx, agentID)
+	if err != nil {
+		t.Fatalf("ListAgentFiles: %v", err)
+	}
+	want := []string{"IDENTITY.md", "SOUL.md"}
+	if len(files) != len(want) {
+		t.Fatalf("ListAgentFiles = %v; want %v", files, want)
+	}
+	for i, w := range want {
+		if files[i] != w {
+			t.Errorf("ListAgentFiles[%d] = %q; want %q", i, files[i], w)
+		}
+	}
+
+	if err := db.DeleteAgentFile(ctx, agentID, "SOUL.md"); err != nil {
+		t.Fatalf("DeleteAgentFile: %v", err)
+	}
+	if _, err := db.GetAgentFile(ctx, agentID, "SOUL.md"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetAgentFile after delete err = %v; want ErrNotFound", err)
+	}
+
+	// user_id column must be gone after migrateAgentFilesDropUserID.
+	hasUID, err := db.tableHasColumn(ctx, "agent_files", "user_id")
+	if err != nil {
+		t.Fatalf("check user_id column: %v", err)
+	}
+	if hasUID {
+		t.Error("agent_files.user_id still exists; migrateAgentFilesDropUserID should have removed it")
 	}
 }

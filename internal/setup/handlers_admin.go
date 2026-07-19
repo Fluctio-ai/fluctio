@@ -753,7 +753,7 @@ var forkAgentScopeConfigs = map[string]bool{
 // usual fallback paths).
 func (s *Server) forkAgentContent(r *http.Request, src, dst *store.AgentRecord) error {
 	for _, name := range forkAgentFiles {
-		data, err := s.dataStore.GetAgentFileExact(r.Context(), src.ID, src.UserID, name)
+		data, err := s.dataStore.GetAgentFile(r.Context(), src.ID, name)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				continue
@@ -763,7 +763,7 @@ func (s *Server) forkAgentContent(r *http.Request, src, dst *store.AgentRecord) 
 		if len(data) == 0 {
 			continue
 		}
-		if err := s.dataStore.SaveAgentFile(r.Context(), dst.ID, dst.UserID, name, data); err != nil {
+		if err := s.dataStore.SaveAgentFile(r.Context(), dst.ID, name, data); err != nil {
 			return err
 		}
 	}

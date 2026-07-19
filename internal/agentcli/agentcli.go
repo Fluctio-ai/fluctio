@@ -378,10 +378,10 @@ func Remove(ctx context.Context, st store.Store, name string) (*store.AgentRecor
 	if err != nil {
 		return nil, err
 	}
-	files, err := st.ListAgentFiles(ctx, rec.ID, rec.UserID)
+	files, err := st.ListAgentFiles(ctx, rec.ID)
 	if err == nil {
 		for _, f := range files {
-			_ = st.DeleteAgentFile(ctx, rec.ID, rec.UserID, f)
+			_ = st.DeleteAgentFile(ctx, rec.ID, f)
 		}
 	}
 	if err := st.DeleteAgent(ctx, rec.ID); err != nil {
@@ -459,24 +459,24 @@ func GetConfig(ctx context.Context, st store.Store, agentID, key string) (interf
 }
 
 // PutFile writes a system file to the agent's row in the agent_files table.
-func PutFile(ctx context.Context, st store.Store, agentID, userID, filename string, data []byte) error {
+func PutFile(ctx context.Context, st store.Store, agentID, filename string, data []byte) error {
 	if err := validateSystemFilename(filename); err != nil {
 		return err
 	}
-	return st.SaveAgentFile(ctx, agentID, userID, filename, data)
+	return st.SaveAgentFile(ctx, agentID, filename, data)
 }
 
 // GetFile reads a system file.
-func GetFile(ctx context.Context, st store.Store, agentID, userID, filename string) ([]byte, error) {
+func GetFile(ctx context.Context, st store.Store, agentID, filename string) ([]byte, error) {
 	if err := validateSystemFilename(filename); err != nil {
 		return nil, err
 	}
-	return st.GetAgentFile(ctx, agentID, userID, filename)
+	return st.GetAgentFile(ctx, agentID, filename)
 }
 
 // ListFiles lists the agent's system files (allowlist-filtered).
-func ListFiles(ctx context.Context, st store.Store, agentID, userID string) ([]string, error) {
-	files, err := st.ListAgentFiles(ctx, agentID, userID)
+func ListFiles(ctx context.Context, st store.Store, agentID string) ([]string, error) {
+	files, err := st.ListAgentFiles(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}

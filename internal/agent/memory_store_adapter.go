@@ -7,10 +7,17 @@ import (
 )
 
 // MemoryStoreAdapter exposes the agent's identity + memory files via the
-// underlying store. Reads pass userID through so the per-user override
-// row wins when present (USER.md / MEMORY.md the agent autopersisted
-// for that chatter); writes also carry userID so chat-time updates land
-// in the chatter's row, never the shared template.
+// underlying store.
+//
+// NOTE: agent_files was flattened to one row per (agent, filename), so
+// the per-user overlay (caller's row vs owner's row) is gone and every
+// method here resolves to a single agent-scoped row. The userID parameter
+// is retained on each method only for interface compatibility —
+// MemoryStore (memory.go) and SystemFileStore (tools/registry.go) still
+// thread a chatter userID through to support the not-yet-removed
+// per-chatter Memory rebind. It's received as `_` to signal "unused
+// here"; Phase 2 task 2.2 deletes it from both interfaces and then the
+// parameter disappears for real.
 type MemoryStoreAdapter struct {
 	st store.Store
 }
@@ -21,36 +28,29 @@ func NewMemoryStoreAdapter(st store.Store) *MemoryStoreAdapter {
 
 const memoryFilename = "MEMORY.md"
 
-// GetMemory uses the *Exact* (no owner-fallback) variant deliberately.
-// MEMORY.md is per-chatter — a public-link visitor must not inherit the
-// agent owner's accumulated memories of past conversations.
-func (a *MemoryStoreAdapter) GetMemory(ctx context.Context, agentID, userID string) (string, error) {
-	data, err := a.st.GetAgentFileExact(ctx, agentID, userID, memoryFilename)
+func (a *MemoryStoreAdapter) GetMemory(ctx context.Context, agentID, _ string) (string, error) {
+	data, err := a.st.GetAgentFile(ctx, agentID, memoryFilename)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
 }
 
-func (a *MemoryStoreAdapter) SaveMemory(ctx context.Context, agentID, userID, content string) error {
-	return a.st.SaveAgentFile(ctx, agentID, userID, memoryFilename, []byte(content))
+func (a *MemoryStoreAdapter) SaveMemory(ctx context.Context, agentID, _ string, content string) error {
+	return a.st.SaveAgentFile(ctx, agentID, memoryFilename, []byte(content))
 }
 
-// GetWorkspaceFile keeps the owner-fallback overlay because the
-// ContextBuilder uses this method for shared identity files
-// (SOUL/IDENTITY/AGENTS/BOOTSTRAP/HEARTBEAT/TOOLS). Chatters inheriting
-// the owner's identity is the desired behavior there.
-func (a *MemoryStoreAdapter) GetWorkspaceFile(ctx context.Context, agentID, userID, filename string) ([]byte, error) {
-	return a.st.GetAgentFile(ctx, agentID, userID, filename)
+func (a *MemoryStoreAdapter) GetWorkspaceFile(ctx context.Context, agentID, _ string, filename string) ([]byte, error) {
+	return a.st.GetAgentFile(ctx, agentID, filename)
 }
 
-// GetWorkspaceFileExact bypasses the owner-fallback overlay. Used for
-// per-chatter files (USER.md) so a fresh visitor sees an empty profile
-// instead of the owner's.
-func (a *MemoryStoreAdapter) GetWorkspaceFileExact(ctx context.Context, agentID, userID, filename string) ([]byte, error) {
-	return a.st.GetAgentFileExact(ctx, agentID, userID, filename)
+// GetWorkspaceFileExact previously bypassed the owner-fallback overlay to
+// read only the caller's row. Post-flatten there's a single row, so it's
+// equivalent to GetWorkspaceFile; the method stays for interface compat.
+func (a *MemoryStoreAdapter) GetWorkspaceFileExact(ctx context.Context, agentID, _ string, filename string) ([]byte, error) {
+	return a.st.GetAgentFile(ctx, agentID, filename)
 }
 
-func (a *MemoryStoreAdapter) SaveWorkspaceFile(ctx context.Context, agentID, userID, filename string, data []byte) error {
-	return a.st.SaveAgentFile(ctx, agentID, userID, filename, data)
+func (a *MemoryStoreAdapter) SaveWorkspaceFile(ctx context.Context, agentID, _ string, filename string, data []byte) error {
+	return a.st.SaveAgentFile(ctx, agentID, filename, data)
 }

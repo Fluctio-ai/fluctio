@@ -787,61 +787,20 @@ func (s *Server) handleGetAgentSystemFile(w http.ResponseWriter, r *http.Request
 	if !s.requireAgentReadable(w, r, id) {
 		return
 	}
-	rec, err := s.dataStore.GetAgent(r.Context(), id)
-	if err != nil || rec == nil {
-		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
-		return
-	}
-	caller := s.effectiveUserID(r)
-
-	// Identity files: read the owner's row directly — that's the single
-	// source of truth, regardless of who's asking.
-	if agentIdentityFiles[name] {
-		data, err := s.dataStore.GetAgentFileExact(r.Context(), id, rec.UserID, name)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				jsonResponse(w, http.StatusOK, map[string]any{"content": "", "source": "default"})
-				return
-			}
-			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	// Flattened: every system file is a single agent-scoped row, so the
+	// identity-vs-per-user overlay is gone. One read — source "owner"
+	// means "agent has content" (keeps the dashboard's edit badge / value
+	// prefill working), "default" is the empty state.
+	data, err := s.dataStore.GetAgentFile(r.Context(), id, name)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			jsonResponse(w, http.StatusOK, map[string]any{"content": "", "source": "default"})
 			return
 		}
-		jsonResponse(w, http.StatusOK, map[string]any{"content": string(data), "source": "owner"})
-		return
-	}
-
-	// Per-user files: prefer caller's own row, fall back to the owner's.
-	// `source: "db"` means the caller has authored an override; "owner"
-	// means we're showing the agent owner's row by fallback. The
-	// frontend uses this to decide whether to show the "Edited" badge
-	// and enable the Revert action.
-	if data, err := s.dataStore.GetAgentFileExact(r.Context(), id, caller, name); err == nil {
-		baseContent := ""
-		if rec.UserID != caller {
-			if base, err2 := s.dataStore.GetAgentFileExact(r.Context(), id, rec.UserID, name); err2 == nil {
-				baseContent = string(base)
-			}
-		}
-		resp := map[string]any{"content": string(data), "source": "db"}
-		if baseContent != "" {
-			resp["baseContent"] = baseContent
-		}
-		jsonResponse(w, http.StatusOK, resp)
-		return
-	} else if !errors.Is(err, store.ErrNotFound) {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	if rec.UserID != caller {
-		if data, err := s.dataStore.GetAgentFileExact(r.Context(), id, rec.UserID, name); err == nil {
-			jsonResponse(w, http.StatusOK, map[string]any{"content": string(data), "source": "owner"})
-			return
-		} else if !errors.Is(err, store.ErrNotFound) {
-			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{"content": "", "source": "default"})
+	jsonResponse(w, http.StatusOK, map[string]any{"content": string(data), "source": "owner"})
 }
 
 func (s *Server) handlePutAgentSystemFile(w http.ResponseWriter, r *http.Request) {
@@ -861,15 +820,14 @@ func (s *Server) handlePutAgentSystemFile(w http.ResponseWriter, r *http.Request
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	target, ok := s.resolveSystemFileTarget(w, r, id, name)
-	if !ok {
+	if !s.checkSystemFileWritable(w, r, id, name) {
 		return
 	}
-	if err := s.dataStore.SaveAgentFile(r.Context(), id, target, name, []byte(body.Content)); err != nil {
+	if err := s.dataStore.SaveAgentFile(r.Context(), id, name, []byte(body.Content)); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	s.invalidateUser(target)
+	s.invalidateAgent(id)
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -883,49 +841,50 @@ func (s *Server) handleDeleteAgentSystemFile(w http.ResponseWriter, r *http.Requ
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "filename not allowed"})
 		return
 	}
-	target, ok := s.resolveSystemFileTarget(w, r, id, name)
-	if !ok {
+	if !s.checkSystemFileWritable(w, r, id, name) {
 		return
 	}
-	if err := s.dataStore.DeleteAgentFile(r.Context(), id, target, name); err != nil {
+	if err := s.dataStore.DeleteAgentFile(r.Context(), id, name); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	s.invalidateUser(target)
+	s.invalidateAgent(id)
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// resolveSystemFileTarget figures out which user_id row a write/delete
-// on (agentID, filename) should hit, and gates access:
+// checkSystemFileWritable gates write/delete access on (agentID, name):
 //
 //   - Identity files (SOUL/IDENTITY/AGENTS/BOOTSTRAP/TOOLS/HEARTBEAT/
-//     agent.json) always target the agent owner's row — this is the
-//     canonical "shared template". Caller must be the owner or hold
-//     platform admin (super_admin session, or type=admin apikey).
-//   - Per-user files (USER.md, MEMORY.md) target the caller's own row
-//     so each chatter has an independent override. Caller just needs
-//     read access to the agent.
+//     agent.json) are the canonical shared template; caller must be the
+//     agent owner or hold platform admin (super_admin session or
+//     type=admin apikey).
+//   - Per-user files (USER.md, MEMORY.md) just need read access to the
+//     agent.
 //
-// Writes 4xx and returns ok=false on permission/lookup failures.
-func (s *Server) resolveSystemFileTarget(w http.ResponseWriter, r *http.Request, agentID, name string) (string, bool) {
+// Writes 4xx and returns false on permission/lookup failures. Pre-flatten
+// this also resolved *which* user_id row a write targeted (owner for
+// identity files, caller for per-user overrides); with agent_files
+// flattened to one row per (agent, filename) the target user is gone —
+// only the access check remains.
+func (s *Server) checkSystemFileWritable(w http.ResponseWriter, r *http.Request, agentID, name string) bool {
 	rec, err := s.dataStore.GetAgent(r.Context(), agentID)
 	if err != nil || rec == nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
-		return "", false
+		return false
 	}
-	caller := s.effectiveUserID(r)
-	ident, _ := auth.FromContext(r.Context())
 	if agentIdentityFiles[name] {
+		caller := s.effectiveUserID(r)
+		ident, _ := auth.FromContext(r.Context())
 		if rec.UserID != caller && !ident.CanAdminPlatform() {
 			jsonResponse(w, http.StatusForbidden, map[string]any{"error": "not your agent"})
-			return "", false
+			return false
 		}
-		return rec.UserID, true
+		return true
 	}
 	if !s.requireAgentReadable(w, r, agentID) {
-		return "", false
+		return false
 	}
-	return caller, true
+	return true
 }
 
 // Workspace files — list / get / upload of agent-produced artifacts.

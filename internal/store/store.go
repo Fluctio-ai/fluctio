@@ -223,18 +223,12 @@ type Store interface {
 	// --- Agent files ---
 	//
 	// SOUL.md, IDENTITY.md, MEMORY.md, AGENTS.md, BOOTSTRAP.md, etc.
-	// Layered: user_id="" is the shared template (edited via the admin
-	// Customize page), user_id=u_xxx is that user's personal override.
-	// Read picks user-specific over template via fallback; write hits
-	// the (agentID, userID, filename) row exactly.
-	// GetAgentFile prefers the caller's own row, falling back to the
-	// agent owner's row. Use GetAgentFileExact for a strict (agent,
-	// user, filename) lookup that bypasses the overlay.
-	GetAgentFile(ctx context.Context, agentID, userID, filename string) ([]byte, error)
-	GetAgentFileExact(ctx context.Context, agentID, userID, filename string) ([]byte, error)
-	SaveAgentFile(ctx context.Context, agentID, userID, filename string, data []byte) error
-	DeleteAgentFile(ctx context.Context, agentID, userID, filename string) error
-	ListAgentFiles(ctx context.Context, agentID, userID string) ([]string, error)
+	// Flattened to one row per (agentID, filename) — the per-user overlay
+	// was removed when agent_files was collapsed onto the agent dimension.
+	GetAgentFile(ctx context.Context, agentID, filename string) ([]byte, error)
+	SaveAgentFile(ctx context.Context, agentID, filename string, data []byte) error
+	DeleteAgentFile(ctx context.Context, agentID, filename string) error
+	ListAgentFiles(ctx context.Context, agentID string) ([]string, error)
 
 	// --- Configs (providers / settings live here; channels have their own table) ---
 	//
