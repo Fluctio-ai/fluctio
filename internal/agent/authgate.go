@@ -123,16 +123,25 @@ func (g *authGate) evaluateCall(toolName, argsJSON, mode string) authDecision {
 	sandboxed := g.sandboxed
 	g.mu.RUnlock()
 
-	// exec-family tools: hardline + dangerous + workspace boundary.
+	// exec-family tools: hardline + dangerous + safe whitelist + workspace boundary.
 	if execTools[toolName] {
 		command := extractStringArg(argsJSON, "command")
 		if command != "" {
-			if tier, desc := classifyCommand(command); tier == tierHardline {
+			tier, desc := classifyCommand(command)
+			if tier == tierHardline {
 				return authDecision{action: authBlock, reason: "hardline: " + desc}
-			} else if tier == tierDangerous {
-				if !sandboxed {
-					return modeGate(mode, "dangerous command: "+desc)
-				}
+			}
+			// Safe whitelist: read-only / query commands auto-allow even in
+			// ask/auto mode. Must run AFTER hardline (a `safe` verb can never
+			// bypass the hardline floor) but BEFORE dangerous so that a
+			// command like `git status` doesn't trip a dangerous pattern.
+			// commandSafeTier enforces pure-single-command (no shell
+			// operators) + a safePattern match.
+			if commandSafeTier(command) {
+				return authDecision{action: authAllow}
+			}
+			if tier == tierDangerous && !sandboxed {
+				return modeGate(mode, "dangerous command: "+desc)
 			}
 		}
 		// exec commands that didn't trip a pattern are still subject to
@@ -352,13 +361,23 @@ var dangerousPatterns = []struct {
 }
 
 // classifyCommand inspects a shell command against hardline + dangerous
-// patterns. Returns the tier hit, or tierSafe.
+// patterns. Returns the tier hit, or tierNormal when no pattern matched.
+//
+// Note: classifyCommand does NOT know about the safe whitelist. The safe
+// auto-allow is decided separately in evaluateCall via commandSafeTier,
+// which composes a shell-operator blocklist with the safePatterns list.
+// classifyCommand keeps its original two-role job (hardline floor +
+// dangerous flagging) so existing callers and tests are unaffected.
 type commandTier int
 
 const (
-	tierSafe commandTier = iota
-	tierDangerous
-	tierHardline
+	tierNormal commandTier = iota // unclassified — falls through to mode gate
+	tierDangerous                 // high-risk recoverable, mode decides
+	tierHardline                  // catastrophic, unconditional block
+	// tierSafe is intentionally NOT returned by classifyCommand. It is the
+	// auto-allow verdict from commandSafeTier, evaluated in evaluateCall
+	// after the hardline check clears.
+	tierSafe
 )
 
 func classifyCommand(command string) (commandTier, string) {
@@ -373,7 +392,120 @@ func classifyCommand(command string) (commandTier, string) {
 			return tierDangerous, p.desc
 		}
 	}
-	return tierSafe, ""
+	return tierNormal, ""
+}
+
+// =========================================================================
+// Safe-tier whitelist — conservative read-only / query commands that are
+// auto-allowed regardless of mode (ask/auto/yolo). Plugs the "every harmless
+// `dir` / `--version` / `git status` triggers a /yes prompt" passivity the
+// user flagged. Order in evaluateCall is:
+//
+//  1. hardline → block (unconditional, FIRST — safe can never bypass)
+//  2. safe → allow (auto, regardless of mode)
+//  3. dangerous → mode gate
+//  4. normal exec → mode gate (existing)
+//
+// A command qualifies as safe ONLY if BOTH hold:
+//   - it contains NO shell operator that could chain or redirect
+//     (see shellOperatorRE), AND
+//   - it matches a safePattern (read-only / query verb + arg shape).
+//
+// Anything else falls through to the mode gate. When uncertain, DO NOT
+// whitelist — let the existing gate prompt.
+// =========================================================================
+
+// shellOperatorRE matches any shell operator that could chain a second
+// command, redirect I/O, or perform substitution/background. If ANY of
+// these appears in the command string, commandSafeTier returns false and
+// the command falls through to the mode gate.
+//
+// Covered: `|`, `||`, `&&`, `;`, `>`, `>>`, `<`, `<<`, backtick (cmd
+// substitution), `$(...)` (cmd substitution via `$(`), and bare `&`
+// (background). `$` alone is not flagged (Windows filenames may contain
+// it); only `$(` is — so `echo $HOME` is NOT blocked, but `echo $(rm x)`
+// is. Note: because we test for `$(`, `echo $HOME` is allowed while
+// `echo $(whoami)` is not.
+var shellOperatorRE = regexp.MustCompile("(`|\\$\\(|\\|\\||&&|\\||;|>|<|&)")
+
+// safePatterns is the conservative whitelist of read-only / query command
+// shapes. Patterns are matched against the lowercased command AFTER the
+// operator blocklist has cleared it, so they can be written without
+// worrying about chained redirects. Each pattern anchors the verb at the
+// start (`^...`) so a leading subshell or path can't smuggle a safe verb.
+//
+// To keep the surface conservative, the arg shape is restricted per family
+// (e.g., `git branch` matches only when bare or carrying list-style flags;
+// `git remote` matches only bare or with `-v`).
+var safePatterns = []struct {
+	re   *regexp.Regexp
+	desc string
+}{
+	// ---- Single-token listing / state queries (any args after operator check) ----
+	// These commands cannot mutate the filesystem: ls/dir/pwd/whoami/hostname/uname.
+	{regexp.MustCompile(`^(dir|ls|pwd|whoami|hostname|uname)(\s.*)?$`), "read-only listing/state query"},
+	// Disk/memory state: df/du/free (POSIX) and systeminfo (Windows).
+	{regexp.MustCompile(`^(df|du|free|systeminfo)(\s.*)?$`), "disk/state query"},
+
+	// ---- Path lookup ----
+	{regexp.MustCompile(`^(where|which)(\s.*)?$`), "path lookup"},
+
+	// ---- Print / stream (file content → stdout, no mutation) ----
+	// echo/print: text output. type (Windows) / cat (POSIX): stream file.
+	// Redirect forms (`cat f > g`) are already rejected by the operator check.
+	{regexp.MustCompile(`^(echo|print|type|cat)(\s.*)?$`), "print/stream command"},
+
+	// ---- Version / help flags on known binaries ----
+	// Allow only short help/version flags so a malicious flag can't slip in.
+	{regexp.MustCompile(`^(node|npm|pnpm|yarn|python|python3|py|go|java|ruby|php|rustc|cargo|pip|pip3|git|gh|docker|kubectl|helm)\s+(-h|--help|-v|--version|-version|-V)$`), "binary version/help flag"},
+
+	// ---- git read-only subcommands ----
+	// status / diff / log / show: no write side-effects regardless of args.
+	{regexp.MustCompile(`^git\s+status\b`), "git status"},
+	{regexp.MustCompile(`^git\s+diff\b`), "git diff"},
+	{regexp.MustCompile(`^git\s+log\b`), "git log"},
+	{regexp.MustCompile(`^git\s+show\b`), "git show"},
+	// branch: ONLY bare or list-style flags. `git branch <name>` (create),
+	// `-d`/`-D` (delete), `-m` (rename) must NOT be safe.
+	{regexp.MustCompile(`^git\s+branch(\s+(-[arlvV]+|--list|--all|--remotes|--verbose))*\s*$`), "git branch (list)"},
+	// remote: bare, `-v`, `--verbose`, or `show <name>`. add/remove/set-url NOT safe.
+	{regexp.MustCompile(`^git\s+remote\s*$`), "git remote (list)"},
+	{regexp.MustCompile(`^git\s+remote\s+(-v|--verbose)\s*$`), "git remote -v"},
+	{regexp.MustCompile(`^git\s+remote\s+show\s+\S+$`), "git remote show"},
+	// Other read-only git queries.
+	{regexp.MustCompile(`^git\s+(blame|shortlog|describe|tag|ls-files|rev-parse)\b`), "git read-only query"},
+	// config: ONLY read forms. `git config user.email x` writes — NOT safe.
+	{regexp.MustCompile(`^git\s+config\s+(-l|--list)\s*$`), "git config --list"},
+	{regexp.MustCompile(`^git\s+config\s+--get\b`), "git config --get"},
+
+	// ---- Package manager list / show ----
+	{regexp.MustCompile(`^(npm|pnpm|yarn)\s+(list|ls)(\s.*)?$`), "npm/pnpm/yarn list"},
+	{regexp.MustCompile(`^pip3?\s+(list|show)(\s.*)?$`), "pip list/show"},
+}
+
+// commandSafeTier returns true ONLY when the command:
+//  1. is non-empty,
+//  2. contains NO shell operator that could chain/redirect/substitute
+//     (see shellOperatorRE), AND
+//  3. matches one of the conservative safePatterns.
+//
+// If any operator is present → false (the command may still match a
+// safePattern verb, but the operator could smuggle a destructive second
+// command, so it must go through the mode gate).
+func commandSafeTier(command string) bool {
+	if command == "" {
+		return false
+	}
+	if shellOperatorRE.MatchString(command) {
+		return false
+	}
+	c := strings.ToLower(command)
+	for _, p := range safePatterns {
+		if p.re.MatchString(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // denyMessageBypass returns the standard anti-bypass rejection wording,
