@@ -83,9 +83,6 @@ func (s *Server) authorizeScope(w http.ResponseWriter, r *http.Request, sc, scop
 			jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "agent not yours"})
 			return false
 		}
-		if rec.UserID == ident.UserID {
-			return true
-		}
 		// Non-owner read access on a shared agent: when the owner has
 		// shareModelConfig on (default), the agent's runtime resolution
 		// already includes its agent-scope providers for chatters
