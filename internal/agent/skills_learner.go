@@ -119,6 +119,13 @@ func (sl *SkillsLearner) stageExtractedSkill(skill *extractedSkill) error {
 	if sl.agentHome == "" {
 		return fmt.Errorf("stageExtractedSkill: agentHome is required")
 	}
+	// Validate the LLM-extracted slug BEFORE touching the filesystem so a
+	// malformed extraction surfaces as a clear "invalid slug" rejection
+	// (and MaybeExtract logs "skipped extracted skill, invalid slug") rather
+	// than a wrapped WritePending error from inside the skills package.
+	if err := skills.IsValidSkillName(skill.Slug); err != nil {
+		return fmt.Errorf("stageExtractedSkill: invalid slug %q: %w", skill.Slug, err)
+	}
 	pendingSkillPath := filepath.Join(sl.agentHome, "skills-pending", skill.Slug, "SKILL.md")
 	if _, err := os.Stat(pendingSkillPath); err == nil {
 		return errSkillAlreadyPending

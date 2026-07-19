@@ -14,7 +14,7 @@ import (
 func TestSkillManageWritesToPendingNotLive(t *testing.T) {
 	home := t.TempDir()
 	r := NewRegistry(t.TempDir(), t.TempDir())
-	RegisterSkillManage(r, home, "fluctio skill approve", nil, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", nil)
 
 	fn := r.GetFunc("skill_manage")
 	if fn == nil {
@@ -71,10 +71,12 @@ func TestSkillManageWritesToPendingNotLive(t *testing.T) {
 func TestSkillManageRejectsBadNames(t *testing.T) {
 	home := t.TempDir()
 	r := NewRegistry(t.TempDir(), t.TempDir())
-	RegisterSkillManage(r, home, "fluctio skill approve", nil, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", nil)
 	fn := r.GetFunc("skill_manage")
 
-	for _, n := range []string{"", "..", "foo/bar", "a b"} {
+	// Match the full pending_test.go isValidSkillName matrix so the agent-
+	// facing tool and the low-level validator stay in sync.
+	for _, n := range []string{"", "..", ".", "foo/bar", "foo\\bar", "../escape", "a b", "a:b"} {
 		raw, _ := json.Marshal(map[string]string{"action": "create", "name": n, "content": "x"})
 		if _, err := fn(context.Background(), raw); err == nil {
 			t.Fatalf("skill_manage accepted bad name %q", n)
@@ -85,7 +87,7 @@ func TestSkillManageRejectsBadNames(t *testing.T) {
 func TestSkillManageRejectsUnknownAction(t *testing.T) {
 	home := t.TempDir()
 	r := NewRegistry(t.TempDir(), t.TempDir())
-	RegisterSkillManage(r, home, "fluctio skill approve", nil, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", nil)
 	fn := r.GetFunc("skill_manage")
 
 	raw, _ := json.Marshal(map[string]string{"action": "bogus", "name": "x", "content": "x"})
@@ -97,7 +99,7 @@ func TestSkillManageRejectsUnknownAction(t *testing.T) {
 func TestSkillManageDeleteStagesDeletion(t *testing.T) {
 	home := t.TempDir()
 	r := NewRegistry(t.TempDir(), t.TempDir())
-	RegisterSkillManage(r, home, "fluctio skill approve", nil, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", nil)
 	fn := r.GetFunc("skill_manage")
 
 	// Pre-existing live skill we want removed.
@@ -143,7 +145,7 @@ func TestSkillManageDeleteStagesDeletion(t *testing.T) {
 func TestSkillManageWriteFileStagesSubFile(t *testing.T) {
 	home := t.TempDir()
 	r := NewRegistry(t.TempDir(), t.TempDir())
-	RegisterSkillManage(r, home, "fluctio skill approve", nil, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", nil)
 	fn := r.GetFunc("skill_manage")
 
 	raw, _ := json.Marshal(map[string]string{
@@ -182,7 +184,7 @@ func TestSkillManageWriteFileStagesSubFile(t *testing.T) {
 func TestSkillManageWriteFileRejectsBadPath(t *testing.T) {
 	home := t.TempDir()
 	r := NewRegistry(t.TempDir(), t.TempDir())
-	RegisterSkillManage(r, home, "fluctio skill approve", nil, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", nil)
 	fn := r.GetFunc("skill_manage")
 
 	for _, p := range []string{"", "..", "../x", "/abs", "a\\b"} {
@@ -201,7 +203,7 @@ func TestSkillManageWriteFileRejectsBadPath(t *testing.T) {
 func TestSkillManageRemoveFileStagesRemoval(t *testing.T) {
 	home := t.TempDir()
 	r := NewRegistry(t.TempDir(), t.TempDir())
-	RegisterSkillManage(r, home, "fluctio skill approve", nil, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", nil)
 	fn := r.GetFunc("skill_manage")
 
 	// Pre-existing live sub-file.
@@ -244,7 +246,7 @@ func TestSkillManageRemoveFileStagesRemoval(t *testing.T) {
 func TestSkillManageEditAliasActsAsPatch(t *testing.T) {
 	home := t.TempDir()
 	r := NewRegistry(t.TempDir(), t.TempDir())
-	RegisterSkillManage(r, home, "fluctio skill approve", nil, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", nil)
 	fn := r.GetFunc("skill_manage")
 
 	raw, _ := json.Marshal(map[string]string{
@@ -274,7 +276,7 @@ func TestSkillManageParserSurfacesGating(t *testing.T) {
 	parser := func(b []byte) *SkillManifest {
 		return &SkillManifest{Name: "demo", Description: "demo skill", Gated: true, GateReason: "requires OS xyz"}
 	}
-	RegisterSkillManage(r, home, "fluctio skill approve", parser, nil)
+	RegisterSkillManage(r, home, "fluctio skill approve", parser)
 	fn := r.GetFunc("skill_manage")
 	raw, _ := json.Marshal(map[string]string{
 		"action":  "create",

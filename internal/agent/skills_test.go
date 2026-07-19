@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -245,5 +246,28 @@ BODY_GATED_WITH_HINT
 	// Bodies must never inline (gated or not, progressive disclosure).
 	if strings.Contains(summary, "BODY_AVAIL") || strings.Contains(summary, "BODY_GATED_NO_HINT") || strings.Contains(summary, "BODY_GATED_WITH_HINT") {
 		t.Fatalf("summary should not inline any SKILL.md body:\n%s", summary)
+	}
+}
+
+// TestBinAvailableMechanism verifies the binAvailable helper resolves PATH
+// the same way the exec tool does — through `cmd /C where` on Windows,
+// LookPath elsewhere. The test asserts the MECHANISM (existing bin → true,
+// bogus bin → false), not any environment-specific binary like bash/python
+// which may or may not be installed on the CI runner.
+func TestBinAvailableMechanism(t *testing.T) {
+	// Pick a binary that definitely exists on each platform. On Windows
+	// `where` itself ships with the OS; on Linux/macOS `sh` is in /bin or
+	// /usr/bin. The point is just to confirm the mechanism can return true.
+	existing := "sh"
+	if runtime.GOOS == "windows" {
+		existing = "where"
+	}
+	if !binAvailable(existing) {
+		t.Fatalf("binAvailable(%q) = false, want true (mechanism should detect existing bin)", existing)
+	}
+
+	// A clearly bogus name that no PATH will resolve.
+	if binAvailable("no-such-bin-xyz-fluctio-12345") {
+		t.Fatalf("binAvailable(bogus) = true, want false")
 	}
 }

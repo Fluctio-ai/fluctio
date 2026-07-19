@@ -68,10 +68,12 @@ type PendingEntry struct {
 	Meta PendingMeta `json:"meta"`
 }
 
-// isValidSkillName rejects empty names, the reserved traversal tokens, and
-// any byte outside the allowed set. The check is deliberately local (not
-// exported) because callers always come through WritePending/Approve/Reject.
-func isValidSkillName(name string) error {
+// IsValidSkillName rejects empty names, the reserved traversal tokens, and
+// any byte outside the allowed set. Exported so out-of-package callers
+// (e.g. the skills_learner) can pre-validate an LLM-supplied slug BEFORE
+// constructing a WritePending call, surfacing the failure with a clearer
+// "invalid slug" message instead of a wrapped WritePending error.
+func IsValidSkillName(name string) error {
 	if name == "" {
 		return fmt.Errorf("skill name is required")
 	}
@@ -83,6 +85,10 @@ func isValidSkillName(name string) error {
 	}
 	return nil
 }
+
+// isValidSkillName is an internal alias kept so existing in-package callers
+// read naturally. New internal code should call IsValidSkillName directly.
+func isValidSkillName(name string) error { return IsValidSkillName(name) }
 
 // isSafeRelativePath guards relpaths used by write_file/remove_file. It
 // rejects absolute paths (Unix or Windows drive-letter form), backslashes,

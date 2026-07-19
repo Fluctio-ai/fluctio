@@ -66,10 +66,7 @@ type skillManageArgs struct {
 // parser (optional) is invoked on the saved content (create/patch/edit only)
 // so the tool result can surface frontmatter gating info back to the model.
 // Pass nil to skip.
-//
-// onChange is reserved for Phase 4 hot-reload wiring; pass nil for now
-// (approval happens out-of-band via the CLI, not in-process).
-func RegisterSkillManage(r *Registry, agentHome, pendingHint string, parser FrontmatterParser, onChange func()) {
+func RegisterSkillManage(r *Registry, agentHome, pendingHint string, parser FrontmatterParser) {
 	if pendingHint == "" {
 		pendingHint = "fluctio skill approve"
 	}

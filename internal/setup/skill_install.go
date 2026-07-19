@@ -385,9 +385,13 @@ func (s *Server) handleUploadSkill(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			continue
 		}
-		// Reject any entry whose cleaned name escapes the skill dir.
+		// Reject any entry whose cleaned name escapes the skill dir. Match
+		// the Phase 3 deliver_file/registry.go predicate: `..foo` is a legal
+		// sibling directory name, only `..` itself or `../<seg>` actually
+		// traverse. Use ToSlash so Windows backslash separators are normalised
+		// before the prefix check.
 		clean := filepath.Clean(name)
-		if strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+		if clean == ".." || strings.HasPrefix(filepath.ToSlash(clean), "../") || filepath.IsAbs(clean) {
 			slog.Warn("skipping unsafe zip entry", "name", entry.Name)
 			continue
 		}

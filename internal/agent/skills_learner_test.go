@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fluctio-ai/fluctio/internal/skills"
@@ -73,5 +74,42 @@ func TestStageExtractedSkill_WritesPendingNotLive(t *testing.T) {
 	}
 	if string(got) != skill.Content {
 		t.Fatalf("pending body changed: got %q, want %q", string(got), skill.Content)
+	}
+}
+
+// TestStageExtractedSkill_RejectsInvalidSlug covers the early-validation
+// path: an LLM that returns a malformed slug (path separator, traversal
+// token, space, etc.) must be rejected at stageExtractedSkill BEFORE any
+// filesystem write is attempted under skills-pending/. Without this guard
+// the failure surfaces as a wrapped skills.WritePending error from inside
+// the skills package, which is harder to attribute to the LLM extraction.
+func TestStageExtractedSkill_RejectsInvalidSlug(t *testing.T) {
+	home := t.TempDir()
+	sl := &SkillsLearner{
+		workspace:    home,
+		agentHome:    home,
+		minToolCalls: 1,
+	}
+	for _, bad := range []string{"", "..", ".", "foo/bar", "foo\\bar", "../escape", "a b", "a:b"} {
+		skill := &extractedSkill{
+			Name:    "demo",
+			Slug:    bad,
+			Content: "---\nname: demo\n---\nbody\n",
+		}
+		err := sl.stageExtractedSkill(skill)
+		if err == nil {
+			t.Fatalf("stageExtractedSkill accepted invalid slug %q", bad)
+		}
+		if !strings.Contains(err.Error(), "invalid slug") {
+			t.Fatalf("slug %q: error %v should mention 'invalid slug'", bad, err)
+		}
+	}
+	// Nothing should have been written to pending for any of the bad slugs.
+	entries, err := skills.ListPending(home)
+	if err != nil {
+		t.Fatalf("ListPending: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected zero pending entries, got %d", len(entries))
 	}
 }

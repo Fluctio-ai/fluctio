@@ -502,8 +502,8 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	// Phase 4 write-approval gate: skill_manage writes to skills-pending/
 	// (NOT live). The parser closure re-uses parseFrontmatterFromBytes +
 	// CheckGating so the tool result can echo the same gating verdict the
-	// system-prompt catalog and load_skill already use. onChange=nil:
-	// approval is out-of-band (CLI in P4 Task 2), not in-process.
+	// system-prompt catalog and load_skill already use. Approval happens
+	// out-of-band (CLI in P4 Task 2), not in-process.
 	tools.RegisterSkillManage(registry, rc.Home, "fluctio skill approve",
 		func(b []byte) *tools.SkillManifest {
 			fm := parseFrontmatterFromBytes(b)
@@ -521,7 +521,7 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 				Gated:       gated,
 				GateReason:  reason,
 			}
-		}, nil)
+		})
 	var sbCfg *tools.SandboxConfig
 	if rc.Sandbox.Enabled {
 		sbCfg = &tools.SandboxConfig{Enabled: true}
@@ -4057,7 +4057,7 @@ func (a *Agent) refreshSkillsFromStore(userID string) {
 				Gated:       gated,
 				GateReason:  reason,
 			}
-		}, nil)
+		})
 	// Per-turn fingerprint of the skill set the system prompt will
 	// ship. Lets us diff IM vs web for the same (agent, chatter) and
 	// confirm — or rule out — that agent-scope skills are reaching
@@ -4109,7 +4109,7 @@ func (a *Agent) ReloadWorkspaceFiles() {
 				Gated:       gated,
 				GateReason:  reason,
 			}
-		}, nil)
+		})
 	a.ctxBuilder = NewContextBuilder(a.homePath, a.memory, skillsSummary)
 	a.ctxBuilder.SetWorkspace(a.workspacePath)
 	a.ctxBuilder.SetPromptMode(a.promptMode)

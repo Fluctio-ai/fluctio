@@ -662,9 +662,13 @@ func CheckGating(meta *SkillMetadata) (bool, string) {
 		return false, ""
 	}
 
-	// Check required binaries
+	// Check required binaries. binAvailable resolves PATH the SAME way the
+	// exec tool does (cmd /C where on Windows, LookPath elsewhere) so gating
+	// agrees with actual exec capability — without this, Windows gateway
+	// processes launched with a trimmed PATH would gate skills whose bins
+	// actually resolve fine through the system PATH the exec tool uses.
 	for _, bin := range oc.Requires.Bins {
-		if _, err := exec.LookPath(bin); err != nil {
+		if !binAvailable(bin) {
 			return true, fmt.Sprintf("required binary %q not found on PATH", bin)
 		}
 	}
@@ -673,7 +677,7 @@ func CheckGating(meta *SkillMetadata) (bool, string) {
 	if len(oc.Requires.AnyBins) > 0 {
 		found := false
 		for _, bin := range oc.Requires.AnyBins {
-			if _, err := exec.LookPath(bin); err == nil {
+			if binAvailable(bin) {
 				found = true
 				break
 			}
@@ -691,6 +695,31 @@ func CheckGating(meta *SkillMetadata) (bool, string) {
 	}
 
 	return false, ""
+}
+
+// binAvailable reports whether the given binary can be resolved on PATH by
+// the exec tool. The exec tool runs commands via `cmd /C <cmd>` on Windows
+// and `sh -c <cmd>` on Linux/macOS, which inherit the SYSTEM PATH — but the
+// gateway Go process may have been launched with a different PATH (e.g. a
+// trimmed dev-shell env). So on Windows we mirror the exec tool by going
+// through `cmd /C where <bin>`; on other platforms the process PATH is
+// normally the system PATH and exec.LookPath is sufficient.
+//
+// Gating must use this helper (not exec.LookPath directly) so CheckGating
+// agrees with what the exec tool can actually run: without it, a Windows
+// gateway missing msys/Git-Bash dirs on its process PATH would gate every
+// skill that requires `bash` even though the exec tool can run `bash` fine
+// through cmd /C.
+func binAvailable(bin string) bool {
+	if runtime.GOOS == "windows" {
+		// cmd /C where uses the SYSTEM PATH (what cmd.exe would see), matching
+		// the exec tool's `cmd /C <cmd>` resolution. Errors or non-zero exit
+		// both mean "not available"; we don't care about stdout.
+		cmd := exec.Command("cmd", "/C", "where", bin)
+		return cmd.Run() == nil
+	}
+	_, err := exec.LookPath(bin)
+	return err == nil
 }
 
 // fluctioBaseDir returns $FLUCTIO_HOME or $HOME/.fluctio. Used as
