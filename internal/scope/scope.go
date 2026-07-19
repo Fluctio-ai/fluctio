@@ -89,25 +89,9 @@ func Providers(ctx context.Context, st store.Store, userID, agentID string) (map
 	} else {
 		apply(rows)
 	}
-	// user layer
-	if userID != "" {
-		if rows, err := st.ListConfigs(ctx, store.KindProvider, userID, ""); err != nil {
-			return nil, err
-		} else {
-			apply(rows)
-		}
-	}
 	// agent layer
 	if agentID != "" {
 		if rows, err := st.ListConfigs(ctx, store.KindProvider, "", agentID); err != nil {
-			return nil, err
-		} else {
-			apply(rows)
-		}
-	}
-	// per-(user, agent) layer
-	if userID != "" && agentID != "" {
-		if rows, err := st.ListConfigs(ctx, store.KindProvider, userID, agentID); err != nil {
 			return nil, err
 		} else {
 			apply(rows)
@@ -240,18 +224,8 @@ func Setting(ctx context.Context, st store.Store, namespace, userID, agentID str
 	if err := tryGet("", ""); err != nil {
 		return nil, err
 	}
-	if userID != "" {
-		if err := tryGet(userID, ""); err != nil {
-			return nil, err
-		}
-	}
 	if agentID != "" {
 		if err := tryGet("", agentID); err != nil {
-			return nil, err
-		}
-	}
-	if userID != "" && agentID != "" {
-		if err := tryGet(userID, agentID); err != nil {
 			return nil, err
 		}
 	}

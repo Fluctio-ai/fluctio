@@ -8,13 +8,12 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
-// Verifies the agent → user → system precedence the dashboard promises
-// in the Models page: agent-scope agents.defaults.model must win over a
-// user-scope override, which must in turn win over the system default.
-// Reported as "agent setting doesn't take effect" by users — this test
-// pins the contract so a future store / merge refactor surfaces a
-// regression instead of silently flipping precedence.
-func TestSettingPrecedence_AgentBeatsUserBeatsSystem(t *testing.T) {
+// Verifies the agent → system precedence post single-user flatten: the
+// user / per-(user, agent) layers are retired (single owner identity),
+// so an agent-scope override wins over the system default and clearing
+// it falls back to system. Pins the contract so a future refactor
+// surfaces a regression instead of silently flipping precedence.
+func TestSettingPrecedence_AgentBeatsSystem(t *testing.T) {
 	db, err := store.NewDBStore("sqlite", "file::memory:?cache=shared")
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -25,7 +24,6 @@ func TestSettingPrecedence_AgentBeatsUserBeatsSystem(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	userID := "user-a"
 	agentID := "agent-x"
 
 	// system: default model
@@ -33,19 +31,14 @@ func TestSettingPrecedence_AgentBeatsUserBeatsSystem(t *testing.T) {
 		map[string]interface{}{"model": "deepseek/deepseek-v4-pro"}); err != nil {
 		t.Fatalf("save system: %v", err)
 	}
-	// user-scope override
-	if err := SaveSetting(ctx, db, userID, "", "agents.defaults",
-		map[string]interface{}{"model": "openai/gpt-5.5"}); err != nil {
-		t.Fatalf("save user: %v", err)
-	}
 
-	// At this point, user wins over system.
+	// System default wins on its own.
 	var got config.AgentDefaults
-	if err := SettingInto(ctx, db, "agents.defaults", userID, agentID, &got); err != nil {
+	if err := SettingInto(ctx, db, "agents.defaults", "", agentID, &got); err != nil {
 		t.Fatalf("setting into: %v", err)
 	}
-	if got.Model != "openai/gpt-5.5" {
-		t.Fatalf("user should beat system: want openai/gpt-5.5, got %q", got.Model)
+	if got.Model != "deepseek/deepseek-v4-pro" {
+		t.Fatalf("system default: want deepseek/deepseek-v4-pro, got %q", got.Model)
 	}
 
 	// agent-scope override on top
@@ -54,17 +47,15 @@ func TestSettingPrecedence_AgentBeatsUserBeatsSystem(t *testing.T) {
 		t.Fatalf("save agent: %v", err)
 	}
 	got = config.AgentDefaults{}
-	if err := SettingInto(ctx, db, "agents.defaults", userID, agentID, &got); err != nil {
+	if err := SettingInto(ctx, db, "agents.defaults", "", agentID, &got); err != nil {
 		t.Fatalf("setting into: %v", err)
 	}
 	if got.Model != "anthropic/claude-opus-4-7" {
-		t.Fatalf("agent should beat user: want anthropic/claude-opus-4-7, got %q", got.Model)
+		t.Fatalf("agent should beat system: want anthropic/claude-opus-4-7, got %q", got.Model)
 	}
 
 	// Verify the raw agent-scope row reads what we wrote, independent of
-	// the merge — the loadUserSpace overlay path reads this directly, not
-	// via Setting(), so a row malformed at write time would still slip
-	// past the merge test.
+	// the merge — the loadUserSpace overlay path reads this directly.
 	rec, err := db.GetConfigByName(ctx, store.KindSetting, "", agentID, "agents.defaults")
 	if err != nil {
 		t.Fatalf("get agent-scope row: %v", err)
@@ -76,15 +67,15 @@ func TestSettingPrecedence_AgentBeatsUserBeatsSystem(t *testing.T) {
 		t.Fatalf("agent-scope row model: want anthropic/claude-opus-4-7, got %q", v)
 	}
 
-	// Delete agent-scope (empty data) → falls back to user-scope.
+	// Delete agent-scope (empty data) → falls back to system.
 	if err := SaveSetting(ctx, db, "", agentID, "agents.defaults", nil); err != nil {
 		t.Fatalf("delete agent-scope: %v", err)
 	}
 	got = config.AgentDefaults{}
-	if err := SettingInto(ctx, db, "agents.defaults", userID, agentID, &got); err != nil {
+	if err := SettingInto(ctx, db, "agents.defaults", "", agentID, &got); err != nil {
 		t.Fatalf("setting into after delete: %v", err)
 	}
-	if got.Model != "openai/gpt-5.5" {
-		t.Fatalf("clear agent should fall back to user: want openai/gpt-5.5, got %q", got.Model)
+	if got.Model != "deepseek/deepseek-v4-pro" {
+		t.Fatalf("clear agent should fall back to system: want deepseek/deepseek-v4-pro, got %q", got.Model)
 	}
 }
