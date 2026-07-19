@@ -360,17 +360,12 @@ func (s *Server) requireUserOrAdmin(w http.ResponseWriter, r *http.Request, path
 // requireAgentOwner returns the agent record if the caller owns it (or is
 // super_admin), otherwise writes a 403/404 and returns nil.
 func (s *Server) requireAgentOwner(w http.ResponseWriter, r *http.Request, agentID string) *store.AgentRecord {
-	uid := s.effectiveUserID(r)
 	rec, err := s.dataStore.GetAgent(r.Context(), agentID)
 	if err != nil || rec == nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
 		return nil
 	}
-	ident, _ := auth.FromContext(r.Context())
-	if rec.UserID != uid && ident.Role != users.RoleSuperAdmin {
-		jsonResponse(w, http.StatusForbidden, map[string]any{"error": "not your agent"})
-		return nil
-	}
+	// Single-user flatten: every authenticated caller owns every agent.
 	return rec
 }
 
@@ -395,15 +390,9 @@ func (s *Server) callerOwnsAgent(r *http.Request, agentID string) bool {
 	if err != nil || rec == nil {
 		return false
 	}
-	uid := s.effectiveUserID(r)
-	ident, _ := auth.FromContext(r.Context())
-	if rec.UserID == uid || ident.Role == users.RoleSuperAdmin {
-		return true
-	}
-	if ident.AuthMethod == "apikey" && ident.CanAccessAgent(agentID) {
-		return true
-	}
-	return false
+	_ = rec
+	// Single-user flatten: every authenticated caller owns every agent.
+	return true
 }
 
 func (s *Server) requireAgentReadable(w http.ResponseWriter, r *http.Request, agentID string) bool {
@@ -412,22 +401,9 @@ func (s *Server) requireAgentReadable(w http.ResponseWriter, r *http.Request, ag
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
 		return false
 	}
-	uid := s.effectiveUserID(r)
-	ident, _ := auth.FromContext(r.Context())
-	if rec.UserID == uid || ident.Role == users.RoleSuperAdmin {
-		return true
-	}
-	// CanAccessAgent is a hard check for apikeys (ACL) but a deferred
-	// "true" for session callers — the comment on Identity.CanAccessAgent
-	// spells this out. Only honor it for the apikey path; for session
-	// users we must do the explicit owner / public check ourselves,
-	// otherwise any signed-in user could GET another user's private
-	// agent via /api/agents/{id} and friends.
-	if ident.AuthMethod == "apikey" && ident.CanAccessAgent(agentID) {
-		return true
-	}
-	jsonResponse(w, http.StatusForbidden, map[string]any{"error": "not your agent"})
-	return false
+	_ = rec
+	// Single-user flatten: every authenticated caller can read every agent.
+	return true
 }
 
 func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
