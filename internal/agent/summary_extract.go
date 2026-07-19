@@ -424,7 +424,6 @@ func persistConversationSummary(
 			UserID:         userID,
 			AgentID:        agentID,
 			SessionKey:     sessionKey,
-			ChatterUserID:  chatterUserID,
 			Topic:          t.Topic,
 			Summary:        t.Summary,
 			Keywords:       t.Keywords,

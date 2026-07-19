@@ -40,23 +40,15 @@ type ConversationSummary struct {
 }
 
 // InsertConversationSummary writes the main row, upserting on the unique
-// (chatter_user_id, agent_id, session_key, seq_start, seq_end) key so
-// re-summarizing the same range (e.g. /compact twice) merges instead of
-// duplicating. The FTS5 trigger auto-populates conversation_summaries_fts.
+// (agent_id, session_key, seq_start, seq_end) key so re-summarizing the
+// same range (e.g. /compact twice) merges instead of duplicating. The
+// FTS5 trigger auto-populates conversation_summaries_fts.
 // Does NOT write the vec0 row — call InsertConversationSummaryVector
 // separately when an embedding is available.
-//
-// Returns an error when chatter_user_id is empty: an empty chatter
-// defeats per-chatter recall isolation and would let one participant's
-// summaries leak to another, so callers must resolve a chatter before
-// persisting.
 func (d *DBStore) InsertConversationSummary(
 	ctx context.Context,
 	s ConversationSummary,
 ) (int64, error) {
-	if strings.TrimSpace(s.ChatterUserID) == "" {
-		return 0, fmt.Errorf("InsertConversationSummary: chatter_user_id is required (agent=%s session=%s)", s.AgentID, s.SessionKey)
-	}
 	keywordsJSON, err := json.Marshal(s.Keywords)
 	if err != nil {
 		return 0, fmt.Errorf("marshal keywords: %w", err)
@@ -77,10 +69,10 @@ func (d *DBStore) InsertConversationSummary(
 		// (reinforcement state survives re-summarize).
 		err = d.db.QueryRowContext(ctx, `
 			INSERT INTO conversation_summaries
-				(agent_id, session_key, chatter_user_id,
+				(agent_id, session_key,
 				 summary, keywords, seq_start, seq_end, embedding_model, importance, topic, segments)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			ON CONFLICT (chatter_user_id, agent_id, session_key, seq_start, seq_end)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			ON CONFLICT (agent_id, session_key, seq_start, seq_end)
 			DO UPDATE SET summary = EXCLUDED.summary,
 			              keywords = EXCLUDED.keywords,
 			              embedding_model = EXCLUDED.embedding_model,
@@ -88,7 +80,7 @@ func (d *DBStore) InsertConversationSummary(
 			              topic = EXCLUDED.topic,
 			              segments = EXCLUDED.segments
 			RETURNING id`,
-			s.AgentID, s.SessionKey, s.ChatterUserID,
+			s.AgentID, s.SessionKey,
 			s.Summary, string(keywordsJSON), s.SeqStart, s.SeqEnd,
 			nilIfEmpty(s.EmbeddingModel), s.Importance, s.Topic, string(segmentsJSON),
 		).Scan(&id)
@@ -98,10 +90,10 @@ func (d *DBStore) InsertConversationSummary(
 		// the caller can stamp the vector on the right summary.
 		err = d.db.QueryRowContext(ctx, `
 			INSERT INTO conversation_summaries
-				(agent_id, session_key, chatter_user_id,
+				(agent_id, session_key,
 				 summary, keywords, seq_start, seq_end, embedding_model, importance, topic, segments)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(chatter_user_id, agent_id, session_key, seq_start, seq_end)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(agent_id, session_key, seq_start, seq_end)
 			DO UPDATE SET summary = excluded.summary,
 			              keywords = excluded.keywords,
 			              embedding_model = excluded.embedding_model,
@@ -109,7 +101,7 @@ func (d *DBStore) InsertConversationSummary(
 			              topic = excluded.topic,
 			              segments = excluded.segments
 			RETURNING id`,
-			s.AgentID, s.SessionKey, s.ChatterUserID,
+			s.AgentID, s.SessionKey,
 			s.Summary, string(keywordsJSON), s.SeqStart, s.SeqEnd,
 			nilIfEmpty(s.EmbeddingModel), s.Importance, s.Topic, string(segmentsJSON),
 		).Scan(&id)
@@ -150,9 +142,9 @@ func nilIfEmpty(s string) any {
 
 // SearchConversationSummariesFTS returns ranked hits scoped to agent_id.
 // Fluctio is single-user: an agent's memory is shared across all of its
-// chatters (owner web / IM / cron), so chatter_user_id is NOT a search
-// dimension here — it's still written on each row as a provenance marker,
-// just not filtered on.
+// chatters (owner web / IM / cron), so recall keys on
+// (agent_id, session_key, seq_start, seq_end) with no per-chatter
+// dimension.
 //
 // Pipeline: SQL LIKE pre-filter → bigram token overlap scoring
 // (keywords×3, summary×2) × recency decay → top-K.
@@ -197,7 +189,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 		}
 		args = append(args, fetchLimit)
 		rows, err := d.db.QueryContext(ctx, `
-			SELECT id, agent_id, session_key, chatter_user_id,
+			SELECT id, agent_id, session_key,
 			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			FROM conversation_summaries
 			WHERE agent_id = $1
@@ -224,7 +216,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 	}
 	args = append(args, fetchLimit)
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, agent_id, session_key, chatter_user_id,
+		SELECT id, agent_id, session_key,
 		       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 		FROM conversation_summaries
 		WHERE agent_id = ?
@@ -252,7 +244,7 @@ func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 		var topic string
 		var segmentsJSON string
 		err := rows.Scan(
-			&s.ID, &s.AgentID, &s.SessionKey, &s.ChatterUserID,
+			&s.ID, &s.AgentID, &s.SessionKey,
 			&s.Summary, &keywordsJSON, &s.SeqStart, &s.SeqEnd, &embModel,
 			&s.Importance, &s.AccessCount, &s.AccessTimeSum, &lastAccessed, &s.CreatedAt,
 			&topic, &segmentsJSON,
@@ -895,7 +887,7 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE agent_id = $1
@@ -903,7 +895,7 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 			 LIMIT $2`, agentID, limit)
 	default:
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE agent_id = ?
@@ -927,14 +919,14 @@ func (d *DBStore) ListConversationSummariesBySession(ctx context.Context, agentI
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE agent_id = $1 AND session_key = $2
 			 ORDER BY created_at`, agentID, sessionKey)
 	default:
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE agent_id = ? AND session_key = ?
@@ -1007,7 +999,7 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE embedding IS NULL OR ($1 != '' AND (embedding_model IS NULL OR embedding_model != $1))
@@ -1015,7 +1007,7 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 			 LIMIT $2`, model, limit)
 	default:
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT s.id, s.agent_id, s.session_key, s.chatter_user_id,
+			`SELECT s.id, s.agent_id, s.session_key,
 			        s.summary, s.keywords, s.seq_start, s.seq_end, s.embedding_model, s.importance, s.access_count, s.access_time_sum, s.last_accessed_at, s.created_at, s.topic, s.segments
 			 FROM conversation_summaries s
 			 LEFT JOIN conversation_summaries_vec v ON v.summary_id = s.id
@@ -1046,7 +1038,7 @@ func (d *DBStore) GetConversationSummariesByIDs(ctx context.Context, ids []int64
 		args[i] = id
 	}
 
-	q := fmt.Sprintf(`SELECT id, agent_id, session_key, chatter_user_id,
+	q := fmt.Sprintf(`SELECT id, agent_id, session_key,
 	       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 	FROM conversation_summaries
 	WHERE id IN (%s)

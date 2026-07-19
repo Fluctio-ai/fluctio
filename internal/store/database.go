@@ -246,6 +246,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionMessagesEventsDropChatter(ctx); err != nil {
 		return fmt.Errorf("migrate session_messages/events drop chatter_user_id: %w", err)
 	}
+	if err := d.migrateConversationSummariesDropChatter(ctx); err != nil {
+		return fmt.Errorf("migrate conversation_summaries drop chatter_user_id: %w", err)
+	}
 	return nil
 }
 
@@ -490,6 +493,62 @@ func (d *DBStore) migrateSessionMessagesEventsDropChatter(ctx context.Context) e
 		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s DROP COLUMN chatter_user_id`, table)); err != nil {
 			return fmt.Errorf("drop %s.chatter_user_id: %w\nSQL: ALTER TABLE %s DROP COLUMN chatter_user_id", table, err, table)
 		}
+	}
+	return nil
+}
+
+// migrateConversationSummariesDropChatter drops
+// conversation_summaries.chatter_user_id, retiring the last per-chatter
+// recall dimension (phase 3.2 — single-user flatten). Recall now keys on
+// (agent_id, session_key, seq_start, seq_end).
+//
+// Prerequisite dance on legacy installs: the unique index +
+// idx_conv_summ_chatter both reference chatter_user_id, and SQLite
+// refuses DROP COLUMN while an index depends on it, so both indexes go
+// first. Rows that collided only by chatter_user_id are deduped to the
+// newest id before the narrower unique index is recreated. Idempotent.
+func (d *DBStore) migrateConversationSummariesDropChatter(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "conversation_summaries", "chatter_user_id")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	// Drop indexes that reference chatter_user_id — SQLite refuses
+	// DROP COLUMN while an index depends on it. The unique index is
+	// recreated on the narrower key after the column is gone.
+	for _, stmt := range []string{
+		`DROP INDEX IF EXISTS idx_conv_summ_chatter`,
+		`DROP INDEX IF EXISTS idx_conv_summ_unique`,
+	} {
+		if _, err := d.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("drop conv_summ index: %w (stmt=%q)", err, stmt)
+		}
+	}
+	// Collapse rows that now collide on the narrower key (rows that
+	// differed only by chatter_user_id) so the recreated unique index
+	// doesn't trip. Keep the newest id per group.
+	if _, err := d.db.ExecContext(ctx, `DELETE FROM conversation_summaries WHERE id NOT IN (
+		SELECT MAX(id) FROM conversation_summaries
+		GROUP BY agent_id, session_key, seq_start, seq_end)`); err != nil {
+		return fmt.Errorf("dedupe summaries on new key: %w", err)
+	}
+	if d.dialect == "postgres" {
+		if _, err := d.db.ExecContext(ctx, `ALTER TABLE conversation_summaries DROP COLUMN IF EXISTS chatter_user_id`); err != nil {
+			return fmt.Errorf("postgres drop conversation_summaries.chatter_user_id: %w", err)
+		}
+	} else {
+		if _, err := d.db.ExecContext(ctx, `ALTER TABLE conversation_summaries DROP COLUMN chatter_user_id`); err != nil {
+			return fmt.Errorf("drop conversation_summaries.chatter_user_id: %w\nSQL: ALTER TABLE conversation_summaries DROP COLUMN chatter_user_id", err)
+		}
+	}
+	// Recreate the upsert unique index on the narrower key. IF NOT EXISTS
+	// so a partial run that already created it doesn't trip; the legacy
+	// index on chatter_user_id was dropped above.
+	if _, err := d.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_summ_unique
+		ON conversation_summaries(agent_id, session_key, seq_start, seq_end)`); err != nil {
+		return fmt.Errorf("recreate idx_conv_summ_unique: %w", err)
 	}
 	return nil
 }
@@ -1617,8 +1676,10 @@ func (d *DBStore) migrateIMClaimsDropOwnerUUID(ctx context.Context) error {
 }
 
 // migrateConversationSummariesDropUserID drops conversation_summaries.user_id.
-// Recall keys on (chatter_user_id, agent_id, session_key, seq_start, seq_end);
-// user_id was a redundant owner marker. Idempotent.
+// user_id was a redundant owner marker; recall keys on
+// (agent_id, session_key, seq_start, seq_end) after phase 3.2. The rebuild
+// keeps chatter_user_id — migrateConversationSummariesDropChatter retires
+// that column (and rebuilds the indexes) in a separate step. Idempotent.
 func (d *DBStore) migrateConversationSummariesDropUserID(ctx context.Context) error {
 	has, err := d.tableHasColumn(ctx, "conversation_summaries", "user_id")
 	if err != nil {
@@ -5140,7 +5201,6 @@ func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
 				id SERIAL PRIMARY KEY,
 				agent_id TEXT NOT NULL,
 				session_key TEXT NOT NULL,
-				chatter_user_id TEXT NOT NULL DEFAULT '',
 				summary TEXT NOT NULL,
 				keywords TEXT NOT NULL DEFAULT '[]',
 				seq_start INTEGER NOT NULL,
@@ -5149,8 +5209,6 @@ func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
 				embedding vector(1024),
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
-			`CREATE INDEX IF NOT EXISTS idx_conv_summ_chatter
-				ON conversation_summaries(chatter_user_id, agent_id, created_at DESC)`,
 			`CREATE INDEX IF NOT EXISTS idx_conv_summ_session
 				ON conversation_summaries(agent_id, session_key)`,
 			`CREATE TABLE IF NOT EXISTS conversation_summaries_meta (
@@ -5177,7 +5235,6 @@ func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			agent_id TEXT NOT NULL,
 			session_key TEXT NOT NULL,
-			chatter_user_id TEXT NOT NULL DEFAULT '',
 			summary TEXT NOT NULL,
 			keywords TEXT NOT NULL DEFAULT '[]',
 			seq_start INTEGER NOT NULL,
@@ -5185,8 +5242,6 @@ func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
 			embedding_model TEXT,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_conv_summ_chatter
-			ON conversation_summaries(chatter_user_id, agent_id, created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_conv_summ_session
 			ON conversation_summaries(agent_id, session_key)`,
 
@@ -5219,13 +5274,19 @@ func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
 // boot (idempotent) and cleans up data that would otherwise violate the
 // unique constraint:
 //
-//  1. Delete rows with empty chatter_user_id — invalid under the new
-//     store rule (empty chatter defeats per-chatter recall isolation).
-//  2. Collapse duplicate (chatter,agent,session,seq_start,seq_end)
-//     groups to the newest id (pre-upsert code could have written dups).
-//  3. Drop vec0 orphans left behind by step 1/2 (SQLite only — Postgres
+//  1. Collapse duplicate (agent,session,seq_start,seq_end) groups to the
+//     newest id (pre-upsert code could have written dups; rows that
+//     differed only by chatter_user_id collapse onto the same key now).
+//  2. Drop vec0 orphans left behind by step 1 (SQLite only — Postgres
 //     embeds the vector in the main row).
-//  4. CREATE UNIQUE INDEX IF NOT EXISTS.
+//  3. CREATE UNIQUE INDEX IF NOT EXISTS on
+//     (agent_id, session_key, seq_start, seq_end).
+//
+// chatter_user_id is no longer part of the key (single-user flatten,
+// phase 3.2). Historical installs still carrying the column have it
+// dropped by migrateConversationSummariesDropChatter, which force-rebuilds
+// this index on the narrower key (IF NOT EXISTS would otherwise skip on
+// a name collision with the legacy index).
 func (d *DBStore) migrateConversationSummariesUniqueIndex(ctx context.Context) error {
 	hasTable, err := d.tableExists(ctx, "conversation_summaries")
 	if err != nil {
@@ -5250,13 +5311,9 @@ func (d *DBStore) migrateConversationSummariesUniqueIndex(ctx context.Context) e
 		}
 	}
 
-	if _, err := d.db.ExecContext(ctx,
-		`DELETE FROM conversation_summaries WHERE chatter_user_id = ''`); err != nil {
-		return fmt.Errorf("drop empty-chatter summaries: %w", err)
-	}
 	if _, err := d.db.ExecContext(ctx, `DELETE FROM conversation_summaries WHERE id NOT IN (
 		SELECT MAX(id) FROM conversation_summaries
-		GROUP BY chatter_user_id, agent_id, session_key, seq_start, seq_end)`); err != nil {
+		GROUP BY agent_id, session_key, seq_start, seq_end)`); err != nil {
 		return fmt.Errorf("dedupe summaries: %w", err)
 	}
 	if d.dialect != "postgres" {
@@ -5272,10 +5329,10 @@ func (d *DBStore) migrateConversationSummariesUniqueIndex(ctx context.Context) e
 	switch d.dialect {
 	case "postgres":
 		_, err = d.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_summ_unique
-			ON conversation_summaries(chatter_user_id, agent_id, session_key, seq_start, seq_end)`)
+			ON conversation_summaries(agent_id, session_key, seq_start, seq_end)`)
 	default:
 		_, err = d.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_summ_unique
-			ON conversation_summaries(chatter_user_id, agent_id, session_key, seq_start, seq_end)`)
+			ON conversation_summaries(agent_id, session_key, seq_start, seq_end)`)
 	}
 	if err != nil {
 		return fmt.Errorf("create unique index: %w", err)
