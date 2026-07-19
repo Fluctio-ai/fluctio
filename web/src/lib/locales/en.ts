@@ -845,6 +845,7 @@ const en: Record<string, string> = {
 
   // Chat
   "chat.unknownError": "Unknown error",
+  "chat.skillPending": "📝 {count} skill(s) pending approval: {names}. Run `fluctio skill approve <name>` to activate.",
   "chat.clearHistory": "Clear session history",
   "chat.undoTurn": "Undo last turn",
   "chat.greeting": "What can I help with?",

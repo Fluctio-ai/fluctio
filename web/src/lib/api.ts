@@ -1097,7 +1097,8 @@ export interface ChatStreamEvent {
     | "done"
     | "subagent_progress"
     | "auth_prompt"
-    | "compaction_notice";
+    | "compaction_notice"
+    | "skill_pending";
   // Per-session monotonic sequence assigned by chat_events. Lets the
   // chat page dedupe events arriving on both the active POST stream
   // and the parallel /api/chat/subscribe SSE connection. -1 means
@@ -1136,6 +1137,12 @@ export interface ChatStreamEvent {
     before?: number;
     after?: number;
     retained_turns?: number;
+    // skill_pending payload — only populated when type === "skill_pending".
+    // Emitted post-turn when pendingSkillNames(agentHome) > 0 to surface
+    // "run `fluctio skill approve <name>`" to the chatter. See loop.go
+    // runPostTurn emit + loop_auth.go emitAuthPrompt for the shape parity.
+    count?: number;
+    names?: string[];
   };
 }
 

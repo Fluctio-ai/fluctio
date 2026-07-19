@@ -141,8 +141,9 @@ interface ChatMessage {
   id: string;
   role: "user" | "agent" | "tool-group" | "notice";
   content: string;
-  // For role==="notice" — currently "compaction_notice" is the only kind.
-  // Set so the renderer can distinguish future notice variants.
+  // For role==="notice" — currently "compaction_notice" and
+  // "skill_pending" are the kinds. Set so the renderer can distinguish
+  // future notice variants.
   kind?: string;
   timestamp: number;
   toolCalls?: { id: string; name: string; arguments: string; result?: string; metadata?: ToolResultMetadata }[];
@@ -832,6 +833,10 @@ export function ChatScreen() {
           max?: number;
           phase?: "thinking" | "running" | "final-delivery" | "done";
           tools?: string[];
+          // skill_pending fields (catch-up rarely carries this — seq=-1,
+          // not persisted — but kept for shape parity with the live path).
+          count?: number;
+          names?: string[];
         };
       };
       try {
@@ -1038,6 +1043,29 @@ export function ChatScreen() {
               setMessages((prev) => [
                 ...prev,
                 { id: `cn-${Date.now()}`, role: "notice", kind: "compaction_notice", content, timestamp: Date.now() },
+              ]);
+            }
+            break;
+          }
+          case "skill_pending": {
+            // Skill(s) staged during this turn (or earlier) are still
+            // awaiting `fluctio skill approve`. Surface as a centered
+            // notice pill — same render path as compaction_notice, but
+            // replace any prior skill_pending pill so they don't stack
+            // turn after turn. Catch-up stream rarely carries this
+            // (seq=-1, not persisted to chat_events) but kept for
+            // shape parity with the live switch.
+            const count = data.data?.count ?? 0;
+            const names = Array.isArray(data.data?.names) ? data.data!.names! : [];
+            if (count > 0) {
+              claim();
+              const content = t("chat.skillPending", {
+                count,
+                names: names.join(", "),
+              });
+              setMessages((prev) => [
+                ...prev.filter((m) => m.kind !== "skill_pending"),
+                { id: `sp-${Date.now()}`, role: "notice", kind: "skill_pending", content, timestamp: Date.now() },
               ]);
             }
             break;
@@ -1812,6 +1840,25 @@ export function ChatScreen() {
               setMessages((prev) => [
                 ...prev,
                 { id: `cn-${Date.now()}`, role: "notice", kind: "compaction_notice", content, timestamp: Date.now() },
+              ]);
+            }
+            break;
+          }
+          case "skill_pending": {
+            // Skill(s) staged during this turn are awaiting approval.
+            // Render as a centered notice pill (same path as
+            // compaction_notice), but replace any prior skill_pending
+            // pill so consecutive turns don't stack duplicates.
+            const count = evt.data?.count ?? 0;
+            const names = Array.isArray(evt.data?.names) ? evt.data!.names! : [];
+            if (count > 0) {
+              const content = t("chat.skillPending", {
+                count,
+                names: names.join(", "),
+              });
+              setMessages((prev) => [
+                ...prev.filter((m) => m.kind !== "skill_pending"),
+                { id: `sp-${Date.now()}`, role: "notice", kind: "skill_pending", content, timestamp: Date.now() },
               ]);
             }
             break;
