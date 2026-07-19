@@ -3285,17 +3285,17 @@ func (d *DBStore) GetSession(ctx context.Context, agentID, sessionKey string) (*
 	return &rec, nil
 }
 
-// LookupSessionOwner returns the agent owner's user_id for the given
-// session. Post-flatten the session row no longer carries its own user_id,
-// so the owner is resolved by joining through agents.user_id (which phase
-// 4 drops). Used by push routing to address the owning user.
+// LookupSessionOwner returns the owner user_id for the given session.
+// Single-user flatten: the owner is the unique super_admin account, so we
+// no longer JOIN agents.user_id (which phase 4 drops). agentID/sessionKey
+// are kept on the signature for callers that still pass them; the owner
+// is agent-independent under single-user. Used by push routing.
 func (d *DBStore) LookupSessionOwner(ctx context.Context, agentID, sessionKey string) (string, error) {
+	_ = agentID
+	_ = sessionKey
 	var uid string
 	err := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT a.user_id FROM sessions s JOIN agents a ON a.id = s.agent_id
-			WHERE s.agent_id = %s AND s.session_key = %s`,
-			d.ph(1), d.ph(2)),
-		agentID, sessionKey).Scan(&uid)
+		`SELECT id FROM users WHERE role = 'super_admin' ORDER BY created_at LIMIT 1`).Scan(&uid)
 	if err != nil {
 		return "", scanErr(err)
 	}
@@ -3367,62 +3367,7 @@ func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMe
 	return metas, rows.Err()
 }
 
-// ListSessionOwnerPairs enumerates every distinct (user_id, agent_id)
-// tuple in the sessions table. The admin Chats page calls this to find
-// all conversation owners (chatters/binders) across all agents — the
-// per-(owner, agent) ListSessions would miss sessions where a non-owner
-// user chats with a public agent or binds an IM bot to it, because
-// those rows live under the chatter's user_id, not the agent owner's.
-func (d *DBStore) ListSessionOwnerPairs(ctx context.Context) ([]SessionOwnerPair, error) {
-	rows, err := d.db.QueryContext(ctx,
-		`SELECT DISTINCT a.user_id, s.agent_id FROM sessions s JOIN agents a ON a.id = s.agent_id
-			WHERE a.user_id <> '' AND s.agent_id <> ''`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var pairs []SessionOwnerPair
-	for rows.Next() {
-		var p SessionOwnerPair
-		if err := rows.Scan(&p.UserID, &p.AgentID); err != nil {
-			return nil, err
-		}
-		pairs = append(pairs, p)
-	}
-	return pairs, rows.Err()
-}
 
-// ListSessionOwnerPairsByAgents returns distinct (user_id, agent_id)
-// pairs restricted to the given agent IDs.
-func (d *DBStore) ListSessionOwnerPairsByAgents(ctx context.Context, agentIDs []string) ([]SessionOwnerPair, error) {
-	if len(agentIDs) == 0 {
-		return nil, nil
-	}
-	// Build placeholders for the IN clause.
-	placeholders := make([]string, len(agentIDs))
-	args := make([]any, len(agentIDs))
-	for i, id := range agentIDs {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	query := `SELECT DISTINCT a.user_id, s.agent_id FROM sessions s JOIN agents a ON a.id = s.agent_id
-		WHERE a.user_id <> '' AND s.agent_id <> ''
-		AND s.agent_id IN (` + strings.Join(placeholders, ",") + `)`
-	rows, err := d.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var pairs []SessionOwnerPair
-	for rows.Next() {
-		var p SessionOwnerPair
-		if err := rows.Scan(&p.UserID, &p.AgentID); err != nil {
-			return nil, err
-		}
-		pairs = append(pairs, p)
-	}
-	return pairs, rows.Err()
-}
 
 func (d *DBStore) ListSessionsPaginated(ctx context.Context, agentIDs []string, offset, limit int) ([]SessionMeta, int, error) {
 	var where string

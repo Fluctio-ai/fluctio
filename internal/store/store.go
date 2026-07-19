@@ -101,15 +101,6 @@ type Store interface {
 	LookupSessionOwner(ctx context.Context, agentID, sessionKey string) (string, error)
 	SaveSession(ctx context.Context, agentID, sessionKey string, session *SessionRecord) error
 	ListSessions(ctx context.Context, agentID string) ([]SessionMeta, error)
-	// ListSessionOwnerPairs returns every distinct (agent owner user_id,
-	// agent_id) pair that has at least one session. Post-flatten there is no
-	// per-session user_id, so the owner comes from agents.user_id. Retained
-	// for the admin Chats view's enumeration even though single-user mode
-	// collapses it to one owner.
-	ListSessionOwnerPairs(ctx context.Context) ([]SessionOwnerPair, error)
-	// ListSessionOwnerPairsByAgents is like ListSessionOwnerPairs but
-	// restricted to the given agent IDs.
-	ListSessionOwnerPairsByAgents(ctx context.Context, agentIDs []string) ([]SessionOwnerPair, error)
 	// ListSessionsPaginated returns a page of session metadata ordered by
 	// updated_at DESC. When agentIDs is nil every agent is included (admin
 	// view); otherwise only the listed agents. Returns (rows, totalCount, err).
