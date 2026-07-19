@@ -9,6 +9,9 @@ package agent
 // pending state onto a per-turn scratch struct, this test fails.
 
 import (
+	"context"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/fluctio-ai/fluctio/internal/bus"
@@ -138,3 +141,160 @@ func TestAuthReplyNoClearsPending(t *testing.T) {
 		t.Fatalf("/no should have popped pending, but Pop returned %d calls", len(got))
 	}
 }
+
+// TestEmitAuthPromptOptionsPayload pins the contract that the auth_prompt
+// ChatEvent carries a structured options array the front-end renders as
+// tappable buttons (/yes /no /auto /yolo). The user's north star is
+// "parameter-driven buttons, not LLM text like '请回复 /yes'" — emitAuthPrompt
+// is the single source of truth for that payload, and the live + catch-up
+// handlers in chat-screen.tsx both read `data.options` to render buttons.
+// If this shape drifts (e.g. options renamed, cmd field dropped), the UI
+// falls back to a text bubble and the user is back to typing /yes manually.
+func TestEmitAuthPromptOptionsPayload(t *testing.T) {
+	a := &Agent{name: "agent-auth-prompt-test"}
+	events := make(chan ChatEvent, 8)
+	ctx := ContextWithChatEvents(context.Background(), events)
+	a.emitAuthPrompt(ctx, "write outside workspace: /etc/foo", "web")
+
+	// Drain non-blocking; expect exactly one auth_prompt + no fallback
+	// content event on the web channel.
+	var got *ChatEvent
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == "auth_prompt" {
+				got = &ev
+			}
+		default:
+			goto done
+		}
+	}
+done:
+	if got == nil {
+		t.Fatal("no auth_prompt event emitted")
+	}
+	desc, _ := got.Data["description"].(string)
+	if desc != "write outside workspace: /etc/foo" {
+		t.Errorf("description: got %q, want the desc passed in", desc)
+	}
+	rawOptions, ok := got.Data["options"]
+	if !ok {
+		t.Fatal("options key missing — UI cannot render buttons without it")
+	}
+	options, ok := rawOptions.([]map[string]string)
+	if !ok {
+		t.Fatalf("options not []map[string]string, got %T", rawOptions)
+	}
+	// Verify each option carries the three fields the front-end reads.
+	wantCmds := []string{"/yes", "/no", "/auto", "/yolo"}
+	if len(options) != len(wantCmds) {
+		t.Fatalf("options length: got %d, want %d", len(options), len(wantCmds))
+	}
+	for i, want := range wantCmds {
+		if options[i]["cmd"] != want {
+			t.Errorf("options[%d].cmd: got %q, want %q", i, options[i]["cmd"], want)
+		}
+		if options[i]["label_zh"] == "" {
+			t.Errorf("options[%d].label_zh empty — Chinese UI shows a blank button", i)
+		}
+		if options[i]["label_en"] == "" {
+			t.Errorf("options[%d].label_en empty — English UI shows a blank button", i)
+		}
+	}
+}
+
+// TestEmitAuthPromptIMChannelFallback verifies the IM-channel branch still
+// emits a plain-text content event alongside the structured auth_prompt,
+// so channels without a bubble UI (telegram / wechat) display the
+// authorization request and the literal slash commands the user can send.
+// The web branch (TestEmitAuthPromptOptionsPayload) intentionally skips
+// the content fallback so the UI's parameter-driven buttons are the only
+// rendering.
+func TestEmitAuthPromptIMChannelFallback(t *testing.T) {
+	a := &Agent{name: "agent-auth-prompt-im-test"}
+	events := make(chan ChatEvent, 8)
+	ctx := ContextWithChatEvents(context.Background(), events)
+	a.emitAuthPrompt(ctx, "dangerous command: rm -rf ./", "telegram")
+
+	var sawContent, sawAuthPrompt bool
+	var contentText string
+	for {
+		select {
+		case ev := <-events:
+			switch ev.Type {
+			case "auth_prompt":
+				sawAuthPrompt = true
+			case "content":
+				sawContent = true
+				contentText, _ = ev.Data["content"].(string)
+			}
+		default:
+			goto done
+		}
+	}
+done:
+	if !sawAuthPrompt {
+		t.Error("IM channel: expected auth_prompt event alongside content fallback")
+	}
+	if !sawContent {
+		t.Fatal("IM channel: expected content fallback event, got none")
+	}
+	// The text fallback must mention all four commands so the chatter on
+	// an IM client (no buttons) knows the literal replies available.
+	for _, cmd := range []string{"/yes", "/no", "/auto", "/yolo"} {
+		if !strings.Contains(contentText, cmd) {
+			t.Errorf("IM fallback content missing %q; text=%q", cmd, contentText)
+		}
+	}
+}
+
+// TestFilterAuthorizedCallsPushesPendingAndBlocks ensures the loop's
+// auth-gate helper leaves the session in the correct state when an
+// ask-mode call is parked: pending pushed (for /yes to drain), holding
+// tool_result in the blocked map (so tool_use↔tool_result pairing stays
+// well-formed), and promptDesc non-empty (so the loop emits auth_prompt
+// and terminates the turn instead of calling the LLM again).
+func TestFilterAuthorizedCallsPushesPendingAndBlocks(t *testing.T) {
+	mgr := session.NewManager(t.TempDir())
+	g := newAuthGate("", "")
+	a := &Agent{name: "agent-filter-test", sessions: mgr, authGate: g}
+	triple := bus.InboundMessage{Channel: "web", ChatID: "chat-filter-1"}
+	sess := mgr.Get(sessionTriple(triple, ""))
+
+	// Two calls: one safe (allowed), one ask-prompted (parked).
+	calls := []provider.ToolCall{
+		{ID: "safe-1", Type: "function", Function: provider.FunctionCall{Name: "exec", Arguments: `{"command":"dir"}`}},
+		{ID: "ask-1", Type: "function", Function: provider.FunctionCall{Name: "exec", Arguments: `{"command":"rm -rf ./"}`}},
+	}
+	toExec, blocked, promptDesc := a.filterAuthorizedCalls(sess, calls)
+
+	if len(toExec) != 1 || toExec[0].ID != "safe-1" {
+		t.Errorf("toExec: got %+v, want [safe-1]", toExec)
+	}
+	if len(blocked) != 1 {
+		t.Fatalf("blocked: got %d entries, want 1 (the parked call's holding result)", len(blocked))
+	}
+	br, ok := blocked["ask-1"]
+	if !ok {
+		t.Fatalf("blocked map missing key ask-1: %+v", blocked)
+	}
+	if br.toolCallID != "ask-1" {
+		t.Errorf("blocked[ask-1].toolCallID = %q", br.toolCallID)
+	}
+	if br.result == "" {
+		t.Error("blocked[ask-1].result empty — the LLM would see an unexplained empty tool_result and retry")
+	}
+	if promptDesc == "" {
+		t.Error("promptDesc empty — the loop wouldn't emit auth_prompt, buttons wouldn't render")
+	}
+	// Pending calls are now on the session, ready for /yes to drain.
+	if got := sess.PopPendingCalls(); len(got) != 1 || got[0].ID != "ask-1" {
+		t.Errorf("PopPendingCalls: got %+v, want [ask-1]", got)
+	}
+}
+
+// dummy reference to keep reflect in imports honest if future helpers
+// need deep-equality assertions. Avoids "imported and not used" cycles
+// when other tests in this file evolve.
+var _ = reflect.DeepEqual
+

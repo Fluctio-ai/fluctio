@@ -2643,12 +2643,14 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// synthetic tool_result so every tool_use id stays paired;
 		// prompted calls are parked on the session for /yes to drain.
 		var authBlocked []toolCallResult
+		authPrompted := false
 		if a.authGate != nil {
 			var blockedMap map[string]toolCallResult
 			var promptDesc string
 			executeCalls, blockedMap, promptDesc = a.filterAuthorizedCalls(sess, executeCalls)
 			if promptDesc != "" {
 				a.emitAuthPrompt(ctx, promptDesc, msg.Channel)
+				authPrompted = true
 			}
 			for _, br := range blockedMap {
 				authBlocked = append(authBlocked, br)
@@ -2811,6 +2813,20 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			allFailedRounds++
 		} else {
 			allFailedRounds = 0
+		}
+
+		// Auth-prompted round: end the turn here. The auth_prompt event
+		// already rendered tappable /yes /no /auto /yolo buttons in the
+		// UI; calling the LLM again would just relay the holding
+		// tool_result as "请回复 /yes" text — burying the buttons under
+		// a redundant agent bubble. /yes (or /no / /auto / /yolo) on
+		// the next turn drains the parked calls via drainApprovedPending
+		// and the LLM picks up with all results (allowed + authorized)
+		// in context.
+		if authPrompted {
+			emitEvent(ctx, ChatEvent{Type: "done"})
+			a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
+			return joinReplyParts(replyParts)
 		}
 
 		// Steering: messages that arrived while this tool round ran are
@@ -3467,12 +3483,14 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		// session for /yes to drain next turn.
 		streamCalls := resp.ToolCalls
 		var authBlocked []toolCallResult
+		authPrompted := false
 		if a.authGate != nil {
 			var blockedMap map[string]toolCallResult
 			var promptDesc string
 			streamCalls, blockedMap, promptDesc = a.filterAuthorizedCalls(sess, streamCalls)
 			if promptDesc != "" {
 				a.emitAuthPrompt(ctx, promptDesc, msg.Channel)
+				authPrompted = true
 			}
 			for _, br := range blockedMap {
 				authBlocked = append(authBlocked, br)
@@ -3509,6 +3527,17 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			toolMsg := provider.Message{Role: "tool", Content: resultContent, ToolCallID: tc.ID, Name: r.toolName, Metadata: meta}
 			sess.Append(toolMsg)
 			messages = append(messages, toolMsg)
+		}
+
+		// Auth-prompted round: end the turn here. The auth_prompt event
+		// already rendered tappable /yes /no /auto /yolo buttons in the
+		// UI; calling the LLM again would just relay the holding
+		// tool_result as "请回复 /yes" text — burying the buttons under
+		// a redundant agent bubble. Mirrors the HandleMessage fix.
+		if authPrompted {
+			emitEvent(ctx, ChatEvent{Type: "done"})
+			a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
+			return a.stringStream("")
 		}
 	}
 
