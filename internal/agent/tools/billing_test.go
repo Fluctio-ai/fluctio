@@ -26,7 +26,6 @@ func TestGetBillingUsageWithQuota(t *testing.T) {
 
 	r := NewRegistry("", "")
 	r.SetOwnerUserID("owner-1")
-	r.SetChatterUserID("chatter-1")
 	RegisterBillingTools(r, meter, quota)
 
 	got, err := r.Execute(ctx, "get_billing_usage", `{}`)
@@ -35,7 +34,7 @@ func TestGetBillingUsageWithQuota(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"billingUserId": "owner-1"`,
-		`"chatterUserId": "chatter-1"`,
+		`"chatterUserId": "owner-1"`,
 		`"tokensUsed": 150`,
 		`"tokens": 850`,
 	} {

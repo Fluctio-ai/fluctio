@@ -37,7 +37,7 @@ func makeGetBillingUsage(meter usage.Meter, quotaStore usage.QuotaStore, r *Regi
 			return "", fmt.Errorf("billing user is not available in this chat context")
 		}
 
-		chatterUserID := r.ChatterUserID()
+		chatterUserID := r.EffectiveUserID()
 		out := map[string]any{
 			"billingUserId": billingUserID,
 			"chatterUserId": chatterUserID,

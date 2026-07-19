@@ -60,7 +60,7 @@ func makeSetTimezone(st store.Store, r *Registry) ToolFunc {
 		if err != nil {
 			return "", fmt.Errorf("unknown timezone %q — use an IANA name like 'Asia/Shanghai': %w", args.Timezone, err)
 		}
-		chatterUID := r.ChatterUserID()
+		chatterUID := r.EffectiveUserID()
 		if chatterUID == "" {
 			return "", fmt.Errorf("no chatter identity on this turn — cannot persist timezone")
 		}

@@ -21,7 +21,7 @@ func TestCreateCronJobPersistsMessageAccountID(t *testing.T) {
 
 	r := NewRegistry(t.TempDir(), t.TempDir())
 	r.SetOwnerUserID("user-1")
-	r.SetChatterUserID("user-1")
+	r.SetOwnerUserID("user-1")
 	r.SetMessageContext("telegram", "dclaw_official_bot", "8169894742")
 	RegisterCronTools(r, db, "user-1", "agent-1")
 

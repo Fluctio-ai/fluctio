@@ -112,7 +112,7 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 		// prompt's date line is rendered in), not the server's. The
 		// resolved name is frozen onto the row so the scheduler keeps
 		// evaluating recurrences in it even if the chatter later moves.
-		tzName := scope.Timezone(ctx, st, r.ChatterUserID(), agentID)
+		tzName := scope.Timezone(ctx, st, r.EffectiveUserID(), agentID)
 		loc := scope.LoadLocationOrLocal(tzName)
 
 		id := generateUUID()

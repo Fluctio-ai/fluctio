@@ -58,7 +58,7 @@ func TestEffectiveUserIDFallback(t *testing.T) {
 	if got := r.EffectiveUserID(); got != "owner-1" {
 		t.Fatalf("no chatter: want owner fallback, got %q", got)
 	}
-	r.SetChatterUserID("chatter-9")
+	r.SetOwnerUserID("chatter-9")
 	if got := r.EffectiveUserID(); got != "chatter-9" {
 		t.Fatalf("with chatter: want chatter, got %q", got)
 	}

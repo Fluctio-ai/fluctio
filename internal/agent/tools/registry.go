@@ -434,27 +434,7 @@ func (r *Registry) OwnerUserID() string {
 	return r.userID
 }
 
-// SetChatterUserID overrides the per-user file routing target for the
-// in-flight turn. Called by the agent loop at the top of HandleMessage /
-// HandleMessageStream with the resolved chatterUID so per-sender USER.md
-// / MEMORY.md writes (and reads, via the same systemFileUserID path)
-// land in the right row even when the UserSpace is owned by a channel
-// binder rather than the actual chatter. Pass "" to clear.
-func (r *Registry) SetChatterUserID(uid string) {
-	r.chatterUserID = uid
-}
 
-// ChatterUserID returns the per-turn chatter set by SetChatterUserID,
-// falling back to the UserSpace owner when no per-turn override is in
-// effect (single-user / legacy case). Tools that persist per-person
-// state (set_timezone, cron jobs) use this so the row keys on the
-// actual participant, not the channel binder.
-func (r *Registry) ChatterUserID() string {
-	if r.chatterUserID != "" {
-		return r.chatterUserID
-	}
-	return r.userID
-}
 
 // AgentID returns the agent_id this registry belongs to.
 func (r *Registry) AgentID() string { return r.agentID }
@@ -481,9 +461,6 @@ func (r *Registry) SetAgentOwnerUserID(uid string) {
 func (r *Registry) systemFileUserID(filename string) string {
 	if r.agentOwnerUserID != "" && identityFiles[filepath.Base(filepath.Clean(filename))] {
 		return r.agentOwnerUserID
-	}
-	if r.chatterUserID != "" {
-		return r.chatterUserID
 	}
 	return r.userID
 }
@@ -573,9 +550,6 @@ func (r *Registry) SessionID() string {
 // runtime tools use it to key the project runtime to the same user the
 // project (and its workspace files) belong to.
 func (r *Registry) EffectiveUserID() string {
-	if r.chatterUserID != "" {
-		return r.chatterUserID
-	}
 	return r.userID
 }
 

@@ -18,7 +18,7 @@ type setPreferenceArgs struct {
 // configure personal settings (API keys, preferences, etc.) through
 // conversation. Writes to user-agent scope so the preference is
 // specific to (this chatter, this agent). The chatter's identity is
-// resolved at execute time via r.ChatterUserID() + r.AgentID().
+// resolved at execute time via r.EffectiveUserID() + r.AgentID().
 //
 // The preference is stored under the "prefs" namespace in configs,
 // the same namespace as timezone. The scope precedence (system →
@@ -61,7 +61,7 @@ func makeSetPreference(st store.Store, r *Registry) ToolFunc {
 			return "", fmt.Errorf("value is required")
 		}
 
-		chatterUID := r.ChatterUserID()
+		chatterUID := r.EffectiveUserID()
 		if chatterUID == "" {
 			return "", fmt.Errorf("no chatter identity on this turn — cannot persist preference")
 		}
