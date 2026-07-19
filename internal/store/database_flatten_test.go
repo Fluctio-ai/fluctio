@@ -35,8 +35,8 @@ func TestAgentFilesFlatSchema(t *testing.T) {
 
 	const agentID = "agt_flat"
 	if _, err := db.db.ExecContext(ctx,
-		`INSERT INTO agents (id, user_id, name, config) VALUES (?, ?, 'flat', '{}')`,
-		agentID, "u_owner"); err != nil {
+		`INSERT INTO agents (id, name, config) VALUES (?, 'flat', '{}')`,
+		agentID); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
 

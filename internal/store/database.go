@@ -252,6 +252,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateConversationSummariesDropChatter(ctx); err != nil {
 		return fmt.Errorf("migrate conversation_summaries drop chatter_user_id: %w", err)
 	}
+	if err := d.migrateAgentsDropUserID(ctx); err != nil {
+		return fmt.Errorf("migrate agents drop user_id: %w", err)
+	}
 	return nil
 }
 
@@ -1153,32 +1156,11 @@ func (d *DBStore) migrateConfigsScopeToUserAgentSQLite(ctx context.Context) erro
 	return nil
 }
 
-// migrateCronJobsAddUserID retrofits user_id onto cron_jobs so the
-// (user_id, agent_id) keying matches the rest of the codebase. Backfill
-// joins agents to recover the owning user. New rows must populate
-// user_id explicitly (SaveCronJob enforces).
+// migrateCronJobsAddUserID is a no-op post single-user flatten: cron_jobs.user_id
+// was dropped in phase 1.5. The historical ADD + agents.user_id backfill is
+// retired (stops re-adding a column migrateCronJobsDropUserID removes, and
+// agents.user_id is itself dropped in phase 4).
 func (d *DBStore) migrateCronJobsAddUserID(ctx context.Context) error {
-	has, err := d.tableHasColumn(ctx, "cron_jobs", "user_id")
-	if err != nil {
-		return err
-	}
-	if !has {
-		if _, err := d.db.ExecContext(ctx,
-			`ALTER TABLE cron_jobs ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`); err != nil {
-			return fmt.Errorf("add cron_jobs.user_id: %w", err)
-		}
-		if _, err := d.db.ExecContext(ctx,
-			`UPDATE cron_jobs SET user_id = COALESCE((SELECT a.user_id FROM agents a WHERE a.id = cron_jobs.agent_id), '')
-			 WHERE user_id = ''`); err != nil {
-			return fmt.Errorf("backfill cron_jobs.user_id: %w", err)
-		}
-	}
-	// Always assert the lookup index. user_id dropped from the key after
-	// the single-user flatten — the index now leads on agent_id.
-	if _, err := d.db.ExecContext(ctx,
-		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_user ON cron_jobs (agent_id)`); err != nil {
-		return fmt.Errorf("index cron_jobs: %w", err)
-	}
 	return nil
 }
 
@@ -1940,6 +1922,32 @@ func (d *DBStore) migrateUsersAppUserCols(ctx context.Context) error {
 	return nil
 }
 
+// migrateAgentsDropUserID drops agents.user_id (phase 4 single-user
+// flatten — agent is a top-level entity, no per-user ownership). The
+// idx_agents_user index goes first. Idempotent.
+func (d *DBStore) migrateAgentsDropUserID(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "agents", "user_id")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_agents_user`); err != nil {
+		return fmt.Errorf("drop idx_agents_user: %w", err)
+	}
+	if d.dialect == "postgres" {
+		if _, err := d.db.ExecContext(ctx, `ALTER TABLE agents DROP COLUMN IF EXISTS user_id`); err != nil {
+			return fmt.Errorf("postgres drop agents.user_id: %w", err)
+		}
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx, `ALTER TABLE agents DROP COLUMN user_id`); err != nil {
+		return fmt.Errorf("drop agents.user_id: %w (SQL: ALTER TABLE agents DROP COLUMN user_id)", err)
+	}
+	return nil
+}
+
 // migrateAgentFilesDropTemplate clears the legacy user_id=” template
 // rows from agent_files. Each row is reparented to the agent's owner
 // when no per-user row already exists for that (agent_id, filename) —
@@ -1949,6 +1957,20 @@ func (d *DBStore) migrateUsersAppUserCols(ctx context.Context) error {
 // FS file at <agent_home>/<name>, which the runtime falls back to.
 // Idempotent: re-runs find no user_id=” rows and exit clean.
 func (d *DBStore) migrateAgentFilesDropTemplate(ctx context.Context) error {
+	// Both columns this migration touches were dropped in phase 1.2
+	// (agent_files.user_id) and phase 4 (agents.user_id). Skip entirely
+	// once either is gone — the template-rewrite only made sense when
+	// per-user agent_files rows existed.
+	if has, err := d.tableHasColumn(ctx, "agent_files", "user_id"); err != nil {
+		return err
+	} else if !has {
+		return nil
+	}
+	if has, err := d.tableHasColumn(ctx, "agents", "user_id"); err != nil {
+		return err
+	} else if !has {
+		return nil
+	}
 	rows, err := d.db.QueryContext(ctx,
 		`SELECT agent_files.agent_id, agent_files.filename, agent_files.content, agents.user_id
 			FROM agent_files
@@ -2354,14 +2376,12 @@ func (d *DBStore) migrationSQL() []string {
 		`CREATE INDEX IF NOT EXISTS idx_apikeys_key_hash ON apikeys (key_hash)`,
 		`CREATE TABLE IF NOT EXISTS agents (
 			id TEXT PRIMARY KEY,
-			user_id TEXT NOT NULL,
 			name TEXT NOT NULL DEFAULT '',
 			config TEXT NOT NULL DEFAULT '{}',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_agents_user ON agents (user_id)`,
-		// channel / account_id / chat_id together identify the
+				// channel / account_id / chat_id together identify the
 		// (channel-type, channel-instance, conversation) the session
 		// belongs to. Multiple session_keys can share that triple — the
 		// active one for IM routing is the row with the latest
@@ -3152,12 +3172,11 @@ func (d *DBStore) LookupAPIKeyByHash(ctx context.Context, keyHash string) (*APIK
 
 // --- Agents ---
 
-const agentSelectCols = `id, user_id, name, config, created_at, updated_at`
+const agentSelectCols = `id, name, config, created_at, updated_at`
 
 func (d *DBStore) ListAgents(ctx context.Context, ownerUserID string) ([]AgentRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT `+agentSelectCols+` FROM agents WHERE user_id = %s ORDER BY created_at DESC`, d.ph(1)),
-		ownerUserID)
+		`SELECT ` + agentSelectCols + ` FROM agents ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -3170,7 +3189,7 @@ func (d *DBStore) GetAgent(ctx context.Context, agentID string) (*AgentRecord, e
 		fmt.Sprintf(`SELECT `+agentSelectCols+` FROM agents WHERE id = %s`, d.ph(1)), agentID)
 	var ag AgentRecord
 	var cfgStr string
-	if err := row.Scan(&ag.ID, &ag.UserID, &ag.Name, &cfgStr, &ag.CreatedAt, &ag.UpdatedAt); err != nil {
+	if err := row.Scan(&ag.ID, &ag.Name, &cfgStr, &ag.CreatedAt, &ag.UpdatedAt); err != nil {
 		return nil, scanErr(err)
 	}
 	json.Unmarshal([]byte(cfgStr), &ag.Config)
@@ -3181,9 +3200,6 @@ func (d *DBStore) SaveAgent(ctx context.Context, agent *AgentRecord) error {
 	if agent.ID == "" {
 		return errors.New("store: agent.id is required")
 	}
-	if agent.UserID == "" {
-		return errors.New("store: agent.user_id is required")
-	}
 	cfgData, _ := json.Marshal(agent.Config)
 	now := time.Now().UTC()
 	if agent.CreatedAt.IsZero() {
@@ -3192,21 +3208,21 @@ func (d *DBStore) SaveAgent(ctx context.Context, agent *AgentRecord) error {
 	agent.UpdatedAt = now
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO agents (id, user_id, name, config, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6)
+			`INSERT INTO agents (id, name, config, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5)
 				ON CONFLICT (id) DO UPDATE
-				SET user_id=$2, name=$3, config=$4, updated_at=$6`,
-			agent.ID, agent.UserID, agent.Name, string(cfgData), agent.CreatedAt, agent.UpdatedAt)
+				SET name=$2, config=$3, updated_at=$5`,
+			agent.ID, agent.Name, string(cfgData), agent.CreatedAt, agent.UpdatedAt)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO agents (id, user_id, name, config, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO agents (id, name, config, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
-			  user_id=excluded.user_id, name=excluded.name,
+			  name=excluded.name,
 			  config=excluded.config,
 			  updated_at=excluded.updated_at`,
-		agent.ID, agent.UserID, agent.Name, string(cfgData), agent.CreatedAt, agent.UpdatedAt)
+		agent.ID, agent.Name, string(cfgData), agent.CreatedAt, agent.UpdatedAt)
 	return err
 }
 
@@ -3247,7 +3263,7 @@ func (d *DBStore) DeleteAgent(ctx context.Context, agentID string) error {
 
 func (d *DBStore) ListAllAgents(ctx context.Context) ([]AgentRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
-		`SELECT `+agentSelectCols+` FROM agents ORDER BY user_id, created_at`)
+		`SELECT `+agentSelectCols+` FROM agents ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -3260,7 +3276,7 @@ func scanAgents(rows *sql.Rows) ([]AgentRecord, error) {
 	for rows.Next() {
 		var ag AgentRecord
 		var cfgStr string
-		if err := rows.Scan(&ag.ID, &ag.UserID, &ag.Name, &cfgStr, &ag.CreatedAt, &ag.UpdatedAt); err != nil {
+		if err := rows.Scan(&ag.ID, &ag.Name, &cfgStr, &ag.CreatedAt, &ag.UpdatedAt); err != nil {
 			return nil, err
 		}
 		json.Unmarshal([]byte(cfgStr), &ag.Config)

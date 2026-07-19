@@ -164,47 +164,6 @@ func TestInitExplicitMissingIDDoesNotFallbackToName(t *testing.T) {
 	}
 }
 
-func TestInitRejectsRebindToOtherUser(t *testing.T) {
-	st := freshStore(t)
-
-	res1, err := Init(context.Background(), st, "alpha", InitOptions{Username: "alice"})
-	if err != nil {
-		t.Fatalf("seed alice: %v", err)
-	}
-	if !res1.OwnerCreated {
-		t.Fatal("expected alice to be created on first init")
-	}
-
-	// Manually create bob.
-	accts, _ := users.NewAccounts(st)
-	if _, err := accts.Create(context.Background(), users.CreateInput{
-		Username:    "bob",
-		Email:       "bob@local",
-		Password:    "secret-bob",
-		DisplayName: "Bob",
-		Role:        users.RoleSuperAdmin,
-	}); err != nil {
-		t.Fatalf("create bob: %v", err)
-	}
-
-	// Update via --id with --username bob: must refuse the silent rebind.
-	_, err = Init(context.Background(), st, "alpha", InitOptions{
-		AgentID:  res1.Agent.ID,
-		Username: "bob",
-	})
-	if err == nil || !strings.Contains(err.Error(), "is owned by user") {
-		t.Fatalf("expected rebind refusal, got %v", err)
-	}
-
-	// Update via --id without --username: owner preserved.
-	res3, err := Init(context.Background(), st, "alpha", InitOptions{AgentID: res1.Agent.ID})
-	if err != nil {
-		t.Fatalf("update by --id: %v", err)
-	}
-	if res3.Agent.UserID != res1.Agent.UserID {
-		t.Fatalf("owner silently rebound: %s -> %s", res1.Agent.UserID, res3.Agent.UserID)
-	}
-}
 
 func TestEnsureOwnerRejectsMissingExplicitUser(t *testing.T) {
 	st := freshStore(t)

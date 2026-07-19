@@ -112,16 +112,11 @@ func Init(ctx context.Context, st store.Store, name string, opts InitOptions) (*
 	var owner *users.Account
 	var ownerCreated bool
 	var generatedPassword string
-	if existing != nil && opts.Username == "" {
-		owner, err = loadAccount(ctx, st, existing.UserID)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		owner, ownerCreated, generatedPassword, err = ensureOwner(ctx, st, opts)
-		if err != nil {
-			return nil, err
-		}
+	// Single-user flatten: the owner is the unique super_admin, resolved
+	// by ensureOwner (no per-agent owner from agents.user_id to preserve).
+	owner, ownerCreated, generatedPassword, err = ensureOwner(ctx, st, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	rec, created, err := writeAgent(ctx, st, existing, displayName, owner, opts)
