@@ -709,7 +709,7 @@ func (s *Server) handleCreateUserAgent(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusCreated, map[string]any{
 		"agent": map[string]any{
 			"id":          rec.ID,
-			"userId":      rec.UserID,
+			"userId":      s.effectiveUserID(r),
 			"name":        rec.Name,
 			"description": description,
 			"model":       model,
