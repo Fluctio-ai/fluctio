@@ -147,7 +147,7 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 
 	// Full path when embedding is configured + reachable.
 	var mem config.MemoryCfg
-	if err := scope.SettingInto(ctx, db, "memory", rec.UserID, id, &mem); err == nil && mem.Embedding.Enabled {
+	if err := scope.SettingInto(ctx, db, "memory", s.effectiveUserID(r), id, &mem); err == nil && mem.Embedding.Enabled {
 		emb := embedding.ProbeEmbedder(ctx, embedding.NewOpenAICompatEmbedder(
 			mem.Embedding.APIBase, mem.Embedding.APIKey, mem.Embedding.Model, mem.Embedding.Dim, mem.Embedding.DimEnabled))
 		if emb.Available() {

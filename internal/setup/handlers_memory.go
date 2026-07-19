@@ -134,7 +134,7 @@ func (s *Server) handleReindexAgentMemory(w http.ResponseWriter, r *http.Request
 
 	// Resolve the agent's effective embedding config (system→owner→agent).
 	var mem config.MemoryCfg
-	if err := scope.SettingInto(r.Context(), db, "memory", rec.UserID, id, &mem); err != nil {
+	if err := scope.SettingInto(r.Context(), db, "memory", s.effectiveUserID(r), id, &mem); err != nil {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

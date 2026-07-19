@@ -322,7 +322,7 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusCreated, map[string]any{
 		"agent": map[string]any{
 			"id":     rec.ID,
-			"userId": rec.UserID,
+			"userId": s.effectiveUserID(r),
 			"name":   rec.Name,
 			"model":  req.Model,
 			"config": rec.Config,
@@ -622,7 +622,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	// SharedIdentity: batch-update all channels for this agent.
 	if req.SharedIdentity != nil {
-		chs, _ := s.dataStore.ListChannels(r.Context(), rec.UserID, rec.ID)
+		chs, _ := s.dataStore.ListChannels(r.Context(), s.effectiveUserID(r), rec.ID)
 		for i := range chs {
 			if chs[i].SharedIdentity != *req.SharedIdentity {
 				chs[i].SharedIdentity = *req.SharedIdentity
@@ -638,13 +638,13 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"agent": map[string]any{
 			"id":             rec.ID,
-			"userId":         rec.UserID,
+			"userId":         s.effectiveUserID(r),
 			"name":           rec.Name,
 			"model":          s.agentScopeModel(r, rec.ID),
 			"promptMode":     s.agentScopePromptMode(r, rec.ID),
 			"splitReplies":   s.agentScopeSplitReplies(r, rec.ID),
 			"autoPersist":    s.agentScopeAutoPersist(r, rec.ID),
-			"sharedIdentity": s.agentScopeSharedIdentity(r, rec.UserID, rec.ID),
+			"sharedIdentity": s.agentScopeSharedIdentity(r, s.effectiveUserID(r), rec.ID),
 			"plugins":        s.agentScopePlugins(r, rec.ID),
 			"config":         rec.Config,
 		},
@@ -673,13 +673,13 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 			"id":             rec.ID,
 			"name":           rec.Name,
 			"description":    desc,
-			"userId":         rec.UserID,
+			"userId":         s.effectiveUserID(r),
 			"role":           role,
 			"model":          s.agentScopeModel(r, rec.ID),
 			"promptMode":     s.agentScopePromptMode(r, rec.ID),
 			"splitReplies":   s.agentScopeSplitReplies(r, rec.ID),
 			"autoPersist":    s.agentScopeAutoPersist(r, rec.ID),
-			"sharedIdentity": s.agentScopeSharedIdentity(r, rec.UserID, rec.ID),
+			"sharedIdentity": s.agentScopeSharedIdentity(r, s.effectiveUserID(r), rec.ID),
 			"plugins":        s.agentScopePlugins(r, rec.ID),
 			"avatarUrl":      "/api/agents/" + rec.ID + "/files/avatar.png",
 			"createdAt":      rec.CreatedAt,
