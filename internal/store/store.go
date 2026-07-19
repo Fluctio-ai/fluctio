@@ -159,11 +159,11 @@ type Store interface {
 	// problem). DeleteProject blocks when any session still references
 	// the row — callers either delete the chats first or use a soft
 	// detach (clearing project_id back to '').
-	ListProjects(ctx context.Context, userID, agentID string) ([]ProjectRecord, error)
-	GetProject(ctx context.Context, userID, agentID, projectID string) (*ProjectRecord, error)
+	ListProjects(ctx context.Context, agentID string) ([]ProjectRecord, error)
+	GetProject(ctx context.Context, agentID, projectID string) (*ProjectRecord, error)
 	SaveProject(ctx context.Context, p *ProjectRecord) error
-	DeleteProject(ctx context.Context, userID, agentID, projectID string) error
-	CountProjectSessions(ctx context.Context, userID, agentID, projectID string) (int, error)
+	DeleteProject(ctx context.Context, agentID, projectID string) error
+	CountProjectSessions(ctx context.Context, agentID, projectID string) (int, error)
 
 	// --- Project runtimes (the live-app layer on top of a project) ---
 	//
@@ -172,9 +172,9 @@ type Store interface {
 	// ListAllProjectRuntimes is for the idle sweeper, which needs to
 	// enumerate every live runtime regardless of owner to evict stale
 	// containers — it is NOT user-scoped on purpose.
-	GetProjectRuntime(ctx context.Context, userID, agentID, projectID string) (*ProjectRuntimeRecord, error)
+	GetProjectRuntime(ctx context.Context, agentID, projectID string) (*ProjectRuntimeRecord, error)
 	SaveProjectRuntime(ctx context.Context, r *ProjectRuntimeRecord) error
-	DeleteProjectRuntime(ctx context.Context, userID, agentID, projectID string) error
+	DeleteProjectRuntime(ctx context.Context, agentID, projectID string) error
 	ListAllProjectRuntimes(ctx context.Context) ([]ProjectRuntimeRecord, error)
 
 	// --- Session messages (append-only per-turn archive) ---

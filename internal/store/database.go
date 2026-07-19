@@ -229,6 +229,11 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionEventsDropUserID(ctx); err != nil {
 		return fmt.Errorf("migrate session_events drop user_id: %w", err)
 	}
+	// Drop projects + project_runtimes.user_id; PKs collapse to
+	// (agent_id, project_id). flatten has already merged any dup rows.
+	if err := d.migrateProjectsDropUserID(ctx); err != nil {
+		return fmt.Errorf("migrate projects drop user_id: %w", err)
+	}
 	return nil
 }
 
@@ -1428,6 +1433,86 @@ func (d *DBStore) migrateSessionEventsDropUserID(ctx context.Context) error {
 	return nil
 }
 
+// migrateProjectsDropUserID rebuilds projects + project_runtimes without
+// the user_id column so both primary keys collapse to (agent_id, project_id).
+// migrateFlattenUserData has already collapsed any dup rows. Idempotent.
+func (d *DBStore) migrateProjectsDropUserID(ctx context.Context) error {
+	rebuilds := []struct {
+		table    string
+		newCols  string
+		copyCols string
+	}{
+		{
+			table: "projects",
+			newCols: `agent_id TEXT NOT NULL,
+				project_id TEXT NOT NULL,
+				name TEXT NOT NULL DEFAULT '',
+				description TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (agent_id, project_id)`,
+			copyCols: `agent_id, project_id, name, description, created_at, updated_at`,
+		},
+		{
+			table: "project_runtimes",
+			newCols: `agent_id TEXT NOT NULL,
+				project_id TEXT NOT NULL,
+				template_ref TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL DEFAULT 'none',
+				dev_port INTEGER NOT NULL DEFAULT 0,
+				host_port INTEGER NOT NULL DEFAULT 0,
+				preview_url TEXT NOT NULL DEFAULT '',
+				container_id TEXT NOT NULL DEFAULT '',
+				git_ref TEXT NOT NULL DEFAULT '',
+				last_error TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (agent_id, project_id)`,
+			copyCols: `agent_id, project_id, template_ref, status, dev_port, host_port, preview_url, container_id, git_ref, last_error, created_at, updated_at`,
+		},
+	}
+	for _, rb := range rebuilds {
+		has, err := d.tableHasColumn(ctx, rb.table, "user_id")
+		if err != nil {
+			return err
+		}
+		if !has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS idx_%s_listing`, rb.table)); err != nil {
+			return fmt.Errorf("drop idx_%s_listing: %w", rb.table, err)
+		}
+		if d.dialect == "postgres" {
+			for _, s := range []string{
+				fmt.Sprintf(`ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s_pkey`, rb.table, rb.table),
+				fmt.Sprintf(`ALTER TABLE %s ADD PRIMARY KEY (agent_id, project_id)`, rb.table),
+				fmt.Sprintf(`ALTER TABLE %s DROP COLUMN IF EXISTS user_id`, rb.table),
+			} {
+				if _, err := d.db.ExecContext(ctx, s); err != nil {
+					return fmt.Errorf("postgres drop %s.user_id: %w\nSQL: %s", rb.table, err, s)
+				}
+			}
+		} else {
+			for _, s := range []string{
+				fmt.Sprintf(`CREATE TABLE %s_new (%s)`, rb.table, rb.newCols),
+				fmt.Sprintf(`INSERT INTO %s_new (%s) SELECT %s FROM %s`, rb.table, rb.copyCols, rb.copyCols, rb.table),
+				fmt.Sprintf(`DROP TABLE %s`, rb.table),
+				fmt.Sprintf(`ALTER TABLE %s_new RENAME TO %s`, rb.table, rb.table),
+			} {
+				if _, err := d.db.ExecContext(ctx, s); err != nil {
+					return fmt.Errorf("sqlite rebuild %s: %w\nSQL: %s", rb.table, err, s)
+				}
+			}
+		}
+		if _, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_listing ON %s (agent_id, project_id, updated_at DESC)`,
+				rb.table, rb.table)); err != nil {
+			return fmt.Errorf("recreate idx_%s_listing: %w", rb.table, err)
+		}
+	}
+	return nil
+}
+
 // migrateSessionsAddChannelTriple retrofits channel / account_id / chat_id
 // onto pre-feature sessions rows. Existing session_keys followed the
 // `<channel>_<chatID>` convention (web_<sid>, wechat_<openid>, …), so the
@@ -2233,7 +2318,7 @@ func (d *DBStore) migrationSQL() []string {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (user_id, agent_id, project_id)
 		)`,
-		`CREATE INDEX IF NOT EXISTS idx_projects_listing ON projects (user_id, agent_id, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_projects_listing ON projects (agent_id, project_id, updated_at DESC)`,
 		// project_runtimes is the live-app layer on top of a project: at
 		// most one running instance (long-lived sandbox + dev server +
 		// preview URL) per project. Same PK as projects — a runtime is
@@ -4445,19 +4530,19 @@ func (d *DBStore) ReleaseChannelLease(ctx context.Context, channel, accountID, h
 
 // --- Projects ---
 
-func (d *DBStore) ListProjects(ctx context.Context, userID, agentID string) ([]ProjectRecord, error) {
+func (d *DBStore) ListProjects(ctx context.Context, agentID string) ([]ProjectRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT project_id, name, description, created_at, updated_at FROM projects
-			WHERE user_id = %s AND agent_id = %s ORDER BY updated_at DESC`,
-			d.ph(1), d.ph(2)),
-		userID, agentID)
+			WHERE agent_id = %s ORDER BY updated_at DESC`,
+			d.ph(1)),
+		agentID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []ProjectRecord
 	for rows.Next() {
-		p := ProjectRecord{UserID: userID, AgentID: agentID}
+		p := ProjectRecord{AgentID: agentID}
 		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -4466,13 +4551,13 @@ func (d *DBStore) ListProjects(ctx context.Context, userID, agentID string) ([]P
 	return out, rows.Err()
 }
 
-func (d *DBStore) GetProject(ctx context.Context, userID, agentID, projectID string) (*ProjectRecord, error) {
+func (d *DBStore) GetProject(ctx context.Context, agentID, projectID string) (*ProjectRecord, error) {
 	row := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT name, description, created_at, updated_at FROM projects
-			WHERE user_id = %s AND agent_id = %s AND project_id = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, projectID)
-	p := ProjectRecord{UserID: userID, AgentID: agentID, ID: projectID}
+			WHERE agent_id = %s AND project_id = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, projectID)
+	p := ProjectRecord{AgentID: agentID, ID: projectID}
 	if err := row.Scan(&p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, scanErr(err)
 	}
@@ -4483,25 +4568,25 @@ func (d *DBStore) GetProject(ctx context.Context, userID, agentID, projectID str
 // is bumped every write. Empty name is allowed at the row level — the
 // HTTP handler enforces non-empty so we don't double-validate here.
 func (d *DBStore) SaveProject(ctx context.Context, p *ProjectRecord) error {
-	if p.UserID == "" || p.AgentID == "" || p.ID == "" {
-		return errors.New("store: SaveProject requires user_id, agent_id, project_id")
+	if p.AgentID == "" || p.ID == "" {
+		return errors.New("store: SaveProject requires agent_id, project_id")
 	}
 	now := time.Now().UTC()
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO projects (user_id, agent_id, project_id, name, description, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $6)
-				ON CONFLICT (user_id, agent_id, project_id) DO UPDATE
-				SET name=$4, description=$5, updated_at=$6`,
-			p.UserID, p.AgentID, p.ID, p.Name, p.Description, now)
+			`INSERT INTO projects (agent_id, project_id, name, description, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $5)
+				ON CONFLICT (agent_id, project_id) DO UPDATE
+				SET name=$3, description=$4, updated_at=$5`,
+			p.AgentID, p.ID, p.Name, p.Description, now)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO projects (user_id, agent_id, project_id, name, description, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (user_id, agent_id, project_id) DO UPDATE SET
+		`INSERT INTO projects (agent_id, project_id, name, description, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (agent_id, project_id) DO UPDATE SET
 			  name=excluded.name, description=excluded.description, updated_at=excluded.updated_at`,
-		p.UserID, p.AgentID, p.ID, p.Name, p.Description, now, now)
+		p.AgentID, p.ID, p.Name, p.Description, now, now)
 	return err
 }
 
@@ -4509,19 +4594,19 @@ func (d *DBStore) SaveProject(ctx context.Context, p *ProjectRecord) error {
 // reference it (via CountProjectSessions); this method does not check
 // because the handler decides the policy (block vs cascade) — the
 // store stays mechanical.
-func (d *DBStore) DeleteProject(ctx context.Context, userID, agentID, projectID string) error {
+func (d *DBStore) DeleteProject(ctx context.Context, agentID, projectID string) error {
 	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM projects WHERE user_id = %s AND agent_id = %s AND project_id = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, projectID)
+		fmt.Sprintf(`DELETE FROM projects WHERE agent_id = %s AND project_id = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, projectID)
 	return err
 }
 
-func (d *DBStore) CountProjectSessions(ctx context.Context, userID, agentID, projectID string) (int, error) {
+func (d *DBStore) CountProjectSessions(ctx context.Context, agentID, projectID string) (int, error) {
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT COUNT(*) FROM sessions WHERE user_id = %s AND agent_id = %s AND project_id = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, projectID)
+		fmt.Sprintf(`SELECT COUNT(*) FROM sessions WHERE agent_id = %s AND project_id = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, projectID)
 	var n int
 	if err := row.Scan(&n); err != nil {
 		return 0, err
@@ -4538,13 +4623,13 @@ func scanProjectRuntime(r *ProjectRuntimeRecord, sc func(...any) error) error {
 		&r.ContainerID, &r.GitRef, &r.LastError, &r.CreatedAt, &r.UpdatedAt)
 }
 
-func (d *DBStore) GetProjectRuntime(ctx context.Context, userID, agentID, projectID string) (*ProjectRuntimeRecord, error) {
+func (d *DBStore) GetProjectRuntime(ctx context.Context, agentID, projectID string) (*ProjectRuntimeRecord, error) {
 	row := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT `+projectRuntimeCols+` FROM project_runtimes
-			WHERE user_id = %s AND agent_id = %s AND project_id = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, projectID)
-	rec := ProjectRuntimeRecord{UserID: userID, AgentID: agentID, ProjectID: projectID}
+			WHERE agent_id = %s AND project_id = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, projectID)
+	rec := ProjectRuntimeRecord{AgentID: agentID, ProjectID: projectID}
 	if err := scanProjectRuntime(&rec, row.Scan); err != nil {
 		return nil, scanErr(err)
 	}
@@ -4555,8 +4640,8 @@ func (d *DBStore) GetProjectRuntime(ctx context.Context, userID, agentID, projec
 // updated_at is bumped every write. Status defaults to 'none' at the
 // row level if the caller left it empty.
 func (d *DBStore) SaveProjectRuntime(ctx context.Context, r *ProjectRuntimeRecord) error {
-	if r.UserID == "" || r.AgentID == "" || r.ProjectID == "" {
-		return errors.New("store: SaveProjectRuntime requires user_id, agent_id, project_id")
+	if r.AgentID == "" || r.ProjectID == "" {
+		return errors.New("store: SaveProjectRuntime requires agent_id, project_id")
 	}
 	if r.Status == "" {
 		r.Status = "none"
@@ -4564,32 +4649,32 @@ func (d *DBStore) SaveProjectRuntime(ctx context.Context, r *ProjectRuntimeRecor
 	now := time.Now().UTC()
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO project_runtimes (user_id, agent_id, project_id, template_ref, status, dev_port, host_port, preview_url, container_id, git_ref, last_error, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-				ON CONFLICT (user_id, agent_id, project_id) DO UPDATE SET
-				  template_ref=$4, status=$5, dev_port=$6, host_port=$7, preview_url=$8,
-				  container_id=$9, git_ref=$10, last_error=$11, updated_at=$12`,
-			r.UserID, r.AgentID, r.ProjectID, r.TemplateRef, r.Status, r.DevPort, r.HostPort,
+			`INSERT INTO project_runtimes (agent_id, project_id, template_ref, status, dev_port, host_port, preview_url, container_id, git_ref, last_error, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+				ON CONFLICT (agent_id, project_id) DO UPDATE SET
+				  template_ref=$3, status=$4, dev_port=$5, host_port=$6, preview_url=$7,
+				  container_id=$8, git_ref=$9, last_error=$10, updated_at=$11`,
+			r.AgentID, r.ProjectID, r.TemplateRef, r.Status, r.DevPort, r.HostPort,
 			r.PreviewURL, r.ContainerID, r.GitRef, r.LastError, now)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO project_runtimes (user_id, agent_id, project_id, template_ref, status, dev_port, host_port, preview_url, container_id, git_ref, last_error, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (user_id, agent_id, project_id) DO UPDATE SET
+		`INSERT INTO project_runtimes (agent_id, project_id, template_ref, status, dev_port, host_port, preview_url, container_id, git_ref, last_error, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (agent_id, project_id) DO UPDATE SET
 			  template_ref=excluded.template_ref, status=excluded.status, dev_port=excluded.dev_port,
 			  host_port=excluded.host_port, preview_url=excluded.preview_url, container_id=excluded.container_id,
 			  git_ref=excluded.git_ref, last_error=excluded.last_error, updated_at=excluded.updated_at`,
-		r.UserID, r.AgentID, r.ProjectID, r.TemplateRef, r.Status, r.DevPort, r.HostPort,
+		r.AgentID, r.ProjectID, r.TemplateRef, r.Status, r.DevPort, r.HostPort,
 		r.PreviewURL, r.ContainerID, r.GitRef, r.LastError, now, now)
 	return err
 }
 
-func (d *DBStore) DeleteProjectRuntime(ctx context.Context, userID, agentID, projectID string) error {
+func (d *DBStore) DeleteProjectRuntime(ctx context.Context, agentID, projectID string) error {
 	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM project_runtimes WHERE user_id = %s AND agent_id = %s AND project_id = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, projectID)
+		fmt.Sprintf(`DELETE FROM project_runtimes WHERE agent_id = %s AND project_id = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, projectID)
 	return err
 }
 
@@ -4598,7 +4683,7 @@ func (d *DBStore) DeleteProjectRuntime(ctx context.Context, userID, agentID, pro
 // user-scoped.
 func (d *DBStore) ListAllProjectRuntimes(ctx context.Context) ([]ProjectRuntimeRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
-		`SELECT user_id, agent_id, project_id, `+projectRuntimeCols+` FROM project_runtimes`)
+		`SELECT agent_id, project_id, `+projectRuntimeCols+` FROM project_runtimes`)
 	if err != nil {
 		return nil, err
 	}
@@ -4606,7 +4691,7 @@ func (d *DBStore) ListAllProjectRuntimes(ctx context.Context) ([]ProjectRuntimeR
 	var out []ProjectRuntimeRecord
 	for rows.Next() {
 		var rec ProjectRuntimeRecord
-		if err := rows.Scan(&rec.UserID, &rec.AgentID, &rec.ProjectID,
+		if err := rows.Scan(&rec.AgentID, &rec.ProjectID,
 			&rec.TemplateRef, &rec.Status, &rec.DevPort, &rec.HostPort, &rec.PreviewURL,
 			&rec.ContainerID, &rec.GitRef, &rec.LastError, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
 			return nil, err

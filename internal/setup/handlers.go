@@ -1894,11 +1894,10 @@ func (s *Server) handleMoveSessionProject(w http.ResponseWriter, r *http.Request
 	if !s.requireWritable(w, r) {
 		return
 	}
-	uid := s.effectiveUserID(r)
 	// Validate the target project exists and belongs to this caller.
 	// Empty projectId is the "detach" case — always allowed.
 	if req.ProjectID != "" && s.dataStore != nil {
-		p, err := s.dataStore.GetProject(r.Context(), uid, agentID, req.ProjectID)
+		p, err := s.dataStore.GetProject(r.Context(), agentID, req.ProjectID)
 		if err != nil {
 			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return

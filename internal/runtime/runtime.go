@@ -305,7 +305,7 @@ func (m *Manager) Get(ctx context.Context, userID, agentID, projectID, sessionID
 	if err != nil {
 		return nil, err
 	}
-	rec, err := m.store.GetProjectRuntime(ctx, userID, agentID, scopeID)
+	rec, err := m.store.GetProjectRuntime(ctx, agentID, scopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +337,7 @@ func (m *Manager) Up(ctx context.Context, userID, agentID, projectID, sessionID,
 	if err != nil {
 		return nil, err
 	}
-	rec, err := m.store.GetProjectRuntime(ctx, userID, agentID, scopeID)
+	rec, err := m.store.GetProjectRuntime(ctx, agentID, scopeID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
@@ -522,7 +522,7 @@ func (m *Manager) Sleep(ctx context.Context, userID, agentID, projectID, session
 		return err
 	}
 	m.evict(userID, agentID, scopeID)
-	rec, err := m.store.GetProjectRuntime(ctx, userID, agentID, scopeID)
+	rec, err := m.store.GetProjectRuntime(ctx, agentID, scopeID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil
@@ -552,7 +552,7 @@ func (m *Manager) Stop(ctx context.Context, userID, agentID, projectID, sessionI
 	m.evict(userID, agentID, scopeID)
 	// The container is gone; reclaim its per-scope node_modules volume.
 	removeVolume(nmVolumeName(scopeID))
-	return m.store.DeleteProjectRuntime(ctx, userID, agentID, scopeID)
+	return m.store.DeleteProjectRuntime(ctx, agentID, scopeID)
 }
 
 // Exec runs a one-shot command inside the runtime container (for git

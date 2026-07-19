@@ -34,7 +34,7 @@ func projectsListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rows, err := st.ListProjects(ctx, ag.UserID, ag.ID)
+			rows, err := st.ListProjects(ctx, ag.ID)
 			if err != nil {
 				return err
 			}
@@ -100,7 +100,7 @@ func projectsDeleteCmd() *cobra.Command {
 				return err
 			}
 			if !force {
-				n, err := st.CountProjectSessions(ctx, ag.UserID, ag.ID, args[1])
+				n, err := st.CountProjectSessions(ctx, ag.ID, args[1])
 				if err != nil {
 					return err
 				}
@@ -108,10 +108,10 @@ func projectsDeleteCmd() *cobra.Command {
 					return fmt.Errorf("project has %d sessions; pass --force to delete the project row anyway", n)
 				}
 			}
-			if err := st.DeleteProjectRuntime(ctx, ag.UserID, ag.ID, args[1]); err != nil {
+			if err := st.DeleteProjectRuntime(ctx, ag.ID, args[1]); err != nil {
 				return err
 			}
-			if err := st.DeleteProject(ctx, ag.UserID, ag.ID, args[1]); err != nil {
+			if err := st.DeleteProject(ctx, ag.ID, args[1]); err != nil {
 				return err
 			}
 			fmt.Printf("Deleted project %s\n", args[1])
@@ -144,7 +144,7 @@ func projectsRuntimeGetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			rec, err := st.GetProjectRuntime(ctx, ag.UserID, ag.ID, args[1])
+			rec, err := st.GetProjectRuntime(ctx, ag.ID, args[1])
 			if err != nil {
 				if errors.Is(err, store.ErrNotFound) {
 					fmt.Println("null")
@@ -176,7 +176,7 @@ func projectsRuntimeSetCmd() *cobra.Command {
 				return err
 			}
 			rec := &store.ProjectRuntimeRecord{UserID: ag.UserID, AgentID: ag.ID, ProjectID: args[1]}
-			if existing, err := st.GetProjectRuntime(ctx, ag.UserID, ag.ID, args[1]); err == nil {
+			if existing, err := st.GetProjectRuntime(ctx, ag.ID, args[1]); err == nil {
 				rec = existing
 			} else if !errors.Is(err, store.ErrNotFound) {
 				return err
@@ -243,7 +243,7 @@ func projectsRuntimeDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := st.DeleteProjectRuntime(ctx, ag.UserID, ag.ID, args[1]); err != nil {
+			if err := st.DeleteProjectRuntime(ctx, ag.ID, args[1]); err != nil {
 				return err
 			}
 			fmt.Printf("Deleted runtime for project %s\n", args[1])

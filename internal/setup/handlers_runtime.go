@@ -100,7 +100,7 @@ func (s *Server) handleRuntimeUp(w http.ResponseWriter, r *http.Request) {
 	}
 	// Confirm the project exists before spinning up a container for it —
 	// avoids minting a runtime for a typo'd pid.
-	if proj, err := s.dataStore.GetProject(r.Context(), uid, id, pid); err != nil || proj == nil {
+	if proj, err := s.dataStore.GetProject(r.Context(), id, pid); err != nil || proj == nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "project not found"})
 		return
 	}

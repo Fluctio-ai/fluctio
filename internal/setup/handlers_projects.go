@@ -87,7 +87,7 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 		return
 	}
-	rows, err := s.dataStore.ListProjects(r.Context(), uid, id)
+	rows, err := s.dataStore.ListProjects(r.Context(), id)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -138,7 +138,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	// Re-read to get authoritative created_at / updated_at the DB
 	// stamped on the row, instead of returning zero times.
-	saved, err := s.dataStore.GetProject(r.Context(), uid, id, rec.ID)
+	saved, err := s.dataStore.GetProject(r.Context(), id, rec.ID)
 	if err != nil || saved == nil {
 		// Fall back to the in-memory copy — IDs and name are correct,
 		// just timestamps are zero. Still better than 500'ing the
@@ -158,8 +158,7 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAgentReadable(w, r, id) {
 		return
 	}
-	uid := s.effectiveUserID(r)
-	existing, err := s.dataStore.GetProject(r.Context(), uid, id, pid)
+	existing, err := s.dataStore.GetProject(r.Context(), id, pid)
 	if err != nil || existing == nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "project not found"})
 		return
@@ -190,7 +189,7 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	saved, _ := s.dataStore.GetProject(r.Context(), uid, id, pid)
+	saved, _ := s.dataStore.GetProject(r.Context(), id, pid)
 	if saved == nil {
 		saved = existing
 	}
@@ -206,13 +205,12 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAgentReadable(w, r, id) {
 		return
 	}
-	uid := s.effectiveUserID(r)
 	// Refuse to delete a project that still owns chats. Cascade /
 	// soft-detach are deliberately not exposed — v1 keeps the
 	// destructive action behind an explicit "delete chats first" step
 	// so a slip on the trash icon can't nuke a survey's worth of
 	// notes.
-	n, err := s.dataStore.CountProjectSessions(r.Context(), uid, id, pid)
+	n, err := s.dataStore.CountProjectSessions(r.Context(), id, pid)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -224,7 +222,7 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err := s.dataStore.DeleteProject(r.Context(), uid, id, pid); err != nil {
+	if err := s.dataStore.DeleteProject(r.Context(), id, pid); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}

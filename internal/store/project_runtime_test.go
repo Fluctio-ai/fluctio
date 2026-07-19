@@ -11,16 +11,15 @@ func TestProjectRuntimeRoundTrip(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 
-	const uid, aid, pid = "u_1", "agt_1", "proj_abc"
+	const aid, pid = "agt_1", "proj_abc"
 
 	// Absent runtime → ErrNotFound.
-	if _, err := db.GetProjectRuntime(ctx, uid, aid, pid); !errors.Is(err, ErrNotFound) {
+	if _, err := db.GetProjectRuntime(ctx, aid, pid); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for missing runtime, got %v", err)
 	}
 
 	// Insert.
 	rec := &ProjectRuntimeRecord{
-		UserID:      uid,
 		AgentID:     aid,
 		ProjectID:   pid,
 		TemplateRef: "shipany-tanstack",
@@ -35,7 +34,7 @@ func TestProjectRuntimeRoundTrip(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	got, err := db.GetProjectRuntime(ctx, uid, aid, pid)
+	got, err := db.GetProjectRuntime(ctx, aid, pid)
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -57,7 +56,7 @@ func TestProjectRuntimeRoundTrip(t *testing.T) {
 	if err := db.SaveProjectRuntime(ctx, got); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
-	after, err := db.GetProjectRuntime(ctx, uid, aid, pid)
+	after, err := db.GetProjectRuntime(ctx, aid, pid)
 	if err != nil {
 		t.Fatalf("get after upsert: %v", err)
 	}
@@ -78,10 +77,10 @@ func TestProjectRuntimeRoundTrip(t *testing.T) {
 	}
 
 	// Delete.
-	if err := db.DeleteProjectRuntime(ctx, uid, aid, pid); err != nil {
+	if err := db.DeleteProjectRuntime(ctx, aid, pid); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	if _, err := db.GetProjectRuntime(ctx, uid, aid, pid); !errors.Is(err, ErrNotFound) {
+	if _, err := db.GetProjectRuntime(ctx, aid, pid); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound after delete, got %v", err)
 	}
 }
