@@ -499,6 +499,29 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	// chatter's workspace. onReload=nil: SkillsLoader re-scans this
 	// dir on every turn, so the new skill is picked up next turn.
 	tools.RegisterSkillInstall(registry, filepath.Join(rc.Home, "skills"), nil)
+	// Phase 4 write-approval gate: skill_manage writes to skills-pending/
+	// (NOT live). The parser closure re-uses parseFrontmatterFromBytes +
+	// CheckGating so the tool result can echo the same gating verdict the
+	// system-prompt catalog and load_skill already use. onChange=nil:
+	// approval is out-of-band (CLI in P4 Task 2), not in-process.
+	tools.RegisterSkillManage(registry, rc.Home, "fluctio skill approve",
+		func(b []byte) *tools.SkillManifest {
+			fm := parseFrontmatterFromBytes(b)
+			if fm == nil {
+				return nil
+			}
+			var meta *SkillMetadata
+			if fm.Metadata.Kind != 0 {
+				meta = parseMetadata(&fm.Metadata)
+			}
+			gated, reason := CheckGating(meta)
+			return &tools.SkillManifest{
+				Name:        fm.Name,
+				Description: fm.Description,
+				Gated:       gated,
+				GateReason:  reason,
+			}
+		}, nil)
 	var sbCfg *tools.SandboxConfig
 	if rc.Sandbox.Enabled {
 		sbCfg = &tools.SandboxConfig{Enabled: true}
@@ -3995,6 +4018,26 @@ func (a *Agent) refreshSkillsFromStore(userID string) {
 	summary := loader.BuildSkillsSummary(skills)
 	a.ctxBuilder.SetSkillsSummary(summary)
 	tools.RegisterLoadSkill(a.registry, loader.AllSkillDirs(), buildSkillGate(skills))
+	// Phase 4 write-approval gate: same wiring as the boot-time site above.
+	// a.homePath == rc.Home (the agent home containing skills/).
+	tools.RegisterSkillManage(a.registry, a.homePath, "fluctio skill approve",
+		func(b []byte) *tools.SkillManifest {
+			fm := parseFrontmatterFromBytes(b)
+			if fm == nil {
+				return nil
+			}
+			var meta *SkillMetadata
+			if fm.Metadata.Kind != 0 {
+				meta = parseMetadata(&fm.Metadata)
+			}
+			gated, reason := CheckGating(meta)
+			return &tools.SkillManifest{
+				Name:        fm.Name,
+				Description: fm.Description,
+				Gated:       gated,
+				GateReason:  reason,
+			}
+		}, nil)
 	// Per-turn fingerprint of the skill set the system prompt will
 	// ship. Lets us diff IM vs web for the same (agent, chatter) and
 	// confirm — or rule out — that agent-scope skills are reaching
@@ -4028,6 +4071,25 @@ func (a *Agent) ReloadWorkspaceFiles() {
 	skills := loader.LoadSkills()
 	skillsSummary := loader.BuildSkillsSummary(skills)
 	tools.RegisterLoadSkill(a.registry, loader.AllSkillDirs(), buildSkillGate(skills))
+	// Phase 4 write-approval gate: same wiring as the boot-time site above.
+	tools.RegisterSkillManage(a.registry, a.homePath, "fluctio skill approve",
+		func(b []byte) *tools.SkillManifest {
+			fm := parseFrontmatterFromBytes(b)
+			if fm == nil {
+				return nil
+			}
+			var meta *SkillMetadata
+			if fm.Metadata.Kind != 0 {
+				meta = parseMetadata(&fm.Metadata)
+			}
+			gated, reason := CheckGating(meta)
+			return &tools.SkillManifest{
+				Name:        fm.Name,
+				Description: fm.Description,
+				Gated:       gated,
+				GateReason:  reason,
+			}
+		}, nil)
 	a.ctxBuilder = NewContextBuilder(a.homePath, a.memory, skillsSummary)
 	a.ctxBuilder.SetWorkspace(a.workspacePath)
 	a.ctxBuilder.SetPromptMode(a.promptMode)
