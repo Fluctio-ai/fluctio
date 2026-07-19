@@ -332,30 +332,6 @@ type UserSpace struct {
 	mu sync.Mutex
 }
 
-// readUserScopeAgentDefaults reads the (user=X, agent='') agents.defaults
-// row raw — distinct from assembleConfig, which merges system + user and
-// can't tell apart "user explicitly chose the system value" from "no
-// user-scope row at all". EnsureAgent uses this to detect a chatter's
-// *explicit* model preference, so it can win over owner / agent-scope
-// overrides for foreign agents. Returns the zero value when there's no
-// row, the row's data can't be unmarshaled, or userID is empty (system
-// caller — no per-user pin to honor).
-func readUserScopeAgentDefaults(ctx context.Context, st store.Store, userID string) config.AgentDefaults {
-	var out config.AgentDefaults
-	if userID == "" || st == nil {
-		return out
-	}
-	rec, err := st.GetConfigByName(ctx, store.KindSetting, userID, "", NSAgentDefaults)
-	if err != nil || rec == nil {
-		return out
-	}
-	blob, err := json.Marshal(rec.Data)
-	if err != nil {
-		return out
-	}
-	_ = json.Unmarshal(blob, &out)
-	return out
-}
 
 // EnsureAgent attaches an agent the user does not own to this UserSpace.
 // Used by super_admin chat: the admin operates on a foreign agent under

@@ -124,29 +124,6 @@ func AgentScopeProviders(ctx context.Context, st store.Store, agentID string) (m
 	return out, nil
 }
 
-// UserScopeProviders returns providers stored at (user=X, agent='')
-// only — the user's personal rows, without the system layer. Used by
-// the foreign-agent path so a viewer can fall back to the owner's
-// provider credentials without dragging the owner's full merged view
-// (which would re-apply system rows on top of the viewer's already-
-// merged set).
-func UserScopeProviders(ctx context.Context, st store.Store, userID string) (map[string]config.ProviderConfig, error) {
-	if st == nil {
-		return nil, errors.New("scope.UserScopeProviders: store is required")
-	}
-	if userID == "" {
-		return map[string]config.ProviderConfig{}, nil
-	}
-	rows, err := st.ListConfigs(ctx, store.KindProvider, userID, "")
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]config.ProviderConfig, len(rows))
-	for _, r := range rows {
-		out[r.Name] = providerToConfig(r)
-	}
-	return out, nil
-}
 
 // Channels returns the merged channel map. Disabled rows in an inner
 // scope erase the outer entry.
