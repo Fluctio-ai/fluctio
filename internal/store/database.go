@@ -153,7 +153,10 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate session_messages provider/model: %w", err)
 	}
 	if err := d.migrateTokenUsageAddChannelChatter(ctx); err != nil {
-		return fmt.Errorf("migrate token_usage channel/chatter: %w", err)
+		return fmt.Errorf("migrate token_usage channel: %w", err)
+	}
+	if err := d.migrateTokenUsageDropChatter(ctx); err != nil {
+		return fmt.Errorf("migrate token_usage drop chatter_user_id: %w", err)
 	}
 	if err := d.migrateUsersAddOwnerUserID(ctx); err != nil {
 		return fmt.Errorf("migrate users.owner_user_id: %w", err)
@@ -679,17 +682,18 @@ func (d *DBStore) migrateTokenUsageAddProvider(ctx context.Context) error {
 	return nil
 }
 
-// migrateTokenUsageAddChannelChatter adds channel + chatter_user_id
-// columns to token_usage_daily and token_usage_log so usage records
-// capture which channel the conversation came from and who the actual
-// chatter was (as opposed to the agent owner stored in user_id).
+// migrateTokenUsageAddChannelChatter adds the channel column to
+// token_usage_daily and token_usage_log so usage records capture which
+// channel the conversation came from. chatter_user_id was retired in
+// phase 2.1 (single-user flatten); migrateTokenUsageDropChatter removes
+// it from legacy installs.
 func (d *DBStore) migrateTokenUsageAddChannelChatter(ctx context.Context) error {
 	for _, table := range []string{"token_usage_daily", "token_usage_log"} {
 		exists, err := d.tableExists(ctx, table)
 		if err != nil || !exists {
 			continue
 		}
-		for _, col := range []string{"channel", "chatter_user_id"} {
+		for _, col := range []string{"channel"} {
 			has, err := d.tableHasColumn(ctx, table, col)
 			if err != nil || has {
 				continue
@@ -698,6 +702,25 @@ func (d *DBStore) migrateTokenUsageAddChannelChatter(ctx context.Context) error 
 			if _, err := d.db.ExecContext(ctx, stmt); err != nil {
 				return fmt.Errorf("add %s.%s: %w", table, col, err)
 			}
+		}
+	}
+	return nil
+}
+
+// migrateTokenUsageDropChatter drops chatter_user_id from
+// token_usage_daily + token_usage_log (phase 2.1 single-user flatten
+// retired per-chatter usage tracking). Idempotent.
+func (d *DBStore) migrateTokenUsageDropChatter(ctx context.Context) error {
+	for _, table := range []string{"token_usage_daily", "token_usage_log"} {
+		has, err := d.tableHasColumn(ctx, table, "chatter_user_id")
+		if err != nil {
+			return err
+		}
+		if !has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s DROP COLUMN chatter_user_id`, table)); err != nil {
+			return fmt.Errorf("drop %s.chatter_user_id: %w", table, err)
 		}
 	}
 	return nil

@@ -405,28 +405,26 @@ func (s *SQLMeter) dayParam(t time.Time) any {
 func (s *SQLMeter) RecordTokens(ctx context.Context, userID, agentID, sessionKey, provider, model string, t Tokens) error {
 	day := s.dayParam(dayBucket(time.Now()))
 	channel := store.ChannelFromContext(ctx)
-	chatterUID := store.ChatterUserIDFromContext(ctx)
 	// Both dialects support this six-column conflict target and the
 	// EXCLUDED reference. We additionally bump request_count by 1.
-	// channel + chatter_user_id are informational — not part of the PK.
+	// channel is informational — not part of the PK.
 	q := s.rebind(`
 		INSERT INTO token_usage_daily
 			(day, user_id, agent_id, session_key, provider, model,
 			 input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, request_count,
-			 channel, chatter_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+			 channel)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 		ON CONFLICT (day, user_id, agent_id, session_key, provider, model) DO UPDATE SET
 			input_tokens         = token_usage_daily.input_tokens         + EXCLUDED.input_tokens,
 			output_tokens        = token_usage_daily.output_tokens        + EXCLUDED.output_tokens,
 			cache_read_tokens    = token_usage_daily.cache_read_tokens    + EXCLUDED.cache_read_tokens,
 			cache_create_tokens  = token_usage_daily.cache_create_tokens  + EXCLUDED.cache_create_tokens,
 			request_count        = token_usage_daily.request_count        + 1,
-			channel              = EXCLUDED.channel,
-			chatter_user_id      = EXCLUDED.chatter_user_id`)
+			channel              = EXCLUDED.channel`)
 	_, err := s.db.ExecContext(ctx, q,
 		day, userID, agentID, sessionKey, provider, model,
 		t.Input, t.Output, t.CacheRead, t.CacheCreation,
-		channel, chatterUID,
+		channel,
 	)
 	return err
 }
@@ -565,17 +563,16 @@ func (s *SQLMeter) DailyForUser(ctx context.Context, userID string, r Range) ([]
 
 func (s *SQLMeter) RecordTokenLog(ctx context.Context, userID, agentID, sessionKey, prov, model string, t Tokens, durationMs int64) error {
 	channel := store.ChannelFromContext(ctx)
-	chatterUID := store.ChatterUserIDFromContext(ctx)
 	q := s.rebind(`
 		INSERT INTO token_usage_log
 			(user_id, agent_id, session_key, provider, model,
 			 input_tokens, output_tokens, cache_read_tokens, cache_create_tokens,
-			 duration_ms, channel, chatter_user_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
+			 duration_ms, channel, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
 	_, err := s.db.ExecContext(ctx, q,
 		userID, agentID, sessionKey, prov, model,
 		t.Input, t.Output, t.CacheRead, t.CacheCreation,
-		durationMs, channel, chatterUID,
+		durationMs, channel,
 	)
 	return err
 }
