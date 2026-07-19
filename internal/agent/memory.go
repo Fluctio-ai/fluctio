@@ -480,7 +480,7 @@ func (a *Agent) maybeAutoTitle(sessionKey string, messages []provider.Message, h
 	ctx := context.Background()
 
 	// Skip if already titled — user renamed or a previous run landed.
-	if title, _ := a.dataStore.LookupSessionTitle(ctx, ownerUserID, a.name, sessionKey); strings.TrimSpace(title) != "" {
+	if title, _ := a.dataStore.LookupSessionTitle(ctx, a.name, sessionKey); strings.TrimSpace(title) != "" {
 		return
 	}
 
@@ -544,7 +544,7 @@ func (a *Agent) maybeAutoTitle(sessionKey string, messages []provider.Message, h
 	if title == "" {
 		return
 	}
-	if err := a.dataStore.RenameSession(ctx, ownerUserID, a.name, sessionKey, title); err != nil {
+	if err := a.dataStore.RenameSession(ctx, a.name, sessionKey, title); err != nil {
 		slog.Warn("auto-title: rename failed", "agent", a.name, "session", sessionKey, "error", err)
 		return
 	}

@@ -286,7 +286,7 @@ func (a *Agent) summarizeIdleSessions(ctx context.Context, idleAfter time.Durati
 		return
 	}
 	cutoff := time.Now().Add(-idleAfter)
-	sessions, err := db.ListIdleSessions(ctx, a.ownerUserID, a.agentID, cutoff, minMessages)
+	sessions, err := db.ListIdleSessions(ctx, a.agentID, cutoff, minMessages)
 	if err != nil {
 		slog.Warn("idle summary: list sessions failed",
 			"agent", a.agentID, "error", err)
@@ -348,7 +348,7 @@ func persistConversationSummary(
 	maxSeq := allMsgs[len(allMsgs)-1].Seq
 
 	lastSeq := 0
-	if rec, rerr := db.GetSession(ctx, userID, agentID, sessionKey); rerr == nil && rec != nil {
+	if rec, rerr := db.GetSession(ctx, agentID, sessionKey); rerr == nil && rec != nil {
 		lastSeq = rec.LastSummarizedSeq
 	}
 
@@ -385,7 +385,7 @@ func persistConversationSummary(
 		// Nothing worth saving, but advance last_summarized_seq anyway so
 		// the idle sweep stops re-scanning this session every tick — the
 		// LLM already decided everything up to maxSeq is forgettable.
-		if serr := db.SetSessionLastSummarizedSeq(ctx, userID, agentID, sessionKey, maxSeq); serr != nil {
+		if serr := db.SetSessionLastSummarizedSeq(ctx, agentID, sessionKey, maxSeq); serr != nil {
 			slog.Warn("conversation summary: advance last_summarized_seq (empty) failed",
 				"agent", agentID, "session", sessionKey, "error", serr)
 		}
@@ -461,7 +461,7 @@ func persistConversationSummary(
 		}
 	}
 
-	if serr := db.SetSessionLastSummarizedSeq(ctx, userID, agentID, sessionKey, maxSeq); serr != nil {
+	if serr := db.SetSessionLastSummarizedSeq(ctx, agentID, sessionKey, maxSeq); serr != nil {
 		slog.Warn("conversation summary: advance last_summarized_seq failed",
 			"agent", agentID, "session", sessionKey, "error", serr)
 	}

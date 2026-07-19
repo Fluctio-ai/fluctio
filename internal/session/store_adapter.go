@@ -59,7 +59,7 @@ func (a *StoreAdapter) resolveSessionOwner(ctx context.Context, agentID, session
 }
 
 func (a *StoreAdapter) GetSession(ctx context.Context, agentID, sessionKey string) ([]provider.Message, error) {
-	rec, err := a.st.GetSession(ctx, a.resolveSessionOwner(ctx, agentID, sessionKey), agentID, sessionKey)
+	rec, err := a.st.GetSession(ctx, agentID, sessionKey)
 	if err != nil || rec == nil {
 		return nil, err
 	}
@@ -113,14 +113,14 @@ func (a *StoreAdapter) SaveSession(ctx context.Context, agentID, sessionKey, cha
 	for i, m := range messages {
 		rec.Messages[i] = sessionMessageFromProvider(m)
 	}
-	return a.st.SaveSession(ctx, a.userID, agentID, sessionKey, rec)
+	return a.st.SaveSession(ctx, agentID, sessionKey, rec)
 }
 
 // ResolveActiveSessionKey forwards to the store. The session.Manager
 // uses this to pick the active session_key for an inbound (channel,
 // account, chat) triple before any messages get loaded.
 func (a *StoreAdapter) ResolveActiveSessionKey(ctx context.Context, agentID, channel, accountID, chatID string) (string, error) {
-	k, err := a.st.ResolveActiveSessionKey(ctx, a.userID, agentID, channel, accountID, chatID)
+	k, err := a.st.ResolveActiveSessionKey(ctx, agentID, channel, accountID, chatID)
 	if err != nil {
 		// Translate ErrNotFound to ("", nil) so the manager treats the
 		// "no session yet" case as a normal mint trigger instead of
@@ -137,7 +137,7 @@ func (a *StoreAdapter) ResolveActiveSessionKey(ctx context.Context, agentID, cha
 // (channel, accountID, chatID). Used when a URL hand-off carries only
 // the session_key and the handler needs the conversation triple back.
 func (a *StoreAdapter) LookupSessionTriple(ctx context.Context, agentID, sessionKey string) (string, string, string, error) {
-	ch, acc, ci, err := a.st.LookupSessionTriple(ctx, a.userID, agentID, sessionKey)
+	ch, acc, ci, err := a.st.LookupSessionTriple(ctx, agentID, sessionKey)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return "", "", "", nil
@@ -152,7 +152,7 @@ func (a *StoreAdapter) LookupSessionTriple(ctx context.Context, agentID, session
 // than an error so callers can use the empty string to mean "fall back
 // to the per-chat workspace dir".
 func (a *StoreAdapter) LookupSessionProject(ctx context.Context, agentID, sessionKey string) (string, error) {
-	pid, err := a.st.LookupSessionProject(ctx, a.userID, agentID, sessionKey)
+	pid, err := a.st.LookupSessionProject(ctx, agentID, sessionKey)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return "", nil
@@ -263,7 +263,7 @@ func providerMessageFromStored(m store.SessionMessage) provider.Message {
 // The agent-side history/delete/rename handlers accept either a
 // session_key or a legacy `<chat_id>` URL token via ResolveSessionKey.
 func (a *StoreAdapter) ListWebSessions(ctx context.Context, agentID string) ([]WebSession, error) {
-	metas, err := a.st.ListSessions(ctx, a.userID, agentID)
+	metas, err := a.st.ListSessions(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +302,7 @@ func (a *StoreAdapter) BuildWebSession(ctx context.Context, m store.SessionMeta)
 	var source []store.SessionMessage
 	if len(archive) > 0 {
 		source = archive
-	} else if rec, err := a.st.GetSession(ctx, sessionOwner, agentID, m.Key); err == nil && rec != nil {
+	} else if rec, err := a.st.GetSession(ctx, agentID, m.Key); err == nil && rec != nil {
 		source = rec.Messages
 	}
 	for _, msg := range source {
@@ -431,13 +431,13 @@ func userImage(m store.SessionMessage) string {
 }
 
 func (a *StoreAdapter) DeleteSession(ctx context.Context, agentID, sessionKey string) error {
-	return a.st.DeleteSession(ctx, a.userID, agentID, sessionKey)
+	return a.st.DeleteSession(ctx, agentID, sessionKey)
 }
 
 func (a *StoreAdapter) RenameSession(ctx context.Context, agentID, sessionKey, title string) error {
-	return a.st.RenameSession(ctx, a.userID, agentID, sessionKey, title)
+	return a.st.RenameSession(ctx, agentID, sessionKey, title)
 }
 
 func (a *StoreAdapter) MoveSession(ctx context.Context, agentID, sessionKey, projectID string) error {
-	return a.st.MoveSession(ctx, a.userID, agentID, sessionKey, projectID)
+	return a.st.MoveSession(ctx, agentID, sessionKey, projectID)
 }

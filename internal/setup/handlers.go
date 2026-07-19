@@ -268,7 +268,7 @@ func (s *Server) resolveSessionProject(ctx context.Context, r *http.Request, age
 	if uid == "" {
 		return ""
 	}
-	pid, err := s.dataStore.LookupSessionProject(ctx, uid, agentID, sessionKey)
+	pid, err := s.dataStore.LookupSessionProject(ctx, agentID, sessionKey)
 	if err != nil {
 		return ""
 	}

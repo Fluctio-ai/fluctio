@@ -210,6 +210,14 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateAgentFilesDropUserID(ctx); err != nil {
 		return fmt.Errorf("migrate agent_files drop user_id: %w", err)
 	}
+	// Drop sessions.user_id + chatter_user_id now that flatten has
+	// collapsed any duplicate (agent_id, session_key) rows onto a single
+	// winner. PK becomes (agent_id, session_key). session_messages /
+	// session_events keep their own user_id / chatter_user_id columns
+	// until their own phase-1 sub-task.
+	if err := d.migrateSessionsDropUserAndChatter(ctx); err != nil {
+		return fmt.Errorf("migrate sessions drop user/chatter: %w", err)
+	}
 	return nil
 }
 
@@ -1217,6 +1225,79 @@ func (d *DBStore) migrateAgentFilesDropUserID(ctx context.Context) error {
 	return nil
 }
 
+// migrateSessionsDropUserAndChatter rebuilds the sessions table without
+// the user_id / chatter_user_id columns so the primary key collapses to
+// (agent_id, session_key). migrateFlattenUserData has already collapsed
+// any duplicate (agent_id, session_key) rows onto a single winner, so the
+// row-copy is collision-free. Idempotent — skips the rebuild when user_id
+// is already gone.
+//
+// The CREATE TABLE in migrationSQL still emits the legacy shape (PK on
+// user_id + chatter_user_id column), so a fresh install also flows through
+// here once. session_messages / session_events keep their columns for now
+// — they're dropped in their own phase-1 sub-task once their store methods
+// stop referencing them.
+func (d *DBStore) migrateSessionsDropUserAndChatter(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "sessions", "user_id")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	// Old indexes reference user_id / chatter_user_id and would block the
+	// column drops (Postgres) or vanish with the rebuild (SQLite). Drop
+	// explicitly so both dialects land in the same state.
+	for _, idx := range []string{"idx_sessions_chat_active", "idx_sessions_by_chatter"} {
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS %s`, idx)); err != nil {
+			return fmt.Errorf("drop index %s: %w", idx, err)
+		}
+	}
+	if d.dialect == "postgres" {
+		for _, s := range []string{
+			`ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_pkey`,
+			`ALTER TABLE sessions ADD PRIMARY KEY (agent_id, session_key)`,
+			`ALTER TABLE sessions DROP COLUMN IF EXISTS user_id`,
+			`ALTER TABLE sessions DROP COLUMN IF EXISTS chatter_user_id`,
+		} {
+			if _, err := d.db.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("postgres drop sessions user/chatter: %w\nSQL: %s", err, s)
+			}
+		}
+	} else {
+		for _, s := range []string{
+			`CREATE TABLE sessions_new (
+				agent_id TEXT NOT NULL,
+				session_key TEXT NOT NULL,
+				channel TEXT NOT NULL DEFAULT '',
+				account_id TEXT NOT NULL DEFAULT '',
+				chat_id TEXT NOT NULL DEFAULT '',
+				project_id TEXT NOT NULL DEFAULT '',
+				title TEXT NOT NULL DEFAULT '',
+				messages TEXT NOT NULL DEFAULT '[]',
+				message_count INTEGER NOT NULL DEFAULT 0,
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_summarized_seq INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (agent_id, session_key)
+			)`,
+			`INSERT INTO sessions_new (agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq)
+				SELECT agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq FROM sessions`,
+			`DROP TABLE sessions`,
+			`ALTER TABLE sessions_new RENAME TO sessions`,
+		} {
+			if _, err := d.db.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("sqlite rebuild sessions: %w\nSQL: %s", err, s)
+			}
+		}
+	}
+	// Recreate the chat-active lookup on the flattened column set.
+	if _, err := d.db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_chat_active ON sessions (agent_id, channel, account_id, chat_id, updated_at DESC)`); err != nil {
+		return fmt.Errorf("recreate idx_sessions_chat_active: %w", err)
+	}
+	return nil
+}
+
 // migrateSessionsAddChannelTriple retrofits channel / account_id / chat_id
 // onto pre-feature sessions rows. Existing session_keys followed the
 // `<channel>_<chatID>` convention (web_<sid>, wechat_<openid>, …), so the
@@ -1267,8 +1348,10 @@ func (d *DBStore) migrateSessionsAddChannelTriple(ctx context.Context) error {
 	// Always (re)assert the index — the CREATE INDEX in migrationSQL was
 	// removed because it would fire before the columns existed on legacy
 	// databases. IF NOT EXISTS makes it idempotent for fresh installs.
+	// user_id dropped from the key after the single-user flatten — the
+	// index now leads on agent_id so IM active-session lookups stay fast.
 	if _, err := d.db.ExecContext(ctx,
-		`CREATE INDEX IF NOT EXISTS idx_sessions_chat_active ON sessions (user_id, agent_id, channel, account_id, chat_id, updated_at DESC)`); err != nil {
+		`CREATE INDEX IF NOT EXISTS idx_sessions_chat_active ON sessions (agent_id, channel, account_id, chat_id, updated_at DESC)`); err != nil {
 		return fmt.Errorf("create index: %w", err)
 	}
 	return nil
@@ -2738,11 +2821,11 @@ func scanAgents(rows *sql.Rows) ([]AgentRecord, error) {
 
 // --- Sessions ---
 
-func (d *DBStore) GetSession(ctx context.Context, userID, agentID, sessionKey string) (*SessionRecord, error) {
+func (d *DBStore) GetSession(ctx context.Context, agentID, sessionKey string) (*SessionRecord, error) {
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT messages, channel, account_id, chat_id, project_id, updated_at, last_summarized_seq FROM sessions WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, sessionKey)
+		fmt.Sprintf(`SELECT messages, channel, account_id, chat_id, project_id, updated_at, last_summarized_seq FROM sessions WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, sessionKey)
 	var msgsStr string
 	var rec SessionRecord
 	if err := row.Scan(&msgsStr, &rec.Channel, &rec.AccountID, &rec.ChatID, &rec.ProjectID, &rec.UpdatedAt, &rec.LastSummarizedSeq); err != nil {
@@ -2752,11 +2835,15 @@ func (d *DBStore) GetSession(ctx context.Context, userID, agentID, sessionKey st
 	return &rec, nil
 }
 
-// LookupSessionOwner returns the user_id that owns the given session row.
+// LookupSessionOwner returns the agent owner's user_id for the given
+// session. Post-flatten the session row no longer carries its own user_id,
+// so the owner is resolved by joining through agents.user_id (which phase
+// 4 drops). Used by push routing to address the owning user.
 func (d *DBStore) LookupSessionOwner(ctx context.Context, agentID, sessionKey string) (string, error) {
 	var uid string
 	err := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT user_id FROM sessions WHERE agent_id = %s AND session_key = %s`,
+		fmt.Sprintf(`SELECT a.user_id FROM sessions s JOIN agents a ON a.id = s.agent_id
+			WHERE s.agent_id = %s AND s.session_key = %s`,
 			d.ph(1), d.ph(2)),
 		agentID, sessionKey).Scan(&uid)
 	if err != nil {
@@ -2785,53 +2872,36 @@ func (d *DBStore) GetSessionByKey(ctx context.Context, agentID, sessionKey strin
 // ProjectID are written on INSERT only; the ON CONFLICT branch
 // deliberately preserves the existing values so a callback that didn't
 // know the triple (e.g. compaction calling ReplaceMessages) can't
-// accidentally clear it.
-func (d *DBStore) SaveSession(ctx context.Context, userID, agentID, sessionKey string, session *SessionRecord) error {
-	if userID == "" {
-		return errors.New("store: SaveSession requires user_id")
-	}
+// accidentally clear it. Flattened: keyed on (agent_id, session_key).
+func (d *DBStore) SaveSession(ctx context.Context, agentID, sessionKey string, session *SessionRecord) error {
 	msgsData, _ := json.Marshal(session.Messages)
 	now := time.Now().UTC()
 	count := len(session.Messages)
-	// Per-turn chatter (= the actual conversation participant) is plumbed
-	// via ctx so this signature stays backward compatible. Empty when no
-	// upstream caller tagged ctx — readers fall back to user_id.
-	chatterID := ChatterUserIDFromContext(ctx)
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO sessions (user_id, agent_id, session_key, channel, account_id, chat_id, project_id, messages, message_count, updated_at, chatter_user_id)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-				ON CONFLICT (user_id, agent_id, session_key) DO UPDATE
-				SET messages=$8, message_count=$9, updated_at=$10,
-				    chatter_user_id = CASE WHEN $11 <> '' THEN $11 ELSE sessions.chatter_user_id END`,
-			userID, agentID, sessionKey, session.Channel, session.AccountID, session.ChatID, session.ProjectID,
-			string(msgsData), count, now, chatterID)
+			`INSERT INTO sessions (agent_id, session_key, channel, account_id, chat_id, project_id, messages, message_count, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				ON CONFLICT (agent_id, session_key) DO UPDATE
+				SET messages=$7, message_count=$8, updated_at=$9`,
+			agentID, sessionKey, session.Channel, session.AccountID, session.ChatID, session.ProjectID,
+			string(msgsData), count, now)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO sessions (user_id, agent_id, session_key, channel, account_id, chat_id, project_id, messages, message_count, updated_at, chatter_user_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (user_id, agent_id, session_key) DO UPDATE SET
-			  messages=excluded.messages, message_count=excluded.message_count, updated_at=excluded.updated_at,
-			  chatter_user_id = CASE WHEN excluded.chatter_user_id <> '' THEN excluded.chatter_user_id ELSE sessions.chatter_user_id END`,
-		userID, agentID, sessionKey, session.Channel, session.AccountID, session.ChatID, session.ProjectID,
-		string(msgsData), count, now, chatterID)
+		`INSERT INTO sessions (agent_id, session_key, channel, account_id, chat_id, project_id, messages, message_count, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (agent_id, session_key) DO UPDATE SET
+			  messages=excluded.messages, message_count=excluded.message_count, updated_at=excluded.updated_at`,
+		agentID, sessionKey, session.Channel, session.AccountID, session.ChatID, session.ProjectID,
+		string(msgsData), count, now)
 	return err
 }
 
-func (d *DBStore) ListSessions(ctx context.Context, userID, agentID string) ([]SessionMeta, error) {
-	// Include sessions owned by the caller AND sessions owned by any
-	// app_user whose owner_user_id is the caller. This surfaces IM
-	// conversations routed through an API-key-provisioned app_user's
-	// channel binding in the web dashboard sidebar.
+func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMeta, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT session_key, user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, COALESCE(chatter_user_id,'') FROM sessions
-			WHERE agent_id = %s AND (
-				user_id = %s OR user_id IN (
-					SELECT id FROM users WHERE owner_user_id = %s
-				)
-			) ORDER BY updated_at DESC`, d.ph(1), d.ph(2), d.ph(3)),
-		agentID, userID, userID)
+		fmt.Sprintf(`SELECT session_key, '' AS user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, '' AS chatter_user_id FROM sessions
+			WHERE agent_id = %s ORDER BY updated_at DESC`, d.ph(1)),
+		agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -2855,8 +2925,8 @@ func (d *DBStore) ListSessions(ctx context.Context, userID, agentID string) ([]S
 // those rows live under the chatter's user_id, not the agent owner's.
 func (d *DBStore) ListSessionOwnerPairs(ctx context.Context) ([]SessionOwnerPair, error) {
 	rows, err := d.db.QueryContext(ctx,
-		`SELECT DISTINCT user_id, agent_id FROM sessions
-			WHERE user_id <> '' AND agent_id <> ''`)
+		`SELECT DISTINCT a.user_id, s.agent_id FROM sessions s JOIN agents a ON a.id = s.agent_id
+			WHERE a.user_id <> '' AND s.agent_id <> ''`)
 	if err != nil {
 		return nil, err
 	}
@@ -2885,9 +2955,9 @@ func (d *DBStore) ListSessionOwnerPairsByAgents(ctx context.Context, agentIDs []
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := `SELECT DISTINCT user_id, agent_id FROM sessions
-		WHERE user_id <> '' AND agent_id <> ''
-		AND agent_id IN (` + strings.Join(placeholders, ",") + `)`
+	query := `SELECT DISTINCT a.user_id, s.agent_id FROM sessions s JOIN agents a ON a.id = s.agent_id
+		WHERE a.user_id <> '' AND s.agent_id <> ''
+		AND s.agent_id IN (` + strings.Join(placeholders, ",") + `)`
 	rows, err := d.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -2926,7 +2996,7 @@ func (d *DBStore) ListSessionsPaginated(ctx context.Context, agentIDs []string, 
 		return nil, 0, err
 	}
 	// Page query.
-	dataQ := fmt.Sprintf(`SELECT session_key, user_id, agent_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, COALESCE(chatter_user_id,'')
+	dataQ := fmt.Sprintf(`SELECT session_key, '' AS user_id, agent_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, '' AS chatter_user_id
 		FROM sessions %s ORDER BY updated_at DESC LIMIT %d OFFSET %d`, where, limit, offset)
 	rows, err := d.db.QueryContext(ctx, dataQ, args...)
 	if err != nil {
@@ -2951,12 +3021,12 @@ func (d *DBStore) ListSessionsPaginated(ctx context.Context, agentIDs []string, 
 // chatID) it belongs to. Used by handlers that take a session_key from
 // a URL and need the original chat_id — e.g. to keep workspace files
 // namespaced by the conversation rather than the session.
-func (d *DBStore) LookupSessionTriple(ctx context.Context, userID, agentID, sessionKey string) (string, string, string, error) {
+func (d *DBStore) LookupSessionTriple(ctx context.Context, agentID, sessionKey string) (string, string, string, error) {
 	row := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT channel, account_id, chat_id FROM sessions
-			WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, sessionKey)
+			WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, sessionKey)
 	var ch, acc, ci string
 	if err := row.Scan(&ch, &acc, &ci); err != nil {
 		return "", "", "", scanErr(err)
@@ -2967,12 +3037,12 @@ func (d *DBStore) LookupSessionTriple(ctx context.Context, userID, agentID, sess
 // LookupSessionProject returns the project_id of a session_key (or "")
 // — the workspace path resolver consults this to decide between
 // projects/<id>/ and sessions/<chat>/ for the sandbox mount.
-func (d *DBStore) LookupSessionProject(ctx context.Context, userID, agentID, sessionKey string) (string, error) {
+func (d *DBStore) LookupSessionProject(ctx context.Context, agentID, sessionKey string) (string, error) {
 	row := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT project_id FROM sessions
-			WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, sessionKey)
+			WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, sessionKey)
 	var pid string
 	if err := row.Scan(&pid); err != nil {
 		return "", scanErr(err)
@@ -2986,14 +3056,14 @@ func (d *DBStore) LookupSessionProject(ctx context.Context, userID, agentID, ses
 // adapters carry no session id of their own, so the gateway picks the
 // freshest thread when a message arrives. `/new` mints a fresh row that
 // then wins the ORDER BY on subsequent resolves.
-func (d *DBStore) ResolveActiveSessionKey(ctx context.Context, userID, agentID, channel, accountID, chatID string) (string, error) {
+func (d *DBStore) ResolveActiveSessionKey(ctx context.Context, agentID, channel, accountID, chatID string) (string, error) {
 	row := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT session_key FROM sessions
-			WHERE user_id = %s AND agent_id = %s
+			WHERE agent_id = %s
 			  AND channel = %s AND account_id = %s AND chat_id = %s
 			ORDER BY updated_at DESC LIMIT 1`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5)),
-		userID, agentID, channel, accountID, chatID)
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
+		agentID, channel, accountID, chatID)
 	var key string
 	if err := row.Scan(&key); err == nil {
 		return key, nil
@@ -3009,10 +3079,9 @@ func (d *DBStore) ResolveActiveSessionKey(ctx context.Context, userID, agentID, 
 		row = d.db.QueryRowContext(ctx,
 			fmt.Sprintf(`SELECT session_key FROM sessions
 				WHERE agent_id = %s AND channel = %s AND chat_id = %s
-				  AND user_id IN (SELECT id FROM users WHERE id = %s OR owner_user_id = %s)
 				ORDER BY updated_at DESC LIMIT 1`,
-				d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5)),
-			agentID, channel, chatID, userID, userID)
+				d.ph(1), d.ph(2), d.ph(3)),
+			agentID, channel, chatID)
 		if err := row.Scan(&key); err == nil {
 			return key, nil
 		}
@@ -3020,19 +3089,19 @@ func (d *DBStore) ResolveActiveSessionKey(ctx context.Context, userID, agentID, 
 	return "", ErrNotFound
 }
 
-func (d *DBStore) DeleteSession(ctx context.Context, userID, agentID, sessionKey string) error {
+func (d *DBStore) DeleteSession(ctx context.Context, agentID, sessionKey string) error {
 	for _, t := range []string{"session_messages", "session_events"} {
 		if _, err := d.db.ExecContext(ctx,
-			fmt.Sprintf(`DELETE FROM %s WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-				t, d.ph(1), d.ph(2), d.ph(3)),
-			userID, agentID, sessionKey); err != nil {
+			fmt.Sprintf(`DELETE FROM %s WHERE agent_id = %s AND session_key = %s`,
+				t, d.ph(1), d.ph(2)),
+			agentID, sessionKey); err != nil {
 			return err
 		}
 	}
 	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM sessions WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, sessionKey)
+		fmt.Sprintf(`DELETE FROM sessions WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, sessionKey)
 	return err
 }
 
@@ -3256,23 +3325,23 @@ func (d *DBStore) CountChatterUserMessages(ctx context.Context, agentID, chatter
 	return n, nil
 }
 
-func (d *DBStore) RenameSession(ctx context.Context, userID, agentID, sessionKey, title string) error {
+func (d *DBStore) RenameSession(ctx context.Context, agentID, sessionKey, title string) error {
 	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`UPDATE sessions SET title = %s WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
-		title, userID, agentID, sessionKey)
+		fmt.Sprintf(`UPDATE sessions SET title = %s WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2), d.ph(3)),
+		title, agentID, sessionKey)
 	return err
 }
 
 // LookupSessionTitle returns the session's title, or "" when the row is
 // missing / title never set. Used by the auto-title PostTurn hook to
 // skip sessions the user already named.
-func (d *DBStore) LookupSessionTitle(ctx context.Context, userID, agentID, sessionKey string) (string, error) {
+func (d *DBStore) LookupSessionTitle(ctx context.Context, agentID, sessionKey string) (string, error) {
 	var title string
 	err := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT COALESCE(title,'') FROM sessions WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, sessionKey).Scan(&title)
+		fmt.Sprintf(`SELECT COALESCE(title,'') FROM sessions WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, sessionKey).Scan(&title)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
@@ -3284,11 +3353,11 @@ func (d *DBStore) LookupSessionTitle(ctx context.Context, userID, agentID, sessi
 // must have already migrated the workspace files and validated that
 // projectID, when non-empty, is a real project the user owns under
 // this agent — this method only touches the sessions row.
-func (d *DBStore) MoveSession(ctx context.Context, userID, agentID, sessionKey, projectID string) error {
+func (d *DBStore) MoveSession(ctx context.Context, agentID, sessionKey, projectID string) error {
 	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`UPDATE sessions SET project_id = %s WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
-		projectID, userID, agentID, sessionKey)
+		fmt.Sprintf(`UPDATE sessions SET project_id = %s WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2), d.ph(3)),
+		projectID, agentID, sessionKey)
 	return err
 }
 
@@ -4966,27 +5035,27 @@ func (d *DBStore) migrateSessionsAddLastSummarizedSeq(ctx context.Context) error
 	return nil
 }
 
-func (d *DBStore) SetSessionLastSummarizedSeq(ctx context.Context, userID, agentID, sessionKey string, seq int) error {
+func (d *DBStore) SetSessionLastSummarizedSeq(ctx context.Context, agentID, sessionKey string, seq int) error {
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`UPDATE sessions SET last_summarized_seq=$1 WHERE user_id=$2 AND agent_id=$3 AND session_key=$4`,
-			seq, userID, agentID, sessionKey)
+			`UPDATE sessions SET last_summarized_seq=$1 WHERE agent_id=$2 AND session_key=$3`,
+			seq, agentID, sessionKey)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`UPDATE sessions SET last_summarized_seq=? WHERE user_id=? AND agent_id=? AND session_key=?`,
-		seq, userID, agentID, sessionKey)
+		`UPDATE sessions SET last_summarized_seq=? WHERE agent_id=? AND session_key=?`,
+		seq, agentID, sessionKey)
 	return err
 }
 
-func (d *DBStore) ListIdleSessions(ctx context.Context, userID, agentID string, cutoff time.Time, minMessages int) ([]IdleSession, error) {
+func (d *DBStore) ListIdleSessions(ctx context.Context, agentID string, cutoff time.Time, minMessages int) ([]IdleSession, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT session_key, COALESCE(NULLIF(chatter_user_id, ''), user_id), message_count, updated_at FROM sessions
-			WHERE user_id = %s AND agent_id = %s AND updated_at < %s AND message_count >= %s
+		fmt.Sprintf(`SELECT session_key, '' AS chatter_user_id, message_count, updated_at FROM sessions
+			WHERE agent_id = %s AND updated_at < %s AND message_count >= %s
 			AND last_summarized_seq < message_count - 1
 			ORDER BY updated_at ASC`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
-		userID, agentID, cutoff, minMessages)
+			d.ph(1), d.ph(2), d.ph(3)),
+		agentID, cutoff, minMessages)
 	if err != nil {
 		return nil, err
 	}

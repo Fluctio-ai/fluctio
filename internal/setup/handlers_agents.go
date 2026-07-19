@@ -920,7 +920,7 @@ func (s *Server) workspaceSessionScope(ctx context.Context, agentID, urlToken st
 	if uid == "" {
 		return ""
 	}
-	_, _, chatID, err := s.dataStore.LookupSessionTriple(ctx, uid, agentID, tok)
+	_, _, chatID, err := s.dataStore.LookupSessionTriple(ctx, agentID, tok)
 	if err != nil || chatID == "" {
 		return ""
 	}

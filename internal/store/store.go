@@ -84,74 +84,71 @@ type Store interface {
 	// CountPendingKBSources returns KB sources whose wiki_generated_at is NULL.
 	CountPendingKBSources(ctx context.Context, agentID string) (int, error)
 
-	// --- Sessions (per user, per agent — chat history is private) ---
-	GetSession(ctx context.Context, userID, agentID, sessionKey string) (*SessionRecord, error)
-	// GetSessionByKey loads a session by (agentID, sessionKey) without
-	// user_id scoping. Used when the caller's user_id may differ from
-	// the session's owner (e.g. parent user viewing a child app_user's
-	// session in the dashboard).
+	// --- Sessions (agent-scoped — chat history keys on (agent, session)) ---
+	GetSession(ctx context.Context, agentID, sessionKey string) (*SessionRecord, error)
+	// GetSessionByKey loads a session by (agentID, sessionKey). Now that
+	// GetSession is itself agent-scoped the two are equivalent; GetSessionByKey
+	// is retained as an alias for callers that historically skipped user scoping.
 	GetSessionByKey(ctx context.Context, agentID, sessionKey string) (*SessionRecord, error)
 	// LookupSessionTitle returns the session's title ("" when never
 	// renamed). The auto-title PostTurn hook reads this to decide
 	// whether to fire — empty = OK to summarise, non-empty = leave it.
-	LookupSessionTitle(ctx context.Context, userID, agentID, sessionKey string) (string, error)
-	// LookupSessionOwner returns the user_id that owns the given session.
-	// Used to resolve the correct user_id for cross-user session reads.
+	LookupSessionTitle(ctx context.Context, agentID, sessionKey string) (string, error)
+	// LookupSessionOwner returns the agent owner's user_id for the session.
+	// Post-flatten the session row no longer carries its own user_id, so the
+	// owner is resolved through the agents table (kept until phase 4 drops
+	// agents.user_id). Used by push routing to address the owning user.
 	LookupSessionOwner(ctx context.Context, agentID, sessionKey string) (string, error)
-	SaveSession(ctx context.Context, userID, agentID, sessionKey string, session *SessionRecord) error
-	ListSessions(ctx context.Context, userID, agentID string) ([]SessionMeta, error)
-	// ListSessionOwnerPairs returns every distinct (user_id, agent_id)
-	// pair present in the sessions table. Used by the admin Chats page
-	// to discover non-owner sessions: when a chatter binds their own bot
-	// to a public agent (or messages a public agent on the web), the
-	// session row is saved under that chatter's user_id, not the agent
-	// owner's — so an owner-keyed ListSessions misses them. Iterating
-	// pairs lets the admin view enumerate every (chatter, agent) tuple
-	// that has chat history, regardless of who owns the agent.
+	SaveSession(ctx context.Context, agentID, sessionKey string, session *SessionRecord) error
+	ListSessions(ctx context.Context, agentID string) ([]SessionMeta, error)
+	// ListSessionOwnerPairs returns every distinct (agent owner user_id,
+	// agent_id) pair that has at least one session. Post-flatten there is no
+	// per-session user_id, so the owner comes from agents.user_id. Retained
+	// for the admin Chats view's enumeration even though single-user mode
+	// collapses it to one owner.
 	ListSessionOwnerPairs(ctx context.Context) ([]SessionOwnerPair, error)
 	// ListSessionOwnerPairsByAgents is like ListSessionOwnerPairs but
-	// restricted to the given agent IDs. Used by the scoped /api/chats
-	// endpoint so user/agent API keys see only their authorized agents.
+	// restricted to the given agent IDs.
 	ListSessionOwnerPairsByAgents(ctx context.Context, agentIDs []string) ([]SessionOwnerPair, error)
 	// ListSessionsPaginated returns a page of session metadata ordered by
 	// updated_at DESC. When agentIDs is nil every agent is included (admin
 	// view); otherwise only the listed agents. Returns (rows, totalCount, err).
 	ListSessionsPaginated(ctx context.Context, agentIDs []string, offset, limit int) ([]SessionMeta, int, error)
-	// ListIdleSessions returns sessions under (userID, agentID) whose
-	// updated_at is before cutoff and message_count >= minMessages —
-	// candidates for the idle-summary background sweep. The sweep
-	// double-checks updated_at again before summarizing (the row may
-	// have been touched between scan and processing).
-	ListIdleSessions(ctx context.Context, userID, agentID string, cutoff time.Time, minMessages int) ([]IdleSession, error)
+	// ListIdleSessions returns sessions under agentID whose updated_at is
+	// before cutoff and message_count >= minMessages — candidates for the
+	// idle-summary background sweep. The sweep double-checks updated_at
+	// again before summarizing (the row may have been touched between
+	// scan and processing).
+	ListIdleSessions(ctx context.Context, agentID string, cutoff time.Time, minMessages int) ([]IdleSession, error)
 	// SetSessionLastSummarizedSeq records the highest session_messages.seq
 	// the conversation summary has covered, so the next summary trigger
 	// runs incremental (only newer messages) instead of full. Stamped
 	// after a successful persist by every trigger path (compact,
 	// new-session, idle sweep).
-	SetSessionLastSummarizedSeq(ctx context.Context, userID, agentID, sessionKey string, seq int) error
-	DeleteSession(ctx context.Context, userID, agentID, sessionKey string) error
-	RenameSession(ctx context.Context, userID, agentID, sessionKey, title string) error
+	SetSessionLastSummarizedSeq(ctx context.Context, agentID, sessionKey string, seq int) error
+	DeleteSession(ctx context.Context, agentID, sessionKey string) error
+	RenameSession(ctx context.Context, agentID, sessionKey, title string) error
 	// MoveSession reassigns a session to a different project (or
 	// detaches it when projectID is ""). Used by the sidebar
 	// drag-and-drop affordance. Workspace file migration is the
 	// caller's responsibility — this only flips sessions.project_id.
-	MoveSession(ctx context.Context, userID, agentID, sessionKey, projectID string) error
+	MoveSession(ctx context.Context, agentID, sessionKey, projectID string) error
 	// ResolveActiveSessionKey returns the most recently updated session_key
 	// for the (channel, accountID, chatID) triple, or ErrNotFound. Used by
 	// IM routing to pick the conversation thread an inbound message
 	// belongs to without forcing the channel adapter to track session IDs.
-	ResolveActiveSessionKey(ctx context.Context, userID, agentID, channel, accountID, chatID string) (string, error)
+	ResolveActiveSessionKey(ctx context.Context, agentID, channel, accountID, chatID string) (string, error)
 	// LookupSessionTriple returns the (channel, accountID, chatID) for a
 	// known session_key — the inverse of ResolveActiveSessionKey. Web
 	// chat handlers use it to recover the chat_id when the URL only
 	// carries the session_key, so workspace artifacts stay namespaced
 	// under the original conversation rather than re-keyed by session.
-	LookupSessionTriple(ctx context.Context, userID, agentID, sessionKey string) (channel, accountID, chatID string, err error)
+	LookupSessionTriple(ctx context.Context, agentID, sessionKey string) (channel, accountID, chatID string, err error)
 	// LookupSessionProject returns the project_id of a session_key, or
 	// "" if the session is loose (no project). Used by the workspace
 	// path resolver to pick projects/<id>/ over sessions/<chat>/ when
 	// mounting the sandbox.
-	LookupSessionProject(ctx context.Context, userID, agentID, sessionKey string) (string, error)
+	LookupSessionProject(ctx context.Context, agentID, sessionKey string) (string, error)
 
 	// --- Projects (per user, per agent — workspace folder grouping) ---
 	//

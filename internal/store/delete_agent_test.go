@@ -33,7 +33,7 @@ func TestDeleteAgentRemovesScopedRows(t *testing.T) {
 	if err := db.SaveAgentFile(ctx, agentID, "SOUL.md", []byte("soul")); err != nil {
 		t.Fatalf("save agent file: %v", err)
 	}
-	if err := db.SaveSession(ctx, ownerID, agentID, sessionKey, &SessionRecord{
+	if err := db.SaveSession(ctx, agentID, sessionKey, &SessionRecord{
 		ProjectID: projectID,
 		Messages:  []SessionMessage{{Role: "user", Content: "hello"}},
 		UpdatedAt: now,

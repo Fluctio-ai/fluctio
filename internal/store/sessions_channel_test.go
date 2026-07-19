@@ -15,7 +15,6 @@ func TestSessionChannelTriple(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 
-	const userID = "u-test"
 	const agentID = "agt-test"
 
 	// Two sessions sharing the same wechat (account, openid) triple —
@@ -26,7 +25,7 @@ func TestSessionChannelTriple(t *testing.T) {
 		ChatID:    "openid-A",
 		Messages:  []SessionMessage{{Role: "user", Content: "hi v1"}},
 	}
-	if err := db.SaveSession(ctx, userID, agentID, "s-old", older); err != nil {
+	if err := db.SaveSession(ctx, agentID, "s-old", older); err != nil {
 		t.Fatalf("save older: %v", err)
 	}
 	// Force older's updated_at into the past so the active lookup has a
@@ -39,7 +38,7 @@ func TestSessionChannelTriple(t *testing.T) {
 		ChatID:    "openid-A",
 		Messages:  []SessionMessage{{Role: "user", Content: "hi v2"}},
 	}
-	if err := db.SaveSession(ctx, userID, agentID, "s-new", newer); err != nil {
+	if err := db.SaveSession(ctx, agentID, "s-new", newer); err != nil {
 		t.Fatalf("save newer: %v", err)
 	}
 	// And one unrelated row under a *different* bot's account — must
@@ -50,13 +49,13 @@ func TestSessionChannelTriple(t *testing.T) {
 		ChatID:    "openid-A",
 		Messages:  []SessionMessage{{Role: "user", Content: "different bot"}},
 	}
-	if err := db.SaveSession(ctx, userID, agentID, "s-other", other); err != nil {
+	if err := db.SaveSession(ctx, agentID, "s-other", other); err != nil {
 		t.Fatalf("save other: %v", err)
 	}
 
 	// Active lookup should pick the newer row (max updated_at) for
 	// (wechat, wxbot1, openid-A).
-	got, err := db.ResolveActiveSessionKey(ctx, userID, agentID, "wechat", "wxbot1", "openid-A")
+	got, err := db.ResolveActiveSessionKey(ctx, agentID, "wechat", "wxbot1", "openid-A")
 	if err != nil {
 		t.Fatalf("resolve active: %v", err)
 	}
@@ -65,7 +64,7 @@ func TestSessionChannelTriple(t *testing.T) {
 	}
 
 	// And the unrelated bot's lookup yields its own row.
-	gotOther, err := db.ResolveActiveSessionKey(ctx, userID, agentID, "wechat", "wxbot2", "openid-A")
+	gotOther, err := db.ResolveActiveSessionKey(ctx, agentID, "wechat", "wxbot2", "openid-A")
 	if err != nil {
 		t.Fatalf("resolve other: %v", err)
 	}
@@ -82,10 +81,10 @@ func TestSessionChannelTriple(t *testing.T) {
 		ChatID:    "tg-chat",
 		Messages:  []SessionMessage{{Role: "user", Content: "added later"}},
 	}
-	if err := db.SaveSession(ctx, userID, agentID, "s-old", mistaken); err != nil {
+	if err := db.SaveSession(ctx, agentID, "s-old", mistaken); err != nil {
 		t.Fatalf("re-save older: %v", err)
 	}
-	rec, err := db.GetSession(ctx, userID, agentID, "s-old")
+	rec, err := db.GetSession(ctx, agentID, "s-old")
 	if err != nil {
 		t.Fatalf("get older: %v", err)
 	}
@@ -96,7 +95,7 @@ func TestSessionChannelTriple(t *testing.T) {
 
 	// ListSessions surfaces the columns (powers the dashboard's "this
 	// session belongs to which conversation" rendering).
-	metas, err := db.ListSessions(ctx, userID, agentID)
+	metas, err := db.ListSessions(ctx, agentID)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -133,11 +132,13 @@ func TestSessionTripleBackfill(t *testing.T) {
 	}
 	// Insert legacy-format rows directly via the bare INSERT (the
 	// column-aware SaveSession would refuse without the new cols).
+	// Post-flatten sessions has no user_id column either, so the seed
+	// carries only (agent_id, session_key).
 	for _, key := range []string{"web_s-1234-abcd", "wechat_openid-XYZ", "telegram_555"} {
 		if _, err := db.db.ExecContext(ctx,
-			`INSERT INTO sessions (user_id, agent_id, session_key, messages, message_count, updated_at)
-				VALUES (?, ?, ?, '[]', 0, CURRENT_TIMESTAMP)`,
-			"u-back", "agt-back", key); err != nil {
+			`INSERT INTO sessions (agent_id, session_key, messages, message_count, updated_at)
+				VALUES (?, ?, '[]', 0, CURRENT_TIMESTAMP)`,
+			"agt-back", key); err != nil {
 			t.Fatalf("seed legacy row %s: %v", key, err)
 		}
 	}
@@ -148,16 +149,16 @@ func TestSessionTripleBackfill(t *testing.T) {
 	}
 
 	cases := []struct {
-		key       string
-		wantChan  string
-		wantChat  string
+		key      string
+		wantChan string
+		wantChat string
 	}{
 		{"web_s-1234-abcd", "web", "s-1234-abcd"},
 		{"wechat_openid-XYZ", "wechat", "openid-XYZ"},
 		{"telegram_555", "telegram", "555"},
 	}
 	for _, tc := range cases {
-		rec, err := db.GetSession(ctx, "u-back", "agt-back", tc.key)
+		rec, err := db.GetSession(ctx, "agt-back", tc.key)
 		if err != nil {
 			t.Fatalf("get %s: %v", tc.key, err)
 		}
@@ -175,7 +176,7 @@ func TestSessionTripleBackfill(t *testing.T) {
 
 	// Resolution by triple must find the backfilled rows so existing
 	// IM conversations don't lose their history after the upgrade.
-	got, err := db.ResolveActiveSessionKey(ctx, "u-back", "agt-back", "wechat", "", "openid-XYZ")
+	got, err := db.ResolveActiveSessionKey(ctx, "agt-back", "wechat", "", "openid-XYZ")
 	if err != nil {
 		t.Fatalf("resolve backfilled: %v", err)
 	}

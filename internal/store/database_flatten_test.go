@@ -6,85 +6,14 @@ import (
 	"testing"
 )
 
-// TestFlattenUserDataMigration verifies migrateFlattenUserData collapses
-// per-user rows onto a single row per natural key, keeping the newest
-// content per group. It seeds duplicate (agent, session_key) rows across
-// two users, runs the full Migrate (which now includes the flatten step),
-// and asserts only the newest row per group survives. Idempotency is
-// checked by running Migrate a second time.
-//
-// Note: agent_files used to be covered here too, but task 1.2 dropped its
-// user_id column (PK is now (agent_id, filename), so duplicates can't
-// exist) and the agent_files branch of the flatten is therefore a
-// permanent no-op. The sessions / session_messages cases below still
-// exercise the same flattenDuplicateRows code path end-to-end.
-func TestFlattenUserDataMigration(t *testing.T) {
-	db := openTestDB(t)
-	defer db.Close()
-	ctx := context.Background()
-
-	const agentID = "agt_demo"
-	if _, err := db.db.ExecContext(ctx,
-		`INSERT INTO agents (id, user_id, name, config) VALUES (?, ?, 'demo', '{}')`,
-		agentID, "u_owner"); err != nil {
-		t.Fatalf("seed agent: %v", err)
-	}
-
-	// sessions: two rows share (agent, session_key='sess_X') across users
-	// (defensive collapse), plus a unique sess_Y that must be left alone.
-	sess := []struct {
-		userID, sessionKey, updatedAt string
-	}{
-		{"u_owner", "sess_X", "2026-07-01 10:00:00"},
-		{"u_chatter", "sess_X", "2026-07-02 10:00:00"}, // dup, newer → wins
-		{"u_owner", "sess_Y", "2026-07-01 10:00:00"},   // unique → kept
-	}
-	for _, s := range sess {
-		if _, err := db.db.ExecContext(ctx,
-			`INSERT INTO sessions (user_id, agent_id, session_key, channel, account_id, chat_id, updated_at)
-			 VALUES (?, ?, ?, '', '', '', ?)`,
-			s.userID, agentID, s.sessionKey, s.updatedAt); err != nil {
-			t.Fatalf("seed session %+v: %v", s, err)
-		}
-	}
-
-	// Run the migration — flatten fires as part of Migrate.
-	if err := db.Migrate(ctx); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	// sessions: sess_X collapsed to 1 row, sess_Y kept → 2 rows total.
-	var sessCount int
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sessions WHERE agent_id = ?`, agentID).Scan(&sessCount); err != nil {
-		t.Fatalf("count sessions: %v", err)
-	}
-	if sessCount != 2 {
-		t.Errorf("sessions count = %d; want 2 (sess_X collapsed, sess_Y kept)", sessCount)
-	}
-	// sess_X winner is the chatter row (newer).
-	var sessXUser string
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT user_id FROM sessions WHERE agent_id = ? AND session_key = 'sess_X'`, agentID).Scan(&sessXUser); err != nil {
-		t.Fatalf("scan sess_X: %v", err)
-	}
-	if sessXUser != "u_chatter" {
-		t.Errorf("sess_X winner user_id = %q; want u_chatter (newest)", sessXUser)
-	}
-
-	// Idempotency: a second Migrate must not delete anything further.
-	if err := db.Migrate(ctx); err != nil {
-		t.Fatalf("migrate (2nd): %v", err)
-	}
-	var sessCount2 int
-	if err := db.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sessions WHERE agent_id = ?`, agentID).Scan(&sessCount2); err != nil {
-		t.Fatalf("count sessions after 2nd migrate: %v", err)
-	}
-	if sessCount2 != 2 {
-		t.Errorf("sessions not idempotent: count after 2nd migrate = %d; want 2", sessCount2)
-	}
-}
+// (TestFlattenUserDataMigration used to seed duplicate (agent, session_key)
+// rows across two users and assert the newest survived. After task 1.3a
+// dropped sessions.user_id the sessions PK became (agent_id, session_key),
+// so duplicates can no longer exist and that branch of the flatten is a
+// permanent no-op — the case can't be constructed. flattenDuplicateRows
+// itself is still covered end-to-end by
+// TestFlattenUserDataMigration_sessionMessages below, and TestAgentFilesFlatSchema
+// asserts the agent_files schema post-flatten.)
 
 // TestFlattenUserDataMigration_sessionMessages covers the (agent,
 // session_key, seq) collapse on session_messages — the seq dimension
