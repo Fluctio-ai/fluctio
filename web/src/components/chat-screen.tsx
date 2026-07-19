@@ -837,6 +837,11 @@ export function ChatScreen() {
           // not persisted — but kept for shape parity with the live path).
           count?: number;
           names?: string[];
+          // auth_prompt fields — the persisted event replays the same
+          // {description, options} payload the live handler renders, so a
+          // reloaded tab still gets the tappable buttons.
+          description?: string;
+          options?: { cmd: string; label_zh: string; label_en: string }[];
         };
       };
       try {
@@ -933,24 +938,28 @@ export function ChatScreen() {
           }
           case "auth_prompt": {
             // ask-mode outside-workspace/dangerous call was parked on
-            // the session; surface the authorization request to the user
-            // as an agent bubble so they can reply /yes /no /auto /yolo.
-            // (Minimal render — button UI is a follow-up; handleSend is
-            // already wired to send the slash on click.) NOTE: the catch-up
-            // stream can't actually carry auth_prompt (seq=-1, not persisted
-            // to chat_events) — kept for shape parity with the live switch.
-            const desc = ""; // catch-up never carries auth_prompt (seq=-1, not persisted)
+            // the session; surface the authorization request with the
+            // same authOptions payload the live POST handler uses, so a
+            // tab that reconnects via /api/chat/subscribe (reload,
+            // network blip, or catch-up after the POST stream ended)
+            // still renders the tappable /yes /no /auto /yolo buttons
+            // instead of a text-only fallback. auth_prompt IS persisted
+            // (events.go skips only content_delta), so this branch is
+            // reachable on every catch-up — the prior "Minimal render"
+            // stub left reloaders with text and no buttons.
+            const desc = data.data?.description || "";
+            const options = Array.isArray(data.data?.options)
+              ? data.data!.options!
+              : [];
+            claim();
             setMessages((prev) => [
               ...prev,
               {
                 id: `auth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 role: "agent" as const,
-                content:
-                  `⚠️ 需要授权：${desc}\n` +
-                  `/yes 授权执行 · /no 取消 · /auto 自动拒绝 · /yolo 全放行\n` +
-                  `Authorization required: ${desc}\n` +
-                  `/yes approve · /no cancel · /auto auto-deny · /yolo allow all`,
+                content: desc,
                 timestamp: Date.now(),
+                authOptions: { description: desc, options },
               },
             ]);
             break;

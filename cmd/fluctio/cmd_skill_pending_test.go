@@ -9,12 +9,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/fluctio-ai/fluctio/internal/skills"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // TestRunSkillApprove_MovesPendingLive is the RED→GREEN anchor: write a
@@ -188,5 +190,30 @@ func TestRunSkillDiff_PendingVsLive(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("err = %v, want it to mention the skill name", err)
+	}
+}
+
+// TestNotifyGatewayReloadHTTP_NoDaemon is the contract test for the
+// cross-platform HTTP reload helper: with no daemon running (the test
+// environment never has one), it must return false silently and not panic
+// or print spurious errors. The skill-rename already happened before the
+// helper is called, so "no daemon" is a normal, expected path — the user
+// just doesn't get hot-reload this time.
+func TestNotifyGatewayReloadHTTP_NoDaemon(t *testing.T) {
+	// No need for a real store — the helper's first guard is the daemon
+	// PID check, which fails immediately in tests. Passing a nil store
+	// makes the test self-contained and asserts the guard fires before
+	// any store access (which would otherwise panic on nil).
+	rec := &store.AgentRecord{ID: "agt_test", UserID: "u_test"}
+	if notifyGatewayReloadHTTP(context.Background(), nil, rec) {
+		t.Fatal("expected false when no daemon is running; got true")
+	}
+}
+
+// TestNotifyGatewayReloadHTTP_NilRecord guards against the helper being
+// called with an unresolved agent record (defensive nil-check).
+func TestNotifyGatewayReloadHTTP_NilRecord(t *testing.T) {
+	if notifyGatewayReloadHTTP(context.Background(), nil, nil) {
+		t.Fatal("expected false for nil record; got true")
 	}
 }

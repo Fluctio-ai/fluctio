@@ -15,26 +15,40 @@ package main
 // ~/.fluctio/agents/<agtID>/agent. --agent accepts a display name or agt_ id;
 // when omitted the command auto-selects if the operator's store has exactly
 // one agent. Approve is atomic at the skills package level; after the
-// rename, notifyGatewayReload() pings the running daemon (SIGHUP on Unix)
-// so cached UserSpaces are invalidated and the agent re-reads its skills
-// directory on the next turn. On Windows where SIGHUP isn't delivered the
-// user can also POST /api/agents/<id>/skills/reload directly.
+// rename, notifyGatewayReload() pings the running daemon so cached
+// UserSpaces are invalidated and the agent re-reads its skills directory on
+// the next turn. The ping has two legs:
+//
+//  1. notifyGatewayReloadHTTP (cross-platform) — mint a temporary admin
+//     API key for the agent's owner, POST /api/agents/<id>/skills/reload,
+//     delete the key. Works on Windows where SIGHUP isn't deliverable.
+//  2. notifyGatewayReload (SIGHUP) — Unix-only fast path that needs no
+//     HTTP round-trip or temp key.
+//
+// Either leg is best-effort: the file rename already happened, so failure
+// only means the running daemon keeps the old skills until next restart.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/fluctio-ai/fluctio/internal/agentcli"
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/daemon"
 	"github.com/fluctio-ai/fluctio/internal/skills"
 	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/users"
 )
 
 // skillPendingCmd lists staged skill edits awaiting approval.
@@ -78,10 +92,15 @@ func skillApproveCmd() *cobra.Command {
 
 Atomically moves <agentHome>/skills-pending/<name>/ to <agentHome>/skills/<name>/.
 If a live skill already exists at the destination it is replaced. After the
-rename, this command pings the running gateway (SIGHUP on Unix) so the agent
-hot-reloads its skills directory on the next turn. On Windows, where SIGHUP
-isn't delivered, restart the gateway or POST /api/agents/<id>/skills/reload
-to pick up the new skill immediately.`,
+rename, this command pings the running gateway so the agent hot-reloads its
+skills directory on the next turn:
+
+  - Unix: SIGHUP the daemon PID (fast path, no HTTP round-trip).
+  - Windows (or SIGHUP failure): mint a temporary admin API key, POST
+    /api/agents/<id>/skills/reload, delete the key. Cross-platform fallback.
+
+Both legs are best-effort — the file rename already happened, so a reload
+failure only means the running daemon keeps the old skills until restart.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
@@ -90,19 +109,17 @@ to pick up the new skill immediately.`,
 				return err
 			}
 			defer st.Close()
-			agentHome, err := resolveAgentHome(ctx, st, agentRef)
+			agentHome, rec, err := resolveAgentHomeAndRec(ctx, st, agentRef)
 			if err != nil {
 				return err
 			}
 			if err := runSkillApprove(agentHome, args[0], os.Stdout); err != nil {
 				return err
 			}
-			// Best-effort: tell the running gateway to drop cached
-			// UserSpaces so the agent re-reads skills/ on the next turn.
-			// No-op when no daemon is running (e.g. tests, or the user is
-			// running approve against a home dir the gateway hasn't
-			// loaded yet). On Windows SIGHUP isn't delivered — the user
-			// can still call POST /api/agents/<id>/skills/reload.
+			// Best-effort reload. Try HTTP first (cross-platform, works on
+			// Windows); fall back to SIGHUP on Unix. Either leg failing is
+			// fine — the rename already happened.
+			notifyGatewayReloadHTTP(ctx, st, rec)
 			notifyGatewayReload()
 			return nil
 		},
@@ -169,32 +186,42 @@ func skillDiffCmd() *cobra.Command {
 // disambiguate. Keeping this logic out of the cobra RunE makes the command
 // bodies thin and puts the testable core in run* below.
 func resolveAgentHome(ctx context.Context, st store.Store, agentRef string) (string, error) {
-	var agentID string
+	home, _, err := resolveAgentHomeAndRec(ctx, st, agentRef)
+	return home, err
+}
+
+// resolveAgentHomeAndRec is resolveAgentHome that also returns the full
+// agent record. The approve path needs the agent ID (for the
+// /api/agents/<id>/skills/reload URL) and the owner UserID (to mint the
+// temporary admin API key); other callers use resolveAgentHome and
+// discard the record.
+func resolveAgentHomeAndRec(ctx context.Context, st store.Store, agentRef string) (string, *store.AgentRecord, error) {
+	var rec *store.AgentRecord
 	if strings.TrimSpace(agentRef) == "" {
 		agents, err := agentcli.List(ctx, st)
 		if err != nil {
-			return "", fmt.Errorf("list agents: %w", err)
+			return "", nil, fmt.Errorf("list agents: %w", err)
 		}
 		switch len(agents) {
 		case 0:
-			return "", errors.New("no agents found; create one with `fluctio agents init`")
+			return "", nil, errors.New("no agents found; create one with `fluctio agents init`")
 		case 1:
-			agentID = agents[0].ID
+			rec = &agents[0]
 		default:
-			return "", errors.New("multiple agents found; specify one with --agent <name|agt_id>")
+			return "", nil, errors.New("multiple agents found; specify one with --agent <name|agt_id>")
 		}
 	} else {
-		rec, err := agentcli.Resolve(ctx, st, agentRef)
+		r, err := agentcli.Resolve(ctx, st, agentRef)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		agentID = rec.ID
+		rec = r
 	}
-	home, err := config.AgentHomeDir(agentID)
+	home, err := config.AgentHomeDir(rec.ID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return home, nil
+	return home, rec, nil
 }
 
 // runSkillPending is the testable core of `skill pending`. It lists every
@@ -278,4 +305,82 @@ func runSkillDiff(agentHome, name string, w io.Writer) error {
 	fmt.Fprintf(w, "--- live: %s\n%s\n\n", liveFile, strings.TrimRight(string(liveBody), "\n"))
 	fmt.Fprintf(w, "+++ pending: %s\n%s\n", pendingFile, strings.TrimRight(string(pendingBody), "\n"))
 	return nil
+}
+
+// notifyGatewayReloadHTTP mints a temporary admin API key for the agent's
+// owner, POSTs to /api/agents/<id>/skills/reload, then deletes the key.
+// Cross-platform — works on Windows where SIGHUP isn't deliverable.
+//
+// Best-effort: any failure (gateway not running, store error, HTTP error,
+// auth rejection) is logged to stderr and the function returns silently.
+// The skill rename already happened; a failed reload only means the
+// running daemon keeps the old skills until next restart.
+//
+// Returns true when the reload actually hit the endpoint and got a 2xx —
+// callers can use that to skip the SIGHUP fallback on Unix.
+func notifyGatewayReloadHTTP(ctx context.Context, st store.Store, rec *store.AgentRecord) bool {
+	if rec == nil || rec.ID == "" || rec.UserID == "" {
+		return false
+	}
+	// Gate on the daemon actually running. Without this check we'd spin
+	// up a temp API key + TCP dial every time approve is invoked from a
+	// script that has no gateway attached (CI, dev sandbox, etc.).
+	daemonSt, _ := daemon.GetStatus()
+	if daemonSt == nil || !daemonSt.Running {
+		return false
+	}
+
+	port := config.LoadEnv().Gateway.Port
+	if port <= 0 {
+		port = 18953
+	}
+
+	ak, err := users.NewAPIKeys(st)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: couldn't open API keys to mint temp reload token: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	keyRec, token, err := ak.Create(ctx, rec.UserID, "skill-reload-tmp", users.APIKeyTypeAdmin, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: couldn't mint temp reload API key: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	// Always delete the temp key on exit — leaving stray admin keys in
+	// the audit log would be noisy and a security smell.
+	defer func(id string) {
+		delCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := ak.Delete(delCtx, id); err != nil {
+			fmt.Fprintf(os.Stderr, "Note: failed to clean up temp reload API key %s: %v\n", id, err)
+		}
+	}(keyRec.ID)
+
+	url := fmt.Sprintf("http://localhost:%d/api/agents/%s/skills/reload", port, rec.ID)
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(nil))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: couldn't build reload request: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: skills/reload HTTP request failed: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		fmt.Fprintf(os.Stderr, "Note: skills/reload HTTP returned %d (%s). Falling back to SIGHUP/restart hint.\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		return false
+	}
+	// Surface success — parse the {ok:true} envelope so we can confirm
+	// the endpoint actually reloaded (vs. a stub 200).
+	var envelope struct {
+		OK bool `json:"ok"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&envelope)
+	fmt.Fprintf(os.Stderr, "Reloaded agent %s skills via HTTP (PID %d).\n", rec.ID, daemonSt.PID)
+	return true
 }
