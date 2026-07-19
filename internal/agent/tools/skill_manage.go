@@ -74,7 +74,7 @@ func RegisterSkillManage(r *Registry, agentHome, pendingHint string, parser Fron
 		pendingHint = "fluctio skill approve"
 	}
 	r.RegisterWithEffect("skill_manage",
-		"Mutate a skill via PENDING staging (NOT live until the user runs `"+pendingHint+" <name>`). Use after completing a non-trivial workflow or finding a working path worth reusing. Actions: create|patch|edit (full SKILL.md body in content); delete (no body); write_file (sub-file at path, content is the file body); remove_file (sub-file path, no body).",
+		"Mutate a skill via PENDING staging (NOT live until the user runs `"+pendingHint+" <name>`). Actions: create|patch|edit (full SKILL.md body in content); delete (no body); write_file (sub-file at path, content is the file body); remove_file (sub-file path, no body). Call this proactively when ANY of these four triggers fire: (1) After a complex successful task (5+ tool calls) that's worth reusing; (2) When you hit a wall and then found the working path — capture it so future turns skip the dead ends; (3) When the user corrected your approach — encode the correction; (4) When you discovered a non-trivial workflow/technique not already in a skill.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

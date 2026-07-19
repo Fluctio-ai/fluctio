@@ -3021,6 +3021,26 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 		IsPlanMode:     isPlanMode(msg.Params),
 	})
 
+	// Pending-skill notice: if skill_manage / skills_learner staged
+	// anything during this turn (or earlier turns still awaiting
+	// approval), surface the count + names to the chatter so they know
+	// to run `fluctio skill approve`. Gated on user-driven sources so
+	// cron / heartbeat turns don't spam the chat — mirrors
+	// goalTriggerHook's allowedContinuationSources gate.
+	if allowedContinuationSources[msg.Source] {
+		if names, err := pendingSkillNames(a.homePath); err == nil && len(names) > 0 {
+			emitEvent(ctx, ChatEvent{
+				Type: "skill_pending",
+				Data: map[string]any{
+					"count": len(names),
+					"names": names,
+				},
+			})
+		} else if err != nil {
+			slog.Warn("skill_pending notice: list failed", "agent", a.name, "error", err)
+		}
+	}
+
 	// Auto-persist memory every N user turns.
 	//
 	// Cadence is keyed on a DURABLE counter — `session_messages.role='user'`
