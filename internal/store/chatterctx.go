@@ -9,18 +9,6 @@ import "context"
 // HandleMessageStream; everything downstream just propagates ctx.
 type chatterUserIDCtxKey struct{}
 
-// WithChatterUserID returns ctx tagged with the per-turn chatter
-// userID. Distinct from config.WithUserID (the authenticated user
-// resolved by middleware) and sandbox.WithUserID (the executor mount
-// target) — those two carry different values whenever an IM channel
-// routes a per-sender app_user into a channel-owner UserSpace.
-// Empty uid is a no-op so callers don't have to guard.
-func WithChatterUserID(ctx context.Context, uid string) context.Context {
-	if uid == "" {
-		return ctx
-	}
-	return context.WithValue(ctx, chatterUserIDCtxKey{}, uid)
-}
 
 // ChatterUserIDFromContext returns the chatter userID set by
 // WithChatterUserID, or "" if none. Store implementations should

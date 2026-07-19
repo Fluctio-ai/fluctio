@@ -1915,7 +1915,6 @@ func buildToolCatalogForPlan(toolDefs []provider.Tool) string {
 func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) string {
 	chatterUID := a.chatterUserID(msg)
 	ctx = sandbox.WithUserID(ctx, chatterUID)
-	ctx = store.WithChatterUserID(ctx, chatterUID)
 	ctx = store.WithChannel(ctx, msg.Channel)
 	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 	// Session.ctx() builds its OWN context from session-held fields
@@ -2130,7 +2129,6 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// messages (e.g. "翻译 xxx") bypass the agent loop entirely.
 	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
 		chatterUID := a.chatterUserID(msg)
-		ctx = store.WithChatterUserID(ctx, chatterUID)
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 		sess.SetChatter(chatterUID)
 		sess.BeginTurn()
@@ -2219,7 +2217,6 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// session_events). user_id stays = UserSpace owner so admin views
 	// continue to list "all sessions on my bots"; chatter_user_id
 	// records the actual participant for per-chatter queries.
-	ctx = store.WithChatterUserID(ctx, chatterUID)
 	ctx = store.WithChannel(ctx, msg.Channel)
 	// Per-turn channel context for the skill-refresh diagnostic. Lets
 	// us correlate the "skills summary refreshed" log emitted inside
@@ -3113,7 +3110,6 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// instead of the LLM.
 	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
 		chatterUID := a.chatterUserID(msg)
-		ctx = store.WithChatterUserID(ctx, chatterUID)
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 		sess.SetChatter(chatterUID)
 		sess.BeginTurn()
@@ -3164,7 +3160,6 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	ctx = sandbox.WithUserID(ctx, chatterUID)
 	// Tag ctx so DBStore session writes stamp chatter_user_id — see
 	// the HandleMessage path for the rationale.
-	ctx = store.WithChatterUserID(ctx, chatterUID)
 	ctx = store.WithChannel(ctx, msg.Channel)
 	slog.Info("turn: refreshing skills",
 		"agent", a.name, "channel", msg.Channel, "chat_id", msg.ChatID, "user", chatterUID)
@@ -3989,9 +3984,10 @@ func sessionTriple(msg bus.InboundMessage, projectID string) (string, string, st
 }
 
 func (a *Agent) chatterUserID(msg bus.InboundMessage) string {
-	if msg.UserID != "" {
-		return msg.UserID
-	}
+	// Single-user flatten: every chatter is the owner. Kept as a thin
+	// shim so call sites compile while the surrounding chatter plumbing
+	// (sandbox.WithUserID / memory.WithUserID / registry.SetChatterUserID)
+	// is removed in follow-up commits.
 	return a.ownerUserID
 }
 

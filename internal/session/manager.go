@@ -14,7 +14,6 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/provider"
-	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // Session holds the message history for one conversation thread within
@@ -149,9 +148,6 @@ func (s *Session) ctx() context.Context {
 	ctx := context.Background()
 	if s.userID != "" {
 		ctx = config.WithUserID(ctx, s.userID)
-	}
-	if s.chatterUserID != "" {
-		ctx = store.WithChatterUserID(ctx, s.chatterUserID)
 	}
 	return ctx
 }
