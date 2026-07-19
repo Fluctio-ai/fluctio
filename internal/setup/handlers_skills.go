@@ -197,3 +197,26 @@ func (s *Server) handleDeleteAgentSkill(w http.ResponseWriter, r *http.Request) 
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// handleReloadAgentSkills triggers a hot-reload of the agent's workspace
+// files (skills + identity .md) so edits made outside the gateway — e.g.
+// `fluctio skill approve` moving a skill from skills-pending/ to skills/
+// on disk — take effect on the next turn without restarting the process.
+// Mirrors the embedded ReloadWorkspaceFiles call already inside
+// handleDeleteAgentSkill / handleInstallSkill, exposed as its own endpoint
+// so external scripts (and the CLI) can request a reload after a file-level
+// mutation. Owner-only: Identity.CanAccessAgent is a deferred-true for
+// session callers, and triggering a reload on someone else's agent is a
+// noisy primitive even though it's not strictly a privilege escalation.
+func (s *Server) handleReloadAgentSkills(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.requireAgentOwner(w, r, id) == nil {
+		return
+	}
+	if ag := s.resolveAgent(r, id); ag != nil {
+		ag.ReloadWorkspaceFiles()
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not running"})
+}

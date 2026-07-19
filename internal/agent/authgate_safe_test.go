@@ -37,6 +37,9 @@ func TestSafeTierWhitelist(t *testing.T) {
 		{name: "safe git diff ask", tool: "exec", command: "git diff", mode: AuthModeAsk, want: authAllow},
 		{name: "safe git branch noargs ask", tool: "exec", command: "git branch", mode: AuthModeAsk, want: authAllow},
 		{name: "safe git branch -a ask", tool: "exec", command: "git branch -a", mode: AuthModeAsk, want: authAllow},
+		{name: "safe git tag noargs ask", tool: "exec", command: "git tag", mode: AuthModeAsk, want: authAllow},
+		{name: "safe git tag -l ask", tool: "exec", command: "git tag -l", mode: AuthModeAsk, want: authAllow},
+		{name: "safe git tag -l pattern ask", tool: "exec", command: "git tag -l v1.*", mode: AuthModeAsk, want: authAllow},
 		{name: "safe git remote -v ask", tool: "exec", command: "git remote -v", mode: AuthModeAsk, want: authAllow},
 		{name: "safe where bash ask", tool: "exec", command: "where bash", mode: AuthModeAsk, want: authAllow},
 		{name: "safe which go ask", tool: "exec", command: "which go", mode: AuthModeAsk, want: authAllow},
@@ -82,6 +85,12 @@ func TestSafeTierWhitelist(t *testing.T) {
 		{name: "git branch create ask", tool: "exec", command: "git branch new-feature", mode: AuthModeAsk, want: authPrompt},
 		{name: "git branch delete ask", tool: "exec", command: "git branch -d old", mode: AuthModeAsk, want: authPrompt},
 		{name: "git remote add ask", tool: "exec", command: "git remote add origin url", mode: AuthModeAsk, want: authPrompt},
+		// (6b) git tag with create/delete/annotate args must NOT be safe.
+		{name: "git tag create ask", tool: "exec", command: "git tag v1.0", mode: AuthModeAsk, want: authPrompt},
+		{name: "git tag create auto", tool: "exec", command: "git tag v1.0", mode: AuthModeAuto, want: authBlock},
+		{name: "git tag delete ask", tool: "exec", command: "git tag -d v1.0", mode: AuthModeAsk, want: authPrompt},
+		{name: "git tag annotate ask", tool: "exec", command: "git tag -a v1.0 -m msg", mode: AuthModeAsk, want: authPrompt},
+		{name: "git tag force ask", tool: "exec", command: "git tag -f v1.0", mode: AuthModeAsk, want: authPrompt},
 	}
 
 	for _, c := range cases {
@@ -108,6 +117,7 @@ func TestCommandSafeTierDirect(t *testing.T) {
 		"node --version", "python --version", "go --help",
 		"git status", "git diff", "git log --oneline", "git show HEAD",
 		"git branch", "git branch -a", "git remote -v",
+		"git tag", "git tag -l", "git tag -l v1.*", "git tag --list", "git tag --list 'v2.*'",
 		"npm list", "npm ls", "pip list", "pip show pkg",
 	}
 	for _, cmd := range safe {
@@ -125,6 +135,9 @@ func TestCommandSafeTierDirect(t *testing.T) {
 		"go build ./...", "rm file", "mv a b", "cp a b",
 		"git branch newname", "git branch -d old", "git remote add origin url",
 		"git config user.email", "npm install pkg",
+		// git tag create / delete / annotate / force must NOT be safe.
+		"git tag v1.0", "git tag -d v1.0", "git tag -a v1.0", "git tag -f v1.0",
+		"git tag -m msg v1.0",
 		// Empty.
 		"",
 	}

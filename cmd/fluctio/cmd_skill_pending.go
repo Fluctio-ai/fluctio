@@ -14,9 +14,11 @@ package main
 // agentHome resolution mirrors the writer (skill_manage tool, loop.go):
 // ~/.fluctio/agents/<agtID>/agent. --agent accepts a display name or agt_ id;
 // when omitted the command auto-selects if the operator's store has exactly
-// one agent. Approve is atomic at the skills package level — the live skill
-// tree is reloaded on the agent's next rescan, so we deliberately do NOT
-// signal the gateway mid-command (documented in --help).
+// one agent. Approve is atomic at the skills package level; after the
+// rename, notifyGatewayReload() pings the running daemon (SIGHUP on Unix)
+// so cached UserSpaces are invalidated and the agent re-reads its skills
+// directory on the next turn. On Windows where SIGHUP isn't delivered the
+// user can also POST /api/agents/<id>/skills/reload directly.
 
 import (
 	"context"
@@ -75,9 +77,11 @@ func skillApproveCmd() *cobra.Command {
 		Long: `Activate a staged skill edit.
 
 Atomically moves <agentHome>/skills-pending/<name>/ to <agentHome>/skills/<name>/.
-If a live skill already exists at the destination it is replaced. The live
-skill tree is reloaded on the agent's next skill rescan — there is no need
-to restart or signal the gateway for the new skill to take effect.`,
+If a live skill already exists at the destination it is replaced. After the
+rename, this command pings the running gateway (SIGHUP on Unix) so the agent
+hot-reloads its skills directory on the next turn. On Windows, where SIGHUP
+isn't delivered, restart the gateway or POST /api/agents/<id>/skills/reload
+to pick up the new skill immediately.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
@@ -90,7 +94,17 @@ to restart or signal the gateway for the new skill to take effect.`,
 			if err != nil {
 				return err
 			}
-			return runSkillApprove(agentHome, args[0], os.Stdout)
+			if err := runSkillApprove(agentHome, args[0], os.Stdout); err != nil {
+				return err
+			}
+			// Best-effort: tell the running gateway to drop cached
+			// UserSpaces so the agent re-reads skills/ on the next turn.
+			// No-op when no daemon is running (e.g. tests, or the user is
+			// running approve against a home dir the gateway hasn't
+			// loaded yet). On Windows SIGHUP isn't delivered — the user
+			// can still call POST /api/agents/<id>/skills/reload.
+			notifyGatewayReload()
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&agentRef, "agent", "", "agent name or agt_ id (default: auto-select if exactly one agent)")
@@ -216,8 +230,9 @@ func runSkillPending(agentHome string, w io.Writer) error {
 
 // runSkillApprove is the testable core of `skill approve <name>`. It performs
 // the atomic move via skills.ApprovePending and prints the live path on
-// success. The live skill tree is reloaded on the agent's next rescan — no
-// gateway signal needed (see --help text on the cobra command).
+// success. The cobra wrapper follows up with notifyGatewayReload() so the
+// running agent picks up the new skill on its next turn; that step lives in
+// the wrapper (not here) so unit tests stay daemon-free.
 func runSkillApprove(agentHome, name string, w io.Writer) error {
 	livePath, err := skills.ApprovePending(agentHome, name)
 	if err != nil {

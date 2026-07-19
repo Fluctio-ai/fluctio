@@ -472,8 +472,13 @@ var safePatterns = []struct {
 	{regexp.MustCompile(`^git\s+remote\s*$`), "git remote (list)"},
 	{regexp.MustCompile(`^git\s+remote\s+(-v|--verbose)\s*$`), "git remote -v"},
 	{regexp.MustCompile(`^git\s+remote\s+show\s+\S+$`), "git remote show"},
-	// Other read-only git queries.
-	{regexp.MustCompile(`^git\s+(blame|shortlog|describe|tag|ls-files|rev-parse)\b`), "git read-only query"},
+	// tag: ONLY bare or list-style (`-l` / `--list` with optional pattern).
+	// `git tag <name>` (create), `-d` (delete), `-a`/`-s`/`-m` (annotate),
+	// `-f` (force) must NOT be safe — mirror the git branch list-only shape.
+	{regexp.MustCompile(`^git\s+tag(\s+(-l|--list)(\s+\S+)?)?\s*$`), "git tag (list)"},
+	// Other read-only git queries. (`tag` was pulled out of this group into
+	// the strict list-only pattern above so `git tag v1.0` can't sneak through.)
+	{regexp.MustCompile(`^git\s+(blame|shortlog|describe|ls-files|rev-parse)\b`), "git read-only query"},
 	// config: ONLY read forms. `git config user.email x` writes — NOT safe.
 	{regexp.MustCompile(`^git\s+config\s+(-l|--list)\s*$`), "git config --list"},
 	{regexp.MustCompile(`^git\s+config\s+--get\b`), "git config --get"},

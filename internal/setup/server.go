@@ -394,6 +394,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/skills/{name}", admin(s.handleDeleteSkill))
 	mux.HandleFunc("GET /api/agents/{id}/skills", auth(s.handleListAgentSkills))
 	mux.HandleFunc("DELETE /api/agents/{id}/skills/{name}", auth(s.handleDeleteAgentSkill))
+	mux.HandleFunc("POST /api/agents/{id}/skills/reload", auth(s.handleReloadAgentSkills))
 
 	// Plugins (super_admin only).
 	mux.HandleFunc("GET /api/plugins", admin(s.handleListPlugins))
