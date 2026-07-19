@@ -293,14 +293,23 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
-	// Single-user enforcement: when <home>/owner.json exists, ensure the
-	// configured owner is the only super-admin account — upsert the owner
-	// (password/email from config), merge any surplus account's data into
-	// it, then delete the surplus. No-op when the file is absent, so this
-	// stays opt-in and existing deployments are unaffected.
-	if ownerCfg, oerr := config.LoadOwnerFile(homeDir); oerr != nil {
-		return nil, fmt.Errorf("load owner file: %w", oerr)
-	} else if ownerCfg != nil {
+	// Single-user enforcement: owner identity comes from env vars first
+	// (FLUCTIO_OWNER_JSON or four individual FLUCTIO_* vars), falling back
+	// to <home>/owner.json for backward compatibility. When resolved, the
+	// configured owner is the only super-admin — upsert + merge surplus
+	// accounts into it. No-op when neither source is set, so existing
+	// deployments are unaffected.
+	ownerCfg, oerr := config.LoadOwnerFromEnv()
+	if oerr != nil {
+		return nil, fmt.Errorf("load owner from env: %w", oerr)
+	}
+	if ownerCfg == nil {
+		ownerCfg, oerr = config.LoadOwnerFile(homeDir)
+		if oerr != nil {
+			return nil, fmt.Errorf("load owner file: %w", oerr)
+		}
+	}
+	if ownerCfg != nil {
 		if err := users.EnsureSingleOwner(context.Background(), st, users.OwnerSpec{
 			Username:    ownerCfg.Username,
 			Email:       ownerCfg.Email,
