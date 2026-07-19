@@ -243,6 +243,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateConversationSummariesDropUserID(ctx); err != nil {
 		return fmt.Errorf("migrate conversation_summaries drop user_id: %w", err)
 	}
+	if err := d.migrateSessionMessagesEventsDropChatter(ctx); err != nil {
+		return fmt.Errorf("migrate session_messages/events drop chatter_user_id: %w", err)
+	}
 	return nil
 }
 
@@ -458,36 +461,34 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 // fallback is exactly right for the web channel (user_id was already
 // the chatter there) and matches the pre-fix behavior on IM (where
 // every chatter was mis-attributed to the channel owner anyway).
+// migrateSessionsAddChatterUserID is a no-op post single-user flatten:
+// chatter_user_id has been dropped from sessions (1.3a) and is dropped
+// from session_messages / session_events by the 2.4 migration. Retiring
+// the historical ADD + partial indexes here stops them re-adding a column
+// the drop migration removes on every boot.
 func (d *DBStore) migrateSessionsAddChatterUserID(ctx context.Context) error {
-	for _, t := range []string{"sessions", "session_messages", "session_events"} {
-		exists, err := d.tableExists(ctx, t)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			continue
-		}
-		has, err := d.tableHasColumn(ctx, t, "chatter_user_id")
+	return nil
+}
+
+// migrateSessionMessagesEventsDropChatter drops chatter_user_id from
+// session_messages + session_events (the index that referenced it goes
+// first). Idempotent. conversation_summaries.chatter_user_id is NOT
+// dropped here — it's still the recall key until phase 3.2 retires
+// per-chatter recall.
+func (d *DBStore) migrateSessionMessagesEventsDropChatter(ctx context.Context) error {
+	for _, table := range []string{"session_messages", "session_events"} {
+		has, err := d.tableHasColumn(ctx, table, "chatter_user_id")
 		if err != nil {
 			return err
 		}
 		if !has {
-			if _, err := d.db.ExecContext(ctx,
-				fmt.Sprintf(`ALTER TABLE %s ADD COLUMN chatter_user_id TEXT NOT NULL DEFAULT ''`, t)); err != nil {
-				return fmt.Errorf("add column on %s: %w", t, err)
-			}
+			continue
 		}
-	}
-	// Partial indexes — only rows with a non-empty chatter populate the
-	// index, so legacy rows don't bloat it.
-	indexSQL := []string{
-		`CREATE INDEX IF NOT EXISTS idx_sessions_by_chatter ON sessions (chatter_user_id, agent_id, updated_at DESC) WHERE chatter_user_id <> ''`,
-		`CREATE INDEX IF NOT EXISTS idx_session_messages_by_chatter ON session_messages (chatter_user_id, agent_id, session_key, seq) WHERE chatter_user_id <> ''`,
-		`CREATE INDEX IF NOT EXISTS idx_session_events_by_chatter ON session_events (chatter_user_id, agent_id, session_key, seq) WHERE chatter_user_id <> ''`,
-	}
-	for _, stmt := range indexSQL {
-		if _, err := d.db.ExecContext(ctx, stmt); err != nil {
-			return fmt.Errorf("create chatter index: %w (sql: %s)", err, stmt)
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`DROP INDEX IF EXISTS idx_%s_by_chatter`, table)); err != nil {
+			return fmt.Errorf("drop idx_%s_by_chatter: %w", table, err)
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s DROP COLUMN chatter_user_id`, table)); err != nil {
+			return fmt.Errorf("drop %s.chatter_user_id: %w\nSQL: ALTER TABLE %s DROP COLUMN chatter_user_id", table, err, table)
 		}
 	}
 	return nil
@@ -1367,13 +1368,12 @@ func (d *DBStore) migrateSessionMessagesDropUserID(ctx context.Context) error {
 				raw_assistant TEXT NOT NULL DEFAULT '',
 				origin TEXT NOT NULL DEFAULT '',
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				chatter_user_id TEXT NOT NULL DEFAULT '',
 				provider TEXT NOT NULL DEFAULT '',
 				model TEXT NOT NULL DEFAULT '',
 				PRIMARY KEY (agent_id, session_key, seq)
 			)`,
-			`INSERT INTO session_messages_new (agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model)
-				SELECT agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model FROM session_messages`,
+			`INSERT INTO session_messages_new (agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model)
+				SELECT agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model FROM session_messages`,
 			`DROP TABLE session_messages`,
 			`ALTER TABLE session_messages_new RENAME TO session_messages`,
 		} {
@@ -1422,11 +1422,10 @@ func (d *DBStore) migrateSessionEventsDropUserID(ctx context.Context) error {
 				type TEXT NOT NULL,
 				data TEXT NOT NULL DEFAULT '',
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				chatter_user_id TEXT NOT NULL DEFAULT '',
 				PRIMARY KEY (agent_id, session_key, seq)
 			)`,
-			`INSERT INTO session_events_new (agent_id, session_key, seq, type, data, created_at, chatter_user_id)
-				SELECT agent_id, session_key, seq, type, data, created_at, chatter_user_id FROM session_events`,
+			`INSERT INTO session_events_new (agent_id, session_key, seq, type, data, created_at)
+				SELECT agent_id, session_key, seq, type, data, created_at FROM session_events`,
 			`DROP TABLE session_events`,
 			`ALTER TABLE session_events_new RENAME TO session_events`,
 		} {
@@ -3498,29 +3497,28 @@ func (d *DBStore) AppendSessionMessage(ctx context.Context, agentID, sessionKey 
 	if ts.IsZero() {
 		ts = time.Now().UTC()
 	}
-	chatterID := ChatterUserIDFromContext(ctx)
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
 			`INSERT INTO session_messages
-				(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model)
-			SELECT $1, $2, COALESCE(MAX(seq), -1) + 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+				(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model)
+			SELECT $1, $2, COALESCE(MAX(seq), -1) + 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
 				FROM session_messages
 				WHERE agent_id = $1 AND session_key = $2`,
 			agentID, sessionKey,
 			msg.Role, msg.Content, string(contentParts), string(toolCalls),
-			msg.ToolCallID, msg.Name, string(metadata), msg.Thinking, rawAssistant, msg.Origin, ts, chatterID,
+			msg.ToolCallID, msg.Name, string(metadata), msg.Thinking, rawAssistant, msg.Origin, ts,
 			msg.Provider, msg.Model)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
 		`INSERT INTO session_messages
-			(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, chatter_user_id, provider, model)
-		SELECT ?, ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model)
+		SELECT ?, ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 			FROM session_messages
 			WHERE agent_id = ? AND session_key = ?`,
 		agentID, sessionKey,
 		msg.Role, msg.Content, string(contentParts), string(toolCalls),
-		msg.ToolCallID, msg.Name, string(metadata), msg.Thinking, rawAssistant, msg.Origin, ts, chatterID,
+		msg.ToolCallID, msg.Name, string(metadata), msg.Thinking, rawAssistant, msg.Origin, ts,
 		msg.Provider, msg.Model,
 		agentID, sessionKey)
 	return err
@@ -3542,7 +3540,6 @@ func (d *DBStore) AppendSessionEvent(ctx context.Context, agentID, sessionKey, e
 	}
 	defer tx.Rollback()
 	var seq int64
-	chatterID := ChatterUserIDFromContext(ctx)
 	if d.dialect == "postgres" {
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COALESCE(MAX(seq), -1) + 1 FROM session_events
@@ -3551,9 +3548,9 @@ func (d *DBStore) AppendSessionEvent(ctx context.Context, agentID, sessionKey, e
 			return 0, err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session_events (agent_id, session_key, seq, type, data, created_at, chatter_user_id)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			agentID, sessionKey, seq, eventType, string(data), time.Now().UTC(), chatterID); err != nil {
+			`INSERT INTO session_events (agent_id, session_key, seq, type, data, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6)`,
+			agentID, sessionKey, seq, eventType, string(data), time.Now().UTC()); err != nil {
 			return 0, err
 		}
 	} else {
@@ -3564,9 +3561,9 @@ func (d *DBStore) AppendSessionEvent(ctx context.Context, agentID, sessionKey, e
 			return 0, err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session_events (agent_id, session_key, seq, type, data, created_at, chatter_user_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			agentID, sessionKey, seq, eventType, string(data), time.Now().UTC(), chatterID); err != nil {
+			`INSERT INTO session_events (agent_id, session_key, seq, type, data, created_at)
+				VALUES (?, ?, ?, ?, ?, ?)`,
+			agentID, sessionKey, seq, eventType, string(data), time.Now().UTC()); err != nil {
 			return 0, err
 		}
 	}
@@ -3683,15 +3680,16 @@ func (d *DBStore) ListSessionMessages(ctx context.Context, agentID, sessionKey s
 // correctly so this is only a concern for sessions migrated from
 // pre-fix daemon runs.
 func (d *DBStore) CountChatterUserMessages(ctx context.Context, agentID, chatterUserID string) (int, error) {
-	if chatterUserID == "" {
-		return 0, nil
-	}
+	// Post single-user flatten: count user messages by agent. The chatter
+	// dimension is gone from session_messages, so chatterUserID is no longer
+	// a filter — it's kept on the signature only so loop.go's autoPersist
+	// gate compiles unchanged until phase 2 retires the chatter plumbing.
 	var n int
 	err := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT COUNT(*) FROM session_messages
-			WHERE agent_id = %s AND chatter_user_id = %s AND role = 'user'`,
-			d.ph(1), d.ph(2)),
-		agentID, chatterUserID).Scan(&n)
+			WHERE agent_id = %s AND role = 'user'`,
+			d.ph(1)),
+		agentID).Scan(&n)
 	if err != nil {
 		return 0, err
 	}
