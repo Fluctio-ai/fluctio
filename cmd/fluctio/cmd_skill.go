@@ -25,6 +25,10 @@ func skillCmd() *cobra.Command {
 	cmd.AddCommand(skillUpdateCmd())
 	cmd.AddCommand(skillRemoveCmd())
 	cmd.AddCommand(skillInfoCmd())
+	cmd.AddCommand(skillPendingCmd())
+	cmd.AddCommand(skillApproveCmd())
+	cmd.AddCommand(skillRejectCmd())
+	cmd.AddCommand(skillDiffCmd())
 	return cmd
 }
 
