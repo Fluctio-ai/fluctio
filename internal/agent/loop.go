@@ -1922,7 +1922,6 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	// chatter onto sess itself, the WithChatterUserID we just stamped
 	// above never reaches AppendSessionMessage / SaveSession and the
 	// chatter_user_id column stays empty.
-	sess.SetChatter(chatterUID)
 	{
 		prov, mdl := provider.SplitProviderModel(a.model)
 		sess.SetProviderModel(prov, mdl)
@@ -1948,7 +1947,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 		return noProviderMsg
 	}
 
-	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, a.memory.WithUserID(chatterUID))
+	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, a.memory)
 	a.logSystemPromptFingerprint(msg.Channel, msg.ChatID, chatterUID, systemPrompt)
 	// Tool catalog injection: plan mode passes tools=nil to the LLM so
 	// it can't accidentally call anything, but that also hides the
@@ -2128,9 +2127,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// instead of the LLM. Evaluated before slash commands so fixed-format
 	// messages (e.g. "翻译 xxx") bypass the agent loop entirely.
 	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
-		chatterUID := a.chatterUserID(msg)
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
-		sess.SetChatter(chatterUID)
 		sess.BeginTurn()
 		sess.Append(buildUserMessage(msg))
 		sess.Append(provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()})
@@ -2231,7 +2228,6 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// WithChatterUserID we stamped onto the caller ctx above does NOT
 	// reach AppendSessionMessage / SaveSession on its own — sess has to
 	// carry the chatter itself.
-	sess.SetChatter(chatterUID)
 	{
 		prov, mdl := provider.SplitProviderModel(a.model)
 		sess.SetProviderModel(prov, mdl)
@@ -2286,7 +2282,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// Hook: BeforeSystemPrompt
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeSystemPrompt, UserID: a.ownerUserID})
 
-	chatterMem := a.memory.WithUserID(chatterUID)
+	chatterMem := a.memory
 	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, chatterMem)
 	a.logSystemPromptFingerprint(msg.Channel, msg.ChatID, chatterUID, systemPrompt)
 
@@ -3109,9 +3105,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// Regex hooks: intercept messages matching a pattern and execute CLI
 	// instead of the LLM.
 	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
-		chatterUID := a.chatterUserID(msg)
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
-		sess.SetChatter(chatterUID)
 		sess.BeginTurn()
 		sess.Append(buildUserMessage(msg))
 		sess.Append(provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()})
@@ -3168,7 +3162,6 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// Bind chatter onto sess so its ctx() embeds WithChatterUserID
 	// for DBStore session writes — Session.ctx() rebuilds ctx from its
 	// own fields, so the chatter has to live on sess itself.
-	sess.SetChatter(chatterUID)
 	{
 		prov, mdl := provider.SplitProviderModel(a.model)
 		sess.SetProviderModel(prov, mdl)
@@ -3193,7 +3186,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	defer padOrphanToolResults(sess)
 
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeSystemPrompt, UserID: a.ownerUserID})
-	chatterMem := a.memory.WithUserID(chatterUID)
+	chatterMem := a.memory
 	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, chatterMem)
 	a.logSystemPromptFingerprint(msg.Channel, msg.ChatID, chatterUID, systemPrompt)
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: AfterSystemPrompt, UserID: a.ownerUserID})
@@ -3857,7 +3850,7 @@ func (a *Agent) chatterLocation(chatterUID string) *time.Location {
 	// over the DB prefs, so editing USER.md is enough to fix the clock
 	// without also having to run set_timezone.
 	if a.memory != nil {
-		if profile := a.memory.WithUserID(chatterUID).LoadUserFile(); profile != "" {
+		if profile := a.memory.LoadUserFile(); profile != "" {
 			if loc := scope.LocationFromText(profile); loc != nil {
 				return loc
 			}
