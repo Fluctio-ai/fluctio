@@ -58,7 +58,7 @@ func TestRenameChatEventsToSessionEvents(t *testing.T) {
 	var seq int64
 	var typ string
 	if err := db.db.QueryRowContext(ctx,
-		`SELECT seq, type FROM session_events WHERE user_id='u' AND agent_id='a' AND session_key='s-1'`).Scan(&seq, &typ); err != nil {
+		`SELECT seq, type FROM session_events WHERE agent_id='a' AND session_key='s-1'`).Scan(&seq, &typ); err != nil {
 		t.Fatalf("read seeded row: %v", err)
 	}
 	if seq != 0 || typ != "content" {
@@ -66,7 +66,7 @@ func TestRenameChatEventsToSessionEvents(t *testing.T) {
 	}
 
 	// Public API should now work end-to-end against the renamed table.
-	newSeq, err := db.AppendSessionEvent(ctx, "u", "a", "s-1", "done", []byte("{}"))
+	newSeq, err := db.AppendSessionEvent(ctx, "a", "s-1", "done", []byte("{}"))
 	if err != nil {
 		t.Fatalf("AppendSessionEvent: %v", err)
 	}

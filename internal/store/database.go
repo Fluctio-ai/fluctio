@@ -224,6 +224,11 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionMessagesDropUserID(ctx); err != nil {
 		return fmt.Errorf("migrate session_messages drop user_id: %w", err)
 	}
+	// Drop session_events.user_id (chatter_user_id stays until phase 2.4).
+	// PK becomes (agent_id, session_key, seq).
+	if err := d.migrateSessionEventsDropUserID(ctx); err != nil {
+		return fmt.Errorf("migrate session_events drop user_id: %w", err)
+	}
 	return nil
 }
 
@@ -1366,6 +1371,59 @@ func (d *DBStore) migrateSessionMessagesDropUserID(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx,
 		`CREATE INDEX IF NOT EXISTS idx_session_messages_lookup ON session_messages (agent_id, session_key, seq)`); err != nil {
 		return fmt.Errorf("recreate idx_session_messages_lookup: %w", err)
+	}
+	return nil
+}
+
+// migrateSessionEventsDropUserID rebuilds session_events without the user_id
+// column so the primary key becomes (agent_id, session_key, seq).
+// chatter_user_id is KEPT until phase 2.4. Idempotent.
+func (d *DBStore) migrateSessionEventsDropUserID(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "session_events", "user_id")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_session_events_lookup`); err != nil {
+		return fmt.Errorf("drop idx_session_events_lookup: %w", err)
+	}
+	if d.dialect == "postgres" {
+		for _, s := range []string{
+			`ALTER TABLE session_events DROP CONSTRAINT IF EXISTS session_events_pkey`,
+			`ALTER TABLE session_events ADD PRIMARY KEY (agent_id, session_key, seq)`,
+			`ALTER TABLE session_events DROP COLUMN IF EXISTS user_id`,
+		} {
+			if _, err := d.db.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("postgres drop session_events.user_id: %w\nSQL: %s", err, s)
+			}
+		}
+	} else {
+		for _, s := range []string{
+			`CREATE TABLE session_events_new (
+				agent_id TEXT NOT NULL,
+				session_key TEXT NOT NULL,
+				seq INTEGER NOT NULL,
+				type TEXT NOT NULL,
+				data TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				chatter_user_id TEXT NOT NULL DEFAULT '',
+				PRIMARY KEY (agent_id, session_key, seq)
+			)`,
+			`INSERT INTO session_events_new (agent_id, session_key, seq, type, data, created_at, chatter_user_id)
+				SELECT agent_id, session_key, seq, type, data, created_at, chatter_user_id FROM session_events`,
+			`DROP TABLE session_events`,
+			`ALTER TABLE session_events_new RENAME TO session_events`,
+		} {
+			if _, err := d.db.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("sqlite rebuild session_events: %w\nSQL: %s", err, s)
+			}
+		}
+	}
+	if _, err := d.db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_session_events_lookup ON session_events (agent_id, session_key, seq)`); err != nil {
+		return fmt.Errorf("recreate idx_session_events_lookup: %w", err)
 	}
 	return nil
 }
@@ -3237,9 +3295,9 @@ func (d *DBStore) AppendSessionMessage(ctx context.Context, agentID, sessionKey 
 // so concurrent appenders (e.g. fan-out + replay) can't collide on the
 // PK. Used by reconnecting clients to skip past events they've
 // already rendered.
-func (d *DBStore) AppendSessionEvent(ctx context.Context, userID, agentID, sessionKey, eventType string, data []byte) (int64, error) {
-	if userID == "" || agentID == "" || sessionKey == "" {
-		return 0, errors.New("store: AppendSessionEvent requires user_id, agent_id, session_key")
+func (d *DBStore) AppendSessionEvent(ctx context.Context, agentID, sessionKey, eventType string, data []byte) (int64, error) {
+	if agentID == "" || sessionKey == "" {
+		return 0, errors.New("store: AppendSessionEvent requires agent_id, session_key")
 	}
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -3251,27 +3309,27 @@ func (d *DBStore) AppendSessionEvent(ctx context.Context, userID, agentID, sessi
 	if d.dialect == "postgres" {
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COALESCE(MAX(seq), -1) + 1 FROM session_events
-				WHERE user_id = $1 AND agent_id = $2 AND session_key = $3`,
-			userID, agentID, sessionKey).Scan(&seq); err != nil {
+				WHERE agent_id = $1 AND session_key = $2`,
+			agentID, sessionKey).Scan(&seq); err != nil {
 			return 0, err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session_events (user_id, agent_id, session_key, seq, type, data, created_at, chatter_user_id)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			userID, agentID, sessionKey, seq, eventType, string(data), time.Now().UTC(), chatterID); err != nil {
+			`INSERT INTO session_events (agent_id, session_key, seq, type, data, created_at, chatter_user_id)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			agentID, sessionKey, seq, eventType, string(data), time.Now().UTC(), chatterID); err != nil {
 			return 0, err
 		}
 	} else {
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COALESCE(MAX(seq), -1) + 1 FROM session_events
-				WHERE user_id = ? AND agent_id = ? AND session_key = ?`,
-			userID, agentID, sessionKey).Scan(&seq); err != nil {
+				WHERE agent_id = ? AND session_key = ?`,
+			agentID, sessionKey).Scan(&seq); err != nil {
 			return 0, err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO session_events (user_id, agent_id, session_key, seq, type, data, created_at, chatter_user_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			userID, agentID, sessionKey, seq, eventType, string(data), time.Now().UTC(), chatterID); err != nil {
+			`INSERT INTO session_events (agent_id, session_key, seq, type, data, created_at, chatter_user_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			agentID, sessionKey, seq, eventType, string(data), time.Now().UTC(), chatterID); err != nil {
 			return 0, err
 		}
 	}
@@ -3283,13 +3341,13 @@ func (d *DBStore) AppendSessionEvent(ctx context.Context, userID, agentID, sessi
 
 // ListSessionEventsSince returns every chat event with seq strictly
 // greater than sinceSeq, ascending. Pass sinceSeq=-1 to get all.
-func (d *DBStore) ListSessionEventsSince(ctx context.Context, userID, agentID, sessionKey string, sinceSeq int64) ([]SessionEventRecord, error) {
+func (d *DBStore) ListSessionEventsSince(ctx context.Context, agentID, sessionKey string, sinceSeq int64) ([]SessionEventRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT seq, type, data, created_at FROM session_events
-			WHERE user_id = %s AND agent_id = %s AND session_key = %s AND seq > %s
+			WHERE agent_id = %s AND session_key = %s AND seq > %s
 			ORDER BY seq ASC`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
-		userID, agentID, sessionKey, sinceSeq)
+			d.ph(1), d.ph(2), d.ph(3)),
+		agentID, sessionKey, sinceSeq)
 	if err != nil {
 		return nil, err
 	}
@@ -3301,7 +3359,6 @@ func (d *DBStore) ListSessionEventsSince(ctx context.Context, userID, agentID, s
 		if err := rows.Scan(&rec.Seq, &rec.Type, &dataStr, &rec.CreatedAt); err != nil {
 			return nil, err
 		}
-		rec.UserID = userID
 		rec.AgentID = agentID
 		rec.SessionKey = sessionKey
 		if dataStr != "" {
@@ -3315,13 +3372,13 @@ func (d *DBStore) ListSessionEventsSince(ctx context.Context, userID, agentID, s
 // LatestSessionEventSeq returns the highest seq for the session, or -1 if
 // none. Surfaced to clients via the chat history response so they
 // know where to subscribe from on a fresh page load.
-func (d *DBStore) LatestSessionEventSeq(ctx context.Context, userID, agentID, sessionKey string) (int64, error) {
+func (d *DBStore) LatestSessionEventSeq(ctx context.Context, agentID, sessionKey string) (int64, error) {
 	var seq sql.NullInt64
 	err := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT MAX(seq) FROM session_events
-			WHERE user_id = %s AND agent_id = %s AND session_key = %s`,
-			d.ph(1), d.ph(2), d.ph(3)),
-		userID, agentID, sessionKey).Scan(&seq)
+			WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, sessionKey).Scan(&seq)
 	if err != nil {
 		return -1, err
 	}

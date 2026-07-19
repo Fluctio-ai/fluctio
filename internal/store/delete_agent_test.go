@@ -47,7 +47,7 @@ func TestDeleteAgentRemovesScopedRows(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append session message: %v", err)
 	}
-	if _, err := db.AppendSessionEvent(ctx, ownerID, agentID, sessionKey, "content", []byte(`{"text":"hi"}`)); err != nil {
+	if _, err := db.AppendSessionEvent(ctx, agentID, sessionKey, "content", []byte(`{"text":"hi"}`)); err != nil {
 		t.Fatalf("append session event: %v", err)
 	}
 	if err := db.SaveProject(ctx, &ProjectRecord{

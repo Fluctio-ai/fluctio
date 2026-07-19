@@ -83,7 +83,7 @@ func hubKey(userID, agentID, sessionKey string) string {
 // store.Store interface's AppendSessionEvent satisfies this exactly, so
 // the gateway can pass its store as-is.
 type EventSink interface {
-	AppendSessionEvent(ctx context.Context, userID, agentID, sessionKey, eventType string, data []byte) (int64, error)
+	AppendSessionEvent(ctx context.Context, agentID, sessionKey, eventType string, data []byte) (int64, error)
 }
 
 // streamCtx carries the per-turn handles emitEvent reaches for:

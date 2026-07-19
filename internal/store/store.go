@@ -212,9 +212,9 @@ type Store interface {
 	// last-seen seq and receive the missed delta — without this the
 	// agent's reply becomes invisible until the parent session row is
 	// next loaded. Cleared by DeleteSession alongside session_messages.
-	AppendSessionEvent(ctx context.Context, userID, agentID, sessionKey, eventType string, data []byte) (int64, error)
-	ListSessionEventsSince(ctx context.Context, userID, agentID, sessionKey string, sinceSeq int64) ([]SessionEventRecord, error)
-	LatestSessionEventSeq(ctx context.Context, userID, agentID, sessionKey string) (int64, error)
+	AppendSessionEvent(ctx context.Context, agentID, sessionKey, eventType string, data []byte) (int64, error)
+	ListSessionEventsSince(ctx context.Context, agentID, sessionKey string, sinceSeq int64) ([]SessionEventRecord, error)
+	LatestSessionEventSeq(ctx context.Context, agentID, sessionKey string) (int64, error)
 
 	// --- Agent files ---
 	//

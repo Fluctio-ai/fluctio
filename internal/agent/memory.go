@@ -563,7 +563,7 @@ func (a *Agent) maybeAutoTitle(sessionKey string, messages []provider.Message, h
 		}
 		var seq int64 = -1
 		blob, _ := json.Marshal(evt.Data)
-		if s, err := a.dataStore.AppendSessionEvent(ctx, ownerUserID, a.name, sessionKey, evt.Type, blob); err == nil {
+		if s, err := a.dataStore.AppendSessionEvent(ctx, a.name, sessionKey, evt.Type, blob); err == nil {
 			seq = s
 		} else {
 			slog.Debug("auto-title: persist event failed", "error", err)

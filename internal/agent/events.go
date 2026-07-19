@@ -58,7 +58,7 @@ func emitEvent(ctx context.Context, evt ChatEvent) {
 
 	if persist && stream != nil && stream.sink != nil && stream.userID != "" && stream.sessionKey != "" {
 		blob, _ := json.Marshal(evt.Data)
-		s, err := stream.sink.AppendSessionEvent(ctx, stream.userID, stream.agentID, stream.sessionKey, evt.Type, blob)
+		s, err := stream.sink.AppendSessionEvent(ctx, stream.agentID, stream.sessionKey, evt.Type, blob)
 		if err != nil {
 			slog.Warn("persist chat event failed",
 				"agent", stream.agentID, "session", stream.sessionKey,

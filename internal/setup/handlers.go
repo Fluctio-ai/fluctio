@@ -1400,7 +1400,7 @@ func (s *Server) handleChatSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// Replay missed events from the persistent log.
 	if s.dataStore != nil {
-		rows, err := s.dataStore.ListSessionEventsSince(r.Context(), uid, agentID, sessionID, sinceSeq)
+		rows, err := s.dataStore.ListSessionEventsSince(r.Context(), agentID, sessionID, sinceSeq)
 		if err != nil {
 			slog.Warn("session_events replay failed", "agent", agentID, "session", sessionID, "since", sinceSeq, "error", err)
 		}
@@ -1652,7 +1652,7 @@ func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 	if s.dataStore != nil {
 		uid := s.effectiveUserID(r)
 		if uid != "" {
-			if seq, err := s.dataStore.LatestSessionEventSeq(r.Context(), uid, ag.Name(), sessionID); err == nil {
+			if seq, err := s.dataStore.LatestSessionEventSeq(r.Context(), ag.Name(), sessionID); err == nil {
 				resp["latestEventSeq"] = seq
 			}
 		}
