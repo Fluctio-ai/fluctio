@@ -51,7 +51,7 @@ type Store interface {
 	ListPushDevices(ctx context.Context, userID string) ([]PushDeviceRecord, error)
 
 	// --- IM claim codes (owner binds IM platform ID via /claim <code>) ---
-	CreateIMClaim(ctx context.Context, agentID, channel, ownerUUID, intent string) (string, error)
+	CreateIMClaim(ctx context.Context, agentID, channel, intent string) (string, error)
 	RedeemIMClaim(ctx context.Context, agentID, channel, code string) (bool, error)
 	GetActiveIMClaim(ctx context.Context, agentID, channel string) (*IMClaimRecord, error)
 	CleanupExpiredIMClaims(ctx context.Context) (int, error)
@@ -269,7 +269,6 @@ type Store interface {
 	//
 	// Cron rows are owned by an agent; the executing identity is the
 	// agent's user_id. List by ownerUserID joins against agents.
-	ListCronJobsByOwner(ctx context.Context, ownerUserID string) ([]CronJobRecord, error)
 	ListCronJobsByAgent(ctx context.Context, agentID string) ([]CronJobRecord, error)
 	GetCronJob(ctx context.Context, jobID string) (*CronJobRecord, error)
 	SaveCronJob(ctx context.Context, job *CronJobRecord) error

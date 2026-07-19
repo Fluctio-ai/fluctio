@@ -39,11 +39,11 @@ type IMClaimRecord struct {
 }
 
 // CreateIMClaim mints a one-time verification code for (agentID, channel),
-// invalidating any prior unused code for the same pair first. The caller is
-// the web-side authenticated owner (ownerUUID). Returns the 6-digit code.
-func (d *DBStore) CreateIMClaim(ctx context.Context, agentID, channel, ownerUUID, intent string) (string, error) {
-	if agentID == "" || channel == "" || ownerUUID == "" {
-		return "", errors.New("store: create im claim requires agentID, channel, ownerUUID")
+// invalidating any prior unused code for the same pair first. Returns the
+// 6-digit code. (ownerUUID dropped: single-user, the web caller IS the owner.)
+func (d *DBStore) CreateIMClaim(ctx context.Context, agentID, channel, intent string) (string, error) {
+	if agentID == "" || channel == "" {
+		return "", errors.New("store: create im claim requires agentID, channel")
 	}
 	if intent == "" {
 		intent = IMClaimIntentAdd
@@ -65,10 +65,10 @@ func (d *DBStore) CreateIMClaim(ctx context.Context, agentID, channel, ownerUUID
 	}
 	now := time.Now().UTC()
 	if _, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO im_claims (id, agent_id, channel, owner_uuid, code, intent, expires_at, used, attempts, created_at)
-			VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, 0, %s)`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8)),
-		id, agentID, channel, ownerUUID, code, intent, now.Add(IMClaimTTL), now); err != nil {
+		fmt.Sprintf(`INSERT INTO im_claims (id, agent_id, channel, code, intent, expires_at, used, attempts, created_at)
+			VALUES (%s, %s, %s, %s, %s, %s, FALSE, 0, %s)`,
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7)),
+		id, agentID, channel, code, intent, now.Add(IMClaimTTL), now); err != nil {
 		return "", err
 	}
 	return code, nil
@@ -111,14 +111,14 @@ func (d *DBStore) RedeemIMClaim(ctx context.Context, agentID, channel, code stri
 func (d *DBStore) GetActiveIMClaim(ctx context.Context, agentID, channel string) (*IMClaimRecord, error) {
 	now := time.Now().UTC()
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT id, agent_id, channel, owner_uuid, code, intent, expires_at, used, attempts, created_at
+		fmt.Sprintf(`SELECT id, agent_id, channel, code, intent, expires_at, used, attempts, created_at
 			FROM im_claims
 			WHERE agent_id = %s AND channel = %s AND used = FALSE AND expires_at > %s
 			ORDER BY created_at DESC LIMIT 1`,
 			d.ph(1), d.ph(2), d.ph(3)),
 		agentID, channel, now)
 	var c IMClaimRecord
-	if err := row.Scan(&c.ID, &c.AgentID, &c.Channel, &c.OwnerUUID, &c.Code, &c.Intent, &c.ExpiresAt, &c.Used, &c.Attempts, &c.CreatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.AgentID, &c.Channel, &c.Code, &c.Intent, &c.ExpiresAt, &c.Used, &c.Attempts, &c.CreatedAt); err != nil {
 		return nil, scanErr(err)
 	}
 	return &c, nil

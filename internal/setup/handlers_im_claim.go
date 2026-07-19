@@ -32,7 +32,7 @@ func (s *Server) handleCreateIMClaim(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "IM channel required (e.g. wechat, discord, telegram)"})
 		return
 	}
-	code, err := s.dataStore.CreateIMClaim(r.Context(), id, req.Channel, rec.UserID, store.IMClaimIntentAdd)
+	code, err := s.dataStore.CreateIMClaim(r.Context(), id, req.Channel, store.IMClaimIntentAdd)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -155,7 +155,7 @@ func (s *Server) handleRebindIM(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	code, err := s.dataStore.CreateIMClaim(r.Context(), id, req.Channel, rec.UserID, store.IMClaimIntentReplace)
+	code, err := s.dataStore.CreateIMClaim(r.Context(), id, req.Channel, store.IMClaimIntentReplace)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
