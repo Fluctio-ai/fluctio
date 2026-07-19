@@ -3057,42 +3057,22 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 		}
 	}
 
-	// Auto-persist memory every N user turns.
-	//
-	// Cadence is keyed on a DURABLE counter — `session_messages.role='user'`
-	// rows for this (agent, chatter). Originally this was `a.turnCount`,
-	// an int field on Agent that resets to 0 on daemon restart,
-	// UserSpace invalidation (any agent-scope dashboard save fires
-	// InvalidateAgent), and 30-minute idle eviction. That made it
-	// practically untestable — flipping the dashboard toggle to
-	// observe the next fire reset the counter to 0 every time. Reading
-	// from the DB removes the reset entirely and also gives a natural
-	// per-chatter cadence (the in-memory counter was shared across
-	// all chatters of the same agent).
-	//
-	// Falls back to skipping fire when dataStore isn't wired
-	// (single-user local mode without persistence) — autoPersist
-	// without persistence is meaningless anyway.
-	var chatterUID string
-	if chatterMem != nil {
-		chatterUID = chatterMem.UserID()
-	}
+	// Auto-persist memory every N user turns. Single-user flatten dropped
+	// the per-chatter durable DB counter (CountChatterUserMessages); the
+	// cadence now keys on a.turnCount, the in-memory turn counter that
+	// resets on daemon restart / agent eviction. With a single user that
+	// only delays a persist by at most EveryNTurns — acceptable vs.
+	// threading a session_key into runPostTurn just to re-count user
+	// messages from the DB.
 	willFire := false
-	chatterTurns := 0
-	if a.dataStore != nil && a.memoryCfg.AutoPersist.Enabled && a.memoryCfg.AutoPersist.EveryNTurns > 0 && chatterUID != "" {
-		n, err := a.dataStore.CountChatterUserMessages(ctx, a.name, chatterUID)
-		if err != nil {
-			slog.Warn("auto-persist: count query failed", "agent", a.name, "chatter", chatterUID, "error", err)
-		} else {
-			chatterTurns = n
-			willFire = n > 0 && n%a.memoryCfg.AutoPersist.EveryNTurns == 0
-		}
+	turns := a.turnCount
+	if a.memoryCfg.AutoPersist.Enabled && a.memoryCfg.AutoPersist.EveryNTurns > 0 {
+		willFire = turns > 0 && turns%a.memoryCfg.AutoPersist.EveryNTurns == 0
 	}
 	slog.Info("auto-persist gate",
 		"agent", a.name,
-		"chatter", chatterUID,
 		"enabled", a.memoryCfg.AutoPersist.Enabled,
-		"chatter_turns", chatterTurns,
+		"turns", turns,
 		"every_n_turns", a.memoryCfg.AutoPersist.EveryNTurns,
 		"will_fire", willFire)
 	if willFire {
@@ -3100,7 +3080,7 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 		if model == "" {
 			model = a.model
 		}
-		slog.Info("auto-persist firing", "agent", a.name, "chatter", chatterUID, "model", model, "chatter_turns", chatterTurns, "messages", len(messages))
+		slog.Info("auto-persist firing", "agent", a.name, "model", model, "turns", turns, "messages", len(messages))
 		go AutoPersistMemory(ctx, chatterMem, a.provider, model, messages)
 	}
 

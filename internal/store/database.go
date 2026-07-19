@@ -3728,34 +3728,6 @@ func (d *DBStore) ListSessionMessages(ctx context.Context, agentID, sessionKey s
 	return out, rows.Err()
 }
 
-// CountChatterUserMessages returns the count of user-role messages
-// this chatter has accumulated under the agent across all sessions.
-// Used by the autoPersist cadence gate as a durable counter — see the
-// interface doc on Store for why we don't reuse the in-memory turnCount.
-//
-// Filter is strictly on chatter_user_id (no fallback to user_id). Old
-// rows written before the chatter_user_id column existed have it set
-// to ” and are not counted; those predate per-chatter resolution and
-// folding them in would over-count (they're keyed by channel owner,
-// not the actual chatter). New conversations write chatter_user_id
-// correctly so this is only a concern for sessions migrated from
-// pre-fix daemon runs.
-func (d *DBStore) CountChatterUserMessages(ctx context.Context, agentID, chatterUserID string) (int, error) {
-	// Post single-user flatten: count user messages by agent. The chatter
-	// dimension is gone from session_messages, so chatterUserID is no longer
-	// a filter — it's kept on the signature only so loop.go's autoPersist
-	// gate compiles unchanged until phase 2 retires the chatter plumbing.
-	var n int
-	err := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT COUNT(*) FROM session_messages
-			WHERE agent_id = %s AND role = 'user'`,
-			d.ph(1)),
-		agentID).Scan(&n)
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
-}
 
 func (d *DBStore) RenameSession(ctx context.Context, agentID, sessionKey, title string) error {
 	_, err := d.db.ExecContext(ctx,
