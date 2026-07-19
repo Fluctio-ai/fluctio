@@ -38,15 +38,6 @@ type Session struct {
 	// rows it's read back via Manager.Get and late-bound here so the
 	// next save preserves it.
 	projectID string
-	// chatterUserID is the per-turn conversation participant — distinct
-	// from userID (UserSpace owner = channel binder) whenever an IM
-	// channel routes a per-sender app_user into a channel-owner
-	// UserSpace. Set per-turn by the agent loop via SetChatter so the
-	// ctx() embeds it for DBStore session writes (sessions.chatter_user_id /
-	// session_messages.chatter_user_id / session_events.chatter_user_id).
-	// Empty when the caller hasn't bound a chatter — writes leave the
-	// column '' and readers fall back to user_id.
-	chatterUserID string
 	// provider and model are stamped onto assistant messages by
 	// Append so session_messages rows record which LLM produced them.
 	// Set per-turn by the agent loop via SetProviderModel.
@@ -152,25 +143,7 @@ func (s *Session) ctx() context.Context {
 	return ctx
 }
 
-// SetChatter binds the per-turn conversation participant to this
-// Session so the next Append / SaveSession write stamps the
-// chatter_user_id column. Called by the agent loop at the top of each
-// turn from the resolved chatterUID. Passing "" clears it (the next
-// write goes back to ” which readers fall back to user_id for).
-func (s *Session) SetChatter(uid string) {
-	s.mu.Lock()
-	s.chatterUserID = uid
-	s.mu.Unlock()
-}
 
-// ChatterUserID returns the per-turn conversation participant bound by
-// SetChatter (empty when unset). Used by the summary path to scope
-// conversation_summaries to the chatter.
-func (s *Session) ChatterUserID() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.chatterUserID
-}
 
 // SetProviderModel binds the current LLM provider and model to this
 // Session so Append stamps them onto assistant messages. Called by the

@@ -303,7 +303,7 @@ func (a *Agent) summarizeIdleSessions(ctx context.Context, idleAfter time.Durati
 			"agent", a.agentID, "session", s.SessionKey,
 			"messages", s.MessageCount, "idle_for", time.Since(s.UpdatedAt).Round(time.Minute))
 		persistConversationSummary(ctx, db, a.provider, a.summaryModelFor(), a.embedder,
-			a.ownerUserID, a.agentID, s.SessionKey, s.ChatterUserID)
+			a.ownerUserID, a.agentID, s.SessionKey)
 	}
 }
 
@@ -331,7 +331,7 @@ func persistConversationSummary(
 	prov provider.Provider,
 	model string,
 	emb embedding.Embedder,
-	userID, agentID, sessionKey, chatterUserID string,
+	userID, agentID, sessionKey string,
 ) {
 	if db == nil || prov == nil {
 		return
@@ -504,7 +504,6 @@ func (a *Agent) maybeExtractSummary(sess *session.Session, trigger string) {
 	owner := a.ownerUserID
 	agentID := a.agentID
 	sessionKey := sess.SessionKey()
-	chatterUID := sess.ChatterUserID()
 	prov := a.provider
 	model := a.summaryModelFor()
 	emb := a.embedder
@@ -515,6 +514,6 @@ func (a *Agent) maybeExtractSummary(sess *session.Session, trigger string) {
 		slog.Debug("summary extraction: background goroutine started",
 			"agent", agentID, "session", sessionKey, "trigger", trigger)
 		persistConversationSummary(ctx, db, prov, model, emb,
-			owner, agentID, sessionKey, chatterUID)
+			owner, agentID, sessionKey)
 	}()
 }
