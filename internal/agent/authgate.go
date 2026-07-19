@@ -131,12 +131,26 @@ func (g *authGate) evaluateCall(toolName, argsJSON, mode string) authDecision {
 			if tier == tierHardline {
 				return authDecision{action: authBlock, reason: "hardline: " + desc}
 			}
+			// Defense in depth: a catastrophic command wrapped in a shell
+			// wrapper can evade the raw-string hardline patterns when the
+			// trailing quote/punctuation breaks the regex's end anchor
+			// (e.g. `cmd /c "rm -rf /"` — the trailing `"` defeats the
+			// `(\s|$)` anchor on the rm-root hardline pattern). Re-check
+			// hardline on the unwrapped inner so wrapped catastrophic
+			// commands still hard-block regardless of mode.
+			if inner, ok := unwrapShellWrapper(command); ok && inner != command {
+				if it, d := classifyCommand(inner); it == tierHardline {
+					return authDecision{action: authBlock, reason: "hardline (wrapped): " + d}
+				}
+			}
 			// Safe whitelist: read-only / query commands auto-allow even in
 			// ask/auto mode. Must run AFTER hardline (a `safe` verb can never
 			// bypass the hardline floor) but BEFORE dangerous so that a
 			// command like `git status` doesn't trip a dangerous pattern.
 			// commandSafeTier enforces pure-single-command (no shell
-			// operators) + a safePattern match.
+			// operators) + a safePattern match. It also unwraps one
+			// cmd/sh/bash -c layer so common LLM wrappers (cmd /c dir,
+			// sh -c ls) auto-allow.
 			if commandSafeTier(command) {
 				return authDecision{action: authAllow}
 			}
@@ -490,16 +504,29 @@ var safePatterns = []struct {
 
 // commandSafeTier returns true ONLY when the command:
 //  1. is non-empty,
-//  2. contains NO shell operator that could chain/redirect/substitute
-//     (see shellOperatorRE), AND
+//  2. (after one-layer cmd/sh/bash -c unwrap) contains NO shell operator
+//     that could chain/redirect/substitute (see shellOperatorRE), AND
 //  3. matches one of the conservative safePatterns.
 //
 // If any operator is present → false (the command may still match a
 // safePattern verb, but the operator could smuggle a destructive second
 // command, so it must go through the mode gate).
+//
+// One wrapper layer is unwrapped first so the common LLM form
+// (`cmd /c dir` on Windows, `sh -c ls` on POSIX) auto-allows when the
+// inner is safe. Only ONE layer is stripped — exotic nesting
+// (`cmd /c cmd /c ...`) is left intact. The hardline check in evaluateCall
+// runs on BOTH the raw command and the unwrapped inner (defense in depth),
+// so a wrapped catastrophic command cannot slip through.
 func commandSafeTier(command string) bool {
 	if command == "" {
 		return false
+	}
+	// Unwrap at most one shell-wrapper layer. If the prefix is absent or
+	// malformed (e.g. `cmd /c` with nothing after), unwrapShellWrapper
+	// returns (command, false) and we evaluate the original string.
+	if inner, ok := unwrapShellWrapper(command); ok {
+		command = inner
 	}
 	if shellOperatorRE.MatchString(command) {
 		return false
@@ -511,6 +538,49 @@ func commandSafeTier(command string) bool {
 		}
 	}
 	return false
+}
+
+// shellWrapperRE matches the leading shell-wrapper prefix and captures the
+// remainder. Covers:
+//   - Windows: `cmd /c`, `cmd.exe /c`, fully-qualified `C:\...\cmd.exe /c`
+//     (case-insensitive).
+//   - POSIX:   `sh -c`, `bash -c`.
+//
+// Capture group 1 holds the inner command (after the prefix). Surrounding
+// quotes are stripped by unwrapShellWrapper, not the regex.
+var shellWrapperRE = regexp.MustCompile(`(?i)^(?:` +
+	// Windows cmd.exe — bare, with .exe suffix, or fully-qualified drive path.
+	`cmd(?:\.exe)?\s+/c\s+` +
+	`|(?:[a-z]:[\\/])(?:[^\s\\/]+[\\/])*cmd\.exe\s+/c\s+` +
+	// POSIX sh / bash.
+	`|(?:sh|bash)\s+-c\s+` +
+	`)(.*)$`)
+
+// unwrapShellWrapper strips ONE cmd/sh/bash wrapper layer. Returns
+// (inner, true) when a wrapper prefix was found AND the inner is non-empty,
+// otherwise (command, false). Surrounding quotes around the whole inner
+// command are removed (`cmd /c "dir"` → `dir`, `sh -c 'ls'` → `ls`).
+func unwrapShellWrapper(command string) (string, bool) {
+	m := shellWrapperRE.FindStringSubmatch(command)
+	if m == nil {
+		return command, false
+	}
+	inner := m[1]
+	// Strip one matching pair of surrounding quotes. Mixed quoting like
+	// `'foo"` is intentionally left intact (only matching pairs removed).
+	if len(inner) >= 2 {
+		first, last := inner[0], inner[len(inner)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			inner = inner[1 : len(inner)-1]
+		}
+	}
+	if strings.TrimSpace(inner) == "" {
+		// Malformed (`cmd /c` with nothing meaningful after) — don't claim
+		// unwrapped; let the caller fall through to existing logic on the
+		// raw command.
+		return command, false
+	}
+	return inner, true
 }
 
 // denyMessageBypass returns the standard anti-bypass rejection wording,

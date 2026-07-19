@@ -91,6 +91,38 @@ func TestSafeTierWhitelist(t *testing.T) {
 		{name: "git tag delete ask", tool: "exec", command: "git tag -d v1.0", mode: AuthModeAsk, want: authPrompt},
 		{name: "git tag annotate ask", tool: "exec", command: "git tag -a v1.0 -m msg", mode: AuthModeAsk, want: authPrompt},
 		{name: "git tag force ask", tool: "exec", command: "git tag -f v1.0", mode: AuthModeAsk, want: authPrompt},
+
+		// (7) Shell-wrapper unwrap: cmd /c <inner>, sh -c <inner>, bash -c <inner>.
+		// Safe inner → allow; non-safe inner → mode gate; operators in inner → mode gate;
+		// hardline inner → block (defense in depth via inner-classify).
+		{name: "wrapped cmd /c dir ask", tool: "exec", command: "cmd /c dir", mode: AuthModeAsk, want: authAllow},
+		{name: "wrapped cmd /c quoted dir ask", tool: "exec", command: `cmd /c "dir"`, mode: AuthModeAsk, want: authAllow},
+		{name: "wrapped cmd /c dir with args ask", tool: "exec", command: `cmd /c dir C:\Users`, mode: AuthModeAsk, want: authAllow},
+		{name: "wrapped cmd.exe /c git status ask", tool: "exec", command: "cmd.exe /c git status", mode: AuthModeAsk, want: authAllow},
+		{name: "wrapped cmd full path /c dir ask", tool: "exec", command: `C:\Windows\System32\cmd.exe /c dir`, mode: AuthModeAsk, want: authAllow},
+		{name: "wrapped sh -c ls ask", tool: "exec", command: "sh -c ls", mode: AuthModeAsk, want: authAllow},
+		{name: "wrapped sh -c quoted ls ask", tool: "exec", command: "sh -c 'ls'", mode: AuthModeAsk, want: authAllow},
+		{name: "wrapped bash -c quoted git status ask", tool: "exec", command: "bash -c 'git status'", mode: AuthModeAsk, want: authAllow},
+		{name: "wrapped sh -c uname ask", tool: "exec", command: "sh -c 'uname -a'", mode: AuthModeAsk, want: authAllow},
+
+		// (7b) Wrapper + operator in inner → NOT safe (mode gate).
+		{name: "wrapped cmd /c chained ask", tool: "exec", command: `cmd /c "dir && del x"`, mode: AuthModeAsk, want: authPrompt},
+		{name: "wrapped sh -c pipe ask", tool: "exec", command: "sh -c 'ls | grep foo'", mode: AuthModeAsk, want: authPrompt},
+		{name: "wrapped cmd /c redirect ask", tool: "exec", command: `cmd /c "dir > x"`, mode: AuthModeAsk, want: authPrompt},
+
+		// (7c) Wrapper + non-safe verb in inner → NOT safe (mode gate or dangerous).
+		{name: "wrapped cmd /c rm ask", tool: "exec", command: "cmd /c rm -rf x", mode: AuthModeAsk, want: authPrompt},
+
+		// (7d) Wrapper + hardline inner → BLOCK even in yolo (defense in depth:
+		// quoted wrappers may evade the raw-string hardline check because of
+		// trailing quote/punctuation).
+		{name: "wrapped cmd /c hardline rm root yolo", tool: "exec", command: `cmd /c "rm -rf /"`, mode: AuthModeYolo, want: authBlock},
+		{name: "wrapped sh -c hardline rm home yolo", tool: "exec", command: "sh -c 'rm -rf /home'", mode: AuthModeYolo, want: authBlock},
+		{name: "wrapped sh -c hardline mkfs yolo", tool: "exec", command: "sh -c 'mkfs.ext4 /dev/sda1'", mode: AuthModeYolo, want: authBlock},
+		{name: "wrapped cmd /c hardline shutdown yolo", tool: "exec", command: `cmd /c "shutdown /s /t 0"`, mode: AuthModeYolo, want: authBlock},
+
+		// (7e) Malformed wrapper (nothing after /c) → fall through to mode gate.
+		{name: "wrapped cmd /c empty ask", tool: "exec", command: "cmd /c", mode: AuthModeAsk, want: authPrompt},
 	}
 
 	for _, c := range cases {
@@ -138,12 +170,29 @@ func TestCommandSafeTierDirect(t *testing.T) {
 		// git tag create / delete / annotate / force must NOT be safe.
 		"git tag v1.0", "git tag -d v1.0", "git tag -a v1.0", "git tag -f v1.0",
 		"git tag -m msg v1.0",
+		// Wrapper + operator in inner must NOT be safe.
+		`cmd /c "dir && del x"`, "sh -c 'ls | grep foo'",
+		// Wrapper + non-safe verb must NOT be safe.
+		"cmd /c rm -rf x", "sh -c go build ./...",
 		// Empty.
 		"",
 	}
 	for _, cmd := range notSafe {
 		if commandSafeTier(cmd) {
 			t.Errorf("commandSafeTier(%q) = true, want false", cmd)
+		}
+	}
+
+	// Wrapped safe inners SHOULD now report safe.
+	wrappedSafe := []string{
+		"cmd /c dir", `cmd /c "dir"`, `cmd /c dir C:\Users`,
+		"cmd.exe /c git status", `C:\Windows\System32\cmd.exe /c dir`,
+		"sh -c ls", "sh -c 'ls'", "bash -c 'git status'",
+		"sh -c 'uname -a'",
+	}
+	for _, cmd := range wrappedSafe {
+		if !commandSafeTier(cmd) {
+			t.Errorf("commandSafeTier(%q) = false, want true (wrapped safe inner)", cmd)
 		}
 	}
 }
@@ -163,6 +212,82 @@ func TestClassifyCommandSafeTierStillUnclassified(t *testing.T) {
 			t.Errorf("classifyCommand(%q) = %d desc=%q: safe command must not be classified as hardline/dangerous",
 				cmd, tier, desc)
 		}
+	}
+}
+
+// TestUnwrapShellWrapper covers the one-layer wrapper-unwrap helper directly.
+// Verifies: cmd/c (bare, .exe, full path), sh/c, bash/c; surrounding quotes
+// stripped; only ONE layer stripped; empty inner falls through; non-wrappers
+// pass through unchanged.
+func TestUnwrapShellWrapper(t *testing.T) {
+	cases := []struct {
+		in       string
+		wantInner string
+		wantOK   bool
+	}{
+		// Windows cmd / c family.
+		{in: "cmd /c dir", wantInner: "dir", wantOK: true},
+		{in: `cmd /c "dir"`, wantInner: "dir", wantOK: true},
+		{in: `cmd /c "dir C:\Users"`, wantInner: `dir C:\Users`, wantOK: true},
+		{in: "cmd /c git status", wantInner: "git status", wantOK: true},
+		{in: "cmd.exe /c dir", wantInner: "dir", wantOK: true},
+		{in: "CMD /C dir", wantInner: "dir", wantOK: true},
+		{in: `C:\Windows\System32\cmd.exe /c dir`, wantInner: "dir", wantOK: true},
+		// POSIX sh / bash family.
+		{in: "sh -c ls", wantInner: "ls", wantOK: true},
+		{in: "sh -c 'ls -la'", wantInner: "ls -la", wantOK: true},
+		{in: "bash -c 'git status'", wantInner: "git status", wantOK: true},
+		{in: "sh -c 'echo hi'", wantInner: "echo hi", wantOK: true},
+		// Only one layer stripped — nested wrapper kept.
+		{in: "cmd /c cmd /c dir", wantInner: "cmd /c dir", wantOK: true},
+		{in: "sh -c sh -c ls", wantInner: "sh -c ls", wantOK: true},
+		// Empty / malformed → not unwrapped.
+		{in: "cmd /c", wantInner: "cmd /c", wantOK: false},
+		{in: "cmd /c   ", wantInner: "cmd /c   ", wantOK: false},
+		{in: "sh -c", wantInner: "sh -c", wantOK: false},
+		// Non-wrappers pass through.
+		{in: "dir", wantInner: "dir", wantOK: false},
+		{in: "git status", wantInner: "git status", wantOK: false},
+		{in: "echo hi", wantInner: "echo hi", wantOK: false},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			inner, ok := unwrapShellWrapper(c.in)
+			if ok != c.wantOK {
+				t.Fatalf("unwrapShellWrapper(%q) ok=%v want %v (inner=%q)",
+					c.in, ok, c.wantOK, inner)
+			}
+			if ok && inner != c.wantInner {
+				t.Fatalf("unwrapShellWrapper(%q) inner=%q want %q",
+					c.in, inner, c.wantInner)
+			}
+		})
+	}
+}
+
+// TestWrappedHardlineDefenseInDepth confirms that catastrophic commands
+// wrapped in a shell wrapper still hit authBlock even in yolo mode. The
+// raw-string hardline regex misses quoted wrappers (trailing quote breaks
+// the trailing (\s|$) anchor), so evaluateCall also classifies the
+// unwrapped inner — defense in depth.
+func TestWrappedHardlineDefenseInDepth(t *testing.T) {
+	g := newAuthGate("", "")
+	cases := []string{
+		`cmd /c "rm -rf /"`,
+		`cmd /c rm -rf /`,
+		`sh -c 'rm -rf /home'`,
+		`sh -c 'mkfs.ext4 /dev/sda1'`,
+		`cmd /c "shutdown /s /t 0"`,
+	}
+	for _, cmd := range cases {
+		t.Run(cmd, func(t *testing.T) {
+			args, _ := json.Marshal(map[string]string{"command": cmd})
+			dec := g.evaluateCall("exec", string(args), AuthModeYolo)
+			if dec.action != authBlock {
+				t.Fatalf("wrapped hardline %q mode=yolo: want authBlock got action=%d reason=%q",
+					cmd, dec.action, dec.reason)
+			}
+		})
 	}
 }
 
