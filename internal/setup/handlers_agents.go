@@ -666,11 +666,8 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	desc, _ := rec.Config["description"].(string)
-	uid := s.effectiveUserID(r)
+	// Single-user: caller is always the owner.
 	role := "owner"
-	if rec.UserID != uid {
-		role = "viewer"
-	}
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"agent": map[string]any{
 			"id":             rec.ID,
@@ -849,12 +846,7 @@ func (s *Server) checkSystemFileWritable(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	if agentIdentityFiles[name] {
-		caller := s.effectiveUserID(r)
-		ident, _ := auth.FromContext(r.Context())
-		if rec.UserID != caller && !ident.CanAdminPlatform() {
-			jsonResponse(w, http.StatusForbidden, map[string]any{"error": "not your agent"})
-			return false
-		}
+		// Single-user: every authenticated caller owns every agent.
 		return true
 	}
 	if !s.requireAgentReadable(w, r, agentID) {
