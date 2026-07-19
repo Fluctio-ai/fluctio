@@ -1914,7 +1914,6 @@ func buildToolCatalogForPlan(toolDefs []provider.Tool) string {
 // against the full session including this plan.
 func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) string {
 	chatterUID := a.chatterUserID(msg)
-	ctx = sandbox.WithUserID(ctx, chatterUID)
 	ctx = store.WithChannel(ctx, msg.Channel)
 	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 	// Session.ctx() builds its OWN context from session-held fields
@@ -2208,7 +2207,6 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// per-user skills dir into the container at /root/.agents/skills
 	// (where `npx skills add -g -y` writes). Tagging happens before
 	// any sandbox.Get call below so attachments + exec inherit it.
-	ctx = sandbox.WithUserID(ctx, chatterUID)
 	// Tag ctx with the chatter so DBStore session writes stamp the
 	// chatter_user_id column (sessions / session_messages /
 	// session_events). user_id stays = UserSpace owner so admin views
@@ -3151,7 +3149,6 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	}
 
 	chatterUID := a.chatterUserID(msg)
-	ctx = sandbox.WithUserID(ctx, chatterUID)
 	// Tag ctx so DBStore session writes stamp chatter_user_id — see
 	// the HandleMessage path for the rationale.
 	ctx = store.WithChannel(ctx, msg.Channel)
