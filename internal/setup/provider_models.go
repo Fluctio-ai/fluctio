@@ -46,12 +46,12 @@ func (s *Server) providerConfigForAgent(ctx context.Context, agentID string) (co
 	// Read agent-level model override first, fall back to system default.
 	model := ""
 	if agentID != "" {
-		if rec, err := s.dataStore.GetConfigByName(ctx, store.KindSetting, "", agentID, "agents.defaults"); err == nil && rec != nil {
+		if rec, err := s.dataStore.GetConfigByName(ctx, store.KindSetting, agentID, "agents.defaults"); err == nil && rec != nil {
 			model, _ = rec.Data["model"].(string)
 		}
 	}
 	if model == "" {
-		rec, err := s.dataStore.GetConfigByName(ctx, store.KindSetting, "", "", "agents.defaults")
+		rec, err := s.dataStore.GetConfigByName(ctx, store.KindSetting, "", "agents.defaults")
 		if err != nil || rec == nil {
 			return config.ProviderConfig{}, fmt.Errorf("no agents.defaults model configured")
 		}

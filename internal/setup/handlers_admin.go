@@ -756,7 +756,7 @@ func (s *Server) forkAgentContent(r *http.Request, src, dst *store.AgentRecord) 
 			return err
 		}
 	}
-	rows, err := s.dataStore.ListConfigs(r.Context(), store.KindSetting, "", src.ID)
+	rows, err := s.dataStore.ListConfigs(r.Context(), store.KindSetting, src.ID)
 	if err != nil {
 		return err
 	}

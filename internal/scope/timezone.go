@@ -34,20 +34,10 @@ func Timezone(ctx context.Context, st store.Store, chatterUID, agentID string) s
 	if st == nil {
 		return ""
 	}
-	type layer struct{ uid, aid string }
-	layers := []layer{}
-	if chatterUID != "" && agentID != "" {
-		layers = append(layers, layer{chatterUID, agentID})
-	}
-	if chatterUID != "" {
-		layers = append(layers, layer{chatterUID, ""})
-	}
-	if agentID != "" {
-		layers = append(layers, layer{"", agentID})
-	}
-	layers = append(layers, layer{"", ""})
-	for _, l := range layers {
-		rec, err := st.GetConfigByName(ctx, store.KindSetting, l.uid, l.aid, PrefsNamespace)
+	_ = chatterUID
+	// Single-user flatten: chatter == owner, so resolution is agent → system.
+	for _, aid := range []string{agentID, ""} {
+		rec, err := st.GetConfigByName(ctx, store.KindSetting, aid, PrefsNamespace)
 		if err != nil || rec == nil {
 			continue
 		}
@@ -85,11 +75,12 @@ func SaveUserTimezone(ctx context.Context, st store.Store, userID, tz string) er
 		return errors.New("scope.SaveUserTimezone: userID is required")
 	}
 	data := map[string]interface{}{}
-	if rec, err := st.GetConfigByName(ctx, store.KindSetting, userID, "", PrefsNamespace); err == nil && rec != nil {
+	if rec, err := st.GetConfigByName(ctx, store.KindSetting, "", PrefsNamespace); err == nil && rec != nil {
 		for k, v := range rec.Data {
 			data[k] = v
 		}
 	}
 	data[prefsTimezoneKey] = tz
-	return SaveSetting(ctx, st, userID, "", PrefsNamespace, data)
+	// Single-user flatten: write at system scope (user-scope retired).
+	return SaveSetting(ctx, st, "", "", PrefsNamespace, data)
 }

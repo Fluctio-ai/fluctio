@@ -214,7 +214,7 @@ func loadToolCategoriesExact(ctx context.Context, st store.Store, userID, agentI
 }
 
 func loadSettingExact(ctx context.Context, st store.Store, userID, agentID, namespace string, dst interface{}) error {
-	rec, err := st.GetConfigByName(ctx, store.KindSetting, userID, agentID, namespace)
+	rec, err := st.GetConfigByName(ctx, store.KindSetting, agentID, namespace)
 	if err != nil {
 		if err == store.ErrNotFound {
 			return nil

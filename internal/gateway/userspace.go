@@ -40,7 +40,7 @@ func loadAgentSkillEntries(ctx context.Context, st store.Store, userID string) (
 	}
 	out := map[string]map[string]config.SkillEntryCfg{}
 	for _, ar := range agents {
-		rec, err := st.GetConfigByName(ctx, store.KindSetting, "", ar.ID, "skills.entries")
+		rec, err := st.GetConfigByName(ctx, store.KindSetting, ar.ID, "skills.entries")
 		if err != nil || rec == nil || len(rec.Data) == 0 {
 			continue
 		}
@@ -399,7 +399,7 @@ func (sp *UserSpace) EnsureAgent(ctx context.Context, st store.Store, mb *bus.Me
 	// have UI to set them per-agent.
 	applyOwnerOverlays := true
 	if applyOwnerOverlays {
-		if cfgRec, err := st.GetConfigByName(ctx, store.KindSetting, "", rc.ID, "agents.defaults"); err == nil && cfgRec != nil {
+		if cfgRec, err := st.GetConfigByName(ctx, store.KindSetting, rc.ID, "agents.defaults"); err == nil && cfgRec != nil {
 			var ovr config.AgentDefaults
 			blob, _ := json.Marshal(cfgRec.Data)
 			_ = json.Unmarshal(blob, &ovr)
@@ -492,7 +492,7 @@ func (sp *UserSpace) EnsureAgent(ctx context.Context, st store.Store, mb *bus.Me
 	// that would leak the owner's API keys into another user's session
 	// for skills they may not even be invoking.
 	skillsCfg := sp.Config.Skills
-	if cfgRec, err := st.GetConfigByName(ctx, store.KindSetting, "", rc.ID, "skills.entries"); err == nil && cfgRec != nil && len(cfgRec.Data) > 0 {
+	if cfgRec, err := st.GetConfigByName(ctx, store.KindSetting, rc.ID, "skills.entries"); err == nil && cfgRec != nil && len(cfgRec.Data) > 0 {
 		blob, _ := json.Marshal(cfgRec.Data)
 		var entries map[string]config.SkillEntryCfg
 		if json.Unmarshal(blob, &entries) == nil && len(entries) > 0 {
@@ -615,7 +615,7 @@ func loadUserSpace(ctx context.Context, userID string, mb *bus.MessageBus, st st
 		// and chat silently uses the system/user default.
 		rc := &resolved[i]
 		var agentOverride config.AgentDefaults
-		if rec, err := st.GetConfigByName(ctx, store.KindSetting, "", rc.ID, "agents.defaults"); err == nil && rec != nil {
+		if rec, err := st.GetConfigByName(ctx, store.KindSetting, rc.ID, "agents.defaults"); err == nil && rec != nil {
 			blob, _ := json.Marshal(rec.Data)
 			_ = json.Unmarshal(blob, &agentOverride)
 			if agentOverride.Model != "" {
@@ -838,7 +838,7 @@ func readAgentScopePluginsEnabled(ctx context.Context, st store.Store, agentID s
 	if st == nil || agentID == "" {
 		return nil
 	}
-	rec, err := st.GetConfigByName(ctx, store.KindSetting, "", agentID, "plugins.enabled")
+	rec, err := st.GetConfigByName(ctx, store.KindSetting, agentID, "plugins.enabled")
 	if err != nil || rec == nil {
 		return nil
 	}
@@ -1113,12 +1113,12 @@ func bindingsFromChannelRows(ctx context.Context, st store.Store, userID string,
 
 	// Fallback: read from configs for pre-migration installs.
 	for _, ar := range agents {
-		rows, err := st.ListConfigs(ctx, store.KindChannel, "", ar.ID)
+		rows, err := st.ListConfigs(ctx, store.KindChannel, ar.ID)
 		if err == nil {
 			out = append(out, expandChannelBindings(rows, ar.ID)...)
 		}
 		if userID != "" {
-			rows, err := st.ListConfigs(ctx, store.KindChannel, userID, ar.ID)
+			rows, err := st.ListConfigs(ctx, store.KindChannel, ar.ID)
 			if err == nil {
 				out = append(out, expandChannelBindings(rows, ar.ID)...)
 			}

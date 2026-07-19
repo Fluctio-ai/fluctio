@@ -56,7 +56,7 @@ func TestSettingPrecedence_AgentBeatsSystem(t *testing.T) {
 
 	// Verify the raw agent-scope row reads what we wrote, independent of
 	// the merge — the loadUserSpace overlay path reads this directly.
-	rec, err := db.GetConfigByName(ctx, store.KindSetting, "", agentID, "agents.defaults")
+	rec, err := db.GetConfigByName(ctx, store.KindSetting, agentID, "agents.defaults")
 	if err != nil {
 		t.Fatalf("get agent-scope row: %v", err)
 	}

@@ -320,13 +320,13 @@ func (s *Server) providerForAgent(agentID string) (provider.Provider, string) {
 	// Read agent-level model override first, fall back to system default
 	model := ""
 	if agentID != "" {
-		agentRow, _ := s.dataStore.GetConfigByName(ctx, store.KindSetting, "", agentID, "agents.defaults")
+		agentRow, _ := s.dataStore.GetConfigByName(ctx, store.KindSetting, agentID, "agents.defaults")
 		if agentRow != nil {
 			model, _ = agentRow.Data["model"].(string)
 		}
 	}
 	if model == "" {
-		defaultsRow, err := s.dataStore.GetConfigByName(ctx, store.KindSetting, "", "", "agents.defaults")
+		defaultsRow, err := s.dataStore.GetConfigByName(ctx, store.KindSetting, "", "agents.defaults")
 		if err != nil || defaultsRow == nil {
 			slog.Warn("wiki: no agents.defaults config found")
 			return nil, ""

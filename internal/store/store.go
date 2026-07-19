@@ -219,7 +219,7 @@ type Store interface {
 	//
 	// ListConfigs(kind, userID, agentID) derives scope_id internally and
 	// returns matching rows. Pass both empty to get only system/global rows.
-	ListConfigs(ctx context.Context, kind, userID, agentID string) ([]ConfigRecord, error)
+	ListConfigs(ctx context.Context, kind, agentID string) ([]ConfigRecord, error)
 	// ListConfigsByUser returns every row of a given kind owned by userID
 	// regardless of agent_id. The UserSpace assembly uses this to surface
 	// channel rows where the caller is the binder on a foreign agent —
@@ -233,7 +233,7 @@ type Store interface {
 	// rows of a kind across users/agents.
 	QueryAllConfigs(ctx context.Context, kind string) ([]ConfigRecord, error)
 	GetConfig(ctx context.Context, id string) (*ConfigRecord, error)
-	GetConfigByName(ctx context.Context, kind, userID, agentID, name string) (*ConfigRecord, error)
+	GetConfigByName(ctx context.Context, kind, agentID, name string) (*ConfigRecord, error)
 	SaveConfig(ctx context.Context, c *ConfigRecord) error
 	DeleteConfig(ctx context.Context, id string) error
 	LookupChannelByCredential(ctx context.Context, channelType, credKey string) (*ConfigRecord, error)

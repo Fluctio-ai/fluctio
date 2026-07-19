@@ -47,7 +47,7 @@ func agentShareModelConfig(rec *store.AgentRecord) bool {
 // table — the kind=setting, scope=agent row that supersedes the
 // system/user defaults when set.
 func (s *Server) agentScopeModel(r *http.Request, agentID string) string {
-	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, "", agentID, "agents.defaults")
+	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, agentID, "agents.defaults")
 	if err != nil || rec == nil {
 		return ""
 	}
@@ -72,7 +72,7 @@ func (s *Server) saveAgentScopeModel(r *http.Request, agentID, model string) err
 // this as the base for merge-aware patches (read-modify-write) so a
 // single PATCH that touches one field doesn't clobber the rest.
 func (s *Server) agentScopeDefaultsRead(r *http.Request, agentID string) map[string]interface{} {
-	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, "", agentID, "agents.defaults")
+	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, agentID, "agents.defaults")
 	if err != nil || rec == nil || rec.Data == nil {
 		return map[string]interface{}{}
 	}
@@ -123,7 +123,7 @@ func (s *Server) applyAgentScopePluginsPatch(r *http.Request, agentID string, pa
 		return nil
 	}
 	data := map[string]interface{}{}
-	if rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, "", agentID, "plugins.enabled"); err == nil && rec != nil {
+	if rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, agentID, "plugins.enabled"); err == nil && rec != nil {
 		for k, v := range rec.Data {
 			data[k] = v
 		}
@@ -140,7 +140,7 @@ func (s *Server) applyAgentScopePluginsPatch(r *http.Request, agentID string, pa
 // dashboard could choose to render "unset" differently from "off", but
 // today the Switch renders both as off and that's fine).
 func (s *Server) agentScopeSplitReplies(r *http.Request, agentID string) *bool {
-	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, "", agentID, "agents.defaults")
+	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, agentID, "agents.defaults")
 	if err != nil || rec == nil {
 		return nil
 	}
@@ -153,7 +153,7 @@ func (s *Server) agentScopeSplitReplies(r *http.Request, agentID string) *bool {
 
 // agentScopePromptMode reads the per-agent promptMode override.
 func (s *Server) agentScopePromptMode(r *http.Request, agentID string) string {
-	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, "", agentID, "agents.defaults")
+	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, agentID, "agents.defaults")
 	if err != nil || rec == nil {
 		return ""
 	}
@@ -167,7 +167,7 @@ func (s *Server) agentScopePromptMode(r *http.Request, agentID string) string {
 // nil when no row exists. Keyed pluginID → bool; missing keys fall
 // through to the system-wide plugin entry's enabled state.
 func (s *Server) agentScopePlugins(r *http.Request, agentID string) map[string]bool {
-	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, "", agentID, "plugins.enabled")
+	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, agentID, "plugins.enabled")
 	if err != nil || rec == nil {
 		return nil
 	}
@@ -189,7 +189,7 @@ func (s *Server) agentScopePlugins(r *http.Request, agentID string) map[string]b
 // USER.md / MEMORY.md) which is the only chatter-memory persistence
 // path in chatbot mode.
 func (s *Server) agentScopeAutoPersist(r *http.Request, agentID string) *bool {
-	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, "", agentID, "agents.defaults")
+	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, agentID, "agents.defaults")
 	if err != nil || rec == nil {
 		return nil
 	}

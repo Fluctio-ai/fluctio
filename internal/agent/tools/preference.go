@@ -72,7 +72,7 @@ func makeSetPreference(st store.Store, r *Registry) ToolFunc {
 
 		// Read existing prefs at user-agent scope, merge the new key.
 		data := map[string]interface{}{}
-		if rec, err := st.GetConfigByName(ctx, store.KindSetting, chatterUID, agentID, scope.PrefsNamespace); err == nil && rec != nil {
+		if rec, err := st.GetConfigByName(ctx, store.KindSetting, agentID, scope.PrefsNamespace); err == nil && rec != nil {
 			for k, v := range rec.Data {
 				data[k] = v
 			}

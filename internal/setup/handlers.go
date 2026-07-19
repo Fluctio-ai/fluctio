@@ -87,7 +87,7 @@ func loadAgentSkillEntriesForUser(ctx context.Context, st store.Store, userID st
 	}
 	out := map[string]map[string]config.SkillEntryCfg{}
 	for _, ar := range agents {
-		rec, err := st.GetConfigByName(ctx, store.KindSetting, "", ar.ID, "skills.entries")
+		rec, err := st.GetConfigByName(ctx, store.KindSetting, ar.ID, "skills.entries")
 		if err != nil || rec == nil || len(rec.Data) == 0 {
 			continue
 		}

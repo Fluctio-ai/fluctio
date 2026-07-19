@@ -84,14 +84,14 @@ func Providers(ctx context.Context, st store.Store, userID, agentID string) (map
 		}
 	}
 	// system layer
-	if rows, err := st.ListConfigs(ctx, store.KindProvider, "", ""); err != nil {
+	if rows, err := st.ListConfigs(ctx, store.KindProvider, ""); err != nil {
 		return nil, err
 	} else {
 		apply(rows)
 	}
 	// agent layer
 	if agentID != "" {
-		if rows, err := st.ListConfigs(ctx, store.KindProvider, "", agentID); err != nil {
+		if rows, err := st.ListConfigs(ctx, store.KindProvider, agentID); err != nil {
 			return nil, err
 		} else {
 			apply(rows)
@@ -113,7 +113,7 @@ func AgentScopeProviders(ctx context.Context, st store.Store, agentID string) (m
 	if agentID == "" {
 		return map[string]config.ProviderConfig{}, nil
 	}
-	rows, err := st.ListConfigs(ctx, store.KindProvider, "", agentID)
+	rows, err := st.ListConfigs(ctx, store.KindProvider, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,27 +141,27 @@ func Channels(ctx context.Context, st store.Store, userID, agentID string) (map[
 			out[r.Name] = channelToConfig(r)
 		}
 	}
-	if rows, err := st.ListConfigs(ctx, store.KindChannel, "", ""); err != nil {
+	if rows, err := st.ListConfigs(ctx, store.KindChannel, ""); err != nil {
 		return nil, err
 	} else {
 		apply(rows)
 	}
 	if userID != "" {
-		if rows, err := st.ListConfigs(ctx, store.KindChannel, userID, ""); err != nil {
+		if rows, err := st.ListConfigs(ctx, store.KindChannel, ""); err != nil {
 			return nil, err
 		} else {
 			apply(rows)
 		}
 	}
 	if agentID != "" {
-		if rows, err := st.ListConfigs(ctx, store.KindChannel, "", agentID); err != nil {
+		if rows, err := st.ListConfigs(ctx, store.KindChannel, agentID); err != nil {
 			return nil, err
 		} else {
 			apply(rows)
 		}
 	}
 	if userID != "" && agentID != "" {
-		if rows, err := st.ListConfigs(ctx, store.KindChannel, userID, agentID); err != nil {
+		if rows, err := st.ListConfigs(ctx, store.KindChannel, agentID); err != nil {
 			return nil, err
 		} else {
 			apply(rows)
@@ -186,7 +186,7 @@ func Setting(ctx context.Context, st store.Store, namespace, userID, agentID str
 		}
 	}
 	tryGet := func(uid, aid string) error {
-		rec, err := st.GetConfigByName(ctx, store.KindSetting, uid, aid, namespace)
+		rec, err := st.GetConfigByName(ctx, store.KindSetting, aid, namespace)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return nil
@@ -254,7 +254,7 @@ func SaveSetting(ctx context.Context, st store.Store, userID, agentID, namespace
 	}
 	if len(data) == 0 {
 		// Find and drop the row if it exists. Idempotent: missing-row is a no-op.
-		if rec, err := st.GetConfigByName(ctx, store.KindSetting, userID, agentID, namespace); err == nil && rec != nil {
+		if rec, err := st.GetConfigByName(ctx, store.KindSetting, agentID, namespace); err == nil && rec != nil {
 			return st.DeleteConfig(ctx, rec.ID)
 		}
 		return nil

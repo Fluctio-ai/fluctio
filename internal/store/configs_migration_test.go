@@ -183,7 +183,7 @@ func TestConfigsScopeMigration(t *testing.T) {
 	if err := db.SaveConfig(ctx, rec); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
-	listed, err := db.ListConfigs(ctx, KindProvider, "u_new", agentID)
+	listed, err := db.ListConfigs(ctx, KindProvider, agentID)
 	if err != nil {
 		t.Fatalf("ListConfigs: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestConfigsScopeMigration(t *testing.T) {
 	if err := db.SaveConfig(ctx, agentRec); err != nil {
 		t.Fatalf("SaveConfig (agent scope): %v", err)
 	}
-	got, err := db.GetConfigByName(ctx, KindProvider, "", agentID, "claude")
+	got, err := db.GetConfigByName(ctx, KindProvider, agentID, "claude")
 	if err != nil {
 		t.Fatalf("GetConfigByName (agent scope): %v", err)
 	}

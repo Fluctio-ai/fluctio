@@ -121,14 +121,14 @@ func (s *Server) authorizeScope(w http.ResponseWriter, r *http.Request, sc, scop
 // ownership; this helper exists so the dashboard's scope-keyed routes
 // don't have to inline the conversion at every call site.
 func (s *Server) listConfigsByScope(ctx context.Context, kind, sc, scopeID string) ([]store.ConfigRecord, error) {
-	uid, aid := scope.OwnershipFromScope(sc, scopeID)
-	return s.dataStore.ListConfigs(ctx, kind, uid, aid)
+	_, aid := scope.OwnershipFromScope(sc, scopeID)
+	return s.dataStore.ListConfigs(ctx, kind, aid)
 }
 
 // getConfigByNameScope is the GetConfigByName variant of the same bridge.
 func (s *Server) getConfigByNameScope(ctx context.Context, kind, sc, scopeID, name string) (*store.ConfigRecord, error) {
-	uid, aid := scope.OwnershipFromScope(sc, scopeID)
-	return s.dataStore.GetConfigByName(ctx, kind, uid, aid, name)
+	_, aid := scope.OwnershipFromScope(sc, scopeID)
+	return s.dataStore.GetConfigByName(ctx, kind, aid, name)
 }
 
 // scopeFromQuery reads the scope/scopeId query parameters with sensible
@@ -380,8 +380,8 @@ func (s *Server) handleCreateScopedChannel(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	credKey := credentialKeyFor(req.Type, req.BotToken, req.CredentialKey)
-	uid, aid := scope.OwnershipFromScope(sc, scopeID)
-	if err := s.assertChannelCredentialUnique(r, req.Type, credKey, "", uid, aid); err != nil {
+	_, aid := scope.OwnershipFromScope(sc, scopeID)
+	if err := s.assertChannelCredentialUnique(r, req.Type, credKey, "", "", aid); err != nil {
 		jsonResponse(w, http.StatusConflict, map[string]any{"error": err.Error()})
 		return
 	}

@@ -3853,8 +3853,8 @@ func (d *DBStore) ListAgentFiles(ctx context.Context, agentID string) ([]string,
 // system-scope queries are unaffected by this widening.
 const configSelectCols = `id, kind, scope, scope_id, name, enabled, data, created_at, updated_at`
 
-func (d *DBStore) ListConfigs(ctx context.Context, kind, userID, agentID string) ([]ConfigRecord, error) {
-	scopeID := computeScopeID(userID, agentID)
+func (d *DBStore) ListConfigs(ctx context.Context, kind, agentID string) ([]ConfigRecord, error) {
+	scopeID := computeScopeID("", agentID)
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT `+configSelectCols+`
 			FROM configs WHERE kind = %s AND scope_id = %s ORDER BY name`,
@@ -3914,8 +3914,8 @@ func (d *DBStore) GetConfig(ctx context.Context, id string) (*ConfigRecord, erro
 	return scanConfigRow(row)
 }
 
-func (d *DBStore) GetConfigByName(ctx context.Context, kind, userID, agentID, name string) (*ConfigRecord, error) {
-	scopeID := computeScopeID(userID, agentID)
+func (d *DBStore) GetConfigByName(ctx context.Context, kind, agentID, name string) (*ConfigRecord, error) {
+	scopeID := computeScopeID("", agentID)
 	row := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT `+configSelectCols+`
 			FROM configs WHERE kind = %s AND scope_id = %s AND name = %s`,

@@ -56,7 +56,7 @@ func TestInitCreatesAgentAndOwner(t *testing.T) {
 	}
 
 	// Provider config went to system scope.
-	rec, err := st.GetConfigByName(context.Background(), store.KindProvider, "", "", "openai")
+	rec, err := st.GetConfigByName(context.Background(), store.KindProvider, "", "openai")
 	if err != nil {
 		t.Fatalf("get provider: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestInitProviderPreflightRunsBeforeWrites(t *testing.T) {
 	if len(agents) != 0 {
 		t.Fatalf("preflight failure must not create agents: %#v", agents)
 	}
-	if rec, err := st.GetConfigByName(context.Background(), store.KindProvider, "", "", "openai"); err == nil || rec != nil {
+	if rec, err := st.GetConfigByName(context.Background(), store.KindProvider, "", "openai"); err == nil || rec != nil {
 		t.Fatalf("preflight failure must not save provider config: rec=%#v err=%v", rec, err)
 	}
 }
@@ -291,7 +291,7 @@ func TestSetProviderModelRejectsEmptyValue(t *testing.T) {
 	if err := SetConfig(context.Background(), st, "ignored", "provider.openai.model", ""); err == nil {
 		t.Fatal("empty model id must be rejected")
 	}
-	rec, err := st.GetConfigByName(context.Background(), store.KindProvider, "", "", "openai")
+	rec, err := st.GetConfigByName(context.Background(), store.KindProvider, "", "openai")
 	if err != nil {
 		t.Fatalf("get provider: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestSetProviderModelRejectsEmptyValue(t *testing.T) {
 	if err := SetConfig(context.Background(), st, "ignored", "provider.openai.models", "[]"); err != nil {
 		t.Fatalf("explicit clear: %v", err)
 	}
-	rec, _ = st.GetConfigByName(context.Background(), store.KindProvider, "", "", "openai")
+	rec, _ = st.GetConfigByName(context.Background(), store.KindProvider, "", "openai")
 	if models, _ := rec.Data["models"].([]interface{}); len(models) != 0 {
 		t.Fatalf("models not cleared: %#v", models)
 	}

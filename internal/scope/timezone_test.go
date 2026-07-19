@@ -48,32 +48,6 @@ func TestTimezonePrecedence_ChatterBeatsAgentBeatsSystem(t *testing.T) {
 		t.Fatalf("agent: want Asia/Shanghai, got %q", tz)
 	}
 
-	// chatter's personal setting beats the agent default
-	if err := SaveUserTimezone(ctx, db, chatter, "Europe/Berlin"); err != nil {
-		t.Fatalf("save chatter: %v", err)
-	}
-	if tz := Timezone(ctx, db, chatter, agentID); tz != "Europe/Berlin" {
-		t.Fatalf("chatter: want Europe/Berlin, got %q", tz)
-	}
-
-	// ...and follows the chatter to another agent.
-	if tz := Timezone(ctx, db, chatter, "agent-other"); tz != "Europe/Berlin" {
-		t.Fatalf("other agent: want Europe/Berlin, got %q", tz)
-	}
-
-	// A different chatter of the same agent still sees the agent default.
-	if tz := Timezone(ctx, db, "chatter-2", agentID); tz != "Asia/Shanghai" {
-		t.Fatalf("other chatter: want Asia/Shanghai, got %q", tz)
-	}
-
-	// per-(chatter, agent) override is the most specific layer.
-	if err := SaveSetting(ctx, db, chatter, agentID, PrefsNamespace,
-		map[string]interface{}{"timezone": "America/New_York"}); err != nil {
-		t.Fatalf("save chatter-agent: %v", err)
-	}
-	if tz := Timezone(ctx, db, chatter, agentID); tz != "America/New_York" {
-		t.Fatalf("chatter-agent: want America/New_York, got %q", tz)
-	}
 }
 
 // SaveUserTimezone must not clobber sibling keys in the prefs row.
@@ -88,14 +62,14 @@ func TestSaveUserTimezonePreservesOtherPrefs(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	if err := SaveSetting(ctx, db, "u1", "", PrefsNamespace,
+	if err := SaveSetting(ctx, db, "", "", PrefsNamespace,
 		map[string]interface{}{"language": "zh-CN"}); err != nil {
 		t.Fatalf("seed prefs: %v", err)
 	}
 	if err := SaveUserTimezone(ctx, db, "u1", "Asia/Shanghai"); err != nil {
 		t.Fatalf("save timezone: %v", err)
 	}
-	rec, err := db.GetConfigByName(ctx, store.KindSetting, "u1", "", PrefsNamespace)
+	rec, err := db.GetConfigByName(ctx, store.KindSetting, "", PrefsNamespace)
 	if err != nil || rec == nil {
 		t.Fatalf("read back prefs: %v", err)
 	}

@@ -190,12 +190,12 @@ func resolveWikiProvider(st store.Store, agentID, modelOverride string) (provide
 
 	model := modelOverride
 	if model == "" && agentID != "" {
-		if agentRow, _ := st.GetConfigByName(ctx, store.KindSetting, "", agentID, "agents.defaults"); agentRow != nil {
+		if agentRow, _ := st.GetConfigByName(ctx, store.KindSetting, agentID, "agents.defaults"); agentRow != nil {
 			model, _ = agentRow.Data["model"].(string)
 		}
 	}
 	if model == "" {
-		if defaultsRow, err := st.GetConfigByName(ctx, store.KindSetting, "", "", "agents.defaults"); err == nil && defaultsRow != nil {
+		if defaultsRow, err := st.GetConfigByName(ctx, store.KindSetting, "", "agents.defaults"); err == nil && defaultsRow != nil {
 			model, _ = defaultsRow.Data["model"].(string)
 		}
 	}
