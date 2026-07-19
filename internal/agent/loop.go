@@ -440,7 +440,7 @@ func NewAgentWithFullCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bu
 		}
 		learnerLoader := NewSkillsLoaderWithGlobal(homeDir, rc.Home, rc.Skills, fullCfg.Skills)
 		learnerLoader.agentID = rc.ID
-		ag.skillsLearner = NewSkillsLearner(rc.Home, prov, model, learnerLoader.AllSkillDirs()...)
+		ag.skillsLearner = NewSkillsLearner(rc.Home, rc.Home, prov, model, learnerLoader.AllSkillDirs()...)
 		if fullCfg.SkillsLearner.MinToolCalls > 0 {
 			ag.skillsLearner.minToolCalls = fullCfg.SkillsLearner.MinToolCalls
 		}

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -10,21 +11,40 @@ import (
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/skills"
 )
 
+// errSkillAlreadyPending signals that a skill with the same slug is already
+// staged in <agentHome>/skills-pending/. MaybeExtract treats this as a silent
+// skip — a chatty conversation that produces the same extraction repeatedly
+// must not overwrite an already-staged pending entry.
+var errSkillAlreadyPending = errors.New("skill already pending")
+
 // SkillsLearner observes complex tasks and extracts reusable skill patterns.
+//
+// workspace is the live skills tree root used only for the "already exists?"
+// pre-check (extracted skills whose slug already lives in <workspace>/skills
+// are not re-staged). agentHome is where the pending approval queue lives
+// (<agentHome>/skills-pending/); the two are usually the same directory in
+// practice (rc.Home) but kept separate so the existence check and the write
+// target are conceptually distinct.
 type SkillsLearner struct {
 	workspace    string
+	agentHome    string
 	provider     provider.Provider
 	model        string
 	minToolCalls int      // minimum tool calls to consider extracting (default: 3)
 	skillDirs    []string // directories to search for the skill-learner skill
 }
 
-// NewSkillsLearner creates a new SkillsLearner.
-func NewSkillsLearner(workspace string, p provider.Provider, model string, skillDirs ...string) *SkillsLearner {
+// NewSkillsLearner creates a new SkillsLearner. agentHome is the directory
+// under which skills-pending/ lives (the approval gate target). workspace is
+// the live skills tree root for the "already exists?" pre-check; pass the
+// same value when the caller doesn't distinguish.
+func NewSkillsLearner(workspace, agentHome string, p provider.Provider, model string, skillDirs ...string) *SkillsLearner {
 	return &SkillsLearner{
 		workspace:    workspace,
+		agentHome:    agentHome,
 		provider:     p,
 		model:        model,
 		minToolCalls: 3,
@@ -45,7 +65,10 @@ type extractionResponse struct {
 }
 
 // MaybeExtract checks if the conversation warrants skill extraction.
-// Called after agent turns complete. Extracts and saves to workspace/skills/<name>/SKILL.md.
+// Called after agent turns complete. The extracted skill is staged to
+// <agentHome>/skills-pending/<slug>/ — NOT the live skills/ tree — so the
+// background extractor honours the same user-approval gate as skill_manage.
+// Activate via `fluctio skill approve <slug>`.
 func (sl *SkillsLearner) MaybeExtract(ctx context.Context, messages []provider.Message, toolCallCount int) error {
 	if toolCallCount < sl.minToolCalls {
 		return nil
@@ -59,23 +82,55 @@ func (sl *SkillsLearner) MaybeExtract(ctx context.Context, messages []provider.M
 		return nil
 	}
 
-	// Check if similar skill already exists
+	// Skip if the skill already lives in the live tree. The pending write
+	// itself also guards against re-staging (stageExtractedSkill returns
+	// errSkillAlreadyPending), so this check is a fast-path stat before
+	// hitting the LLM-staged body.
 	skillDir := filepath.Join(sl.workspace, "skills", skill.Slug)
 	if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); err == nil {
 		slog.Debug("skill already exists, skipping", "slug", skill.Slug)
 		return nil
 	}
 
-	// Save the extracted skill
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		return fmt.Errorf("create skill dir: %w", err)
+	if err := sl.stageExtractedSkill(skill); err != nil {
+		if errors.Is(err, errSkillAlreadyPending) {
+			slog.Debug("skill already pending, skipping", "slug", skill.Slug)
+			return nil
+		}
+		return fmt.Errorf("stage skill: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skill.Content), 0o644); err != nil {
-		return fmt.Errorf("write skill: %w", err)
-	}
+	slog.Info("staged skill to PENDING",
+		"name", skill.Name, "slug", skill.Slug,
+		"hint", fmt.Sprintf("run `fluctio skill approve %s` to activate", skill.Slug))
+	return nil
+}
 
-	slog.Info("extracted new skill", "name", skill.Name, "slug", skill.Slug)
+// stageExtractedSkill writes the LLM-produced SKILL.md body to the pending
+// approval queue at <agentHome>/skills-pending/<slug>/SKILL.md (plus
+// .pending.json metadata with Source="skills_learner" and Action="create").
+// It does NOT touch the live skills/ directory — approval is a separate
+// user-driven step (`fluctio skill approve <slug>`).
+//
+// Returns errSkillAlreadyPending without writing if a pending entry with the
+// same slug already exists, so repeated extraction attempts on similar
+// conversations don't clobber an earlier stage.
+func (sl *SkillsLearner) stageExtractedSkill(skill *extractedSkill) error {
+	if sl.agentHome == "" {
+		return fmt.Errorf("stageExtractedSkill: agentHome is required")
+	}
+	pendingSkillPath := filepath.Join(sl.agentHome, "skills-pending", skill.Slug, "SKILL.md")
+	if _, err := os.Stat(pendingSkillPath); err == nil {
+		return errSkillAlreadyPending
+	}
+	meta := skills.PendingMeta{
+		Source:      "skills_learner",
+		Description: skill.Description,
+		Action:      skills.ActionCreate,
+	}
+	if err := skills.WritePending(sl.agentHome, skill.Slug, []byte(skill.Content), meta); err != nil {
+		return err
+	}
 	return nil
 }
 
