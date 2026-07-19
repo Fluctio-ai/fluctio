@@ -434,7 +434,6 @@ type SessionRecord struct {
 // summary background sweep.
 type IdleSession struct {
 	SessionKey    string
-	ChatterUserID string
 	MessageCount  int
 	UpdatedAt     time.Time
 }
@@ -504,7 +503,6 @@ type SessionMeta struct {
 	Title         string    `json:"title,omitempty"`
 	MessageCount  int       `json:"messageCount"`
 	UpdatedAt     time.Time `json:"updatedAt"`
-	ChatterUserID string    `json:"chatterUserId,omitempty"`
 }
 
 // ProjectRecord is a per-(user, agent) named workspace folder. Sessions

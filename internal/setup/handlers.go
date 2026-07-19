@@ -1774,17 +1774,6 @@ func (s *Server) handleChats(w http.ResponseWriter, r *http.Request) {
 			"createdAt":    ws.CreatedAt,
 			"updatedAt":    ws.UpdatedAt,
 		}
-		if ws.ChatterUserID != "" {
-			entry["chatterUserId"] = ws.ChatterUserID
-			if chatter := resolveOwner(ws.ChatterUserID); chatter != nil {
-				if chatter.ExternalID != "" {
-					entry["chatterExternalId"] = chatter.ExternalID
-				}
-				if chatter.DisplayName != "" {
-					entry["chatterDisplayName"] = chatter.DisplayName
-				}
-			}
-		}
 		if owner != nil {
 			entry["ownerUsername"] = owner.Username
 			entry["ownerEmail"] = owner.Email

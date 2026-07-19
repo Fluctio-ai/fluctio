@@ -306,7 +306,6 @@ func (a *StoreAdapter) BuildWebSession(ctx context.Context, m store.SessionMeta)
 		ThumbnailURL:  thumb,
 		CreatedAt:     m.UpdatedAt.UnixMilli(),
 		UpdatedAt:     m.UpdatedAt.UnixMilli(),
-		ChatterUserID: m.ChatterUserID,
 	}
 }
 

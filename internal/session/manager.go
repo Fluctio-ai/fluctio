@@ -735,7 +735,6 @@ type WebSession struct {
 	// ChatterUserID is the actual conversation participant. Differs
 	// from user_id when an IM sender is resolved to a per-sender
 	// app_user under the channel owner's UserSpace.
-	ChatterUserID string `json:"chatterUserId,omitempty"`
 }
 
 // ListWebSessions scans session files for web chat sessions and returns

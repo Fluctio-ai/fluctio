@@ -3349,7 +3349,7 @@ func (d *DBStore) SaveSession(ctx context.Context, agentID, sessionKey string, s
 
 func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMeta, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT session_key, '' AS user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, '' AS chatter_user_id FROM sessions
+		fmt.Sprintf(`SELECT session_key, '' AS user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at FROM sessions
 			WHERE agent_id = %s ORDER BY updated_at DESC`, d.ph(1)),
 		agentID)
 	if err != nil {
@@ -3359,7 +3359,7 @@ func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMe
 	var metas []SessionMeta
 	for rows.Next() {
 		var m SessionMeta
-		if err := rows.Scan(&m.Key, &m.UserID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt, &m.ChatterUserID); err != nil {
+		if err := rows.Scan(&m.Key, &m.UserID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
 		metas = append(metas, m)
@@ -3446,7 +3446,7 @@ func (d *DBStore) ListSessionsPaginated(ctx context.Context, agentIDs []string, 
 		return nil, 0, err
 	}
 	// Page query.
-	dataQ := fmt.Sprintf(`SELECT session_key, '' AS user_id, agent_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, '' AS chatter_user_id
+	dataQ := fmt.Sprintf(`SELECT session_key, '' AS user_id, agent_id, channel, account_id, chat_id, project_id, title, message_count, updated_at
 		FROM sessions %s ORDER BY updated_at DESC LIMIT %d OFFSET %d`, where, limit, offset)
 	rows, err := d.db.QueryContext(ctx, dataQ, args...)
 	if err != nil {
@@ -3457,7 +3457,7 @@ func (d *DBStore) ListSessionsPaginated(ctx context.Context, agentIDs []string, 
 	for rows.Next() {
 		var m SessionMeta
 		var agentID string
-		if err := rows.Scan(&m.Key, &m.UserID, &agentID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt, &m.ChatterUserID); err != nil {
+		if err := rows.Scan(&m.Key, &m.UserID, &agentID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		m.AgentID = agentID
@@ -5444,7 +5444,7 @@ func (d *DBStore) SetSessionLastSummarizedSeq(ctx context.Context, agentID, sess
 
 func (d *DBStore) ListIdleSessions(ctx context.Context, agentID string, cutoff time.Time, minMessages int) ([]IdleSession, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT session_key, '' AS chatter_user_id, message_count, updated_at FROM sessions
+		fmt.Sprintf(`SELECT session_key, message_count, updated_at FROM sessions
 			WHERE agent_id = %s AND updated_at < %s AND message_count >= %s
 			AND last_summarized_seq < message_count - 1
 			ORDER BY updated_at ASC`,
@@ -5457,7 +5457,7 @@ func (d *DBStore) ListIdleSessions(ctx context.Context, agentID string, cutoff t
 	var out []IdleSession
 	for rows.Next() {
 		var s IdleSession
-		if err := rows.Scan(&s.SessionKey, &s.ChatterUserID, &s.MessageCount, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.SessionKey, &s.MessageCount, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
