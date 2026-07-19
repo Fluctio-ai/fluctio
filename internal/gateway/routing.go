@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/agent"
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
@@ -65,21 +64,12 @@ func (g *Gateway) processInbound(ctx context.Context) {
 				continue
 			}
 
-			// When shared_identity is enabled on the channel, the owner
-			// wants all their personal channels to share the same session
-			// and memory. Skip per-platform chatter creation and use the
-			// owner's user_id directly so session/memory resolution lands
-			// on the same identity regardless of which channel the message
-			// arrived from.
+			// Single-user flatten: every inbound resolves to the owner.
+			// A channel with shared_identity still flags msg.SharedIdentity
+			// so SessionTriple converges on the shared session key.
+			msg.UserID = ownerID
 			if sharedIdentity {
-				msg.UserID = ownerID
 				msg.SharedIdentity = true
-			} else if chatterID := g.resolveChatter(ctx, ownerID, msg); chatterID != "" {
-				// Normalize msg.UserID into a fluctio `u_xxx` id. IM
-				// channels emit the raw platform-side identifier; without
-				// translation the agent ends up with an empty chatter
-				// profile every turn.
-				msg.UserID = chatterID
 			}
 
 			if msg.PeerKind != "group" {
@@ -158,95 +148,6 @@ func (g *Gateway) resolveChannelOwner(ctx context.Context, msg bus.InboundMessag
 	return channelOwnerInfo{}
 }
 
-// resolveChatter normalizes msg.UserID into a fluctio `u_xxx` id. IM
-// channels deliver the platform-side identifier (wechat openid, telegram
-// numeric id, …) and the agent loop then keys per-chatter files (USER.md,
-// MEMORY.md, per-user skills) under that raw string — which never matches
-// the u_xxx rows the dashboard wrote. Translating once at the routing seam
-// keeps every downstream consumer of msg.UserID aligned without having to
-// teach each one about the IM-side namespace.
-//
-// Resolution:
-//   - empty UserID → "" (caller leaves the slot empty; chatterUserID will
-//     fall back to the agent owner).
-//   - already `u_`-prefixed → assume it's already canonical, leave alone.
-//   - lazy-mint an app_user keyed by the owner namespace plus
-//     "<channel>:<accountID>:<msg.UserID>" so every distinct IM sender gets
-//     a stable u_xxx of their own. Channel and account are prefixed so the
-//     same numeric id on two platforms or two bots cannot merge into one
-//     USER.md / MEMORY.md row.
-//
-// Returns "" when the original msg.UserID should be kept unchanged
-// (empty input, already canonical, or any error path) — the caller treats
-// "" as "no rewrite".
-func (g *Gateway) resolveChatter(ctx context.Context, ownerID string, msg bus.InboundMessage) string {
-	if msg.UserID == "" {
-		return ""
-	}
-	if strings.HasPrefix(msg.UserID, "u_") {
-		return ""
-	}
-	if g.store == nil || g.accounts == nil {
-		return ""
-	}
-	// extID uses channel + platform user ID only — no accountID.
-	// This keeps the chatter's identity stable across bot reconnections
-	// (where accountID changes) and across multiple agents owned by the
-	// same user (where each agent has a different bot / accountID).
-	extID := msg.Channel + ":" + msg.UserID
-
-	// Look up by owner_user_id + extID (new format).
-	if acc, err := g.store.GetUserByExternal(ctx, ownerID, extID); err == nil {
-		return acc.ID
-	}
-	// Fall back: owner_user_id + legacy extID (channel:accountID:userID)
-	// for chatters created before the accountID-free format.
-	if acc, err := g.store.GetUserByExternalSuffix(ctx, ownerID, msg.Channel+":", ":"+msg.UserID); err == nil {
-		return acc.ID
-	}
-	// Fall back: legacy rows where owner_user_id was stored as
-	// "owner:xxx" in the old apikey_id column (pre-migration). The
-	// migration backfills owner_user_id, but in case it hasn't run
-	// yet or the row was created by an older binary, check the old
-	// namespace format too.
-	legacyNS := "owner:" + ownerID
-	if acc, err := g.store.GetUserByExternalSuffix(ctx, legacyNS, msg.Channel+":", ":"+msg.UserID); err == nil {
-		return acc.ID
-	}
-	// Also check platform-scoped namespace (apikey owner ID) used
-	// before the per-tenant fix.
-	if owner, err := g.store.GetUser(ctx, ownerID); err == nil && owner.APIKeyID != "" {
-		if acc, err := g.store.GetUserByExternalSuffix(ctx, owner.APIKeyID, msg.Channel+":", ":"+msg.UserID); err == nil {
-			return acc.ID
-		}
-	}
-	// Ancestor fallback: when the channel is bound by an app_user but
-	// the chatter was historically created under the app_user's parent
-	// (web user) or another app_user, walk up the ownership chain and
-	// retry. On hit, migrate the chatter's owner_user_id to the current
-	// ownerID so subsequent lookups are fast and don't repeat this walk.
-	if owner, err := g.store.GetUser(ctx, ownerID); err == nil && owner.OwnerUserID != "" {
-		// ownerID is an app_user — try its parent (web user).
-		if acc, err := g.store.GetUserByExternal(ctx, owner.OwnerUserID, extID); err == nil {
-			acc.OwnerUserID = ownerID
-			_ = g.store.UpdateUser(ctx, acc)
-			return acc.ID
-		}
-		if acc, err := g.store.GetUserByExternalSuffix(ctx, owner.OwnerUserID, msg.Channel+":", ":"+msg.UserID); err == nil {
-			acc.OwnerUserID = ownerID
-			_ = g.store.UpdateUser(ctx, acc)
-			return acc.ID
-		}
-	}
-	// Neither found — brand new chatter.
-	chatter, err := g.accounts.EnsureChatter(ctx, ownerID, extID, msg.SenderName)
-	if err != nil {
-		slog.Warn("resolveChatter: EnsureChatter failed",
-			"owner", ownerID, "ext", extID, "error", err)
-		return ""
-	}
-	return chatter.ID
-}
 
 // trySteer diverts msg into target's currently in-flight turn instead of
 // queuing a separate one. `text` is the body the Submit path would have
