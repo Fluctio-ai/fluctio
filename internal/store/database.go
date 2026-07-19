@@ -240,6 +240,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateIMClaimsDropOwnerUUID(ctx); err != nil {
 		return fmt.Errorf("migrate im_claims drop owner_uuid: %w", err)
 	}
+	if err := d.migrateConversationSummariesDropUserID(ctx); err != nil {
+		return fmt.Errorf("migrate conversation_summaries drop user_id: %w", err)
+	}
 	return nil
 }
 
@@ -1609,6 +1612,54 @@ func (d *DBStore) migrateIMClaimsDropOwnerUUID(ctx context.Context) error {
 			if _, err := d.db.ExecContext(ctx, s); err != nil {
 				return fmt.Errorf("sqlite rebuild im_claims: %w\nSQL: %s", err, s)
 			}
+		}
+	}
+	return nil
+}
+
+// migrateConversationSummariesDropUserID drops conversation_summaries.user_id.
+// Recall keys on (chatter_user_id, agent_id, session_key, seq_start, seq_end);
+// user_id was a redundant owner marker. Idempotent.
+func (d *DBStore) migrateConversationSummariesDropUserID(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "conversation_summaries", "user_id")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+	if d.dialect == "postgres" {
+		if _, err := d.db.ExecContext(ctx, `ALTER TABLE conversation_summaries DROP COLUMN IF EXISTS user_id`); err != nil {
+			return fmt.Errorf("postgres drop conversation_summaries.user_id: %w", err)
+		}
+		return nil
+	}
+	for _, s := range []string{
+		`CREATE TABLE conversation_summaries_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			agent_id TEXT NOT NULL,
+			session_key TEXT NOT NULL,
+			chatter_user_id TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL,
+			keywords TEXT NOT NULL DEFAULT '[]',
+			seq_start INTEGER NOT NULL,
+			seq_end INTEGER NOT NULL,
+			embedding_model TEXT,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			topic TEXT NOT NULL DEFAULT '',
+			importance INTEGER NOT NULL DEFAULT 0,
+			access_count INTEGER NOT NULL DEFAULT 0,
+			access_time_sum INTEGER NOT NULL DEFAULT 0,
+			last_accessed_at TIMESTAMP,
+			segments TEXT NOT NULL DEFAULT '[]'
+		)`,
+		`INSERT INTO conversation_summaries_new (id, agent_id, session_key, chatter_user_id, summary, keywords, seq_start, seq_end, embedding_model, created_at, topic, importance, access_count, access_time_sum, last_accessed_at, segments)
+			SELECT id, agent_id, session_key, chatter_user_id, summary, keywords, seq_start, seq_end, embedding_model, created_at, topic, importance, access_count, access_time_sum, last_accessed_at, segments FROM conversation_summaries`,
+		`DROP TABLE conversation_summaries`,
+		`ALTER TABLE conversation_summaries_new RENAME TO conversation_summaries`,
+	} {
+		if _, err := d.db.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("sqlite rebuild conversation_summaries: %w\nSQL: %s", err, s)
 		}
 	}
 	return nil
@@ -5089,7 +5140,6 @@ func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
 		pgStmts := []string{
 			`CREATE TABLE IF NOT EXISTS conversation_summaries (
 				id SERIAL PRIMARY KEY,
-				user_id TEXT NOT NULL,
 				agent_id TEXT NOT NULL,
 				session_key TEXT NOT NULL,
 				chatter_user_id TEXT NOT NULL DEFAULT '',
@@ -5127,7 +5177,6 @@ func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS conversation_summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
 			session_key TEXT NOT NULL,
 			chatter_user_id TEXT NOT NULL DEFAULT '',

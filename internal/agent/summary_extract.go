@@ -367,7 +367,7 @@ func persistConversationSummary(
 				"agent", agentID, "session", sessionKey, "last_seq", lastSeq)
 			return
 		}
-		existing, lerr := db.ListConversationSummariesBySession(ctx, userID, agentID, sessionKey)
+		existing, lerr := db.ListConversationSummariesBySession(ctx, agentID, sessionKey)
 		if lerr != nil {
 			slog.Warn("conversation summary: list existing failed, falling back to full",
 				"agent", agentID, "session", sessionKey, "error", lerr)
@@ -395,7 +395,7 @@ func persistConversationSummary(
 	}
 
 	if incremental {
-		if derr := db.DeleteConversationSummariesBySession(ctx, userID, agentID, sessionKey); derr != nil {
+		if derr := db.DeleteConversationSummariesBySession(ctx, agentID, sessionKey); derr != nil {
 			slog.Warn("conversation summary: delete old failed, aborting incremental",
 				"agent", agentID, "session", sessionKey, "error", derr)
 			return

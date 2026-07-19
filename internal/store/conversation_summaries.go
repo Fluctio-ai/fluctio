@@ -77,9 +77,9 @@ func (d *DBStore) InsertConversationSummary(
 		// (reinforcement state survives re-summarize).
 		err = d.db.QueryRowContext(ctx, `
 			INSERT INTO conversation_summaries
-				(user_id, agent_id, session_key, chatter_user_id,
+				(agent_id, session_key, chatter_user_id,
 				 summary, keywords, seq_start, seq_end, embedding_model, importance, topic, segments)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			ON CONFLICT (chatter_user_id, agent_id, session_key, seq_start, seq_end)
 			DO UPDATE SET summary = EXCLUDED.summary,
 			              keywords = EXCLUDED.keywords,
@@ -88,7 +88,7 @@ func (d *DBStore) InsertConversationSummary(
 			              topic = EXCLUDED.topic,
 			              segments = EXCLUDED.segments
 			RETURNING id`,
-			s.UserID, s.AgentID, s.SessionKey, s.ChatterUserID,
+			s.AgentID, s.SessionKey, s.ChatterUserID,
 			s.Summary, string(keywordsJSON), s.SeqStart, s.SeqEnd,
 			nilIfEmpty(s.EmbeddingModel), s.Importance, s.Topic, string(segmentsJSON),
 		).Scan(&id)
@@ -98,9 +98,9 @@ func (d *DBStore) InsertConversationSummary(
 		// the caller can stamp the vector on the right summary.
 		err = d.db.QueryRowContext(ctx, `
 			INSERT INTO conversation_summaries
-				(user_id, agent_id, session_key, chatter_user_id,
+				(agent_id, session_key, chatter_user_id,
 				 summary, keywords, seq_start, seq_end, embedding_model, importance, topic, segments)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(chatter_user_id, agent_id, session_key, seq_start, seq_end)
 			DO UPDATE SET summary = excluded.summary,
 			              keywords = excluded.keywords,
@@ -109,7 +109,7 @@ func (d *DBStore) InsertConversationSummary(
 			              topic = excluded.topic,
 			              segments = excluded.segments
 			RETURNING id`,
-			s.UserID, s.AgentID, s.SessionKey, s.ChatterUserID,
+			s.AgentID, s.SessionKey, s.ChatterUserID,
 			s.Summary, string(keywordsJSON), s.SeqStart, s.SeqEnd,
 			nilIfEmpty(s.EmbeddingModel), s.Importance, s.Topic, string(segmentsJSON),
 		).Scan(&id)
@@ -197,7 +197,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 		}
 		args = append(args, fetchLimit)
 		rows, err := d.db.QueryContext(ctx, `
-			SELECT id, user_id, agent_id, session_key, chatter_user_id,
+			SELECT id, agent_id, session_key, chatter_user_id,
 			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			FROM conversation_summaries
 			WHERE agent_id = $1
@@ -224,7 +224,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 	}
 	args = append(args, fetchLimit)
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, user_id, agent_id, session_key, chatter_user_id,
+		SELECT id, agent_id, session_key, chatter_user_id,
 		       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 		FROM conversation_summaries
 		WHERE agent_id = ?
@@ -252,7 +252,7 @@ func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 		var topic string
 		var segmentsJSON string
 		err := rows.Scan(
-			&s.ID, &s.UserID, &s.AgentID, &s.SessionKey, &s.ChatterUserID,
+			&s.ID, &s.AgentID, &s.SessionKey, &s.ChatterUserID,
 			&s.Summary, &keywordsJSON, &s.SeqStart, &s.SeqEnd, &embModel,
 			&s.Importance, &s.AccessCount, &s.AccessTimeSum, &lastAccessed, &s.CreatedAt,
 			&topic, &segmentsJSON,
@@ -895,7 +895,7 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key, chatter_user_id,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE agent_id = $1
@@ -903,7 +903,7 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 			 LIMIT $2`, agentID, limit)
 	default:
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key, chatter_user_id,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE agent_id = ?
@@ -921,24 +921,24 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 // session (across the session's lifetime), ordered by creation. Used by
 // the incremental summary path to feed the LLM the existing topic list
 // for merge. Empty slice for a session that has never been summarized.
-func (d *DBStore) ListConversationSummariesBySession(ctx context.Context, userID, agentID, sessionKey string) ([]ConversationSummary, error) {
+func (d *DBStore) ListConversationSummariesBySession(ctx context.Context, agentID, sessionKey string) ([]ConversationSummary, error) {
 	var rows *sql.Rows
 	var err error
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key, chatter_user_id,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
-			 WHERE user_id = $1 AND agent_id = $2 AND session_key = $3
-			 ORDER BY created_at`, userID, agentID, sessionKey)
+			 WHERE agent_id = $1 AND session_key = $2
+			 ORDER BY created_at`, agentID, sessionKey)
 	default:
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key, chatter_user_id,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
-			 WHERE user_id = ? AND agent_id = ? AND session_key = ?
-			 ORDER BY created_at`, userID, agentID, sessionKey)
+			 WHERE agent_id = ? AND session_key = ?
+			 ORDER BY created_at`, agentID, sessionKey)
 	}
 	if err != nil {
 		return nil, err
@@ -951,11 +951,11 @@ func (d *DBStore) ListConversationSummariesBySession(ctx context.Context, userID
 // vector) for one session. Called by the incremental summary path before
 // writing the merged topic list — the LLM returns the full updated set,
 // so old rows are dropped and the new set inserted in their place.
-func (d *DBStore) DeleteConversationSummariesBySession(ctx context.Context, userID, agentID, sessionKey string) error {
+func (d *DBStore) DeleteConversationSummariesBySession(ctx context.Context, agentID, sessionKey string) error {
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`DELETE FROM conversation_summaries WHERE user_id = $1 AND agent_id = $2 AND session_key = $3`,
-			userID, agentID, sessionKey)
+			`DELETE FROM conversation_summaries WHERE agent_id = $1 AND session_key = $2`,
+			agentID, sessionKey)
 		return err
 	}
 	// SQLite: vec0 lives in a separate virtual table keyed by summary_id.
@@ -968,13 +968,13 @@ func (d *DBStore) DeleteConversationSummariesBySession(ctx context.Context, user
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM conversation_summaries_vec WHERE summary_id IN (
-			SELECT id FROM conversation_summaries WHERE user_id = ? AND agent_id = ? AND session_key = ?)`,
-		userID, agentID, sessionKey); err != nil {
+			SELECT id FROM conversation_summaries WHERE agent_id = ? AND session_key = ?)`,
+		agentID, sessionKey); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM conversation_summaries WHERE user_id = ? AND agent_id = ? AND session_key = ?`,
-		userID, agentID, sessionKey); err != nil {
+		`DELETE FROM conversation_summaries WHERE agent_id = ? AND session_key = ?`,
+		agentID, sessionKey); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1007,7 +1007,7 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, user_id, agent_id, session_key, chatter_user_id,
+			`SELECT id, agent_id, session_key, chatter_user_id,
 			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 			 FROM conversation_summaries
 			 WHERE embedding IS NULL OR ($1 != '' AND (embedding_model IS NULL OR embedding_model != $1))
@@ -1015,7 +1015,7 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 			 LIMIT $2`, model, limit)
 	default:
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT s.id, s.user_id, s.agent_id, s.session_key, s.chatter_user_id,
+			`SELECT s.id, s.agent_id, s.session_key, s.chatter_user_id,
 			        s.summary, s.keywords, s.seq_start, s.seq_end, s.embedding_model, s.importance, s.access_count, s.access_time_sum, s.last_accessed_at, s.created_at, s.topic, s.segments
 			 FROM conversation_summaries s
 			 LEFT JOIN conversation_summaries_vec v ON v.summary_id = s.id
@@ -1046,7 +1046,7 @@ func (d *DBStore) GetConversationSummariesByIDs(ctx context.Context, ids []int64
 		args[i] = id
 	}
 
-	q := fmt.Sprintf(`SELECT id, user_id, agent_id, session_key, chatter_user_id,
+	q := fmt.Sprintf(`SELECT id, agent_id, session_key, chatter_user_id,
 	       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
 	FROM conversation_summaries
 	WHERE id IN (%s)

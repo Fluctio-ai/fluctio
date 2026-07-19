@@ -164,9 +164,9 @@ func TestIncrementConversationSummaryAccessMaintainsTimeSum(t *testing.T) {
 	ctx := context.Background()
 
 	res, err := db.db.ExecContext(ctx, `INSERT INTO conversation_summaries
-		(user_id, agent_id, session_key, chatter_user_id, summary, keywords, seq_start, seq_end)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		"u1", "a1", "s1", "c1", "sum", "[]", 0, 10)
+		(agent_id, session_key, chatter_user_id, summary, keywords, seq_start, seq_end)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"a1", "s1", "c1", "sum", "[]", 0, 10)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
