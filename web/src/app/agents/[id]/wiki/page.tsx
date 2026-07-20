@@ -333,17 +333,19 @@ export default function WikiPage() {
     return m;
   }, [pages]);
 
-  // Rewrite [[type:slug]] wiki links into standard markdown links carrying a
-  // "wiki:" pseudo-protocol that the a renderer below intercepts. Doing this
-  // as a source rewrite (instead of inside a p renderer) means links parse
-  // regardless of whether the surrounding paragraph has inline markup — the
-  // old p-renderer split only handled plain-text paragraphs, so links inside
-  // bold/italic/code-rich paragraphs silently rendered as literal text.
+  // Rewrite [[type:slug]] wiki links into standard markdown links. Two forms
+  // occur in the wild: [[type:slug]] (the prompt asks for this) and
+  // [[type:slug|display text]] (an Obsidian-style alias the LLM emits too),
+  // so the regex accepts an optional "|alias". The href uses a relative
+  // "/wiki-link/" path rather than a "wiki:" pseudo-protocol — ReactMarkdown's
+  // URL sanitizer strips unknown schemes to "", which would drop the link;
+  // a relative path survives, and the a renderer below intercepts it.
   const renderedBody = useMemo(() => {
     if (!selectedPage) return "";
     return (selectedPage.body || "").replace(
-      /\[\[(\w+:[\w-]+)\]\]/g,
-      (_, link) => `[${titleMap[link] ?? link}](wiki:${link})`,
+      /\[\[(\w+:[\w-]+)(?:\|([^\]]+))?\]\]/g,
+      (_, link, display) =>
+        `[${display || titleMap[link] || link}](/wiki-link/${link})`,
     );
   }, [selectedPage, titleMap]);
 
@@ -560,18 +562,22 @@ export default function WikiPage() {
                       // (produced by the [[type:slug]] source rewrite in
                       // renderedBody). Intercept and route to the page
                       // selector instead of letting the browser navigate.
-                      if (href && href.startsWith("wiki:")) {
+                      if (href && href.startsWith("/wiki-link/")) {
+                        // Render as a <button>, NOT <a href> — any href lets
+                        // the browser/Next.js router treat the click as
+                        // navigation and hijack it away from the wiki view.
+                        // The link target is "/wiki-link/<type>:<slug>" from
+                        // the [[...]] source rewrite in renderedBody.
                         return (
-                          <a
-                            href="#"
-                            className="text-primary underline hover:text-primary/80 cursor-pointer"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              handleSelectPage(href.slice(5));
-                            }}
+                          <button
+                            type="button"
+                            className="text-primary underline hover:text-primary/80 cursor-pointer inline bg-transparent border-0 p-0 font-inherit"
+                            onClick={() =>
+                              handleSelectPage(href.slice("/wiki-link/".length))
+                            }
                           >
                             {children}
-                          </a>
+                          </button>
                         );
                       }
                       return ExternalAnchor(props);
