@@ -612,6 +612,13 @@ func formatResults(results []KBResult, query string, ids []string) string {
 		}
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString("When you use a fact from these results, cite it inline with the bracketed id, e.g. [K1]; multiple sources: [K1][K3].\n")
+	switch {
+	case len(ids) >= 2:
+		sb.WriteString(fmt.Sprintf("When you use a fact from these results, cite it inline with the bracketed id, e.g. [%s]; multiple sources: [%s][%s].\n", ids[0], ids[0], ids[1]))
+	case len(ids) == 1:
+		sb.WriteString(fmt.Sprintf("When you use a fact from these results, cite it inline with the bracketed id, e.g. [%s].\n", ids[0]))
+	default:
+		sb.WriteString("When you use a fact from these results, cite it inline with the bracketed id.\n")
+	}
 	return sb.String()
 }

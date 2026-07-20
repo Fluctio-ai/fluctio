@@ -264,7 +264,14 @@ func injectKBContext(hc *HookContext, results []KBResult, citations []string) {
 		sb.WriteString(content)
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString("When you use a fact from the sources above, cite it inline with the bracketed id, e.g. [K1]; if several sources support a point, cite all of them, e.g. [K1][K3].\n\n")
+	switch {
+	case len(citations) >= 2:
+		sb.WriteString(fmt.Sprintf("When you use a fact from the sources above, cite it inline with the bracketed id, e.g. [%s]; if several sources support a point, cite all of them, e.g. [%s][%s].\n\n", citations[0], citations[0], citations[1]))
+	case len(citations) == 1:
+		sb.WriteString(fmt.Sprintf("When you use a fact from the sources above, cite it inline with the bracketed id, e.g. [%s].\n\n", citations[0]))
+	default:
+		sb.WriteString("When you use a fact from the sources above, cite it inline with the bracketed id.\n\n")
+	}
 
 	kbMsg := provider.Message{
 		Role:    "user",
