@@ -220,7 +220,7 @@ func (s *Server) handleKBSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
-	results, err := kbStore.Search(r.Context(), agentID, req.Query, limit, 0, 0.5, 0.15)
+	results, err := kbStore.Search(r.Context(), agentID, req.Query, limit, 0, 0.5, 0.45)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

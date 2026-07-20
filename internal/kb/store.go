@@ -129,7 +129,7 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 		sourceRatio = 0.5
 	}
 	if threshold < 0 || threshold > 1 {
-		threshold = 0.15
+		threshold = 0.45
 	}
 	sourceLimit := int(math.Round(float64(limit) * sourceRatio))
 	otherLimit := limit - sourceLimit

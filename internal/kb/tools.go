@@ -118,14 +118,14 @@ func resolveRatio(fn func() float64) float64 {
 }
 
 // resolveThreshold reads the agent's configured relevance threshold,
-// defaulting to 0.15.
+// defaulting to 0.45.
 func resolveThreshold(fn func() float64) float64 {
 	if fn != nil {
 		if t := fn(); t >= 0 && t <= 1 {
 			return t
 		}
 	}
-	return 0.15
+	return 0.45
 }
 
 func registerKBSearchRaw(r *tools.Registry, store *KBStore, agentID string) {

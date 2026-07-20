@@ -691,7 +691,7 @@ type AgentKBCfg struct {
 	// vs raw kb_entries. nil = 0.5 (default 50/50). 0 = kb only, 1 = wiki only.
 	WikiRatio *float64 `json:"wikiRatio,omitempty"`
 	// Threshold ∈ [0,1]: minimum normalized relevance for a wiki result to
-	// be kept (weighted score ÷ (9 × queryTokenCount)). nil = 0.15.
+	// be kept (weighted score ÷ (9 × queryTokenCount)). nil = 0.45.
 	// Higher = stricter cutoff; 0 effectively returns all prefiltered hits.
 	Threshold *float64 `json:"threshold,omitempty"`
 }

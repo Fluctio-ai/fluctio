@@ -315,7 +315,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				if kbCfg.WikiRatio != nil {
 					wikiRatio = *kbCfg.WikiRatio
 				}
-				threshold := 0.15
+				threshold := 0.45
 				if kbCfg.Threshold != nil {
 					threshold = *kbCfg.Threshold
 				}
@@ -362,7 +362,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					if kbCfg.Threshold != nil {
 						return *kbCfg.Threshold
 					}
-					return 0.15
+					return 0.45
 				})
 			}
 		}

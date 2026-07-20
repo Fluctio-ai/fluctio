@@ -58,7 +58,7 @@ export default function AgentKnowledgePage() {
   const [searchMode, setSearchMode] = useState("augment");
   const [emptyAction, setEmptyAction] = useState("llm");
   const [wikiRatio, setWikiRatio] = useState(0.5);
-  const [threshold, setThreshold] = useState(0.15);
+  const [threshold, setThreshold] = useState(0.45);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -103,7 +103,7 @@ export default function AgentKnowledgePage() {
           setSearchMode(kb.searchMode ?? "augment");
           setEmptyAction(kb.emptyAction ?? "llm");
           setWikiRatio(kb.wikiRatio ?? 0.5);
-          setThreshold(kb.threshold ?? 0.15);
+          setThreshold(kb.threshold ?? 0.45);
         }
         setConfigLoaded(true);
       })

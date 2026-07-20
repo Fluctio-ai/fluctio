@@ -246,7 +246,7 @@ func mcpExecSearch(ctx context.Context, store *KBStore, agentID string, args jso
 	if limit <= 0 {
 		limit = 5
 	}
-	results, err := store.Search(ctx, agentID, p.Query, limit, 0, 0.5, 0.15)
+	results, err := store.Search(ctx, agentID, p.Query, limit, 0, 0.5, 0.45)
 	if err != nil {
 		return "", err
 	}
