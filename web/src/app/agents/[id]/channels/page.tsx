@@ -34,6 +34,8 @@ import {
   ExternalLink,
   Loader2,
   QrCode,
+  AlertCircle,
+  RotateCcw,
 } from "lucide-react";
 import {
   listAgentChannels,
@@ -45,6 +47,7 @@ import {
   startAgentWeChatLogin,
   pollAgentWeChatLoginStatus,
   disconnectAgentChannel,
+  retryAgentChannel,
   type AgentChannel,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
@@ -187,6 +190,36 @@ export default function AgentChannelsPage() {
                 label={entry.label}
                 channel={connected}
                 onDelete={() => setDeleteTarget(connected)}
+                onRetry={
+                  connected.failureType
+                    ? async () => {
+                        const res = await retryAgentChannel(
+                          agentId,
+                          connected.type,
+                          connected.accountId,
+                        );
+                        if (res.error) setError(res.error);
+                        refresh();
+                      }
+                    : undefined
+                }
+                onReconnect={
+                  connected.failureType && connected.type === "wechat"
+                    ? async () => {
+                        // Drop the dead failed account first (a rescan
+                        // mints a fresh accountID, so the old row would
+                        // otherwise linger as failed), then open the QR.
+                        const res = await disconnectAgentChannel(
+                          agentId,
+                          "wechat",
+                          connected.accountId,
+                        );
+                        if (res.error) setError(res.error);
+                        setWechatOpen(true);
+                        refresh();
+                      }
+                    : undefined
+                }
               />
             ) : (
               <CatalogCard
@@ -317,10 +350,14 @@ function ConnectedCard({
   label,
   channel,
   onDelete,
+  onRetry,
+  onReconnect,
 }: {
   label: string;
   channel: AgentChannel;
   onDelete: () => void;
+  onRetry?: () => void;
+  onReconnect?: () => void;
 }) {
   const t = useT();
   // Telegram is the only provider with a public profile URL pattern
@@ -338,12 +375,17 @@ function ConnectedCard({
           <ChannelIcon type={channel.type} />
           <span className="font-medium truncate">{label}</span>
         </div>
-        {channel.enabled && (
+        {channel.failureType ? (
+          <span className="inline-flex items-center gap-1 text-xs text-destructive">
+            <AlertCircle className="h-3 w-3" />
+            {t("channels.failed")}
+          </span>
+        ) : channel.enabled ? (
           <span className="inline-flex items-center gap-1 text-xs text-success">
             <CheckCircle2 className="h-3 w-3" />
             {t("channels.connected")}
           </span>
-        )}
+        ) : null}
       </div>
 
       <div className="flex-1 space-y-1.5 min-w-0">
@@ -367,7 +409,29 @@ function ConnectedCard({
         <code className="text-xs text-muted-foreground/80 font-mono truncate block">
           {channel.botToken}
         </code>
+        {channel.failureType && (
+          <p className="text-xs text-destructive flex items-center gap-1.5">
+            <AlertCircle className="h-3 w-3 shrink-0" />
+            {t(`channels.failure.${channel.failureType}`)}
+          </p>
+        )}
       </div>
+
+      {channel.failureType && (
+        <div className="flex gap-2">
+          {onRetry && (
+            <Button size="sm" variant="outline" onClick={onRetry} className="flex-1">
+              <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+              {t("channels.retryBtn")}
+            </Button>
+          )}
+          {onReconnect && (
+            <Button size="sm" variant="outline" onClick={onReconnect} className="flex-1">
+              {t("channels.reconnectBtn")}
+            </Button>
+          )}
+        </div>
+      )}
 
       <Button
         size="sm"

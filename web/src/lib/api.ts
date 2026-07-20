@@ -2145,6 +2145,7 @@ export interface AgentChannel {
   botToken: string;    // server-masked
   enabled: boolean;
   sharedIdentity: boolean;
+  failureType?: string; // set when adapter gave up reconnecting; UI shows reconnect prompt
   updatedAt?: string;
 }
 
@@ -2446,6 +2447,21 @@ export async function disconnectAgentChannel(
   const res = await apiFetch(
     `/api/agents/${agentId}/channels/${encodeURIComponent(type)}/${encodeURIComponent(accountId)}`,
     { method: "DELETE" },
+  );
+  return res.json();
+}
+
+// retryAgentChannel clears a failed channel account's FailureType and
+// hot-restarts its adapter. Bound to the UI "Retry" button shown when
+// failureType is set.
+export async function retryAgentChannel(
+  agentId: string,
+  type: string,
+  accountId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/channels/${encodeURIComponent(type)}/${encodeURIComponent(accountId)}/retry`,
+    { method: "POST" },
   );
   return res.json();
 }
