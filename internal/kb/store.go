@@ -3,6 +3,7 @@ package kb
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -152,9 +153,59 @@ func (s *KBStore) SearchRawKB(ctx context.Context, agentID, query string, source
 	if limit <= 0 {
 		limit = 5
 	}
+	sourceIDs = s.resolveSourceIDs(ctx, agentID, sourceIDs)
 	// kb_entries_fts was never created (see migrateKBWiki), so searchFTS is a
 	// dead always-error path — go straight to searchLike.
 	return s.searchLike(ctx, agentID, query, sourceIDs, limit)
+}
+
+// resolveSourceIDs expands any wiki page ids ("<type>:<slug>", as returned by
+// knowledgebase_search) into their underlying KB source UUIDs listed in
+// wiki_pages.source_ids. Plain UUIDs pass through unchanged. This bridges the
+// two id namespaces so the LLM can hand the raw tool either form — search
+// returns wiki page ids, but kb_entries.source_id is a UUID. On lookup error
+// it falls back to the original ids (no worse than before).
+func (s *KBStore) resolveSourceIDs(ctx context.Context, agentID string, ids []string) []string {
+	var wikiIDs, resolved []string
+	for _, id := range ids {
+		if strings.Contains(id, ":") {
+			wikiIDs = append(wikiIDs, id)
+		} else {
+			resolved = append(resolved, id)
+		}
+	}
+	if len(wikiIDs) == 0 {
+		return ids
+	}
+	phs := make([]string, len(wikiIDs))
+	args := make([]interface{}, 0, len(wikiIDs)+1)
+	for i, wid := range wikiIDs {
+		phs[i] = s.ph(i + 1)
+		args = append(args, wid)
+	}
+	args = append(args, agentID)
+	q := fmt.Sprintf(`SELECT source_ids FROM wiki_pages WHERE id IN (%s) AND agent_id = %s`,
+		strings.Join(phs, ","), s.ph(len(wikiIDs)+1))
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		slog.Debug("resolveSourceIDs wiki lookup failed", "err", err)
+		return ids
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var srcJSON string
+		if err := rows.Scan(&srcJSON); err != nil {
+			continue
+		}
+		var uuids []string
+		if err := json.Unmarshal([]byte(srcJSON), &uuids); err == nil {
+			resolved = append(resolved, uuids...)
+		}
+	}
+	if len(resolved) == 0 {
+		return ids
+	}
+	return resolved
 }
 
 // searchWikiByType scores wiki pages in two buckets — source pages
