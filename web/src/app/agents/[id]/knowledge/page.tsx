@@ -58,6 +58,7 @@ export default function AgentKnowledgePage() {
   const [searchMode, setSearchMode] = useState("augment");
   const [emptyAction, setEmptyAction] = useState("llm");
   const [wikiRatio, setWikiRatio] = useState(0.5);
+  const [threshold, setThreshold] = useState(0.15);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -102,6 +103,7 @@ export default function AgentKnowledgePage() {
           setSearchMode(kb.searchMode ?? "augment");
           setEmptyAction(kb.emptyAction ?? "llm");
           setWikiRatio(kb.wikiRatio ?? 0.5);
+          setThreshold(kb.threshold ?? 0.15);
         }
         setConfigLoaded(true);
       })
@@ -121,11 +123,12 @@ export default function AgentKnowledgePage() {
           searchMode,
           emptyAction,
           wikiRatio,
+          threshold,
         },
       } as any);
     } catch {}
     setSaving(false);
-  }, [agentId, kbEnabled, autoMode, keywords, maxResults, searchMode, emptyAction, wikiRatio]);
+  }, [agentId, kbEnabled, autoMode, keywords, maxResults, searchMode, emptyAction, wikiRatio, threshold]);
 
   const handleIngestText = useCallback(async () => {
     if (!agentId || !textContent.trim()) return;
@@ -243,6 +246,22 @@ export default function AgentKnowledgePage() {
                 className="w-full accent-primary"
               />
               <p className="text-[11px] text-muted-foreground">{t("knowledge.wikiRatioDesc")}</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">{t("knowledge.threshold")}</Label>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {threshold.toFixed(2)}
+                </span>
+              </div>
+              <input
+                type="range" min={0} max={1} step={0.01}
+                value={threshold}
+                onChange={(e) => setThreshold(Number(e.target.value))}
+                className="w-full accent-primary"
+              />
+              <p className="text-[11px] text-muted-foreground">{t("knowledge.thresholdDesc")}</p>
             </div>
 
             {autoMode === "keyword" && (

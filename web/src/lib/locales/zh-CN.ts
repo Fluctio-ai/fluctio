@@ -536,6 +536,8 @@ const zhCN: Record<string, string> = {
   "knowledge.actionStop": "停止并通知",
   "knowledge.wikiRatio": "Wiki 来源 / 概念 比例",
   "knowledge.wikiRatioDesc": "Wiki 结果里「来源页（原文整理）」vs「概念/实体页（抽象总结）」的占比。偏左=更多原文派生内容，偏右=更多概念抽象。需要原始全文时，模型会调 knowledgebase_search_raw 工具按需取。",
+  "knowledge.threshold": "相关度阈值",
+  "knowledge.thresholdDesc": "归一化相关度（0~1）的下限，低于此值的 wiki 结果会被丢弃。调高更严格（命中减少），调低更宽松。",
   "knowledge.sourceLabel": "来源",
   "knowledge.conceptLabel": "概念",
   "knowledge.kbLabel": "知识库",

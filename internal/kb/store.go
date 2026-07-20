@@ -121,12 +121,15 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 // first (source + other, each bigram-scored within its bucket so the ratio
 // holds); if wiki doesn't fill the limit, fall back to kb_entries (raw chunks,
 // FTS) so exact-phrase queries still hit. kb_entries is a fallback only.
-func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, preFilterLimit int, sourceRatio float64) ([]KBResult, error) {
+func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, preFilterLimit int, sourceRatio float64, threshold float64) ([]KBResult, error) {
 	if limit <= 0 {
 		limit = 5
 	}
 	if sourceRatio < 0 || sourceRatio > 1 {
 		sourceRatio = 0.5
+	}
+	if threshold < 0 || threshold > 1 {
+		threshold = 0.15
 	}
 	sourceLimit := int(math.Round(float64(limit) * sourceRatio))
 	otherLimit := limit - sourceLimit
@@ -135,27 +138,30 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 	// pages, each bigram-scored within its bucket. kb_entries is NOT searched
 	// here — it's exposed as a separate on-demand tool (SearchRawKB) the LLM
 	// calls when wiki's summary isn't detailed enough.
-	return s.searchWikiByType(ctx, agentID, query, sourceLimit, otherLimit, preFilterLimit), nil
+	return s.searchWikiByType(ctx, agentID, query, sourceLimit, otherLimit, preFilterLimit, threshold), nil
 }
 
-// SearchRawKB searches the raw kb_entries chunks (FTS5 + LIKE fallback) for
-// exact-phrase / verbatim matching. Exposed as a separate tool the LLM calls
-// on demand when wiki's conceptual summary isn't detailed enough and it needs
-// the original text. Not used by auto-query — that path stays wiki-only.
-func (s *KBStore) SearchRawKB(ctx context.Context, agentID, query string, limit int) ([]KBResult, error) {
+// SearchRawKB returns the raw kb_entries chunks for the given sourceIDs,
+// optionally narrowed by a LIKE query. It backs the knowledgebase_search_raw
+// tool: the LLM calls it with source_ids obtained from a prior
+// knowledgebase_search to pull the verbatim original text of a source the
+// wiki layer already deemed relevant. sourceIDs must be non-empty — this is
+// an auxiliary second-pass lookup, not an independent search. Not used by
+// auto-query; that path stays wiki-only.
+func (s *KBStore) SearchRawKB(ctx context.Context, agentID, query string, sourceIDs []string, limit int) ([]KBResult, error) {
 	if limit <= 0 {
 		limit = 5
 	}
 	// kb_entries_fts was never created (see migrateKBWiki), so searchFTS is a
 	// dead always-error path — go straight to searchLike.
-	return s.searchLike(ctx, agentID, query, limit)
+	return s.searchLike(ctx, agentID, query, sourceIDs, limit)
 }
 
 // searchWikiByType scores wiki pages in two buckets — source pages
 // (raw-content-derived) and everything else (concept/entity/query) — and
 // returns up to sourceLimit + otherLimit so the caller's ratio holds even
 // when one bucket has few matches.
-func (s *KBStore) searchWikiByType(ctx context.Context, agentID, query string, sourceLimit, otherLimit, preFilterLimit int) []KBResult {
+func (s *KBStore) searchWikiByType(ctx context.Context, agentID, query string, sourceLimit, otherLimit, preFilterLimit int, threshold float64) []KBResult {
 	if sourceLimit <= 0 && otherLimit <= 0 {
 		return nil
 	}
@@ -176,10 +182,10 @@ func (s *KBStore) searchWikiByType(ctx context.Context, agentID, query string, s
 	}
 	var results []KBResult
 	if sourceLimit > 0 {
-		results = append(results, scoredToResults(scoreCandidates(sourcePages, query, sourceLimit))...)
+		results = append(results, scoredToResults(scoreCandidates(sourcePages, query, sourceLimit, threshold))...)
 	}
 	if otherLimit > 0 {
-		results = append(results, scoredToResults(scoreCandidates(otherPages, query, otherLimit))...)
+		results = append(results, scoredToResults(scoreCandidates(otherPages, query, otherLimit, threshold))...)
 	}
 	return results
 }
@@ -283,12 +289,14 @@ func (s *KBStore) searchFTS(ctx context.Context, agentID, query string, limit in
 	return results, nil
 }
 
-func (s *KBStore) searchLike(ctx context.Context, agentID, query string, limit int) ([]KBResult, error) {
+func (s *KBStore) searchLike(ctx context.Context, agentID, query string, sourceIDs []string, limit int) ([]KBResult, error) {
 	// Token-based LIKE: match any query token (word or CJK bigram) in content
 	// or title. A whole-query LIKE barely matched because user/model queries
-	// are rarely verbatim substrings of the stored chunks.
+	// are rarely verbatim substrings of the stored chunks. When query is
+	// empty, only the source_id filter applies — pull all chunks of the given
+	// sources ordered by chunk_index.
 	tokens := tokenize(query)
-	if len(tokens) == 0 {
+	if len(tokens) == 0 && query != "" {
 		tokens = []string{query}
 	}
 	var clauses []string
@@ -305,18 +313,36 @@ func (s *KBStore) searchLike(ctx context.Context, agentID, query string, limit i
 	}
 	phIdx++
 	agentPH := s.ph(phIdx)
+	args = append(args, agentID)
+
+	var sourceCond string
+	if len(sourceIDs) > 0 {
+		sourcePHs := make([]string, len(sourceIDs))
+		for i, sid := range sourceIDs {
+			phIdx++
+			sourcePHs[i] = s.ph(phIdx)
+			args = append(args, sid)
+		}
+		sourceCond = fmt.Sprintf(" AND e.source_id IN (%s)", strings.Join(sourcePHs, ","))
+	}
+
 	phIdx++
 	limitPH := s.ph(phIdx)
-	args = append(args, agentID, limit)
+	args = append(args, limit)
+
+	where := fmt.Sprintf("e.agent_id = %s%s", agentPH, sourceCond)
+	if len(clauses) > 0 {
+		where = fmt.Sprintf("(%s) AND %s", strings.Join(clauses, " OR "), where)
+	}
 	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT e.source_id, COALESCE(s.title, s.source_ref, ''), e.chunk_index, e.content,
 			'' AS snippet, 0.0 AS rank
 		FROM kb_entries e
 		JOIN kb_sources s ON s.id = e.source_id
-		WHERE (%s) AND e.agent_id = %s
+		WHERE %s
 		ORDER BY e.chunk_index
 		LIMIT %s`,
-			strings.Join(clauses, " OR "), agentPH, limitPH),
+			where, limitPH),
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("kb search: %w", err)
@@ -523,7 +549,7 @@ func formatResults(results []KBResult, query string, ids []string) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Found %d results for %q:\n\n", len(results), query))
 	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("--- [%s] Result %d (source: %s, chunk %d) ---\n", ids[i], i+1, r.SourceTitle, r.ChunkIndex))
+		sb.WriteString(fmt.Sprintf("--- [%s] Result %d (source_id: %s, source: %s, chunk %d) ---\n", ids[i], i+1, r.SourceID, r.SourceTitle, r.ChunkIndex))
 		if r.Snippet != "" {
 			sb.WriteString(r.Snippet)
 		} else {

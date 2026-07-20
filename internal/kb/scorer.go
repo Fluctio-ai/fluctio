@@ -95,8 +95,11 @@ type scoredPage struct {
 }
 
 // scoreCandidates re-ranks pre-filtered wiki pages using bigram scoring.
-// Weights: title×4, tag×3, summary×2, slug exact +5.
-func scoreCandidates(pages []wikiPageRow, query string, topK int) []scoredPage {
+// Weights: title×4, tag×3, summary×2, slug exact +5. The weighted score is
+// normalized to [0,1] (maxScore = 9×len(qTokens)); results below threshold
+// are dropped, so a caller-configured threshold gives a stable cutoff
+// independent of query length.
+func scoreCandidates(pages []wikiPageRow, query string, topK int, threshold float64) []scoredPage {
 	qTokens := tokenizeSet(query)
 	if len(qTokens) == 0 {
 		return nil
@@ -116,7 +119,15 @@ func scoreCandidates(pages []wikiPageRow, query string, topK int) []scoredPage {
 			score += 5.0
 		}
 
-		if score < 0.5 {
+		// 9 = 4(title)+3(tag)+2(summary), the max one query token can
+		// contribute when it hits all three fields. Slug +5 stays on the
+		// numerator as a bonus; the ratio is capped at 1.0.
+		maxScore := 9.0 * float64(len(qTokens))
+		normalized := score / maxScore
+		if normalized > 1.0 {
+			normalized = 1.0
+		}
+		if normalized < threshold {
 			continue
 		}
 
@@ -126,7 +137,7 @@ func scoreCandidates(pages []wikiPageRow, query string, topK int) []scoredPage {
 			Summary:  p.Summary,
 			Body:     p.Body,
 			PageType: p.PageType,
-			Score:    score,
+			Score:    normalized,
 		})
 	}
 

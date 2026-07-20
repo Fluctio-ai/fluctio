@@ -536,6 +536,8 @@ const en: Record<string, string> = {
   "knowledge.actionStop": "Stop and notify",
   "knowledge.wikiRatio": "Wiki Source / Concept Ratio",
   "knowledge.wikiRatioDesc": "Share of wiki results from source pages (raw-content-derived) vs concept/entity pages (abstract). Left = more source, right = more concept. Raw full text is available on demand via the knowledgebase_search_raw tool.",
+  "knowledge.threshold": "Relevance threshold",
+  "knowledge.thresholdDesc": "Minimum normalized relevance (0–1); wiki results scoring below this are dropped. Higher = stricter (fewer hits), lower = more permissive.",
   "knowledge.sourceLabel": "Source",
   "knowledge.conceptLabel": "Concept",
   "knowledge.kbLabel": "KB",

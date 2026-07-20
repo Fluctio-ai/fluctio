@@ -1508,6 +1508,8 @@ export interface AgentKBCfg {
   emptyAction?: string;
   /** Fraction [0,1] of result slots for wiki pages vs kb_entries. Default 0.5. */
   wikiRatio?: number;
+  /** Minimum normalized relevance [0,1] for a wiki result to be kept. Default 0.15. */
+  threshold?: number;
 }
 
 // --- Knowledge base types + API (slice 4a REST handlers) ---

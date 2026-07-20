@@ -16,8 +16,8 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/httpclient"
 )
 
-func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64) {
-	registerKBSearch(r, store, agentID, sourceRatioFn)
+func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64, thresholdFn func() float64) {
+	registerKBSearch(r, store, agentID, sourceRatioFn, thresholdFn)
 	registerKBSearchRaw(r, store, agentID)
 	registerKBAdd(r, store, agentID)
 	registerKBIngestURL(r, store, agentID)
@@ -25,7 +25,7 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 	registerKBDelete(r, store, agentID)
 }
 
-func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64) {
+func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64, thresholdFn func() float64) {
 	r.Register("knowledgebase_search", "Search the agent's knowledge base for relevant information. Returns matching text chunks with source references. Use this when the user's question might be answered from previously stored knowledge.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -54,7 +54,7 @@ func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceR
 		if limit <= 0 {
 			limit = 5
 		}
-		results, err := store.Search(ctx, agentID, args.Query, limit, 0, resolveRatio(sourceRatioFn))
+		results, err := store.Search(ctx, agentID, args.Query, limit, 0, resolveRatio(sourceRatioFn), resolveThreshold(thresholdFn))
 		if err != nil {
 			return "", err
 		}
@@ -117,36 +117,53 @@ func resolveRatio(fn func() float64) float64 {
 	return 0.5
 }
 
+// resolveThreshold reads the agent's configured relevance threshold,
+// defaulting to 0.15.
+func resolveThreshold(fn func() float64) float64 {
+	if fn != nil {
+		if t := fn(); t >= 0 && t <= 1 {
+			return t
+		}
+	}
+	return 0.15
+}
+
 func registerKBSearchRaw(r *tools.Registry, store *KBStore, agentID string) {
-	r.Register("knowledgebase_search_raw", "Search the RAW original text chunks stored in the knowledge base (verbatim FTS match on kb_entries). Use this AFTER knowledgebase_search when the wiki-based summary is not detailed enough and you need the exact original wording/passages. Returns verbatim source chunks with [K#] citation ids.", map[string]interface{}{
+	r.Register("knowledgebase_search_raw", "Fetch the RAW original text chunks of specific knowledge-base sources (verbatim, from kb_entries). Call this AFTER knowledgebase_search, passing the source_id values it returned, when the wiki-based summary is not detailed enough and you need the exact original wording/passages. Optionally narrow with a query phrase. Returns verbatim source chunks with [K#] citation ids.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
+			"source_ids": map[string]interface{}{
+				"type":        "array",
+				"items":       map[string]interface{}{"type": "string"},
+				"description": "source_id values from a prior knowledgebase_search result — the sources whose raw chunks you want. Required.",
+			},
 			"query": map[string]interface{}{
 				"type":        "string",
-				"description": "Search query — use distinctive exact phrases to get verbatim original-text matches",
+				"description": "Optional phrase to narrow within the selected sources (LIKE match on chunk text). Omit to pull all chunks of the given sources.",
 			},
 			"limit": map[string]interface{}{
 				"type":        "integer",
 				"description": "Maximum number of raw chunks to return (default 5)",
 			},
 		},
-		"required": []string{"query"},
+		"required": []string{"source_ids"},
 	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
 		var args struct {
-			Query string `json:"query"`
-			Limit int    `json:"limit,omitempty"`
+			SourceIDs []string `json:"source_ids"`
+			Query     string   `json:"query,omitempty"`
+			Limit     int      `json:"limit,omitempty"`
 		}
 		if err := json.Unmarshal(rawArgs, &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
-		if args.Query == "" {
-			return "", fmt.Errorf("query is required")
+		if len(args.SourceIDs) == 0 {
+			return "", fmt.Errorf("source_ids is required — call knowledgebase_search first and pass the source_id values it returned")
 		}
 		limit := args.Limit
 		if limit <= 0 {
 			limit = 5
 		}
-		results, err := store.SearchRawKB(ctx, agentID, args.Query, limit)
+		results, err := store.SearchRawKB(ctx, agentID, args.Query, args.SourceIDs, limit)
 		if err != nil {
 			return "", err
 		}

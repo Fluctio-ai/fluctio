@@ -41,6 +41,9 @@ type AutoQueryCfg struct {
 	// WikiRatio is the resolved fraction [0,1] of result slots for wiki
 	// pages vs kb_entries (nil config → 0.5).
 	WikiRatio float64
+	// Threshold ∈ [0,1]: minimum normalized relevance for a wiki result to
+	// be kept. Zero/out-of-range → 0.15 default. Higher = stricter cutoff.
+	Threshold float64
 }
 
 // AutoQueryHook returns a function suitable for use as a BeforeModelCall
@@ -118,7 +121,12 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			cfg.EmptyAction = "llm"
 		}
 
-		results, err := store.Search(ctx, agentID, query, maxResults, 0, cfg.WikiRatio)
+		threshold := cfg.Threshold
+		if threshold <= 0 || threshold > 1 {
+			threshold = 0.15
+		}
+
+		results, err := store.Search(ctx, agentID, query, maxResults, 0, cfg.WikiRatio, threshold)
 		slog.Info("kb auto-query search", "agent", agentID, "query", query, "results", len(results), "err", err)
 
 		if err != nil {

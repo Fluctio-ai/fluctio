@@ -315,6 +315,10 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				if kbCfg.WikiRatio != nil {
 					wikiRatio = *kbCfg.WikiRatio
 				}
+				threshold := 0.15
+				if kbCfg.Threshold != nil {
+					threshold = *kbCfg.Threshold
+				}
 				return kb.AutoQueryCfg{
 					Enabled:     kbCfg.Enabled,
 					AutoMode:    kbCfg.AutoMode,
@@ -323,6 +327,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					SearchMode:  kbCfg.SearchMode,
 					EmptyAction: kbCfg.EmptyAction,
 					WikiRatio:   wikiRatio,
+					Threshold:   threshold,
 				}
 			})
 			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {
@@ -353,6 +358,11 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 						return *kbCfg.WikiRatio
 					}
 					return 0.5
+				}, func() float64 {
+					if kbCfg.Threshold != nil {
+						return *kbCfg.Threshold
+					}
+					return 0.15
 				})
 			}
 		}
