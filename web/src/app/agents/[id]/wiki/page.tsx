@@ -321,6 +321,32 @@ export default function WikiPage() {
     return m;
   }, [pages]);
 
+  // titleMap resolves a wiki-link target ("page_type:slug") to its display
+  // title, so rendered links read as the target page's name rather than its
+  // slug. Falls back to the raw "type:slug" if the target isn't in the
+  // current listing (e.g. filtered out).
+  const titleMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const p of pages) {
+      m[`${p.page_type}:${p.slug}`] = p.title;
+    }
+    return m;
+  }, [pages]);
+
+  // Rewrite [[type:slug]] wiki links into standard markdown links carrying a
+  // "wiki:" pseudo-protocol that the a renderer below intercepts. Doing this
+  // as a source rewrite (instead of inside a p renderer) means links parse
+  // regardless of whether the surrounding paragraph has inline markup — the
+  // old p-renderer split only handled plain-text paragraphs, so links inside
+  // bold/italic/code-rich paragraphs silently rendered as literal text.
+  const renderedBody = useMemo(() => {
+    if (!selectedPage) return "";
+    return (selectedPage.body || "").replace(
+      /\[\[(\w+:[\w-]+)\]\]/g,
+      (_, link) => `[${titleMap[link] ?? link}](wiki:${link})`,
+    );
+  }, [selectedPage, titleMap]);
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* Left: Tree navigation */}
@@ -528,43 +554,31 @@ export default function WikiPage() {
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkBreaks]}
                   components={{
-                    a: ExternalAnchor,
-                    // Handle [[type:slug]] wiki links inside plain-text
-                    // paragraphs. Only runs when children is a string —
-                    // ReactMarkdown passes an element array when a
-                    // paragraph has inline markup (bold/links/...), and
-                    // String()-ing that produced "[object Object]" in
-                    // front of the link list. Rich paragraphs render as-is.
-                    p: ({ children }) => {
-                      if (typeof children !== "string") {
-                        return <p>{children}</p>;
+                    a: (props) => {
+                      const { href, children } = props;
+                      // Wiki internal links carry a "wiki:" pseudo-protocol
+                      // (produced by the [[type:slug]] source rewrite in
+                      // renderedBody). Intercept and route to the page
+                      // selector instead of letting the browser navigate.
+                      if (href && href.startsWith("wiki:")) {
+                        return (
+                          <a
+                            href="#"
+                            className="text-primary underline hover:text-primary/80 cursor-pointer"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleSelectPage(href.slice(5));
+                            }}
+                          >
+                            {children}
+                          </a>
+                        );
                       }
-                      const parts = children.split(
-                        /\[\[(\w+:[\w-]+)\]\]/g,
-                      );
-                      if (parts.length <= 1) return <p>{children}</p>;
-                      return (
-                        <p>
-                          {parts.map((part, i) => {
-                            if (i % 2 === 1) {
-                              return (
-                                <button
-                                  key={i}
-                                  className="text-primary underline hover:text-primary/80"
-                                  onClick={() => handleSelectPage(part)}
-                                >
-                                  {part}
-                                </button>
-                              );
-                            }
-                            return <span key={i}>{part}</span>;
-                          })}
-                        </p>
-                      );
+                      return ExternalAnchor(props);
                     },
                   }}
                 >
-                  {selectedPage.body || ""}
+                  {renderedBody}
                 </ReactMarkdown>
               </div>
             </div>

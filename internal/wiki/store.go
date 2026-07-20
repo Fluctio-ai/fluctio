@@ -80,6 +80,29 @@ func (s *WikiStore) GetPage(ctx context.Context, id string) (*WikiPage, error) {
 	return p, nil
 }
 
+// GetPageBySlug resolves a wiki [[type:slug]] link to a page. Wiki links
+// carry human-readable "page_type:slug" pairs (not UUIDs); the renderer
+// splits them and the handler calls this to fetch the target page. Returns
+// (nil, nil) on no match so the handler can 404 cleanly.
+func (s *WikiStore) GetPageBySlug(ctx context.Context, agentID, pageType, slug string) (*WikiPage, error) {
+	q := `SELECT id, agent_id, page_type, slug, title, body, summary, source_ids, tags, created_at, updated_at, revision
+		FROM wiki_pages WHERE agent_id = ` + s.ph(1) + ` AND page_type = ` + s.ph(2) + ` AND slug = ` + s.ph(3) + ` LIMIT 1`
+	row := s.db.QueryRowContext(ctx, q, agentID, pageType, slug)
+	p := &WikiPage{}
+	var srcJSON, tagsJSON string
+	err := row.Scan(&p.ID, &p.AgentID, &p.PageType, &p.Slug, &p.Title, &p.Body, &p.Summary,
+		&srcJSON, &tagsJSON, &p.CreatedAt, &p.UpdatedAt, &p.Revision)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal([]byte(srcJSON), &p.SourceIDs)
+	json.Unmarshal([]byte(tagsJSON), &p.Tags)
+	return p, nil
+}
+
 // FindPageByTitle returns an existing page with the given title for the agent.
 func (s *WikiStore) FindPageByTitle(ctx context.Context, agentID, title string) (*WikiPage, error) {
 	q := `SELECT id, agent_id, page_type, slug, title, body, summary, source_ids, tags, created_at, updated_at, revision

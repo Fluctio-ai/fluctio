@@ -64,7 +64,15 @@ func (s *Server) handleWikiGetPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
-	p, err := ws.GetPage(r.Context(), pageID)
+	// Wiki links embed "page_type:slug" rather than a UUID; resolve those
+	// by (agent_id, page_type, slug), plain UUIDs via GetPage.
+	var p *wiki.WikiPage
+	var err error
+	if idx := strings.Index(pageID, ":"); idx > 0 {
+		p, err = ws.GetPageBySlug(r.Context(), agentID, pageID[:idx], pageID[idx+1:])
+	} else {
+		p, err = ws.GetPage(r.Context(), pageID)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
