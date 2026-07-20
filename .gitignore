@@ -103,3 +103,6 @@ run.err.*
 # Local cross-compiled binaries for deployment testing
 /fluctio-linux
 /ga-hook-linux
+
+# Local superpowers agent/worktree docs (private, not for repo)
+/.superpowers/
