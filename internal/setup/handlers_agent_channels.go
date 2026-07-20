@@ -37,6 +37,7 @@ type channelOut struct {
 	BotToken       string `json:"botToken"` // masked
 	Enabled        bool   `json:"enabled"`
 	SharedIdentity bool   `json:"sharedIdentity"`
+	FailureType    string `json:"failureType,omitempty"`
 	UpdatedAt      string `json:"updatedAt,omitempty"`
 	Source         string `json:"source,omitempty"`
 }
@@ -154,6 +155,7 @@ func flattenChannelRows(rows []store.ConfigRecord, source string, _, _ string, f
 				BotUsername: accountID,
 				BotToken:    maskAPIKey(tok),
 				Enabled:     rec.Enabled,
+				FailureType: acct.FailureType,
 				UpdatedAt:   rec.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 				Source:      source,
 			})
@@ -194,6 +196,7 @@ func flattenChannelRecords(rows []store.ChannelRecord, source string) []channelO
 				BotToken:       maskAPIKey(tok),
 				Enabled:        rec.Enabled,
 				SharedIdentity: rec.SharedIdentity,
+				FailureType:    acct.FailureType,
 				UpdatedAt:      rec.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 				Source:         source,
 			})
@@ -373,6 +376,55 @@ func (s *Server) handleDisconnectAgentChannel(w http.ResponseWriter, r *http.Req
 		}
 		s.invalidateOwner(uid, aid)
 		s.hotUnregisterChannel(channelType, accountID)
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	jsonResponse(w, http.StatusNotFound, map[string]any{"error": "binding not found"})
+}
+
+// handleRetryAgentChannel clears a channel account's FailureType and
+// hot-restarts its adapter. Driven by the UI "Retry" button shown on a
+// failed channel account. If the underlying problem persists the adapter
+// will re-accumulate failures and re-mark itself failed — expected.
+func (s *Server) handleRetryAgentChannel(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWritable(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	channelType := r.PathValue("type")
+	accountID := r.PathValue("accountId")
+	uid, aid, ok := s.resolveChannelBindingScope(w, r, id)
+	if !ok {
+		return
+	}
+	chRows, err := s.dataStore.ListChannels(r.Context(), uid, aid)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	for _, ch := range chRows {
+		if ch.Type != channelType || ch.AccountID != accountID {
+			continue
+		}
+		cc := config.ChannelConfig{}
+		if blob, mErr := json.Marshal(ch.Data); mErr == nil {
+			_ = json.Unmarshal(blob, &cc)
+		}
+		cc.Enabled = ch.Enabled
+		if acct, ok := cc.Accounts[accountID]; ok {
+			acct.FailureType = ""
+			cc.Accounts[accountID] = acct
+		}
+		if err := s.saveChannelRecord(r.Context(), uid, aid, channelType, accountID, ch.Enabled, cc); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		s.invalidateOwner(uid, aid)
+		// Re-lookup the saved row and hot-restart the adapter so polling
+		// resumes immediately without a process restart.
+		if updated, err := s.dataStore.LookupChannel(r.Context(), channelType, accountID); err == nil && updated != nil {
+			s.hotRegisterChannelRecord(*updated)
+		}
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}

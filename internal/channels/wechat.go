@@ -95,6 +95,13 @@ const (
 	// graduate to a real buf, short enough that a truly revoked token
 	// doesn't loop forever.
 	wechatEmptyBufExpiredThreshold = 20
+
+	// wechatPollingErrorThreshold is the consecutive-failure count for
+	// GetUpdates errors (path ①) and generic server errors (path ③)
+	// after which we mark the account failed and stop retrying. Same
+	// order of magnitude as the empty-buf threshold so iLink gets ~15-
+	// 20 min of grace before we surface a reconnect prompt.
+	wechatPollingErrorThreshold = 20
 )
 
 // WeChat is the iLink long-poll adapter for one logged-in WeChat bot.
@@ -117,15 +124,14 @@ type WeChat struct {
 	// wechatEmptyBufExpiredThreshold for the matching softened heuristic).
 	getUpdatesBuf string
 	bufPath       string
-	failures      int
 
-	// emptyBufExpiredCount counts consecutive SessionExpired responses
-	// where the supplied get_updates_buf was already empty. We don't
-	// declare the bot token dead until this hits
-	// wechatEmptyBufExpiredThreshold so a legitimate "fresh process /
-	// dropped buf file" first call isn't misread as a permanent expiry.
-	// Reset to 0 on any successful response.
-	emptyBufExpiredCount int
+	// Consecutive-failure tracking. pollFC covers GetUpdates errors
+	// (path ①) and generic server errors (path ③); emptyBufFC covers
+	// the empty-buf SessionExpired path (②) which has its own semantics
+	// ("token may be dead, rescan needed"). Both trip onFailed at their
+	// thresholds and exit Start.
+	pollFC     *FailureCounter
+	emptyBufFC *FailureCounter
 
 	// Per-chat ContextToken cache. The /ilink/bot/getconfig call that
 	// mints typing_ticket wants the latest context_token from the user's
@@ -136,17 +142,20 @@ type WeChat struct {
 	ctxTokensMu sync.Mutex
 	ctxTokens   map[string]string
 
-	// onExpired fires once when the iLink server has confirmed the bot
-	// token is dead (operator must rescan). Set by the gateway so it
-	// can disable the configs row + unregister the adapter; without it
-	// the loop would log the same warning every 5s forever.
-	onExpired func(accountID string)
+	// onFailed fires once when the adapter has decided the account is
+	// unrecoverable without user action (path ①③ polling/server errors
+	// past threshold, or ② empty-buf session expired past threshold).
+	// Set by the gateway via the FailureReporter interface so it can
+	// persist FailureType + unregister; without it the loop would log
+	// the same warning forever.
+	onFailed func(accountID, reason string)
 }
 
-// SetOnExpired registers a callback that fires when the bot token is
-// confirmed dead. The callback runs once; Start exits afterwards.
-func (w *WeChat) SetOnExpired(fn func(accountID string)) {
-	w.onExpired = fn
+// OnFailed registers the framework callback fired when the adapter has
+// given up reconnecting. Implements FailureReporter. The callback runs
+// once; Start exits afterwards.
+func (w *WeChat) OnFailed(fn func(accountID, reason string)) {
+	w.onFailed = fn
 }
 
 // NewWeChat creates a new WeChat channel adapter from a connected
@@ -169,6 +178,8 @@ func NewWeChat(botToken, baseURL, ilinkUserID, accountID string, mb *bus.Message
 		wechatUIN:   wechatGenerateUIN(),
 		ctxTokens:   make(map[string]string),
 		bufPath:     wechatBufPath(accountID),
+		pollFC:      NewFailureCounter(wechatPollingErrorThreshold, wechatBackoffInitial, wechatBackoffMax),
+		emptyBufFC:  NewFailureCounter(wechatEmptyBufExpiredThreshold, wechatBackoffInitial, wechatBackoffMax),
 	}, nil
 }
 
@@ -280,10 +291,18 @@ func (w *WeChat) Start(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
-			w.failures++
-			backoff := w.calcBackoff()
+			if w.pollFC.Hit() {
+				slog.Warn("wechat polling failed — marking account failed",
+					"account", w.accountID, "failures", w.pollFC.Count(), "error", err)
+				w.clearBuf()
+				if w.onFailed != nil {
+					w.onFailed(w.accountID, "polling_failed")
+				}
+				return nil
+			}
+			backoff := w.pollFC.Backoff()
 			slog.Warn("wechat getUpdates error",
-				"account", w.accountID, "failures", w.failures, "backoff", backoff, "error", err)
+				"account", w.accountID, "failures", w.pollFC.Count(), "backoff", backoff, "error", err)
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
@@ -291,7 +310,7 @@ func (w *WeChat) Start(ctx context.Context) error {
 			}
 			continue
 		}
-		w.failures = 0
+		w.pollFC.Reset()
 
 		if resp.ErrCode == wechatErrSessionExpired {
 			if w.getUpdatesBuf != "" {
@@ -313,56 +332,69 @@ func (w *WeChat) Start(ctx context.Context) error {
 			// to mint a fresh buf. Mirror upstream weclaw: keep retrying
 			// with exponential backoff, and only declare the token dead
 			// after wechatEmptyBufExpiredThreshold consecutive failures.
-			w.emptyBufExpiredCount++
-			if w.emptyBufExpiredCount < wechatEmptyBufExpiredThreshold {
-				// Only the first attempt warns — subsequent retries log
-				// at Debug so a slow-to-warm-up account doesn't fill the
-				// log with N copies of the same message before either
-				// recovering (counter resets, see below) or hitting
-				// threshold (which logs its own terminal Warn).
-				if w.emptyBufExpiredCount == 1 {
-					slog.Warn("wechat session expired with empty buf — will retry up to threshold",
-						"account", w.accountID,
-						"threshold", wechatEmptyBufExpiredThreshold)
-				} else {
-					slog.Debug("wechat session expired with empty buf — retrying",
-						"account", w.accountID,
-						"attempt", w.emptyBufExpiredCount,
-						"threshold", wechatEmptyBufExpiredThreshold)
+			if w.emptyBufFC.Hit() {
+				// Threshold tripped: token is dead for real. Wipe the
+				// on-disk buf so a freshly-rescanned account doesn't
+				// inherit the stale cursor on the next process start,
+				// then fire onFailed (the gateway persists FailureType
+				// + unregisters us) and exit.
+				slog.Warn("wechat bot token expired — user must rescan QR",
+					"account", w.accountID, "attempts", w.emptyBufFC.Count())
+				w.clearBuf()
+				if w.onFailed != nil {
+					w.onFailed(w.accountID, "session_expired")
 				}
-				w.failures = w.emptyBufExpiredCount
-				backoff := w.calcBackoff()
-				select {
-				case <-time.After(backoff):
-				case <-ctx.Done():
-					return nil
-				}
-				continue
+				return nil
 			}
-			// Threshold tripped: token is dead for real. Wipe the on-disk
-			// buf so a freshly-rescanned account doesn't inherit the
-			// stale cursor on the next process start, then fire onExpired
-			// (the gateway disables the configs row + unregisters us)
-			// and exit.
-			slog.Warn("wechat bot token expired — user must rescan QR",
-				"account", w.accountID, "attempts", w.emptyBufExpiredCount)
-			w.clearBuf()
-			if w.onExpired != nil {
-				w.onExpired(w.accountID)
+			// Only the first attempt warns — subsequent retries log
+			// at Debug so a slow-to-warm-up account doesn't fill the
+			// log with N copies of the same message before either
+			// recovering (counter resets, see below) or hitting
+			// threshold (which logs its own terminal Warn).
+			if w.emptyBufFC.Count() == 1 {
+				slog.Warn("wechat session expired with empty buf — will retry up to threshold",
+					"account", w.accountID,
+					"threshold", wechatEmptyBufExpiredThreshold)
+			} else {
+				slog.Debug("wechat session expired with empty buf — retrying",
+					"account", w.accountID,
+					"attempt", w.emptyBufFC.Count(),
+					"threshold", wechatEmptyBufExpiredThreshold)
 			}
-			return nil
+			backoff := w.emptyBufFC.Backoff()
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return nil
+			}
+			continue
 		}
 		if resp.Ret != 0 && resp.ErrCode != 0 {
 			slog.Warn("wechat server error",
 				"account", w.accountID, "ret", resp.Ret, "errcode", resp.ErrCode, "errmsg", resp.ErrMsg)
+			if w.pollFC.Hit() {
+				slog.Warn("wechat server errors persisted — marking account failed",
+					"account", w.accountID, "failures", w.pollFC.Count())
+				w.clearBuf()
+				if w.onFailed != nil {
+					w.onFailed(w.accountID, "server_error")
+				}
+				return nil
+			}
+			backoff := w.pollFC.Backoff()
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return nil
+			}
 			continue
 		}
 		// Any non-SessionExpired success resets the empty-buf counter —
 		// we got a real response from the server, the token is alive.
-		if w.emptyBufExpiredCount > 0 {
+		if w.emptyBufFC.Count() > 0 {
 			slog.Info("wechat session recovered after empty-buf retries",
-				"account", w.accountID, "attempts", w.emptyBufExpiredCount)
-			w.emptyBufExpiredCount = 0
+				"account", w.accountID, "attempts", w.emptyBufFC.Count())
+			w.emptyBufFC.Reset()
 		}
 		if resp.GetUpdatesBuf != "" && resp.GetUpdatesBuf != w.getUpdatesBuf {
 			w.getUpdatesBuf = resp.GetUpdatesBuf
@@ -688,17 +720,6 @@ func (w *WeChat) doPost(ctx context.Context, path string, body, result any) erro
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 	return json.Unmarshal(respBody, result)
-}
-
-func (w *WeChat) calcBackoff() time.Duration {
-	d := wechatBackoffInitial
-	for i := 1; i < w.failures; i++ {
-		d *= 2
-		if d > wechatBackoffMax {
-			return wechatBackoffMax
-		}
-	}
-	return d
 }
 
 // wechatGenerateUIN produces the randomized base64 string iLink wants

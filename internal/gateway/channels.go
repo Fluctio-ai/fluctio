@@ -291,6 +291,11 @@ func registerWeChatChannels(rec store.ConfigRecord, chCfg config.ChannelConfig, 
 	// usable top-level config; the per-account fields BaseURL +
 	// UserID are required). So skip the empty-Accounts fallback.
 	for accountID, acct := range chCfg.Accounts {
+		if skipFailedAccount(acct) {
+			slog.Info("skipping failed wechat account on boot",
+				"account", accountID, "reason", acct.FailureType)
+			continue
+		}
 		token := acct.BotToken
 		if token == "" {
 			token = chCfg.BotToken
@@ -299,19 +304,16 @@ func registerWeChatChannels(rec store.ConfigRecord, chCfg config.ChannelConfig, 
 		if err != nil {
 			return err
 		}
-		// On confirmed token-expiry the adapter exits; clean up the
-		// configs row so the next process restart doesn't re-register
-		// a known-dead bot (which would log the same warning again on
-		// boot). The user has to rescan the QR through the dashboard
-		// — that flow re-creates the Accounts entry from scratch.
+		// On confirmed failure (polling errors / session expired /
+		// server errors past threshold) the adapter exits and fires
+		// onFailed; markChannelFailed persists FailureType so the next
+		// restart skips re-starting a known-dead bot (the skip above),
+		// and unregisters so outbound routing stops. The row is kept —
+		// the UI shows a reconnect prompt; the user re-scans QR through
+		// the dashboard to bind a fresh account.
 		if st != nil {
-			rowID := rec.ID
-			wc.SetOnExpired(func(deadAccount string) {
-				if err := purgeWeChatAccount(st, rowID, deadAccount); err != nil {
-					slog.Warn("wechat token-expired cleanup failed",
-						"account", deadAccount, "error", err)
-				}
-				chanMgr.Unregister("wechat", deadAccount)
+			wc.OnFailed(func(deadAccount, reason string) {
+				markChannelFailed(st, chanMgr, "wechat", deadAccount, reason)
 			})
 		}
 		registerSingleton(chanMgr, wc, hot)
@@ -360,5 +362,58 @@ func purgeWeChatAccount(st store.Store, rowID, deadAccount string) error {
 	}
 	rec.Data = data
 	return st.SaveConfig(ctx, rec)
+}
+
+// skipFailedAccount reports whether an account entry has been marked
+// failed (FailureType set). registerXxxChannels loops use it to avoid
+// re-starting an adapter that already gave up — prevents the dead
+// channel from looping forever on every process restart.
+func skipFailedAccount(acct config.AccountConfig) bool {
+	return acct.FailureType != ""
+}
+
+// markChannelFailed persists FailureType onto the channels-table row for
+// (channelType, accountID) and unregisters the adapter so outbound
+// routing stops. The row is NOT deleted — the UI shows a reconnect
+// prompt and the retry handler clears the flag. Idempotent: a missing
+// row (already cleaned, webhook disconnect, or pre-migration data) is
+// a noop that still unregisters.
+func markChannelFailed(st store.Store, chanMgr *channels.Manager, channelType, accountID, reason string) {
+	ctx := context.Background()
+	rec, err := st.LookupChannel(ctx, channelType, accountID)
+	if err != nil || rec == nil {
+		// Missing row is the expected post-disconnect state — not worth
+		// a warning. Still unregister so outbound routing stops.
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			slog.Debug("markChannelFailed lookup returned error",
+				"type", channelType, "account", accountID, "error", err)
+		}
+		chanMgr.Unregister(channelType, accountID)
+		return
+	}
+	cc := config.ChannelConfig{Enabled: rec.Enabled}
+	if blob, mErr := json.Marshal(rec.Data); mErr == nil && len(blob) > 0 {
+		_ = json.Unmarshal(blob, &cc)
+	}
+	cc.Enabled = rec.Enabled
+	acct, ok := cc.Accounts[accountID]
+	if !ok {
+		slog.Warn("markChannelFailed: account not in map",
+			"type", channelType, "account", accountID)
+		chanMgr.Unregister(channelType, accountID)
+		return
+	}
+	acct.FailureType = reason
+	cc.Accounts[accountID] = acct
+	blob, _ := json.Marshal(cc)
+	var data map[string]interface{}
+	_ = json.Unmarshal(blob, &data)
+	delete(data, "enabled")
+	rec.Data = data
+	if err := st.SaveChannel(ctx, rec); err != nil {
+		slog.Warn("markChannelFailed save failed",
+			"type", channelType, "account", accountID, "error", err)
+	}
+	chanMgr.Unregister(channelType, accountID)
 }
 

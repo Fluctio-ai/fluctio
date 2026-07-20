@@ -587,6 +587,12 @@ type AccountConfig struct {
 	// unused (the WS connection is authenticated by appID/appSecret)
 	// and no public URL needs to be reachable.
 	UseLongConn bool `json:"useLongConn,omitempty"`
+	// FailureType is set (non-empty) when the adapter has given up
+	// reconnecting after consecutive failures. Empty = healthy. Value
+	// is a stable enum (polling_failed / session_expired / server_error)
+	// used as the frontend i18n key. Set by gateway.markChannelFailed;
+	// cleared by the retry handler or a fresh reconnect.
+	FailureType string `json:"failureType,omitempty"`
 }
 
 type Binding struct {
