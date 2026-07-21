@@ -3,6 +3,7 @@ package channels
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -863,21 +864,23 @@ func (q *QQChannel) collectAttachments(atts []qqAttachment) ([]string, []bus.Med
 		if err != nil {
 			slog.Warn("qq attachment download failed",
 				"account", q.accountID, "url", a.URL, "error", err)
-			// Still surface the URL so a downstream tool can retry —
-			// losing the URL entirely is worse than a transient fetch miss.
-			photoURLs = append(photoURLs, a.URL)
+			// QQ attachment URLs are short-lived signed links — if the
+			// eager download failed, the URL will be dead by the time
+			// web/agent retries it, so don't surface it. Skip.
 			continue
 		}
 		finalCT := ct
 		if sniffedCT != "" {
 			finalCT = sniffedCT
 		}
-		photoURLs = append(photoURLs, a.URL)
-		mediaItems = append(mediaItems, bus.MediaItem{
-			Filename:    a.Filename,
-			ContentType: finalCT,
-			Bytes:       bytes,
-		})
+		// Build a data: URL from the downloaded bytes. Two reasons:
+		//  (1) QQ signed URLs expire fast — a data URL is durable.
+		//  (2) PhotoURLs flows through loop.go's user-message image path
+		//      (Role: user, ContentParts image_url) so the image renders
+		//      on the USER side (right bubble) + reaches the model as
+		//      vision input. MediaItems would route through workspace
+		//      [Attached:] which web renders assistant-side (left).
+		photoURLs = append(photoURLs, "data:"+finalCT+";base64,"+base64.StdEncoding.EncodeToString(bytes))
 	}
 	return photoURLs, mediaItems
 }
