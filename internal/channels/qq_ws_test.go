@@ -343,6 +343,169 @@ func TestQQDispatchC2CFallbackSenderName(t *testing.T) {
 	}
 }
 
+// ----- /claim chicken-and-egg exemption ----------------------------------------
+//
+// Phase 2 fix: when allowedChecker returns false (Admins["qq"] empty or the
+// openid isn't bound yet), the owner's FIRST /claim must still reach the bus
+// so slash_claim.go can bind it. Other unbound messages stay dropped.
+// Rationale: internal/agent/slash_claim.go:17-19 — /claim is deliberately
+// NOT in writeSlashCommands; the 6-digit code is the abuse gate.
+
+// denyAll is the canonical "Admins['qq'] is empty / user not bound" closure.
+func denyAll(_ string) bool { return false }
+
+func TestQQGroupClaimExemptWhenUnbound(t *testing.T) {
+	// allowedChecker denies everyone; a /claim message must still land on
+	// the bus so slash_claim.go can redeem the code.
+	q, mb := newTestQQ(t)
+	q.SetAllowedChecker(denyAll)
+	send, _ := captureSend()
+
+	payload := `{
+		"id": "MSG_CLAIM_GRP",
+		"group_openid": "G_UNBOUND",
+		"content": "  /claim 123456 ",
+		"author": {"member_openid": "MEM_FUTURE_ADMIN", "username": "Owner"}
+	}`
+	raw, _ := json.Marshal(qqFrame{
+		Op: qqOpDispatch, T: "GROUP_AT_MESSAGE_CREATE", S: intPtr(1),
+		D: json.RawMessage(payload),
+	})
+	if err := q.handleServerMessage(context.Background(), raw, send); err != nil {
+		t.Fatalf("group @ claim: %v", err)
+	}
+	msg := drainInbound(t, mb, time.Second)
+
+	if msg.Channel != "qq" {
+		t.Errorf("Channel = %q, want qq", msg.Channel)
+	}
+	if msg.Text != "/claim 123456" {
+		t.Errorf("Text = %q, want trimmed /claim 123456", msg.Text)
+	}
+	// UserID stays group_openid so 群绑群 still holds once bound.
+	if msg.UserID != "G_UNBOUND" {
+		t.Errorf("UserID = %q, want G_UNBOUND", msg.UserID)
+	}
+}
+
+func TestQQGroupNonClaimDroppedWhenUnbound(t *testing.T) {
+	// allowedChecker denies; a non-/claim message MUST be dropped so the
+	// adapter doesn't leak unbound chatter into the agent.
+	q, mb := newTestQQ(t)
+	q.SetAllowedChecker(denyAll)
+	send, _ := captureSend()
+
+	payload := `{
+		"id": "MSG_RANDOM",
+		"group_openid": "G_UNBOUND",
+		"content": "hello please help me",
+		"author": {"member_openid": "MEM_RAND"}
+	}`
+	raw, _ := json.Marshal(qqFrame{
+		Op: qqOpDispatch, T: "GROUP_AT_MESSAGE_CREATE", S: intPtr(2),
+		D: json.RawMessage(payload),
+	})
+	if err := q.handleServerMessage(context.Background(), raw, send); err != nil {
+		t.Fatalf("group @ non-claim: %v", err)
+	}
+	// No inbound should arrive — adapter must drop.
+	select {
+	case m := <-mb.Inbound:
+		t.Errorf("non-/claim unbound message should be dropped, got %+v", m)
+	case <-time.After(80 * time.Millisecond):
+		// Pass: nothing arrived.
+	}
+}
+
+func TestQQC2CClaimExemptWhenUnbound(t *testing.T) {
+	q, mb := newTestQQ(t)
+	q.SetAllowedChecker(denyAll)
+	send, _ := captureSend()
+
+	payload := `{
+		"id": "MSG_CLAIM_DM",
+		"content": "/claim ABCDEF",
+		"author": {"user_openid": "U_UNBOUND", "username": "Owner"}
+	}`
+	raw, _ := json.Marshal(qqFrame{
+		Op: qqOpDispatch, T: "C2C_MESSAGE_CREATE", S: intPtr(3),
+		D: json.RawMessage(payload),
+	})
+	if err := q.handleServerMessage(context.Background(), raw, send); err != nil {
+		t.Fatalf("c2c claim: %v", err)
+	}
+	msg := drainInbound(t, mb, time.Second)
+	if msg.Text != "/claim ABCDEF" {
+		t.Errorf("Text = %q, want /claim ABCDEF", msg.Text)
+	}
+	if msg.UserID != "U_UNBOUND" {
+		t.Errorf("UserID = %q, want U_UNBOUND", msg.UserID)
+	}
+}
+
+func TestQQC2CNonClaimDroppedWhenUnbound(t *testing.T) {
+	q, mb := newTestQQ(t)
+	q.SetAllowedChecker(denyAll)
+	send, _ := captureSend()
+
+	payload := `{
+		"id": "M2",
+		"content": "just chatting",
+		"author": {"user_openid": "U_UNBOUND"}
+	}`
+	raw, _ := json.Marshal(qqFrame{
+		Op: qqOpDispatch, T: "C2C_MESSAGE_CREATE", S: intPtr(4),
+		D: json.RawMessage(payload),
+	})
+	if err := q.handleServerMessage(context.Background(), raw, send); err != nil {
+		t.Fatalf("c2c non-claim: %v", err)
+	}
+	select {
+	case m := <-mb.Inbound:
+		t.Errorf("non-/claim unbound DM should be dropped, got %+v", m)
+	case <-time.After(80 * time.Millisecond):
+	}
+}
+
+func TestQQClaimPrefixOnlyExempt(t *testing.T) {
+	// Strings that merely mention "claim" but don't start with "/claim"
+	// must NOT be exempt — they'd be abuse (trying to spoof the gate).
+	// TrimSpace is applied before the prefix check, so leading spaces
+	// don't bypass it, but embedded "claim" tokens elsewhere do not
+	// qualify.
+	q, mb := newTestQQ(t)
+	q.SetAllowedChecker(denyAll)
+	send, _ := captureSend()
+
+	for _, content := range []string{
+		"claim 123456",    // missing leading slash
+		"please claim me", // claim mid-sentence
+		"/cli 123456",     // looks similar, different prefix
+	} {
+		payload := `{"id":"X","group_openid":"G","content":` + jsonString(content) + `,"author":{"member_openid":"M"}}`
+		raw, _ := json.Marshal(qqFrame{
+			Op: qqOpDispatch, T: "GROUP_AT_MESSAGE_CREATE", S: intPtr(5),
+			D: json.RawMessage(payload),
+		})
+		if err := q.handleServerMessage(context.Background(), raw, send); err != nil {
+			t.Fatalf("dispatch %q: %v", content, err)
+		}
+		select {
+		case m := <-mb.Inbound:
+			t.Errorf("content %q should NOT be exempt, got inbound %+v", content, m)
+		case <-time.After(40 * time.Millisecond):
+		}
+	}
+}
+
+// jsonString is a tiny helper that produces a JSON string literal without
+// pulling in encoding/json's slow path for a single scalar. Used only for
+// building test payloads inline.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 // ----- Heartbeat ACK + lastSeq progression ------------------------------------
 
 func TestQQHeartbeatACKIsNoop(t *testing.T) {

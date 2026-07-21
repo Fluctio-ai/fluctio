@@ -593,6 +593,20 @@ type AccountConfig struct {
 	// used as the frontend i18n key. Set by gateway.markChannelFailed;
 	// cleared by the retry handler or a fresh reconnect.
 	FailureType string `json:"failureType,omitempty"`
+	// AppID is the QQ Official Bot Platform application ID (numeric
+	// string allocated in the QQ 互联开放平台 console). Used together
+	// with ClientSecret to mint AppAccessToken via the
+	// bots.qq.com/app/getAppAccessToken OAuth2 client_credentials flow.
+	// Empty for non-QQ accounts.
+	AppID string `json:"appId,omitempty"`
+	// ClientSecret is the QQ bot's app secret paired with AppID.
+	ClientSecret string `json:"clientSecret,omitempty"`
+	// UseMarkdown selects msg_type=2 (markdown) vs msg_type=0 (plain
+	// text) for outbound QQ messages. QQ markdown requires a separate
+	// approval template in the open-platform console; defaults to false
+	// (plain text is the safe fallback). Honored by the QQ channel's
+	// Phase 3 outbound path.
+	UseMarkdown bool `json:"useMarkdown,omitempty"`
 }
 
 type Binding struct {

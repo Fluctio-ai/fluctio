@@ -13,6 +13,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
+
 // storeLeaser adapts store.Store to channels.Leaser. The method names
 // differ (Acquire/Renew/Release on the channels side, ...ChannelLease
 // on the store side) so the store can grow other lease kinds without
@@ -55,6 +56,8 @@ func registerChannelInstance(rec store.ConfigRecord, mb *bus.MessageBus, chanMgr
 		return registerWeChatChannels(rec, cc, mb, chanMgr, st, hot)
 	case "feishu":
 		return registerFeishuChannels(cc, mb, chanMgr, hot)
+	case "qq":
+		return registerQQChannels(rec, cc, mb, chanMgr, st, hot)
 	}
 	return nil
 }
@@ -77,6 +80,9 @@ func registerChannelFromRecord(rec store.ChannelRecord, mb *bus.MessageBus, chan
 		return registerWeChatChannels(cfgRec, cc, mb, chanMgr, st, hot)
 	case "feishu":
 		return registerFeishuChannels(cc, mb, chanMgr, hot)
+	case "qq":
+		cfgRec := channelRecordToConfigRecord(rec)
+		return registerQQChannels(cfgRec, cc, mb, chanMgr, st, hot)
 	}
 	return nil
 }
@@ -320,6 +326,68 @@ func registerWeChatChannels(rec store.ConfigRecord, chCfg config.ChannelConfig, 
 	}
 	return nil
 }
+
+// registerQQChannels starts one QQChannel per account in the configs
+// row's Accounts map. Mirrors registerWeChatChannels (contract §5.4):
+//
+//   - Iterates accounts, skipping any pre-marked failed.
+//   - Constructs channels.NewQQChannel with AppID + ClientSecret from
+//     AccountConfig (Phase 4 fields; gateway reads them as-is so the
+//     connect handler can populate them later without a code change).
+//   - SetAllowedChecker installs a live closure that reads the owning
+//     agent's Admins["qq"] via config.AgentFileConfigLoader. The list
+//     updates on every inbound message, so a freshly-claimed admin
+//     takes effect without restarting the adapter (contract §5.5
+//     scheme A — claim复用, no openclaw-style static allowFrom).
+//   - OnFailed → markChannelFailed so a dead account surfaces a
+//     reconnect prompt + skips re-start on next boot.
+//   - registerSingleton: WS long-connection must be lease-guarded so
+//     two replicas don't both connect and double-deliver events.
+//
+// `rec.AgentID` is what links the channel row to the agent whose
+// Admins["qq"] we read; without it the gate is left open (dev/legacy
+// rows).
+func registerQQChannels(rec store.ConfigRecord, chCfg config.ChannelConfig, mb *bus.MessageBus, chanMgr *channels.Manager, st store.Store, hot bool) error {
+	for accountID, acct := range chCfg.Accounts {
+		if skipFailedAccount(acct) {
+			slog.Info("skipping failed qq account on boot",
+				"account", accountID, "reason", acct.FailureType)
+			continue
+		}
+		q, err := channels.NewQQChannel(acct.AppID, acct.ClientSecret, accountID, mb)
+		if err != nil {
+			return err
+		}
+
+		// Live claim closure. Re-reads Admins["qq"] on every inbound
+		// so a /claim in another session takes effect immediately.
+		if agentID := rec.AgentID; agentID != "" {
+			q.SetAllowedChecker(func(openid string) bool {
+				cfg, ok := config.AgentFileConfigLoader(agentID, "")
+				if !ok {
+					return false
+				}
+				for _, id := range cfg.Admins["qq"] {
+					if id == openid {
+						return true
+					}
+				}
+				return false
+			})
+		}
+
+		// FailureReporter callback — same shape as wechat.
+		if st != nil {
+			q.OnFailed(func(deadAccount, reason string) {
+				markChannelFailed(st, chanMgr, "qq", deadAccount, reason)
+			})
+		}
+
+		registerSingleton(chanMgr, q, hot)
+	}
+	return nil
+}
+
 
 // purgeWeChatAccount removes one account from the configs row's
 // Accounts map. If the row is left empty after the removal the whole

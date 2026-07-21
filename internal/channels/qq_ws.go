@@ -129,12 +129,25 @@ type QQChannel struct {
 	lastSeq   *int
 	seqMu     sync.Mutex
 
-	// accessToken is the AppAccessToken fetched at the top of each
-	// dialAndRun cycle. Read by the Identify/Resume payload builder
-	// (handleHello → currentToken) in the same Start goroutine that
-	// wrote it — no mutex needed. Phase 2 replaces this with a cached
-	// token + background refresh goroutine.
+	// accessToken is the AppAccessToken bound to the current wss
+	// connection — populated at the top of each dialAndRun cycle by
+	// qqGetToken (Phase 2: cached + background-refreshed). Read by the
+	// Identify/Resume payload builder (handleHello → currentToken) in
+	// the same Start goroutine that wrote it — no mutex needed.
 	accessToken string
+
+	// tokenFetchFails counts consecutive qqGetToken errors in Start.
+	// When it reaches qqTokenFetchFailureThreshold the adapter gives up
+	// and fires OnFailed("token_refresh_failed") so the framework can
+	// mark the account failed (contract §5.6).
+	tokenFetchFails int
+
+	// allowedChecker gates inbound messages by openid (contract §5.5
+	// claim复用). Set by gateway registration via SetAllowedChecker;
+	// the closure reads the owning agent's Admins["qq"] list. nil =
+	// allow all (Phase 1 behavior — preserved so early dev /claim-less
+	// smoke tests still pass).
+	allowedChecker func(openid string) bool
 
 	// Heartbeat goroutine lifecycle. Started on Hello; stopped when the
 	// owning dialAndRun exits (connCtx cancel). heartbeatRunning guards
@@ -147,7 +160,9 @@ type QQChannel struct {
 	fastDisconnects int       // consecutive <5s disconnects
 	connEstablishedAt time.Time
 
-	// FailureReporter (Phase 2 wires this; Phase 1 just stores).
+	// FailureReporter (gateway wires this via OnFailed →
+	// markChannelFailed so a dead account surfaces a reconnect prompt
+	// in the UI and the next restart skips re-starting it).
 	onFailed func(accountID, reason string)
 }
 
@@ -172,11 +187,24 @@ func NewQQChannel(appID, appSecret, accountID string, mb *bus.MessageBus) (*QQCh
 	}, nil
 }
 
-// OnFailed registers the framework callback (FailureReporter). Phase 2
-// will call this from gateway/channels.go; Phase 1 leaves it unused
-// internally.
+// OnFailed registers the framework callback (FailureReporter). The
+// gateway wires this in registerQQChannels so a dead account surfaces
+// a reconnect prompt in the UI instead of looping forever.
 func (q *QQChannel) OnFailed(fn func(accountID, reason string)) {
 	q.onFailed = fn
+}
+
+// SetAllowedChecker installs the claim-gate closure. The closure reads
+// the owning agent's Admins["qq"] list (via AgentFileConfigLoader)
+// and returns true iff the openid is authorized. Nil = allow all
+// (Phase 1 behavior). Called once per registration; inbound messages
+// consult the live closure on each dispatch so newly-claimed admins
+// take effect without restarting the adapter.
+//
+// Contract §5.5 scheme A: claim复用 existing /claim + Admins["qq"],
+// no openclaw-style static allowFrom.
+func (q *QQChannel) SetAllowedChecker(fn func(openid string) bool) {
+	q.allowedChecker = fn
 }
 
 func (q *QQChannel) Name() string        { return "qq" }
@@ -243,13 +271,31 @@ func (q *QQChannel) Start(ctx context.Context) error {
 			}
 		}
 
-		// Phase 1: re-fetch token every attempt. Phase 2 will cache.
+		// Phase 2: cached token via qqGetToken. Background refresh is
+		// already running (started by qqRefreshToken inside qqGetToken),
+		// so long-lived WS connections stay valid for hours without a
+		// mid-turn 401 (contract §6.7).
 		token, err := q.getAccessToken(ctx)
 		if err != nil {
+			q.tokenFetchFails++
 			slog.Warn("qq getAccessToken failed",
-				"account", q.accountID, "attempt", q.attempts, "error", err)
+				"account", q.accountID,
+				"attempt", q.attempts,
+				"consecutiveFails", q.tokenFetchFails,
+				"error", err)
+			// Contract §5.6: persistent token refresh failure is fatal.
+			// Don't let the loop hammer bots.qq.com forever on a bad
+			// secret — fire OnFailed and exit so the user sees a
+			// reconnect prompt.
+			if q.tokenFetchFails >= qqTokenFetchFailureThreshold {
+				slog.Error("qq token fetch failure threshold reached — stopping adapter",
+					"account", q.accountID, "fails", q.tokenFetchFails)
+				q.fireFailed("token_refresh_failed")
+				return nil
+			}
 			continue
 		}
+		q.tokenFetchFails = 0
 
 		url, err := q.getGatewayUrl(ctx, token)
 		if err != nil {
@@ -651,6 +697,27 @@ func (q *QQChannel) handleGroupAtMessage(d json.RawMessage) error {
 	}
 
 	content := strings.TrimSpace(ev.Content)
+
+	// Claim gate (contract §5.5 scheme A). UserID=group_openid means
+	// the closure checks against the group, not the individual member —
+	// one /claim in the group authorizes everyone in it (群绑群技巧).
+	// Phase 1 left this nil (allow all); Phase 2 wires it via
+	// SetAllowedChecker at registration time.
+	//
+	// /claim exemption (chicken-and-egg, slash_claim.go:17-19): /claim is
+	// NOT in writeSlashCommands — the owner MUST be able to redeem a code
+	// BEFORE being bound as admin. Without this exemption the FIRST /claim
+	// in a fresh install (Admins["qq"] empty → allowedChecker returns
+	// false) would be dropped at the adapter layer and never reach
+	// slash_claim.go, so the binding could never happen. The 6-digit code
+	// in the message body IS the abuse gate. Other unbound messages are
+	// still dropped.
+	if q.allowedChecker != nil && !q.allowedChecker(ev.GroupOpenID) && !strings.HasPrefix(content, "/claim") {
+		slog.Debug("qq group @ message dropped — group not claimed",
+			"account", q.accountID, "group_openid", ev.GroupOpenID)
+		return nil
+	}
+
 	// Phase 1 doesn't download attachments (contract §2.3 — URLs have
 	// short TTL + need SSRF guard). Defer to Phase 3.
 	//attachments := collectImageURLs(ev.Attachments)
@@ -689,6 +756,19 @@ func (q *QQChannel) handleC2CMessage(d json.RawMessage) error {
 	}
 
 	content := strings.TrimSpace(ev.Content)
+
+	// Claim gate (contract §5.5 scheme A). Private chat: the user's
+	// user_openid is what /claim bound to Admins["qq"].
+	//
+	// /claim exemption — see handleGroupAtMessage for full rationale.
+	// Owner's first /claim in a fresh install (allowedChecker returns
+	// false) must reach slash_claim.go to bind. Code is the abuse gate.
+	if q.allowedChecker != nil && !q.allowedChecker(ev.Author.UserOpenID) && !strings.HasPrefix(content, "/claim") {
+		slog.Debug("qq c2c message dropped — user not claimed",
+			"account", q.accountID, "user_openid", ev.Author.UserOpenID)
+		return nil
+	}
+
 	senderName := ev.Author.Username
 	if senderName == "" {
 		senderName = ev.Author.UserOpenID
@@ -758,41 +838,13 @@ type qqAccessTokenResponse struct {
 	ExpiresIn   int    `json:"expires_in,omitempty"`
 }
 
-// getAccessToken POSTs to bots.qq.com/app/getAppAccessToken with the
-// client_credentials body. Phase 2 adds: in-memory cache keyed by appID,
-// singleflight, background refresh 5min before expiry, 401-clear+retry.
+// getAccessToken returns a live access token from the package-level
+// cache (qq_token.go). Phase 2: the cache isolates by appID, single-
+// flights concurrent callers, and runs a background refresh goroutine
+// 5min before expiry (contract §3.2 + §6.7). On a hard miss it POSTs
+// bots.qq.com/app/getAppAccessToken.
 func (q *QQChannel) getAccessToken(ctx context.Context) (string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"appId":        q.appID,
-		"clientSecret": q.appSecret,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, qqTokenURL, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", qqUserAgent)
-
-	resp, err := q.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("token http: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("token read: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("token HTTP %d: %s", resp.StatusCode, string(respBody))
-	}
-	var parsed qqAccessTokenResponse
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", fmt.Errorf("token parse: %w", err)
-	}
-	if parsed.AccessToken == "" {
-		return "", fmt.Errorf("token empty in response")
-	}
-	return parsed.AccessToken, nil
+	return qqGetToken(ctx, q.appID, q.appSecret)
 }
 
 type qqGatewayResponse struct {
