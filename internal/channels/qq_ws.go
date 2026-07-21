@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -917,9 +918,32 @@ func classifyQQClose(code int) qqCloseAction {
 // REST: token + gateway URL (Phase 1 — no caching)
 // ---------------------------------------------------------------------------
 
+// qqExpiresInSeconds tolerates QQ returning expires_in as either a JSON
+// number (7200) or a quoted string ("7200") — the live API has been
+// observed returning the string form, which breaks a plain int field.
+type qqExpiresInSeconds int
+
+func (e *qqExpiresInSeconds) UnmarshalJSON(data []byte) error {
+	s := strings.TrimSpace(string(data))
+	if s == "" || s == "null" {
+		return nil
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		*e = qqExpiresInSeconds(n)
+		return nil
+	}
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		if n, err := strconv.Atoi(s[1 : len(s)-1]); err == nil {
+			*e = qqExpiresInSeconds(n)
+			return nil
+		}
+	}
+	return fmt.Errorf("qq: invalid expires_in %q", s)
+}
+
 type qqAccessTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	ExpiresIn   int    `json:"expires_in,omitempty"`
+	AccessToken string             `json:"access_token"`
+	ExpiresIn   qqExpiresInSeconds `json:"expires_in,omitempty"`
 }
 
 // getAccessToken returns a live access token from the package-level

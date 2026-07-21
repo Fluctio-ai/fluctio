@@ -363,7 +363,7 @@ func qqDefaultTokenFetch(ctx context.Context, appID, secret string) (string, int
 	if parsed.AccessToken == "" {
 		return "", 0, fmt.Errorf("qq token empty in response")
 	}
-	return parsed.AccessToken, parsed.ExpiresIn, nil
+	return parsed.AccessToken, int(parsed.ExpiresIn), nil
 }
 
 // ---------------------------------------------------------------------------
