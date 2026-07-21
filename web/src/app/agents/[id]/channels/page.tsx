@@ -1546,7 +1546,7 @@ function ConnectQQDialog({
             >
               q.qq.com
             </a>
-            {t("channels.qqDesc2")} <strong>群聊 + C2C 私聊</strong>
+            {t("channels.qqDesc2")} <strong>{t("channels.qqDesc2Highlight")}</strong>
             {t("channels.qqDesc3")} <code>AppID</code> + <code>ClientSecret</code>
             {t("channels.qqDesc4")}
           </DialogDescription>

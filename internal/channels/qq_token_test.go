@@ -530,3 +530,47 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+// TestQQClose4004ClearsTokenCache pins down the contract §1.8 wiring:
+// when the WS closes with code 4004 (token invalid), the reconnect
+// loop's switch must call qqClearToken(q.appID) so the next iteration
+// re-fetches instead of returning the same dead token (which would
+// loop until backoff exhausts).
+//
+// The switch is inline in Start() (no helper extraction — would be a
+// refactor). This test mirrors the production path step-by-step:
+// classifyQQClose(4004) → qqCloseActionRefreshToken → qqClearToken.
+// If either building block regresses (classification changes, or
+// qqClearToken stops wiping the cache) this test fails; removing the
+// qqClearToken call from Start()'s switch case is caught by code
+// review (smallest necessary change — no refactor for testability).
+func TestQQClose4004ClearsTokenCache(t *testing.T) {
+	qqResetTokenCacheForTest()
+	calls, restore := installFakeFetcher("T4004", 7200, nil)
+	defer restore()
+
+	const appID = "APP-4004"
+	ctx := context.Background()
+
+	// Prime the cache so qqClearToken has something to clear.
+	if _, err := qqGetToken(ctx, appID, "s"); err != nil {
+		t.Fatalf("prereq qqGetToken: %v", err)
+	}
+	if n := atomic.LoadInt32(calls); n != 1 {
+		t.Fatalf("prereq: %d fetches, want 1", n)
+	}
+
+	// Mirror Start()'s switch: 4004 → RefreshToken → clear.
+	if got := classifyQQClose(qqCloseAuthFailed); got != qqCloseActionRefreshToken {
+		t.Fatalf("classifyQQClose(%d) = %v, want qqCloseActionRefreshToken", qqCloseAuthFailed, got)
+	}
+	qqClearToken(appID)
+
+	// Cache cleared → next qqGetToken must trigger a fresh fetch.
+	if _, err := qqGetToken(ctx, appID, "s"); err != nil {
+		t.Fatalf("post-clear qqGetToken: %v", err)
+	}
+	if n := atomic.LoadInt32(calls); n != 2 {
+		t.Errorf("after 4004 clear: %d total fetches, want 2 (cache must be cleared so the dead token isn't returned again)", n)
+	}
+}

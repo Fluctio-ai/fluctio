@@ -342,8 +342,14 @@ func (q *QQChannel) Start(ctx context.Context) error {
 				}
 				// Don't clear session — server didn't invalidate it.
 				continue
-			case qqCloseActionRefreshToken, qqCloseActionRetry:
-				// Token re-fetched next iteration; session preserved.
+			case qqCloseActionRefreshToken:
+				// 4004: server rejected the token. Clear the cache so
+				// qqGetToken on the next iteration actually re-fetches
+				// instead of returning the same dead token (which would
+				// loop until backoff exhausts — contract §1.8).
+				qqClearToken(q.appID)
+			case qqCloseActionRetry:
+				// Unknown / transient — keep session + token, reconnect.
 			}
 
 			// Fast-disconnect tracking (applies to any non-fatal,

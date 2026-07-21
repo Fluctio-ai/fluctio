@@ -358,6 +358,10 @@ func registerQQChannels(rec store.ConfigRecord, chCfg config.ChannelConfig, mb *
 		if err != nil {
 			return err
 		}
+		// Phase 4 field wiring: AccountConfig.UseMarkdown → adapter
+		// toggle. Without this the dashboard toggle is silently ignored
+		// (useMarkdown defaults to false on NewQQChannel).
+		q.SetUseMarkdown(acct.UseMarkdown)
 
 		// Live claim closure. Re-reads Admins["qq"] on every inbound
 		// so a /claim in another session takes effect immediately.

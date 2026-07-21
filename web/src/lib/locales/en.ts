@@ -1377,6 +1377,7 @@ const en: Record<string, string> = {
   "channels.qqClientSecretPlaceholder": "from App Details → App Secret",
   "channels.qqDesc1": "Create a robot at",
   "channels.qqDesc2": "and request the",
+  "channels.qqDesc2Highlight": "Group chat + C2C DM",
   "channels.qqDesc3": "intent. Copy the",
   "channels.qqDesc4": "from the App Details page. Credentials are stored locally; the bot connects to QQ via a WebSocket on the server side.",
   "channels.qqLiveSuffix": "Add it to a QQ group or DM it, then send a message to test.",

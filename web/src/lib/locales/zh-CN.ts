@@ -1377,6 +1377,7 @@ const zhCN: Record<string, string> = {
   "channels.qqClientSecretPlaceholder": "来自应用详情 → App Secret",
   "channels.qqDesc1": "在",
   "channels.qqDesc2": "创建机器人，并申请",
+  "channels.qqDesc2Highlight": "群聊 + C2C 私聊",
   "channels.qqDesc3": "权限。从应用详情页复制",
   "channels.qqDesc4": "。凭据保存在本地；服务端通过 WebSocket 连接到 QQ。",
   "channels.qqLiveSuffix": "将它加入 QQ 群或私信，然后发送消息测试。",
