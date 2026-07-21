@@ -789,6 +789,11 @@ const zhCN: Record<string, string> = {
   "tools.noProviders": "未选择提供商。{name} 工具在添加至少一个提供商之前对智能体不可用。",
   "tools.test": "测试",
   "tools.testing": "测试中…",
+  "tools.cat.web_search": "网页搜索",
+  "tools.cat.web_fetch": "网页抓取",
+  "tools.cat.image_gen": "图片生成",
+  "tools.cat.tts": "文字转语音",
+  "tools.cat.vision": "图像理解",
 
   // Plugins
 

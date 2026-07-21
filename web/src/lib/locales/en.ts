@@ -789,6 +789,11 @@ const en: Record<string, string> = {
   "tools.noProviders": "No providers selected. The {name} tool won't be available to agents until you add at least one.",
   "tools.test": "Test",
   "tools.testing": "Testing…",
+  "tools.cat.web_search": "Web Search",
+  "tools.cat.web_fetch": "Web Fetch",
+  "tools.cat.image_gen": "Image Generation",
+  "tools.cat.tts": "Text-to-Speech",
+  "tools.cat.vision": "Image Understanding",
 
   // Plugins
 

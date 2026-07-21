@@ -40,6 +40,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 	"github.com/fluctio-ai/fluctio/internal/toolproviders/imagegen"
 	"github.com/fluctio-ai/fluctio/internal/toolproviders/tts"
+	"github.com/fluctio-ai/fluctio/internal/toolproviders/vision"
 	"github.com/fluctio-ai/fluctio/internal/toolproviders/webfetch"
 	"github.com/fluctio-ai/fluctio/internal/toolproviders/websearch"
 	"github.com/fluctio-ai/fluctio/internal/usage"
@@ -54,6 +55,7 @@ var toolProviderRegistry = func() *toolproviders.Registry {
 	webfetch.RegisterAll(r)
 	imagegen.RegisterAll(r)
 	tts.RegisterAll(r)
+	vision.RegisterAll(r)
 	return r
 }()
 
@@ -89,6 +91,9 @@ func registerAgentToolChains(cfg *config.Config, agents []*agent.Agent) {
 		}
 		if chain := buildToolChainFromResolved(resolved, "tts"); chain != nil {
 			ag.RegisterTTSChain(chain)
+		}
+		if chain := buildToolChainFromResolved(resolved, "vision"); chain != nil {
+			ag.RegisterVisionChain(chain)
 		}
 		// web_fetch: chain-first, otherwise the agent keeps the
 		// built-in direct fetcher already registered at construction

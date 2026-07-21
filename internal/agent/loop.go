@@ -1211,6 +1211,12 @@ func (a *Agent) RegisterTTSChain(chain *toolproviders.Chain) {
 	tools.RegisterTTSChain(a.registry, chain)
 }
 
+// RegisterVisionChain exposes the vision (image understanding) tool to this
+// agent, as a multimodal fallback for primary models that can't see images.
+func (a *Agent) RegisterVisionChain(chain *toolproviders.Chain) {
+	tools.RegisterVisionChain(a.registry, chain)
+}
+
 // Sessions returns the session manager for this agent.
 func (a *Agent) Sessions() *session.Manager {
 	return a.sessions

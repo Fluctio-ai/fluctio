@@ -159,6 +159,15 @@ export default function ToolsPage() {
   );
 }
 
+// categoryLabel maps a category name to its localized label, falling back to
+// the backend-provided English label when no translation key exists (e.g. a
+// plugin-registered category we don't ship a translation for).
+function categoryLabel(tt: (k: string) => string, name: string, fallback: string): string {
+  const key = `tools.cat.${name}`;
+  const v = tt(key);
+  return v === key ? fallback : v;
+}
+
 function CategoryRail({
   categories,
   active,
@@ -177,7 +186,7 @@ function CategoryRail({
     <nav className="flex flex-row md:flex-col gap-1 overflow-x-auto md:overflow-visible -mx-1 px-1 md:mx-0 md:px-0">
       {categories.map((c) => (
         <button key={c.name} type="button" onClick={() => onSelect(c.name)} className={itemClass(c.name === active)}>
-          {c.label}
+          {categoryLabel(tt, c.name, c.label)}
         </button>
       ))}
       <div className="hidden md:block my-1 border-t border-border/60" />
@@ -217,7 +226,7 @@ function CategoryPanel({
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 className="text-xl font-semibold tracking-tight">{catalog.label}</h3>
+          <h3 className="text-xl font-semibold tracking-tight">{categoryLabel(tt, catalog.name, catalog.label)}</h3>
           <p className="text-sm text-muted-foreground mt-1">{tt("tools.configDesc")}</p>
         </div>
         {saveButton}

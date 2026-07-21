@@ -89,6 +89,21 @@ var builtinCatalog = []categoryCatalog{
 			{Name: "none", Label: "None (rely on model's native audio)", Models: []string{"default"}},
 		},
 	},
+	{
+		Name:  "vision",
+		Label: "Image Understanding (Vision)",
+		Providers: []providerCatalog{
+			// A multimodal fallback: when the agent's primary model can't
+			// see images, the `vision` tool routes the image through one of
+			// these models and returns its text answer. Any OpenAI-compatible
+			// endpoint works.
+			{Name: "openai", Label: "OpenAI", NeedsKey: true, NeedsURL: true, Models: []string{"gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"}},
+			// "none" sentinel: when picked, vision isn't exposed to the
+			// model at all. The model uses its own native multimodal
+			// capability if it has one.
+			{Name: "none", Label: "None (rely on model's native vision)", Models: []string{"default"}},
+		},
+	},
 }
 
 // handleGetTools returns the categories + provider catalog and the user's
@@ -287,6 +302,10 @@ func probeArgs(category string) map[string]any {
 		return map[string]any{"prompt": "a dot", "n": 1, "size": "256x256"}
 	case "tts":
 		return map[string]any{"text": "hi"}
+	case "vision":
+		// 1x1 PNG — cheap to send, good enough to verify the key+endpoint
+		// respond. The model's answer doesn't matter for the probe.
+		return map[string]any{"image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "question": "what is this?"}
 	}
 	return map[string]any{}
 }

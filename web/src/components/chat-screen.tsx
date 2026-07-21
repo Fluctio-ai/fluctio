@@ -3014,6 +3014,7 @@ const TOOL_FAMILIES: Array<{ match: (name: string) => boolean; icon: typeof Wren
   { match: (n) => n.startsWith("knowledgebase_"), icon: BookOpen, nonDefault: true },
   { match: (n) => n.startsWith("web_"), icon: Globe, nonDefault: true },
   { match: (n) => n === "image_gen", icon: ImageIcon, nonDefault: true },
+  { match: (n) => n === "vision", icon: Eye, nonDefault: true },
   { match: (n) => n === "tts", icon: Music, nonDefault: true },
   { match: (n) => ["read_file", "write_file", "list_dir", "edit_file"].includes(n), icon: FileText, nonDefault: true },
   { match: (n) => n === "apply_patch", icon: FileCode, nonDefault: true },
