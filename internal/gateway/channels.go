@@ -13,7 +13,6 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
-
 // storeLeaser adapts store.Store to channels.Leaser. The method names
 // differ (Acquire/Renew/Release on the channels side, ...ChannelLease
 // on the store side) so the store can grow other lease kinds without
@@ -366,13 +365,14 @@ func registerQQChannels(rec store.ConfigRecord, chCfg config.ChannelConfig, mb *
 		// Live claim closure. Re-reads Admins["qq"] on every inbound
 		// so a /claim in another session takes effect immediately.
 		if agentID := rec.AgentID; agentID != "" {
+			ownerID := rec.UserID
 			q.SetAllowedChecker(func(openid string) bool {
 				cfg, ok := config.AgentFileConfigLoader(agentID, "")
 				if !ok {
 					return false
 				}
 				for _, id := range cfg.Admins["qq"] {
-					if id == openid {
+					if id == ownerID {
 						return true
 					}
 				}
@@ -391,7 +391,6 @@ func registerQQChannels(rec store.ConfigRecord, chCfg config.ChannelConfig, mb *
 	}
 	return nil
 }
-
 
 // purgeWeChatAccount removes one account from the configs row's
 // Accounts map. If the row is left empty after the removal the whole
@@ -488,4 +487,3 @@ func markChannelFailed(st store.Store, chanMgr *channels.Manager, channelType, a
 	}
 	chanMgr.Unregister(channelType, accountID)
 }
-

@@ -66,37 +66,37 @@ const (
 	qqIntentsFull = (1 << 30) | (1 << 12) | (1 << 25) | (1 << 26) // = 1174409216
 
 	// Reconnect policy (contract §1.8).
-	qqMaxReconnectAttempts = 100
-	qqFastDisconnectWindow = 5 * time.Second
-	qqFastDisconnectPenalty = 60 * time.Second
+	qqMaxReconnectAttempts    = 100
+	qqFastDisconnectWindow    = 5 * time.Second
+	qqFastDisconnectPenalty   = 60 * time.Second
 	qqFastDisconnectThreshold = 3
-	qqRateLimitWait = 60 * time.Second
+	qqRateLimitWait           = 60 * time.Second
 )
 
 // QQ OP codes (contract §1.3, source gateway.ts:1896-2163).
 const (
-	qqOpHello         = 10 // S→C: carries heartbeat_interval
-	qqOpIdentify      = 2  // C→S: new session login
-	qqOpResume        = 6  // C→S: resume existing session
-	qqOpDispatch      = 0  // S→C: business event, t/d/s
-	qqOpHeartbeat     = 1  // C→S: periodic heartbeat
-	qqOpHeartbeatACK  = 11 // S→C: heartbeat ack
-	qqOpReconnect     = 7  // S→C: server-requested reconnect
-	qqOpInvalidSession = 9 // S→C: d=bool (true=may resume, false=clear)
+	qqOpHello          = 10 // S→C: carries heartbeat_interval
+	qqOpIdentify       = 2  // C→S: new session login
+	qqOpResume         = 6  // C→S: resume existing session
+	qqOpDispatch       = 0  // S→C: business event, t/d/s
+	qqOpHeartbeat      = 1  // C→S: periodic heartbeat
+	qqOpHeartbeatACK   = 11 // S→C: heartbeat ack
+	qqOpReconnect      = 7  // S→C: server-requested reconnect
+	qqOpInvalidSession = 9  // S→C: d=bool (true=may resume, false=clear)
 )
 
 // WS close codes (contract §1.8, source gateway.ts:2170-2262).
 const (
-	qqCloseNormal        = 1000
-	qqCloseAuthFailed    = 4004 // token invalid → refresh
+	qqCloseNormal         = 1000
+	qqCloseAuthFailed     = 4004 // token invalid → refresh
 	qqCloseSessionInvalid = 4006
-	qqCloseSeqInvalid    = 4007
-	qqCloseRateLimited   = 4008 // wait 60s
+	qqCloseSeqInvalid     = 4007
+	qqCloseRateLimited    = 4008 // wait 60s
 	qqCloseSessionTimeout = 4009
-	qqCloseInternalStart = 4900
-	qqCloseInternalEnd   = 4913
-	qqCloseRobotOffline  = 4914 // fatal: robot delisted
-	qqCloseRobotBanned   = 4915 // fatal: robot banned
+	qqCloseInternalStart  = 4900
+	qqCloseInternalEnd    = 4913
+	qqCloseRobotOffline   = 4914 // fatal: robot delisted
+	qqCloseRobotBanned    = 4915 // fatal: robot banned
 )
 
 // Backoff ladder (contract §1.8): [1s, 2s, 5s, 10s, 30s, 60s], capped at 60s.
@@ -118,10 +118,10 @@ var qqBackoffSteps = [...]time.Duration{
 // into markChannelFailed; Phase 1 stores the callback but never fires it
 // internally).
 type QQChannel struct {
-	accountID string
-	appID     string
-	appSecret string
-	mb        *bus.MessageBus
+	accountID  string
+	appID      string
+	appSecret  string
+	mb         *bus.MessageBus
 	httpClient *http.Client
 
 	// WS state machine (protected by seqMu where shared across goroutines).
@@ -171,8 +171,8 @@ type QQChannel struct {
 	heartbeatMu      sync.Mutex
 
 	// Reconnect bookkeeping (owned by Start goroutine — single-writer).
-	attempts        int       // cumulative reconnect attempts
-	fastDisconnects int       // consecutive <5s disconnects
+	attempts          int // cumulative reconnect attempts
+	fastDisconnects   int // consecutive <5s disconnects
 	connEstablishedAt time.Time
 
 	// FailureReporter (gateway wires this via OnFailed →
@@ -224,7 +224,7 @@ func (q *QQChannel) SetAllowedChecker(fn func(openid string) bool) {
 
 func (q *QQChannel) Name() string        { return "qq" }
 func (q *QQChannel) AccountID() string   { return q.accountID }
-func (q *QQChannel) BotUsername() string { return "" } // QQ has no bot username concept
+func (q *QQChannel) BotUsername() string { return "qqbot" } // sentinel: routeGroup's agentByMention checks BotUsername to recognize @bot on GROUP_AT_MESSAGE_CREATE (QQ events imply @bot; QQ has no real username)
 
 // Send / SendMessage / SendTyping are implemented in qq_send.go
 // (Phase 3 — contract §3.5 + §4.2 + §6.9).
@@ -468,6 +468,10 @@ func (q *QQChannel) handleServerMessage(ctx context.Context, raw []byte, send se
 		return fmt.Errorf("unmarshal frame: %w", err)
 	}
 
+	// DEBUG (Phase 8 e2e): log every inbound frame to distinguish "WS
+	// alive but platform pushes no Dispatch" (capability/sandbox issue)
+	// from "Dispatch arriving but mishandled". Remove after diagnosis.
+
 	switch frame.Op {
 	case qqOpHello:
 		return q.handleHello(ctx, frame.D, send)
@@ -544,9 +548,9 @@ func (q *QQChannel) handleHello(ctx context.Context, d json.RawMessage, send sen
 		payload := qqResumePayload{
 			Op: qqOpResume,
 			D: qqResumeData{
-				Token:    qqAuthScheme + " " + q.currentToken(),
+				Token:     qqAuthScheme + " " + q.currentToken(),
 				SessionID: q.sessionID,
-				Seq:      *lastSeq,
+				Seq:       *lastSeq,
 			},
 		}
 		slog.Info("qq ws sending Resume", "account", q.accountID, "seq", *lastSeq)
@@ -755,12 +759,13 @@ func (q *QQChannel) handleGroupAtMessage(d json.RawMessage) error {
 	q.mb.Inbound <- bus.InboundMessage{
 		Channel:    "qq",
 		AccountID:  q.accountID,
-		ChatID:     ev.GroupOpenID,    // group conversation key
-		UserID:     ev.GroupOpenID,    // ★ 群绑群: same UserID for all members
+		ChatID:     ev.GroupOpenID, // group conversation key
+		UserID:     ev.GroupOpenID, // ★ 群绑群: same UserID for all members
 		PeerKind:   "group",
 		MessageID:  ev.ID,
 		Text:       content,
-		SenderName: senderName,         // member_openid or username for UI display
+		SenderName: senderName,        // member_openid or username for UI display
+		Mentions:   []string{"qqbot"}, // GROUP_AT_MESSAGE_CREATE implies @bot; lets routeGroup agentByMention recognize the trigger
 		PhotoURLs:  photoURLs,
 		MediaItems: mediaItems,
 	}
@@ -884,12 +889,12 @@ func (q *QQChannel) collectAttachments(atts []qqAttachment) ([]string, []bus.Med
 type qqCloseAction int
 
 const (
-	qqCloseActionRetry qqCloseAction = iota // unknown / transient — keep session, reconnect
-	qqCloseActionNormal                      // 1000: graceful, don't reconnect
-	qqCloseActionFatal                       // 4914/4915: robot offline/banned, exit
-	qqCloseActionClearSession                // 4006/4007/4009/4900-4913: clear session, Identify
-	qqCloseActionRefreshToken                // 4004: token invalid, refresh + retry
-	qqCloseActionRateLimit                   // 4008: rate-limited, wait 60s
+	qqCloseActionRetry        qqCloseAction = iota // unknown / transient — keep session, reconnect
+	qqCloseActionNormal                            // 1000: graceful, don't reconnect
+	qqCloseActionFatal                             // 4914/4915: robot offline/banned, exit
+	qqCloseActionClearSession                      // 4006/4007/4009/4900-4913: clear session, Identify
+	qqCloseActionRefreshToken                      // 4004: token invalid, refresh + retry
+	qqCloseActionRateLimit                         // 4008: rate-limited, wait 60s
 )
 
 // classifyQQClose maps a QQ WS close code to a reconnect action. Pure
@@ -1053,15 +1058,15 @@ type qqIdentifyPayload struct {
 }
 
 type qqIdentifyData struct {
-	Token   string  `json:"token"`
-	Intents int     `json:"intents"`
-	Shard   [2]int  `json:"shard"`
+	Token   string `json:"token"`
+	Intents int    `json:"intents"`
+	Shard   [2]int `json:"shard"`
 }
 
 // qqResumePayload is the op:6 outbound body (contract §1.6).
 type qqResumePayload struct {
-	Op int           `json:"op"`
-	D  qqResumeData  `json:"d"`
+	Op int          `json:"op"`
+	D  qqResumeData `json:"d"`
 }
 
 type qqResumeData struct {
@@ -1100,13 +1105,13 @@ type qqAttachment struct {
 // qqGroupAtMessage is GROUP_AT_MESSAGE_CREATE d (contract §2.1).
 // Phase 3 adds Attachments for image download.
 type qqGroupAtMessage struct {
-	ID          string         `json:"id"`
-	GroupOpenID string         `json:"group_openid"`
-	Content     string         `json:"content"`
+	ID          string `json:"id"`
+	GroupOpenID string `json:"group_openid"`
+	Content     string `json:"content"`
 	Author      struct {
-		ID          string `json:"id,omitempty"`
+		ID           string `json:"id,omitempty"`
 		MemberOpenID string `json:"member_openid,omitempty"`
-		Username    string `json:"username,omitempty"`
+		Username     string `json:"username,omitempty"`
 	} `json:"author"`
 	Attachments []qqAttachment `json:"attachments,omitempty"`
 	Timestamp   string         `json:"timestamp,omitempty"`
