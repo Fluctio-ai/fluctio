@@ -66,37 +66,37 @@ const CATALOG: { type: string; label: string; description: string; available: bo
   {
     type: "telegram",
     label: "Telegram",
-    description: "Connect a Telegram bot to relay messages to this agent.",
+    description: "channels.telegramDesc",
     available: true,
   },
   {
     type: "discord",
     label: "Discord",
-    description: "Connect a Discord bot — works in DMs and servers it's invited to.",
+    description: "channels.discordDesc",
     available: true,
   },
   {
     type: "slack",
     label: "Slack",
-    description: "Connect a Slack app via Socket Mode (bot token + app token).",
+    description: "channels.slackDesc",
     available: true,
   },
   {
     type: "line",
     label: "LINE",
-    description: "Connect a LINE Messaging API channel via webhook (channel access token + channel secret).",
+    description: "channels.lineDesc",
     available: true,
   },
   {
     type: "wechat",
     label: "WeChat",
-    description: "Scan a QR code with the WeChat phone app to relay messages to this agent.",
+    description: "channels.wechatDesc",
     available: true,
   },
   {
     type: "feishu",
     label: "Feishu",
-    description: "Connect a Feishu custom-app bot via webhook (App ID + App Secret).",
+    description: "channels.feishuDesc",
     available: true,
   },
 ];
@@ -331,7 +331,7 @@ function CatalogCard({
         <ChannelIcon type={type} />
         <span className="font-medium">{label}</span>
       </div>
-      <p className="text-xs text-muted-foreground flex-1">{description}</p>
+      <p className="text-xs text-muted-foreground flex-1">{t(description)}</p>
       <Button
         size="sm"
         variant={available ? "outline" : "ghost"}
@@ -510,7 +510,7 @@ function ConnectTelegramDialog({
     const res = await connectAgentTelegram(agentId, token.trim());
     setSubmitting(false);
     if (res.error || !res.ok) {
-      setError(res.error || "Failed to connect");
+      setError(res.error || t("channels.connectFailed"));
       return;
     }
     setConnected({ botUsername: res.botUsername || "" });
@@ -526,7 +526,7 @@ function ConnectTelegramDialog({
             {t("channels.connectTelegramBot")}
           </DialogTitle>
           <DialogDescription>
-            Talk to{" "}
+            {t("channels.tgDesc1")}{" "}
             <a
               href="https://t.me/BotFather"
               target="_blank"
@@ -535,9 +535,9 @@ function ConnectTelegramDialog({
             >
               @BotFather
             </a>{" "}
-            on Telegram, run <code>/newbot</code>, and paste the HTTP API token
-            it returns. The token is verified via <code>getMe</code> before
-            anything is saved.
+            {t("channels.tgDesc2")} <code>/newbot</code>
+            {t("channels.tgDesc3")} <code>getMe</code>
+            {t("channels.tgDesc4")}
           </DialogDescription>
         </DialogHeader>
 
@@ -548,7 +548,7 @@ function ConnectTelegramDialog({
               <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
-              Bot is live as{" "}
+              {t("channels.botLiveAs")}{" "}
               <a
                 href={`https://t.me/${connected.botUsername}`}
                 target="_blank"
@@ -558,7 +558,7 @@ function ConnectTelegramDialog({
                 @{connected.botUsername}
                 <ExternalLink className="h-3 w-3" />
               </a>
-              . Send it a message on Telegram to test the integration.
+              . {t("channels.tgLiveSuffix")}
             </p>
           </div>
         ) : (
@@ -636,7 +636,7 @@ function ConnectDiscordDialog({
     const res = await connectAgentDiscord(agentId, token.trim());
     setSubmitting(false);
     if (res.error || !res.ok) {
-      setError(res.error || "Failed to connect");
+      setError(res.error || t("channels.connectFailed"));
       return;
     }
     setConnected({ botUsername: res.botUsername || "" });
@@ -652,7 +652,7 @@ function ConnectDiscordDialog({
             {t("channels.connectDiscordBot")}
           </DialogTitle>
           <DialogDescription>
-            Open the{" "}
+            {t("channels.dcDesc1")}{" "}
             <a
               href="https://discord.com/developers/applications"
               target="_blank"
@@ -661,10 +661,9 @@ function ConnectDiscordDialog({
             >
               Discord Developer Portal
             </a>
-            , create an application, add a Bot, and copy the Bot Token. Make
-            sure <strong>MESSAGE CONTENT INTENT</strong> is enabled under
-            Bot → Privileged Gateway Intents. The token is verified via{" "}
-            <code>/users/@me</code> before anything is saved.
+            {t("channels.dcDesc2")} <strong>MESSAGE CONTENT INTENT</strong>
+            {t("channels.dcDesc3")} <code>/users/@me</code>
+            {t("channels.dcDesc4")}
           </DialogDescription>
         </DialogHeader>
 
@@ -675,10 +674,9 @@ function ConnectDiscordDialog({
               <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
-              Bot is live as{" "}
+              {t("channels.botLiveAs")}{" "}
               <span className="font-mono">{connected.botUsername}</span>.
-              Invite it to a server (OAuth2 → URL Generator → Bot scope) or
-              DM it on Discord to test.
+              {" "}{t("channels.dcLiveSuffix")}
             </p>
           </div>
         ) : (
@@ -756,7 +754,7 @@ function ConnectSlackDialog({
     const res = await connectAgentSlack(agentId, botToken.trim(), appToken.trim());
     setSubmitting(false);
     if (res.error || !res.ok) {
-      setError(res.error || "Failed to connect");
+      setError(res.error || t("channels.connectFailed"));
       return;
     }
     setConnected({ teamName: res.teamName || "" });
@@ -772,7 +770,7 @@ function ConnectSlackDialog({
             {t("channels.connectSlackApp")}
           </DialogTitle>
           <DialogDescription>
-            Create a Slack app at{" "}
+            {t("channels.slDesc1")}{" "}
             <a
               href="https://api.slack.com/apps"
               target="_blank"
@@ -781,16 +779,17 @@ function ConnectSlackDialog({
             >
               api.slack.com/apps
             </a>
-            . Enable <strong>Socket Mode</strong>, generate an{" "}
-            <strong>app-level token</strong> (xapp-…) with{" "}
-            <code>connections:write</code>, then under{" "}
-            <strong>OAuth & Permissions</strong> copy the{" "}
-            <strong>Bot User OAuth Token</strong> (xoxb-…). Then go to{" "}
-            <strong>Event Subscriptions → Subscribe to bot events</strong> and
-            add <code>message.channels</code>, <code>message.im</code>, and{" "}
-            <code>app_mention</code> (Slack will prompt for the matching scopes
-            — <code>channels:history</code>, <code>im:history</code>,{" "}
-            <code>app_mentions:read</code> — and ask you to reinstall).
+            {t("channels.slDesc2")} <strong>Socket Mode</strong>
+            {t("channels.slDesc3")} <strong>app-level token</strong>{" "}
+            {t("channels.slDesc4")} <code>connections:write</code>
+            {t("channels.slDesc5")} <strong>OAuth & Permissions</strong>
+            {t("channels.slDesc6")} <strong>Bot User OAuth Token</strong>
+            {t("channels.slDesc7")} <strong>Event Subscriptions → Subscribe to bot events</strong>
+            {t("channels.slDesc8")} <code>message.channels</code>, <code>message.im</code>, and{" "}
+            <code>app_mention</code>{" "}
+            {t("channels.slDesc9")} <code>channels:history</code>, <code>im:history</code>,{" "}
+            <code>app_mentions:read</code>{" "}
+            {t("channels.slDesc10")}
           </DialogDescription>
         </DialogHeader>
 
@@ -801,15 +800,16 @@ function ConnectSlackDialog({
               <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
-              Bot is live in workspace{" "}
-              <strong>{connected.teamName}</strong>. Invite it to a channel
-              with <code>/invite @bot</code> and message it to test.
+              {t("channels.slLivePrefix")}{" "}
+              <strong>{connected.teamName}</strong>
+              {t("channels.slLiveMid")} <code>/invite @bot</code>{" "}
+              {t("channels.slLiveSuffix")}
             </p>
           </div>
         ) : (
           <div className="space-y-3 py-2">
             <div className="space-y-1.5">
-              <Label htmlFor="slack-bot-token">Bot User OAuth Token</Label>
+              <Label htmlFor="slack-bot-token">{t("channels.botUserOauthToken")}</Label>
               <Input
                 id="slack-bot-token"
                 value={botToken}
@@ -820,7 +820,7 @@ function ConnectSlackDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="slack-app-token">App-Level Token</Label>
+              <Label htmlFor="slack-app-token">{t("channels.appLevelToken")}</Label>
               <Input
                 id="slack-app-token"
                 value={appToken}
@@ -904,7 +904,7 @@ function ConnectLINEDialog({
     );
     setSubmitting(false);
     if (res.error || !res.ok) {
-      setError(res.error || "Failed to connect");
+      setError(res.error || t("channels.connectFailed"));
       return;
     }
     setConnected({
@@ -924,7 +924,7 @@ function ConnectLINEDialog({
             {t("channels.connectLineChannel")}
           </DialogTitle>
           <DialogDescription>
-            Create a Messaging API channel at{" "}
+            {t("channels.lnDesc1")}{" "}
             <a
               href="https://developers.line.biz"
               target="_blank"
@@ -933,10 +933,11 @@ function ConnectLINEDialog({
             >
               developers.line.biz
             </a>
-            . Under <strong>Messaging API</strong> issue a long-lived{" "}
-            <strong>Channel access token</strong>, and copy the{" "}
-            <strong>Channel secret</strong> from the Basic settings tab. Toggle
-            on <em>Use webhook</em> after saving the URL we&apos;ll generate.
+            {t("channels.lnDesc2")} <strong>Messaging API</strong>
+            {t("channels.lnDesc3")} <strong>Channel access token</strong>
+            {t("channels.lnDesc4")} <strong>Channel secret</strong>
+            {t("channels.lnDesc5")} <em>Use webhook</em>
+            {t("channels.lnDesc6")}
           </DialogDescription>
         </DialogHeader>
 
@@ -948,7 +949,7 @@ function ConnectLINEDialog({
                 <span className="text-sm font-medium">{t("channels.credentialsValid")}</span>
               </div>
               <p className="text-sm">
-                Bot identified as{" "}
+                {t("channels.botIdentifiedAs")}{" "}
                 <strong>{connected.botName || "(unnamed)"}</strong>{" "}
                 {connected.basicId && (
                   <code className="font-mono text-xs">{connected.basicId}</code>
@@ -956,12 +957,13 @@ function ConnectLINEDialog({
               </p>
             </div>
             <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
-              <p className="text-sm font-medium">One last step</p>
+              <p className="text-sm font-medium">{t("channels.oneLastStep")}</p>
               <p className="text-xs text-muted-foreground">
-                Paste this into LINE Developers Console →{" "}
-                <strong>Messaging API → Webhook URL</strong>, click{" "}
-                <em>Verify</em>, then toggle{" "}
-                <strong>Use webhook</strong> on.
+                {t("channels.lnPasteDesc1")}{" "}
+                <strong>Messaging API → Webhook URL</strong>
+                {t("channels.lnPasteDesc2")} <em>Verify</em>
+                {t("channels.lnPasteDesc3")} <strong>Use webhook</strong>
+                {t("channels.lnPasteDesc4")}
               </p>
               <Input
                 readOnly
@@ -970,8 +972,7 @@ function ConnectLINEDialog({
                 onFocus={(e) => e.currentTarget.select()}
               />
               <p className="text-xs text-muted-foreground">
-                Add the bot as a friend (search the basic ID), or invite it to
-                a group, then send a message to test.
+                {t("channels.lnFriendHint")}
               </p>
             </div>
           </div>
@@ -983,7 +984,7 @@ function ConnectLINEDialog({
                 id="line-channel-token"
                 value={channelToken}
                 onChange={(e) => setChannelToken(e.target.value)}
-                placeholder="long-lived token"
+                placeholder={t("channels.lineTokenPlaceholder")}
                 type="password"
                 className="font-mono text-sm"
                 autoFocus
@@ -995,12 +996,11 @@ function ConnectLINEDialog({
                 id="line-channel-secret"
                 value={channelSecret}
                 onChange={(e) => setChannelSecret(e.target.value)}
-                placeholder="from Basic settings"
+                placeholder={t("channels.lineSecretPlaceholder")}
                 className="font-mono text-sm"
               />
               <p className="text-xs text-muted-foreground">
-                Optional but strongly recommended — fluctio verifies inbound
-                webhook payloads via HMAC-SHA256 against this secret.
+                {t("channels.optionalButRecommended")}
               </p>
             </div>
             {error && <p className="text-xs text-destructive">{error}</p>}
@@ -1139,10 +1139,7 @@ function ConnectWeChatDialog({
             {t("channels.connectWechat")}
           </DialogTitle>
           <DialogDescription>
-            Scan the QR code with the WeChat phone app to bind a personal
-            WeChat account as the bot for this agent. Inbound DMs will be
-            relayed to the agent; the agent's replies are sent back as
-            plain text.
+            {t("channels.wcDesc")}
           </DialogDescription>
         </DialogHeader>
 
@@ -1153,8 +1150,8 @@ function ConnectWeChatDialog({
               <span className="text-sm font-medium">{t("channels.connected")}</span>
             </div>
             <p className="text-sm">
-              Bot is live as <code className="font-mono text-xs">{accountId}</code>.
-              Send it a WeChat message to test.
+              {t("channels.botLiveAs")} <code className="font-mono text-xs">{accountId}</code>.
+              {" "}{t("channels.wcLiveSuffix")}
             </p>
           </div>
         ) : (
@@ -1276,7 +1273,7 @@ function ConnectFeishuDialog({
     );
     setSubmitting(false);
     if (res.error || !res.ok) {
-      setError(res.error || "Failed to connect");
+      setError(res.error || t("channels.connectFailed"));
       return;
     }
     setConnected({
@@ -1296,7 +1293,7 @@ function ConnectFeishuDialog({
             {t("channels.connectFeishuApp")}
           </DialogTitle>
           <DialogDescription>
-            Create a custom app at{" "}
+            {t("channels.fsDesc1")}{" "}
             <a
               href="https://open.feishu.cn"
               target="_blank"
@@ -1305,13 +1302,10 @@ function ConnectFeishuDialog({
             >
               open.feishu.cn
             </a>
-            . Enable the bot capability, request{" "}
-            <code>im:message</code> + <code>im:message:send_as_bot</code>{" "}
-            scopes, then copy the App ID + App Secret from{" "}
-            <strong>Credentials & Basic Info</strong>. Long-connection mode
-            (recommended) needs nothing else; webhook mode also needs the
-            Verification Token / Encrypt Key from{" "}
-            <strong>Event Subscriptions</strong>.
+            {t("channels.fsDesc2")} <code>im:message</code> + <code>im:message:send_as_bot</code>{" "}
+            {t("channels.fsDesc3")} <strong>Credentials & Basic Info</strong>
+            {t("channels.fsDesc4")} <strong>Event Subscriptions</strong>
+            {t("channels.fsDesc5")}
           </DialogDescription>
         </DialogHeader>
 
@@ -1323,31 +1317,29 @@ function ConnectFeishuDialog({
                 <span className="text-sm font-medium">{t("channels.credentialsValid")}</span>
               </div>
               <p className="text-sm">
-                Bot identified as{" "}
+                {t("channels.botIdentifiedAs")}{" "}
                 <strong>{connected.botName || "(unnamed)"}</strong>.
               </p>
             </div>
             {connected.useLongConn ? (
               <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
-                <p className="text-sm font-medium">Long-connection mode</p>
+                <p className="text-sm font-medium">{t("channels.longConnectionMode")}</p>
                 <p className="text-xs text-muted-foreground">
-                  fluctio is now opening a WebSocket to Feishu — no public
-                  URL setup needed. In the Feishu Developer Console under{" "}
-                  <strong>事件与回调 → 事件配置 → 订阅方式</strong>, pick{" "}
-                  <strong>使用长连接接收事件</strong>, then under{" "}
-                  <strong>Subscribe to bot events</strong> add{" "}
-                  <code>im.message.receive_v1</code>.
+                  {t("channels.fsLongConnDesc1")}{" "}
+                  <strong>事件与回调 → 事件配置 → 订阅方式</strong>
+                  {t("channels.fsLongConnDesc2")} <strong>使用长连接接收事件</strong>
+                  {t("channels.fsLongConnDesc3")} <strong>Subscribe to bot events</strong>
+                  {t("channels.fsLongConnDesc4")} <code>im.message.receive_v1</code>.
                 </p>
               </div>
             ) : (
               <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
-                <p className="text-sm font-medium">One last step</p>
+                <p className="text-sm font-medium">{t("channels.oneLastStep")}</p>
                 <p className="text-xs text-muted-foreground">
-                  Paste this into Feishu Developer Console →{" "}
-                  <strong>Event Subscriptions → Request URL</strong>, then
-                  click <em>Save</em>. Feishu will POST a verification
-                  challenge here and this fluctio instance will echo it
-                  automatically.
+                  {t("channels.fsWebhookDesc1")}{" "}
+                  <strong>Event Subscriptions → Request URL</strong>
+                  {t("channels.fsWebhookDesc2")} <em>Save</em>
+                  {t("channels.fsWebhookDesc3")}
                 </p>
                 <Input
                   readOnly
@@ -1356,8 +1348,8 @@ function ConnectFeishuDialog({
                   onFocus={(e) => e.currentTarget.select()}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Subscribe to <code>im.message.receive_v1</code> to receive
-                  messages.
+                  {t("channels.fsSubscribeHint1")} <code>im.message.receive_v1</code>{" "}
+                  {t("channels.fsSubscribeHint2")}
                 </p>
               </div>
             )}
@@ -1380,7 +1372,7 @@ function ConnectFeishuDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="feishu-app-id">App ID</Label>
+              <Label htmlFor="feishu-app-id">{t("channels.appId")}</Label>
               <Input
                 id="feishu-app-id"
                 value={appId}
@@ -1409,12 +1401,12 @@ function ConnectFeishuDialog({
                 id="feishu-verification-token"
                 value={verificationToken}
                 onChange={(e) => setVerificationToken(e.target.value)}
-                placeholder="from Event Subscriptions tab"
+                placeholder={t("channels.fsVerifyTokenPlaceholder")}
                 className="font-mono text-sm"
               />
               <p className="text-xs text-muted-foreground">
-                Optional but recommended — fluctio rejects webhook payloads
-                whose <code>header.token</code> doesn&apos;t match.
+                {t("channels.fsTokenHint1")} <code>header.token</code>
+                {t("channels.fsTokenHint2")}
               </p>
             </div>
             <div className="space-y-1.5">
@@ -1423,14 +1415,14 @@ function ConnectFeishuDialog({
                 id="feishu-encrypt-key"
                 value={encryptKey}
                 onChange={(e) => setEncryptKey(e.target.value)}
-                placeholder="leave empty if 加密策略 is not configured"
+                placeholder={t("channels.fsEncryptKeyPlaceholder")}
                 type="password"
                 className="font-mono text-sm"
               />
               <p className="text-xs text-muted-foreground">
-                Only required if you set an Encrypt Key under{" "}
-                <strong>加密策略</strong> in the Feishu console. Empty = expect
-                plaintext webhook bodies.
+                {t("channels.fsEncryptHint1")}{" "}
+                <strong>加密策略</strong>
+                {t("channels.fsEncryptHint2")}
               </p>
             </div>
               </>

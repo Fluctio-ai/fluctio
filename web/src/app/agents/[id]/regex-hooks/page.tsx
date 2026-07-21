@@ -96,11 +96,11 @@ export default function AgentRegexHooksPage() {
         setError("");
       })
       .catch((e) =>
-        setError(e instanceof Error ? e.message : "Failed to load hooks"),
+        setError(e instanceof Error ? e.message : t("regexHooks.loadFailed")),
       )
       .finally(() => setLoading(false));
     listHookScripts(agentId).then(setScripts).catch(() => {});
-  }, [agentId]);
+  }, [agentId, t]);
 
   useEffect(() => {
     refresh();
@@ -229,8 +229,7 @@ export default function AgentRegexHooksPage() {
             {t("regexHooks.noHooks")}
           </p>
           <p className="text-xs text-muted-foreground/70 mt-1">
-            Add a hook to intercept messages matching a pattern and process them
-            with a CLI command.
+            {t("regexHooks.emptyHint")}
           </p>
         </div>
       ) : (
@@ -275,13 +274,15 @@ export default function AgentRegexHooksPage() {
             />
             <span className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90">
               <Plus className="size-3.5" />
-              Upload
+              {t("regexHooks.upload")}
             </span>
           </label>
         </div>
         <p className="text-xs text-muted-foreground mb-3">
-          Upload CLI scripts to <code className="rounded bg-muted px-1 py-0.5 font-mono">~/.fluctio/agents/{agentId}/hooks/</code>.
-          Reference them in CLI Command as <code className="rounded bg-muted px-1 py-0.5 font-mono">hooks/script_name</code>.
+          {t("regexHooks.scriptDirHint1")}{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono">~/.fluctio/agents/{agentId}/hooks/</code>
+          {t("regexHooks.scriptDirHint2")}{" "}
+          <code className="rounded bg-muted px-1 py-0.5 font-mono">hooks/script_name</code>.
         </p>
         {scripts.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-card/50 p-6 text-center">
@@ -306,7 +307,7 @@ export default function AgentRegexHooksPage() {
                       setForm((f) => ({ ...f, cliCommand: "hooks/" + s.name }));
                     }}
                   >
-                    Use
+                    {t("regexHooks.useScript")}
                   </Button>
                   <Button
                     size="icon"
@@ -343,7 +344,7 @@ export default function AgentRegexHooksPage() {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, name: e.target.value }))
                 }
-                placeholder="e.g. Translate Chinese"
+                placeholder={t("regexHooks.namePlaceholder")}
               />
             </div>
             <div>
@@ -353,11 +354,11 @@ export default function AgentRegexHooksPage() {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, pattern: e.target.value }))
                 }
-                placeholder="e.g. ^翻译(.+)$"
+                placeholder={t("regexHooks.patternPlaceholder")}
                 className="font-mono"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Use (?i) prefix for case-insensitive matching.
+                {t("regexHooks.patternHint")}
               </p>
             </div>
             <div>
@@ -367,12 +368,11 @@ export default function AgentRegexHooksPage() {
                 onChange={(e) =>
                   setForm((f) => ({ ...f, cliCommand: e.target.value }))
                 }
-                placeholder="e.g. python3 /path/to/script.py"
+                placeholder={t("regexHooks.cliPlaceholder")}
                 className="font-mono"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Message text is passed via stdin. Output follows LLM reply
-                format (markdown with image refs).
+                {t("regexHooks.cliHint")}
               </p>
             </div>
             <div className="flex items-center gap-6">
@@ -416,7 +416,7 @@ export default function AgentRegexHooksPage() {
                   onChange={(e) =>
                     setForm((f) => ({ ...f, errorMessage: e.target.value }))
                   }
-                  placeholder="e.g. Translation service unavailable"
+                  placeholder={t("regexHooks.errorPlaceholder")}
                   rows={2}
                 />
               </div>
@@ -424,7 +424,7 @@ export default function AgentRegexHooksPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               onClick={handleSave}
@@ -445,17 +445,18 @@ export default function AgentRegexHooksPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t("regexHooks.deleteHook")}</AlertDialogTitle>
             <AlertDialogDescription>
-              Remove <strong>{deleteTarget?.name || deleteTarget?.id}</strong>?
-              Messages matching this pattern will go through the LLM instead.
+              {t("regexHooks.deleteConfirmPrefix")}{" "}
+              <strong>{deleteTarget?.name || deleteTarget?.id}</strong>
+              {t("regexHooks.deleteConfirmSuffix")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Delete
+              {t("common.delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -503,12 +504,12 @@ function HookRow({
                 className="inline-flex items-center gap-1 text-[10px]"
               >
                 <Zap className="size-3" />
-                continue
+                {t("regexHooks.badgeContinue")}
               </Badge>
             )}
             {!hook.enabled && (
               <Badge variant="secondary" className="text-[10px]">
-                disabled
+                {t("regexHooks.badgeDisabled")}
               </Badge>
             )}
           </div>
@@ -529,7 +530,7 @@ function HookRow({
           <Switch
             checked={hook.enabled}
             onCheckedChange={(v) => onToggle(v)}
-            aria-label={hook.enabled ? "Disable" : "Enable"}
+            aria-label={hook.enabled ? t("regexHooks.disable") : t("regexHooks.enable")}
           />
           <Button
             size="icon"
