@@ -874,18 +874,10 @@ func TestQQEmptyFrameNoOp(t *testing.T) {
 
 // ----- Stubs (Phase 3 placeholders) -------------------------------------------
 
-func TestQQStubsReturnNil(t *testing.T) {
-	q, _ := newTestQQ(t)
-	if err := q.Send("chat", "hi"); err != nil {
-		t.Errorf("Send stub should return nil, got %v", err)
-	}
-	if err := q.SendMessage(bus.OutboundMessage{ChatID: "c", Text: "x"}); err != nil {
-		t.Errorf("SendMessage stub should return nil, got %v", err)
-	}
-	if err := q.SendTyping("c"); err != nil {
-		t.Errorf("SendTyping stub should return nil, got %v", err)
-	}
-}
+// TestQQStubsReturnNil was removed in Phase 3: Send/SendMessage/SendTyping
+// are real implementations now (qq_send.go), not stubs returning nil. Their
+// behavior is covered by qq_send_test.go (msg_type selection, base64 upload,
+// typing, HTML error handling).
 
 // ----- Constructor validation -------------------------------------------------
 

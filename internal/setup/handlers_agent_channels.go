@@ -1175,6 +1175,86 @@ func feishuWebhookPathFor(r *http.Request, appID string) string {
 	return scheme + "://" + host + "/api/feishu/webhook/" + appID
 }
 
+// --- QQ ---
+
+type connectQQRequest struct {
+	AppID         string `json:"appId"`
+	ClientSecret  string `json:"clientSecret"`
+	UseMarkdown   bool   `json:"useMarkdown"`
+}
+
+// handleConnectAgentQQ stores a QQ Official Bot Platform application
+// credential pair (AppID + ClientSecret) plus the per-account
+// markdown-rendering toggle. Unlike Telegram/Discord, there is no
+// "verify-and-return-bot-identity" step here: QQ's getAppAccessToken
+// call is the token endpoint itself (no /getMe equivalent that returns
+// a public bot username), and the accountID is simply the AppID.
+// Validation happens at adapter Start time when the WS Identify frame
+// is rejected for bad credentials.
+//
+// Storage layout (see AccountConfig fields in config/config.go):
+//   - AccountConfig.AppID         = appId       (also the accountID / credKey)
+//   - AccountConfig.ClientSecret  = clientSecret
+//   - AccountConfig.UseMarkdown   = useMarkdown (msg_type 2 vs 0)
+func (s *Server) handleConnectAgentQQ(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWritable(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	uid, aid, ok := s.resolveChannelBindingScope(w, r, id)
+	if !ok {
+		return
+	}
+
+	var req connectQQRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	appID := strings.TrimSpace(req.AppID)
+	clientSecret := strings.TrimSpace(req.ClientSecret)
+	if appID == "" || clientSecret == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "appId and clientSecret required"})
+		return
+	}
+
+	cc := config.ChannelConfig{
+		Enabled: true,
+		Accounts: map[string]config.AccountConfig{
+			appID: {
+				AppID:        appID,
+				ClientSecret: clientSecret,
+				UseMarkdown:  req.UseMarkdown,
+			},
+		},
+	}
+	credKey := appID
+	if err := s.assertChannelCredentialUniqueOpt(r, "qq", credKey, "", uid, aid, true); err != nil {
+		jsonResponse(w, http.StatusConflict, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := s.saveChannelRecord(r.Context(), uid, aid, "qq", appID, true, cc); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := s.appendBinding(r, "", "", config.Binding{
+		AgentID: id,
+		Match:   config.Match{Channel: "qq", AccountID: appID},
+	}); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	s.invalidateOwner(uid, aid)
+	if ch, err := s.dataStore.LookupChannel(r.Context(), "qq", credKey); err == nil && ch != nil {
+		s.hotRegisterChannelRecord(*ch)
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"appId":      appID,
+		"useMarkdown": req.UseMarkdown,
+	})
+}
+
 // --- LINE ---
 
 type connectLINERequest struct {

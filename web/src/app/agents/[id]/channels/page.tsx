@@ -44,6 +44,7 @@ import {
   connectAgentSlack,
   connectAgentLINE,
   connectAgentFeishu,
+  connectAgentQQ,
   startAgentWeChatLogin,
   pollAgentWeChatLoginStatus,
   disconnectAgentChannel,
@@ -99,6 +100,12 @@ const CATALOG: { type: string; label: string; description: string; available: bo
     description: "channels.feishuDesc",
     available: true,
   },
+  {
+    type: "qq",
+    label: "QQ",
+    description: "channels.qqDesc",
+    available: true,
+  },
 ];
 
 export default function AgentChannelsPage() {
@@ -116,6 +123,7 @@ export default function AgentChannelsPage() {
   const [lineOpen, setLineOpen] = useState(false);
   const [wechatOpen, setWechatOpen] = useState(false);
   const [feishuOpen, setFeishuOpen] = useState(false);
+  const [qqOpen, setQqOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AgentChannel | null>(null);
 
   const refresh = useCallback(() => {
@@ -235,6 +243,7 @@ export default function AgentChannelsPage() {
                   else if (entry.type === "line") setLineOpen(true);
                   else if (entry.type === "wechat") setWechatOpen(true);
                   else if (entry.type === "feishu") setFeishuOpen(true);
+                  else if (entry.type === "qq") setQqOpen(true);
                 }}
               />
             );
@@ -280,6 +289,13 @@ export default function AgentChannelsPage() {
       <ConnectFeishuDialog
         open={feishuOpen}
         onOpenChange={setFeishuOpen}
+        agentId={agentId}
+        onConnected={refresh}
+      />
+
+      <ConnectQQDialog
+        open={qqOpen}
+        onOpenChange={setQqOpen}
         agentId={agentId}
         onConnected={refresh}
       />
@@ -459,6 +475,7 @@ function ChannelIcon({ type }: { type: string }) {
     line: "/channels/line.png",
     feishu: "/channels/feishu.png",
     wechat: "/channels/wechat.svg",
+    qq: "/channels/qq.svg",
   };
   if (asset[type]) {
     // WeChat's artwork is non-square (50×40) — object-contain letterboxes
@@ -1448,6 +1465,165 @@ function ConnectFeishuDialog({
                 disabled={submitting || !appId.trim() || !appSecret.trim()}
               >
                 {submitting ? t("channels.validating") : t("channels.connectBtn")}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// QQ connect dialog. Stores the QQ Official Bot Platform AppID +
+// ClientSecret pair and the markdown toggle. Unlike Telegram/Discord
+// there is no verify step — QQ's getAppAccessToken call is the token
+// endpoint itself and doesn't return a public bot identity, so
+// validation happens later when the WS Identify frame succeeds or fails.
+function ConnectQQDialog({
+  open,
+  onOpenChange,
+  agentId,
+  onConnected,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  agentId: string;
+  onConnected: () => void;
+}) {
+  const t = useT();
+  const [appId, setAppId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [useMarkdown, setUseMarkdown] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [connected, setConnected] = useState<{ appId: string } | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setAppId("");
+      setClientSecret("");
+      setUseMarkdown(false);
+      setError("");
+      setSubmitting(false);
+      setConnected(null);
+    }
+  }, [open]);
+
+  const submit = async () => {
+    if (!appId.trim() || !clientSecret.trim() || !agentId) return;
+    setSubmitting(true);
+    setError("");
+    const res = await connectAgentQQ(
+      agentId,
+      appId.trim(),
+      clientSecret.trim(),
+      useMarkdown,
+    );
+    setSubmitting(false);
+    if (res.error || !res.ok) {
+      setError(res.error || t("channels.connectFailed"));
+      return;
+    }
+    setConnected({ appId: res.appId || appId.trim() });
+    onConnected();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <img src="/channels/qq.svg" alt="QQ" className="h-5 w-5 object-contain" />
+            {t("channels.connectQQBot")}
+          </DialogTitle>
+          <DialogDescription>
+            {t("channels.qqDesc1")}{" "}
+            <a
+              href="https://q.qq.com"
+              target="_blank"
+              rel="noreferrer"
+              className="underline"
+            >
+              q.qq.com
+            </a>
+            {t("channels.qqDesc2")} <strong>群聊 + C2C 私聊</strong>
+            {t("channels.qqDesc3")} <code>AppID</code> + <code>ClientSecret</code>
+            {t("channels.qqDesc4")}
+          </DialogDescription>
+        </DialogHeader>
+
+        {connected ? (
+          <div className="rounded-lg border border-success/30 bg-success/5 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-4 w-4 text-success" />
+              <span className="text-sm font-medium">{t("channels.credentialsValid")}</span>
+            </div>
+            <p className="text-sm">
+              {t("channels.botLiveAs")}{" "}
+              <code className="font-mono text-xs">{connected.appId}</code>.
+              {" "}{t("channels.qqLiveSuffix")}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="qq-app-id">{t("channels.qqAppID")}</Label>
+              <Input
+                id="qq-app-id"
+                value={appId}
+                onChange={(e) => setAppId(e.target.value)}
+                placeholder={t("channels.qqAppIDPlaceholder")}
+                className="font-mono text-sm"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="qq-client-secret">{t("channels.qqClientSecret")}</Label>
+              <Input
+                id="qq-client-secret"
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
+                placeholder={t("channels.qqClientSecretPlaceholder")}
+                type="password"
+                className="font-mono text-sm"
+              />
+            </div>
+            <div className="flex items-start justify-between gap-3 rounded-lg border bg-muted/30 p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="qq-use-markdown" className="text-sm">
+                  {t("channels.qqUseMarkdown")}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t("channels.qqUseMarkdownHint")}
+                </p>
+              </div>
+              <Switch
+                id="qq-use-markdown"
+                checked={useMarkdown}
+                onCheckedChange={setUseMarkdown}
+              />
+            </div>
+            {error && <p className="text-xs text-destructive">{error}</p>}
+          </div>
+        )}
+
+        <DialogFooter>
+          {connected ? (
+            <Button onClick={() => onOpenChange(false)}>{t("channels.doneBtn")}</Button>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={submitting}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                onClick={submit}
+                disabled={submitting || !appId.trim() || !clientSecret.trim()}
+              >
+                {submitting ? t("channels.connecting") : t("channels.connectBtn")}
               </Button>
             </>
           )}

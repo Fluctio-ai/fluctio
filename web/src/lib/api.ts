@@ -2439,6 +2439,29 @@ export async function connectAgentFeishu(
   return res.json();
 }
 
+export async function connectAgentQQ(
+  agentId: string,
+  appId: string,
+  clientSecret: string,
+  useMarkdown: boolean,
+): Promise<{
+  ok: boolean;
+  appId?: string;
+  useMarkdown?: boolean;
+  error?: string;
+}> {
+  const res = await apiFetch(`/api/agents/${agentId}/channels/qq`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      appId,
+      clientSecret,
+      useMarkdown,
+    }),
+  });
+  return res.json();
+}
+
 export async function disconnectAgentChannel(
   agentId: string,
   type: string,
