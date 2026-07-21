@@ -873,14 +873,17 @@ func (q *QQChannel) collectAttachments(atts []qqAttachment) ([]string, []bus.Med
 		if sniffedCT != "" {
 			finalCT = sniffedCT
 		}
-		// Build a data: URL from the downloaded bytes. Two reasons:
-		//  (1) QQ signed URLs expire fast — a data URL is durable.
-		//  (2) PhotoURLs flows through loop.go's user-message image path
-		//      (Role: user, ContentParts image_url) so the image renders
-		//      on the USER side (right bubble) + reaches the model as
-		//      vision input. MediaItems would route through workspace
-		//      [Attached:] which web renders assistant-side (left).
-		photoURLs = append(photoURLs, "data:"+finalCT+";base64,"+base64.StdEncoding.EncodeToString(bytes))
+		// Both: data URL in PhotoURLs (loop.go user-message image path →
+		// right bubble + model vision ContentParts) AND bytes in MediaItems
+		// (gateway writes workspace [Attached:] so the agent can read_file
+		// the image for tools / non-vision models).
+		dataURL := "data:" + finalCT + ";base64," + base64.StdEncoding.EncodeToString(bytes)
+		photoURLs = append(photoURLs, dataURL)
+		mediaItems = append(mediaItems, bus.MediaItem{
+			Filename:    a.Filename,
+			ContentType: finalCT,
+			Bytes:       bytes,
+		})
 	}
 	return photoURLs, mediaItems
 }
