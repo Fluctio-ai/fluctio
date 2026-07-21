@@ -21,23 +21,40 @@ import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
 // and a missing trailing `)`. Returns [...{type:"text"|"image", ...}].
 function splitDataImages(s: string): Array<{ type: "text"; text: string } | { type: "image"; alt: string; src: string }> {
   const out: Array<{ type: "text"; text: string } | { type: "image"; alt: string; src: string }> = [];
-  const headerRe = /!\[([^\]]*?)\]\s*\(\s*<?\s*(data:image\/[a-z0-9.+-]+;base64,)/gi;
+  // Match markdown image tags whose destination is either an inline
+  // data:base64 payload or a remote http(s) URL. data: is emitted by
+  // providers like gpt-image-1; http(s) URLs come from fal/replicate and
+  // from image_gen tool output (`![image 1](https://...)`). Both need to
+  // surface as native <img> — a remote URL is exactly what image_gen
+  // returns, so without this the generated image never renders inline.
+  const headerRe = /!\[([^\]]*?)\]\s*\(\s*<?\s*(data:image\/[a-z0-9.+-]+;base64,|https?:\/\/)/gi;
   let lastIdx = 0;
   let m: RegExpExecArray | null;
   while ((m = headerRe.exec(s)) !== null) {
     const alt = m[1];
-    const dataPrefix = m[2];
-    // Consume base64 body: A–Z a–z 0–9 + / = and any whitespace.
-    let cursor = m.index + m[0].length;
-    while (cursor < s.length && /[A-Za-z0-9+/=\s]/.test(s[cursor])) cursor++;
-    const rawBody = s.slice(m.index + m[0].length, cursor);
-    const body = rawBody.replace(/\s+/g, "");
-    if (!body) continue;
-    const src = dataPrefix + body;
-    // Step past optional `>` and `)` closers (or accept truncation).
-    let after = cursor;
-    while (after < s.length && /[\s>]/.test(s[after])) after++;
-    if (s[after] === ")") after++;
+    const prefix = m[2];
+    const bodyStart = m.index + m[0].length;
+    let src: string;
+    let after: number;
+    if (prefix.startsWith("data:")) {
+      // Consume base64 body: A–Z a–z 0–9 + / = and any whitespace.
+      let cursor = bodyStart;
+      while (cursor < s.length && /[A-Za-z0-9+/=\s]/.test(s[cursor])) cursor++;
+      const body = s.slice(bodyStart, cursor).replace(/\s+/g, "");
+      if (!body) continue;
+      src = prefix + body;
+      // Step past optional `>` and `)` closers (or accept truncation).
+      after = cursor;
+      while (after < s.length && /[\s>]/.test(s[after])) after++;
+      if (s[after] === ")") after++;
+    } else {
+      // Remote URL — consume until the closing `)` (URLs may carry query
+      // chars ?&#=, so scan by delimiter rather than an allowlist).
+      let cursor = bodyStart;
+      while (cursor < s.length && s[cursor] !== ")") cursor++;
+      src = prefix + s.slice(bodyStart, cursor);
+      after = cursor < s.length ? cursor + 1 : cursor;
+    }
 
     if (m.index > lastIdx) out.push({ type: "text", text: s.slice(lastIdx, m.index) });
     out.push({ type: "image", alt, src });
@@ -51,16 +68,19 @@ function splitDataImages(s: string): Array<{ type: "text"; text: string } | { ty
 // Models sometimes emit markdown images with a line break between `]` and
 // `(`, or with very long base64 destinations that some commonmark parsers
 // give up on. Rather than fight the markdown parser, extract
-// `![alt](data:image/...)` (tolerating whitespace/newlines between `]`
-// and `(`) and render those as native <img>, letting ChatMarkdown
-// handle everything else. Returns null if no data-URL images are present
+// `![alt](data:image/...)` AND `![alt](https://...)` (tolerating
+// whitespace/newlines between `]` and `(`) and render those as native
+// <img>. The http(s) branch matters for image_gen, whose tool output is a
+// remote-URL markdown tag — without extracting it the generated image
+// never renders inline. Returns null if no markdown images are present
 // so the caller can fall through to a plain ChatMarkdown render.
-// When `suppressAllInlineImages` is true, every data-URL image inside
+// When `suppressAllInlineImages` is true, every markdown image inside
 // the content is dropped (used when the bubble has tool-output images
 // already attached at the top — the model often re-embeds an image in
 // its reply, and because LLMs can't reproduce base64 verbatim the
 // re-embedded bytes are either a duplicate we already showed or a
-// hallucination that renders as a different picture). `surfacedSrcs`
+// hallucination that renders as a different picture; for remote URLs the
+// re-embed is simply a duplicate of the one already surfaced). `surfacedSrcs`
 // provides a narrower exact-src match for cases where nothing is
 // attached to this bubble but a prior bubble showed the same bytes.
 function renderContentWithDataImages(
