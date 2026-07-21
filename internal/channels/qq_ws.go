@@ -149,6 +149,20 @@ type QQChannel struct {
 	// smoke tests still pass).
 	allowedChecker func(openid string) bool
 
+	// useMarkdown toggles the outbound msg_type (contract §6.3):
+	// false (default) → msg_type=0 with downgraded markdown;
+	// true → msg_type=2 raw markdown. QQ markdown requires separate
+	// platform approval, so false is the safe default. Set via
+	// SetUseMarkdown at registration (Phase 4 wires from AccountConfig).
+	useMarkdown bool
+
+	// peerKinds records the PeerKind ("group" or "dm") observed on the
+	// most recent inbound event per ChatID, so outbound SendMessage can
+	// pick the right REST endpoint (/v2/groups vs /v2/users). ChatIDs
+	// we've never seen inbound from default to "users" (DM) — the agent
+	// rarely sends first, and a wrong-group POST fails cleanly.
+	peerKinds sync.Map
+
 	// Heartbeat goroutine lifecycle. Started on Hello; stopped when the
 	// owning dialAndRun exits (connCtx cancel). heartbeatRunning guards
 	// against a duplicate start if the server sends multiple Hello frames.
@@ -211,23 +225,8 @@ func (q *QQChannel) Name() string        { return "qq" }
 func (q *QQChannel) AccountID() string   { return q.accountID }
 func (q *QQChannel) BotUsername() string { return "" } // QQ has no bot username concept
 
-// Send / SendMessage / SendTyping are Phase 3. They return nil so the
-// manager can route outbound messages without panic during Phase 1
-// smoke-testing (the agent won't be bound to a QQ account in production
-// until Phase 3 lands, but we still need Channel interface satisfaction).
-func (q *QQChannel) Send(chatID, text string) error {
-	return q.SendMessage(bus.OutboundMessage{ChatID: chatID, Text: text})
-}
-
-func (q *QQChannel) SendMessage(msg bus.OutboundMessage) error {
-	slog.Debug("qq SendMessage stub — Phase 3", "account", q.accountID, "chat", msg.ChatID)
-	return nil
-}
-
-func (q *QQChannel) SendTyping(chatID string) error {
-	slog.Debug("qq SendTyping stub — Phase 3", "account", q.accountID, "chat", chatID)
-	return nil
-}
+// Send / SendMessage / SendTyping are implemented in qq_send.go
+// (Phase 3 — contract §3.5 + §4.2 + §6.9).
 
 // fireFailed invokes the registered FailureReporter callback. No-op in
 // Phase 1 (no internal trigger), but defined here so Phase 2 can drop
@@ -690,6 +689,13 @@ func (q *QQChannel) routeDispatch(t string, d json.RawMessage) error {
 //
 // Divergence from contract §5.7 (which lists member_openid → UserID):
 // intentional, documented in task brief + Phase 2 plan.
+//
+// Phase 3 additions (contract §2.3):
+//   - recordPeerKind stores "group" for this ChatID so outbound
+//     SendMessage routes to /v2/groups/ (not /v2/users/).
+//   - Image attachments (content_type starts with image/) are
+//     downloaded via qqSafeDownload (SSRF-guarded) and surfaced as
+//     PhotoURLs + MediaItems so the agent can reason about them.
 func (q *QQChannel) handleGroupAtMessage(d json.RawMessage) error {
 	var ev qqGroupAtMessage
 	if err := json.Unmarshal(d, &ev); err != nil {
@@ -718,9 +724,13 @@ func (q *QQChannel) handleGroupAtMessage(d json.RawMessage) error {
 		return nil
 	}
 
-	// Phase 1 doesn't download attachments (contract §2.3 — URLs have
-	// short TTL + need SSRF guard). Defer to Phase 3.
-	//attachments := collectImageURLs(ev.Attachments)
+	// Phase 3: remember this chat is a group so outbound SendMessage
+	// uses the /v2/groups/ endpoint.
+	q.recordPeerKind(ev.GroupOpenID, "group")
+
+	// Phase 3 (contract §2.3): download image attachments so the agent
+	// can reason about them. URLs have short TTL — fetch eagerly.
+	photoURLs, mediaItems := q.collectAttachments(ev.Attachments)
 
 	senderName := ev.Author.Username
 	if senderName == "" {
@@ -731,7 +741,9 @@ func (q *QQChannel) handleGroupAtMessage(d json.RawMessage) error {
 		"account", q.accountID,
 		"group_openid", ev.GroupOpenID,
 		"member_openid", ev.Author.MemberOpenID,
-		"len", len(content))
+		"len", len(content),
+		"attachments", len(ev.Attachments),
+		"images", len(photoURLs))
 
 	q.mb.Inbound <- bus.InboundMessage{
 		Channel:    "qq",
@@ -742,6 +754,8 @@ func (q *QQChannel) handleGroupAtMessage(d json.RawMessage) error {
 		MessageID:  ev.ID,
 		Text:       content,
 		SenderName: senderName,         // member_openid or username for UI display
+		PhotoURLs:  photoURLs,
+		MediaItems: mediaItems,
 	}
 	return nil
 }
@@ -749,6 +763,9 @@ func (q *QQChannel) handleGroupAtMessage(d json.RawMessage) error {
 // handleC2CMessage maps a C2C_MESSAGE_CREATE payload to a bus.InboundMessage.
 // Private chat: UserID = user_openid (stable per bot), ChatID = user_openid,
 // PeerKind = dm. claim binds directly to this user.
+//
+// Phase 3 additions mirror the group path: recordPeerKind("dm") +
+// attachment download.
 func (q *QQChannel) handleC2CMessage(d json.RawMessage) error {
 	var ev qqC2CMessage
 	if err := json.Unmarshal(d, &ev); err != nil {
@@ -769,6 +786,11 @@ func (q *QQChannel) handleC2CMessage(d json.RawMessage) error {
 		return nil
 	}
 
+	// Phase 3: C2C chat → /v2/users/ on outbound.
+	q.recordPeerKind(ev.Author.UserOpenID, "dm")
+
+	photoURLs, mediaItems := q.collectAttachments(ev.Attachments)
+
 	senderName := ev.Author.Username
 	if senderName == "" {
 		senderName = ev.Author.UserOpenID
@@ -777,7 +799,9 @@ func (q *QQChannel) handleC2CMessage(d json.RawMessage) error {
 	slog.Info("qq c2c message",
 		"account", q.accountID,
 		"user_openid", ev.Author.UserOpenID,
-		"len", len(content))
+		"len", len(content),
+		"attachments", len(ev.Attachments),
+		"images", len(photoURLs))
 
 	q.mb.Inbound <- bus.InboundMessage{
 		Channel:    "qq",
@@ -788,8 +812,62 @@ func (q *QQChannel) handleC2CMessage(d json.RawMessage) error {
 		MessageID:  ev.ID,
 		Text:       content,
 		SenderName: senderName,
+		PhotoURLs:  photoURLs,
+		MediaItems: mediaItems,
 	}
 	return nil
+}
+
+// collectAttachments downloads each image attachment (content_type
+// starting with "image/") via qqSafeDownload. Non-image attachments are
+// logged at debug and skipped (Phase 3 only handles images; voice/video
+// will land in a later phase if needed).
+//
+// Returns parallel slices: photoURLs for back-compat with the single-
+// image PhotoURL/PhotoURLs fields, and mediaItems carrying the bytes
+// for the agent loop to materialize into the session workspace.
+func (q *QQChannel) collectAttachments(atts []qqAttachment) ([]string, []bus.MediaItem) {
+	if len(atts) == 0 {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	var photoURLs []string
+	var mediaItems []bus.MediaItem
+	for _, a := range atts {
+		if a.URL == "" {
+			continue
+		}
+		ct := strings.ToLower(strings.TrimSpace(a.ContentType))
+		if !strings.HasPrefix(ct, "image/") {
+			slog.Debug("qq skipping non-image attachment",
+				"account", q.accountID,
+				"content_type", a.ContentType,
+				"filename", a.Filename)
+			continue
+		}
+		bytes, sniffedCT, err := qqAttachmentFetcher(ctx, q.httpClient, a.URL)
+		if err != nil {
+			slog.Warn("qq attachment download failed",
+				"account", q.accountID, "url", a.URL, "error", err)
+			// Still surface the URL so a downstream tool can retry —
+			// losing the URL entirely is worse than a transient fetch miss.
+			photoURLs = append(photoURLs, a.URL)
+			continue
+		}
+		finalCT := ct
+		if sniffedCT != "" {
+			finalCT = sniffedCT
+		}
+		photoURLs = append(photoURLs, a.URL)
+		mediaItems = append(mediaItems, bus.MediaItem{
+			Filename:    a.Filename,
+			ContentType: finalCT,
+			Bytes:       bytes,
+		})
+	}
+	return photoURLs, mediaItems
 }
 
 // ---------------------------------------------------------------------------
@@ -976,18 +1054,32 @@ type qqReadyData struct {
 	Version   int    `json:"version,omitempty"`
 }
 
+// qqAttachment is one entry in the inbound event's attachments[] list
+// (contract §2.3). ContentType drives the Phase 3 download path:
+// image/* prefixes are fetched via qqSafeDownload; others are logged
+// and skipped (later phases may handle voice/video).
+type qqAttachment struct {
+	ContentType string `json:"content_type,omitempty"`
+	Filename    string `json:"filename,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	Size        int    `json:"size,omitempty"`
+}
+
 // qqGroupAtMessage is GROUP_AT_MESSAGE_CREATE d (contract §2.1).
-// Only fields Phase 1 consumes; attachments + mentions typed in Phase 3.
+// Phase 3 adds Attachments for image download.
 type qqGroupAtMessage struct {
-	ID          string `json:"id"`
-	GroupOpenID string `json:"group_openid"`
-	Content     string `json:"content"`
+	ID          string         `json:"id"`
+	GroupOpenID string         `json:"group_openid"`
+	Content     string         `json:"content"`
 	Author      struct {
 		ID          string `json:"id,omitempty"`
 		MemberOpenID string `json:"member_openid,omitempty"`
 		Username    string `json:"username,omitempty"`
 	} `json:"author"`
-	Timestamp string `json:"timestamp,omitempty"`
+	Attachments []qqAttachment `json:"attachments,omitempty"`
+	Timestamp   string         `json:"timestamp,omitempty"`
 }
 
 // qqC2CMessage is C2C_MESSAGE_CREATE d (contract §2.2).
@@ -999,5 +1091,6 @@ type qqC2CMessage struct {
 		UserOpenID string `json:"user_openid,omitempty"`
 		Username   string `json:"username,omitempty"`
 	} `json:"author"`
-	Timestamp string `json:"timestamp,omitempty"`
+	Attachments []qqAttachment `json:"attachments,omitempty"`
+	Timestamp   string         `json:"timestamp,omitempty"`
 }
