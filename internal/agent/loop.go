@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -4129,8 +4131,11 @@ func (a *Agent) ReloadWorkspaceFiles() {
 
 // extractMediaPaths scans tool output for MEDIA: lines and returns file paths.
 // The MEDIA: protocol is used by OpenClaw skills to attach files to chat messages.
+var mdImageURLRe = regexp.MustCompile(`!\[[^\]]*\]\((https?://[^)]+)\)`)
+
 func extractMediaPaths(output string) []string {
 	var paths []string
+	// MEDIA: protocol — host file paths.
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "MEDIA:") {
@@ -4142,6 +4147,14 @@ func extractMediaPaths(output string) []string {
 			}
 		}
 	}
+	// Markdown image URLs: ![alt](url) — e.g. image_gen tool output
+	// (图床). http(s) URLs, not host files; sendMediaFiles downloads them
+	// into MediaItems so IM channels ship bytes (QQ base64 direct upload).
+	for _, m := range mdImageURLRe.FindAllStringSubmatch(output, -1) {
+		if len(m) > 1 {
+			paths = append(paths, m[1])
+		}
+	}
 	return paths
 }
 
@@ -4150,11 +4163,27 @@ func (a *Agent) sendMediaFiles(msg bus.InboundMessage, mediaPaths []string) {
 	if len(mediaPaths) == 0 || a.messageBus == nil {
 		return
 	}
+	var hostPaths []string
+	var items []bus.MediaItem
+	for _, p := range mediaPaths {
+		if strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://") {
+			// URL (图床, e.g. image_gen output) — download → bytes.
+			b, err := downloadMediaURL(p)
+			if err != nil {
+				slog.Warn("sendMediaFiles url download failed", "url", p, "error", err)
+				continue
+			}
+			items = append(items, bus.MediaItem{Filename: urlBaseName(p), Bytes: b})
+		} else {
+			hostPaths = append(hostPaths, p)
+		}
+	}
 	outMsg := bus.OutboundMessage{
 		Channel:    msg.Channel,
 		AccountID:  msg.AccountID,
 		ChatID:     msg.ChatID,
-		MediaPaths: mediaPaths,
+		MediaPaths: hostPaths,
+		MediaItems: items,
 		AllowSplit: a.splitReplies,
 	}
 	select {
@@ -4162,6 +4191,34 @@ func (a *Agent) sendMediaFiles(msg bus.InboundMessage, mediaPaths []string) {
 	default:
 		slog.Warn("outbound channel full, dropping media message", "agent", a.name)
 	}
+}
+
+// downloadMediaURL fetches a media URL (图床, e.g. image_gen output) with a
+// timeout and returns the bytes. Used by sendMediaFiles for markdown
+// ![](url) image references that extractMediaPaths pulled from tool output.
+func downloadMediaURL(url string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+func urlBaseName(u string) string {
+	if i := strings.LastIndex(u, "/"); i >= 0 {
+		return u[i+1:]
+	}
+	return u
 }
 
 // mcpSafeName mirrors mcp.prefixToolName's server-name sanitization so the

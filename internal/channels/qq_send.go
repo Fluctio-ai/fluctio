@@ -16,6 +16,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -175,6 +177,21 @@ func (q *QQChannel) SendMessage(msg bus.OutboundMessage) error {
 	if msg.ChatID == "" {
 		return errors.New("qq send: empty ChatID")
 	}
+	// Materialize MediaPaths (host file paths from MEDIA: protocol, e.g.
+	// image_gen tool output) into MediaItems so the base64 upload path
+	// handles them. QQ runs host-mounted so os.ReadFile works.
+	for _, p := range msg.MediaPaths {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			slog.Warn("qq media path read failed", "path", p, "error", err)
+			continue
+		}
+		msg.MediaItems = append(msg.MediaItems, bus.MediaItem{
+			Filename: filepath.Base(p),
+			Bytes:    b,
+		})
+	}
+
 	if msg.Text == "" && len(msg.MediaItems) == 0 {
 		return nil
 	}
