@@ -3830,6 +3830,58 @@ func (d *DBStore) PruneLLMCallDiag(ctx context.Context, before time.Time, batchS
 	return total, nil
 }
 
+// LLMCallDiagRow is the read-back shape of one llm_call_diag row (adds ID +
+// CreatedAt vs the write-only LLMCallDiag). Returned by ListLLMCallDiagBySession
+// for the failure-attribution diagnostic.
+type LLMCallDiagRow struct {
+	ID              int64
+	AgentID         string
+	SessionKey      string
+	Provider        string
+	Model           string
+	Status          string
+	HTTPStatus      int
+	ErrorMsg        string
+	DurationMs      int64
+	ToolCallCount   int
+	ResponseChars   int
+	RequestMsgCount int
+	HasImage        bool
+	InputTokens     int
+	OutputTokens    int
+	CreatedAt       time.Time
+}
+
+// ListLLMCallDiagBySession returns every diagnostic row for one session in
+// ascending created_at order. Feeds the LLM-call side of a failure timeline
+// (debug why-failed).
+func (d *DBStore) ListLLMCallDiagBySession(ctx context.Context, sessionKey string) ([]LLMCallDiagRow, error) {
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT id, agent_id, session_key, provider, model, status,
+			http_status, error_msg, duration_ms, tool_call_count, response_chars,
+			request_msg_count, has_image, input_tokens, output_tokens, created_at
+			FROM llm_call_diag WHERE session_key = %s ORDER BY created_at ASC`, d.ph(1)),
+		sessionKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LLMCallDiagRow
+	for rows.Next() {
+		var r LLMCallDiagRow
+		var hasImg int
+		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Provider, &r.Model,
+			&r.Status, &r.HTTPStatus, &r.ErrorMsg, &r.DurationMs, &r.ToolCallCount,
+			&r.ResponseChars, &r.RequestMsgCount, &hasImg, &r.InputTokens, &r.OutputTokens,
+			&r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.HasImage = hasImg != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ListSessionMessages returns every archived turn for one session in
 // ascending seq order. Empty slice on a session that has no archive
 // yet (e.g. rows pre-dating the table). Callers that want a fallback

@@ -103,3 +103,44 @@ func TestPruneLLMCallDiagIndexExists(t *testing.T) {
 		}
 	}
 }
+
+// TestListLLMCallDiagBySession verifies the read-back path round-trips every
+// field and scopes to one session (a different session's rows don't leak in).
+func TestListLLMCallDiagBySession(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	if err := db.RecordLLMCallDiag(ctx, LLMCallDiag{
+		AgentID: "a", SessionKey: "s-list", Provider: "p", Model: "m",
+		Status: "error", HTTPStatus: 503, ErrorMsg: "busy",
+		DurationMs: 500, ToolCallCount: 1, ResponseChars: 0,
+		RequestMsgCount: 3, InputTokens: 10, OutputTokens: 5,
+	}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	// A different session's row must not appear.
+	if err := db.RecordLLMCallDiag(ctx, LLMCallDiag{
+		AgentID: "a2", SessionKey: "s-other", Status: "ok",
+	}); err != nil {
+		t.Fatalf("Record other: %v", err)
+	}
+
+	rows, err := db.ListLLMCallDiagBySession(ctx, "s-list")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("len=%d want 1 (only s-list)", len(rows))
+	}
+	r := rows[0]
+	if r.Status != "error" || r.HTTPStatus != 503 || r.AgentID != "a" ||
+		r.Provider != "p" || r.Model != "m" || r.ErrorMsg != "busy" ||
+		r.DurationMs != 500 || r.ToolCallCount != 1 || r.RequestMsgCount != 3 ||
+		r.InputTokens != 10 || r.OutputTokens != 5 {
+		t.Errorf("fields mismatch: %+v", r)
+	}
+	if r.CreatedAt.IsZero() {
+		t.Errorf("CreatedAt not populated")
+	}
+}
