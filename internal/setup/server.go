@@ -420,6 +420,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("PUT /api/providers/{id}", auth(s.handleUpdateProvider))
 	mux.HandleFunc("DELETE /api/providers/{id}", auth(s.handleDeleteProvider))
 	mux.HandleFunc("POST /api/providers/{id}/test", auth(s.handleTestStoredProvider))
+	// Diagnostic error reports (manual trigger + download). See
+	// specs/2026-07-22-web-ui-llm-error-report.md.
+	mux.HandleFunc("POST /api/diag/reports", auth(s.handleDiagReportGenerate))
+	mux.HandleFunc("GET /api/diag/reports", auth(s.handleDiagReportList))
+	mux.HandleFunc("GET /api/diag/reports/{name}", auth(s.handleDiagReportDownload))
 	mux.HandleFunc("GET /api/scoped-channels", auth(s.handleListScopedChannels))
 	mux.HandleFunc("POST /api/scoped-channels", auth(s.handleCreateScopedChannel))
 	mux.HandleFunc("PUT /api/scoped-channels/{id}", auth(s.handleUpdateScopedChannel))

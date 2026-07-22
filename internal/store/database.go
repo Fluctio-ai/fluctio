@@ -3882,6 +3882,46 @@ func (d *DBStore) ListLLMCallDiagBySession(ctx context.Context, sessionKey strin
 	return out, rows.Err()
 }
 
+// ListFailedLLMCalls returns llm_call_diag rows with status != 'ok' within
+// the time window, newest first. agentID="" means all agents. Feeds the
+// error-report generator's failure-overview + representative-case selection.
+// created_at is a SQLite CURRENT_TIMESTAMP string, so `since` is formatted
+// to match (same convention as the prune path).
+func (d *DBStore) ListFailedLLMCalls(ctx context.Context, since time.Time, agentID string, limit int) ([]LLMCallDiagRow, error) {
+	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+	q := fmt.Sprintf(`SELECT id, agent_id, session_key, provider, model, status,
+		http_status, error_msg, duration_ms, tool_call_count, response_chars,
+		request_msg_count, has_image, input_tokens, output_tokens, created_at
+		FROM llm_call_diag WHERE status != 'ok' AND created_at >= %s`, d.ph(1))
+	args := []any{sinceStr}
+	if agentID != "" {
+		q += fmt.Sprintf(" AND agent_id = %s", d.ph(2))
+		args = append(args, agentID)
+	}
+	next := d.ph(len(args) + 1)
+	q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT %s", next)
+	args = append(args, limit)
+	rows, err := d.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LLMCallDiagRow
+	for rows.Next() {
+		var r LLMCallDiagRow
+		var hasImg int
+		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Provider, &r.Model,
+			&r.Status, &r.HTTPStatus, &r.ErrorMsg, &r.DurationMs, &r.ToolCallCount,
+			&r.ResponseChars, &r.RequestMsgCount, &hasImg, &r.InputTokens, &r.OutputTokens,
+			&r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.HasImage = hasImg != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ListSessionMessages returns every archived turn for one session in
 // ascending seq order. Empty slice on a session that has no archive
 // yet (e.g. rows pre-dating the table). Callers that want a fallback

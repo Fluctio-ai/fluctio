@@ -948,6 +948,24 @@ func (a *Agent) streamChatToResponseQuiet(ctx context.Context, messages []provid
 	return a.streamChatToResponseWithOptions(ctx, messages, tools, false)
 }
 
+// Complete is a one-shot background LLM call for system-level text generation
+// (conversation summaries, diagnostic reports): no tools, no streaming chat
+// events, thinking disabled so reasoning tokens don't eat the output budget.
+// It goes straight to provider.Chat (not streamChatToResponse) precisely so
+// it does NOT record an llm_call_diag row — a report-generation call must not
+// pollute the failure trail it's reporting on.
+func (a *Agent) Complete(ctx context.Context, messages []provider.Message, maxTokens int) (string, error) {
+	ctx = provider.WithNoThinking(ctx)
+	if maxTokens <= 0 {
+		maxTokens = a.maxTokens
+	}
+	resp, err := a.provider.Chat(ctx, messages, nil, a.model, maxTokens, a.temperature)
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
+}
+
 func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []provider.Message, tools []provider.Tool, emitDeltas bool) (*provider.Response, error) {
 	start := time.Now()
 	msgCount := len(messages)
