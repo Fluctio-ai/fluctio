@@ -1502,6 +1502,13 @@ func (d *DBStore) migrateSessionEventsDropUserID(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_session_events_lookup ON session_events (agent_id, session_key, seq)`); err != nil {
 		return fmt.Errorf("recreate idx_session_events_lookup: %w", err)
 	}
+	// idx_session_events_created backs the retention sweep's time-based prune
+	// (specs/2026-07-22-session-events-retention.md). Recreated here because
+	// the table was DROP+RENAME'd above, which drops every index on it.
+	if _, err := d.db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_session_events_created ON session_events (created_at)`); err != nil {
+		return fmt.Errorf("recreate idx_session_events_created: %w", err)
+	}
 	return nil
 }
 
@@ -2475,6 +2482,11 @@ func (d *DBStore) migrationSQL() []string {
 				PRIMARY KEY (user_id, agent_id, session_key, seq)
 			)`,
 		`CREATE INDEX IF NOT EXISTS idx_session_events_lookup ON session_events (user_id, agent_id, session_key, seq)`,
+		// idx_session_events_created backs the retention sweep's time-based
+		// DELETE (specs/2026-07-22-session-events-retention.md). Without it
+		// the prune scans the whole table; this index keeps the candidate
+		// lookup index-driven.
+		`CREATE INDEX IF NOT EXISTS idx_session_events_created ON session_events (created_at)`,
 		// agent_files holds the agent's own files: SOUL.md, IDENTITY.md,
 		// MEMORY.md, AGENTS.md, BOOTSTRAP.md, etc.
 		//
@@ -3665,6 +3677,50 @@ func (d *DBStore) LatestSessionEventSeq(ctx context.Context, agentID, sessionKey
 		return -1, nil
 	}
 	return seq.Int64, nil
+}
+
+// PruneSessionEvents deletes session_events rows older than before, in bounded
+// batches so a large backlog doesn't hold the write lock in one long
+// transaction. Returns the total rows deleted. session_events is the in-flight
+// turn stream; old rows are safe to drop because history lives in
+// session_messages. Deliberately not on the store.Store interface — the
+// retention sweep reaches it via a *DBStore type assertion (see
+// gateway_session_events_retention.go), so no-op test stores don't stub it.
+func (d *DBStore) PruneSessionEvents(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	// created_at is written by SQLite's DEFAULT CURRENT_TIMESTAMP as a
+	// "YYYY-MM-DD HH:MM:SS" UTC string. Format `before` the same way so the
+	// comparison matches how rows are stored, independent of how the driver
+	// serialises time.Time (which can differ and silently break the compare).
+	beforeStr := before.UTC().Format("2006-01-02 15:04:05")
+	var total int64
+	for {
+		res, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM session_events
+				WHERE rowid IN (
+					SELECT rowid FROM session_events
+					WHERE created_at < %s
+					ORDER BY rowid
+					LIMIT %s
+				)`, d.ph(1), d.ph(2)),
+			beforeStr, batchSize)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < int64(batchSize) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+	return total, nil
 }
 
 // ListSessionMessages returns every archived turn for one session in

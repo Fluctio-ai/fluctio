@@ -782,6 +782,15 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.idleSummaryTicker(ctx, 10*time.Minute, idleAfter, 4)
 	}()
+	// session_events retention: periodically prunes events older than the
+	// retention window so the table doesn't grow unbounded. Disabled when
+	// FLUCTIO_SESSION_EVENTS_RETENTION_HOURS<=0. See
+	// specs/2026-07-22-session-events-retention.md.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runSessionEventsRetention(ctx)
+	}()
 	wg.Wait()
 	if g.taskQueue != nil {
 		g.taskQueue.Stop()
