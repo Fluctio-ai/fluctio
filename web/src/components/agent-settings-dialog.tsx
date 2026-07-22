@@ -5,6 +5,7 @@ import {
   BookMarkedIcon,
   BookOpenIcon,
   BrainIcon,
+  Bug,
   ClockIcon,
   CoinsIcon,
   DatabaseIcon,
@@ -45,6 +46,7 @@ import AccountSettingsPage from "@/app/settings/account/page";
 import GeneralSettingsPage from "@/app/settings/general/page";
 import UserModelsPage from "@/app/models/page";
 import AboutSettingsPage from "@/app/settings/about/page";
+import DiagReportPage from "@/app/settings/diag/page";
 
 export type AgentSettingsTab =
   | "profile"
@@ -64,7 +66,8 @@ export type AgentSettingsTab =
   | "account"
   | "general"
   | "about"
-  | "recall-tuning";
+  | "recall-tuning"
+  | "diag";
 
 type TabIcon = React.ComponentType<{ className?: string }>;
 
@@ -92,6 +95,7 @@ const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> 
 const USER_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> = [
   { id: "account", label: "settings.account", icon: UserCog },
   { id: "general", label: "settings.general", icon: Palette },
+  { id: "diag", label: "settings.diag", icon: Bug },
   // About surfaces the gateway version + upgrade hint — only useful
   // to operators (super_admin), filtered out below for regular users.
   { id: "about", label: "settings.about", icon: InfoIcon },
@@ -225,6 +229,11 @@ export function AgentSettingsDialog({
           {tab === "about" && (
             <div className="p-6 max-w-3xl">
               <AboutSettingsPage />
+            </div>
+          )}
+          {tab === "diag" && (
+            <div className="p-6 max-w-3xl">
+              <DiagReportPage />
             </div>
           )}
         </div>

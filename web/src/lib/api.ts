@@ -436,6 +436,43 @@ export async function rotateApikey(id: string) {
   return res.json();
 }
 
+// --- Diagnostic error reports (manual trigger + download) ---
+
+export async function generateDiagReport(opts: {
+  days?: number;
+  agentId?: string;
+}): Promise<{ path: string; name: string }> {
+  const res = await apiFetch("/api/diag/reports", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(opts),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || res.statusText);
+  }
+  return res.json();
+}
+
+export type DiagReportEntry = {
+  name: string;
+  size: number;
+  time: string;
+};
+
+export async function listDiagReports(): Promise<DiagReportEntry[]> {
+  const res = await apiFetch("/api/diag/reports");
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.reports ?? [];
+}
+
+// diagReportDownloadUrl is opened directly by the browser — the endpoint
+// serves the .md file, so no fetch is needed.
+export function diagReportDownloadUrl(name: string): string {
+  return `/api/diag/reports/${encodeURIComponent(name)}`;
+}
+
 // Scoped providers + channels
 
 export type ScopeName = "system" | "user" | "agent";
