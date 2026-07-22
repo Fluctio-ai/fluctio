@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -282,4 +283,20 @@ func NewProvider(apiKey, apiBase, apiType string) Provider {
 		return NewAnthropic(apiKey, apiBase)
 	}
 	return NewOpenAI(apiKey, apiBase)
+}
+
+// HTTPError wraps a non-2xx HTTP response from an LLM provider so callers
+// (e.g. the agent loop's LLM-call diagnostics) can read the status code
+// without parsing the error string. Network-layer errors (send/read
+// failures, context cancellation) are NOT wrapped — they surface as-is so
+// existing errors.Is(err, context.Canceled) checks keep working. Error()
+// matches the legacy "API error <code>: <body>" string so nothing that
+// depended on the message format breaks.
+type HTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Body)
 }

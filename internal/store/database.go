@@ -2704,6 +2704,32 @@ func (d *DBStore) migrationSQL() []string {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_token_usage_log_user ON token_usage_log (user_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_token_usage_log_session ON token_usage_log (user_id, agent_id, session_key)`,
+		// llm_call_diag is the per-LLM-call diagnostic trail (distinct from
+		// token_usage_log's billing role): records BOTH successful and FAILED
+		// calls with status / http_status / error / tool_call fingerprints so
+		// agent failures are attributable. No user_id column (single-user) so
+		// the flatten migrations leave it untouched. Short-lived — pruned by
+		// runLLMCallDiagRetention. See specs/2026-07-22-llm-call-observability.md.
+		`CREATE TABLE IF NOT EXISTS llm_call_diag (
+			id INTEGER PRIMARY KEY,
+			agent_id TEXT NOT NULL DEFAULT '',
+			session_key TEXT NOT NULL DEFAULT '',
+			provider TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			http_status INTEGER NOT NULL DEFAULT 0,
+			error_msg TEXT NOT NULL DEFAULT '',
+			duration_ms BIGINT NOT NULL DEFAULT 0,
+			tool_call_count INTEGER NOT NULL DEFAULT 0,
+			response_chars INTEGER NOT NULL DEFAULT 0,
+			request_msg_count INTEGER NOT NULL DEFAULT 0,
+			has_image INTEGER NOT NULL DEFAULT 0,
+			input_tokens BIGINT NOT NULL DEFAULT 0,
+			output_tokens BIGINT NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_llm_call_diag_created ON llm_call_diag (created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_llm_call_diag_status ON llm_call_diag (status, created_at)`,
 		// channel_leases gates polling / persistent-connection channel
 		// adapters (WeChat, Telegram, Discord, Slack, Feishu long-conn)
 		// to one process at a time. Without it, two cloud replicas
@@ -3701,6 +3727,87 @@ func (d *DBStore) PruneSessionEvents(ctx context.Context, before time.Time, batc
 			fmt.Sprintf(`DELETE FROM session_events
 				WHERE rowid IN (
 					SELECT rowid FROM session_events
+					WHERE created_at < %s
+					ORDER BY rowid
+					LIMIT %s
+				)`, d.ph(1), d.ph(2)),
+			beforeStr, batchSize)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < int64(batchSize) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+	return total, nil
+}
+
+// LLMCallDiag is one row of the per-LLM-call diagnostic trail. Unlike
+// token_usage_log (billing), this captures BOTH successful and failed calls
+// so agent failures are attributable. Populated by the agent loop at every
+// provider.Chat/ChatStream site; pruned on a retention window by the gateway
+// sweep. No UserID — single-user, and omitting it keeps the flatten migrations
+// off this table.
+type LLMCallDiag struct {
+	AgentID         string
+	SessionKey      string
+	Provider        string
+	Model           string
+	Status          string // "ok" | "error" | "timeout" | "canceled"
+	HTTPStatus      int    // 0 = N/A (network-layer failure, no HTTP response)
+	ErrorMsg        string
+	DurationMs      int64
+	ToolCallCount   int
+	ResponseChars   int
+	RequestMsgCount int
+	HasImage        bool
+	InputTokens     int
+	OutputTokens    int
+}
+
+// RecordLLMCallDiag appends one diagnostic row. Callers treat the error as
+// best-effort (log + continue) — diagnostics must never break the agent turn.
+func (d *DBStore) RecordLLMCallDiag(ctx context.Context, rec LLMCallDiag) error {
+	hasImage := 0
+	if rec.HasImage {
+		hasImage = 1
+	}
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`INSERT INTO llm_call_diag
+			(agent_id, session_key, provider, model, status, http_status,
+			 error_msg, duration_ms, tool_call_count, response_chars,
+			 request_msg_count, has_image, input_tokens, output_tokens)
+			VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)`,
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6),
+			d.ph(7), d.ph(8), d.ph(9), d.ph(10), d.ph(11), d.ph(12),
+			d.ph(13), d.ph(14)),
+		rec.AgentID, rec.SessionKey, rec.Provider, rec.Model, rec.Status, rec.HTTPStatus,
+		rec.ErrorMsg, rec.DurationMs, rec.ToolCallCount, rec.ResponseChars,
+		rec.RequestMsgCount, hasImage, rec.InputTokens, rec.OutputTokens)
+	return err
+}
+
+// PruneLLMCallDiag deletes llm_call_diag rows older than before, in bounded
+// batches. Same shape as PruneSessionEvents. created_at is a SQLite
+// CURRENT_TIMESTAMP string, so `before` is formatted to match.
+func (d *DBStore) PruneLLMCallDiag(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	beforeStr := before.UTC().Format("2006-01-02 15:04:05")
+	var total int64
+	for {
+		res, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM llm_call_diag
+				WHERE rowid IN (
+					SELECT rowid FROM llm_call_diag
 					WHERE created_at < %s
 					ORDER BY rowid
 					LIMIT %s

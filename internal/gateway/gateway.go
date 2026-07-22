@@ -791,6 +791,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runSessionEventsRetention(ctx)
 	}()
+	// llm_call_diag retention: prunes the per-LLM-call diagnostic trail past
+	// its window (default 3d via FLUCTIO_LLM_CALL_DIAG_RETENTION_HOURS, 0
+	// disables). See specs/2026-07-22-llm-call-observability.md.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runLLMCallDiagRetention(ctx)
+	}()
 	wg.Wait()
 	if g.taskQueue != nil {
 		g.taskQueue.Stop()

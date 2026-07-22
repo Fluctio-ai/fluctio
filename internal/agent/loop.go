@@ -949,8 +949,15 @@ func (a *Agent) streamChatToResponseQuiet(ctx context.Context, messages []provid
 }
 
 func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []provider.Message, tools []provider.Tool, emitDeltas bool) (*provider.Response, error) {
+	start := time.Now()
+	msgCount := len(messages)
+	hasImg := requestHasImage(messages)
 	sr, err := a.provider.ChatStream(ctx, messages, tools, a.model, a.maxTokens, a.temperature)
 	if err != nil {
+		a.recordLLMCallDiag(ctx, time.Since(start), llmDiagInfo{
+			status: classifyCallError(err), httpStatus: extractHTTPStatus(err),
+			errMsg: err.Error(), msgCount: msgCount, hasImage: hasImg,
+		})
 		return nil, err
 	}
 	var (
@@ -998,6 +1005,10 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 		}
 	}
 	if err := sr.Err(); err != nil {
+		a.recordLLMCallDiag(ctx, time.Since(start), llmDiagInfo{
+			status: classifyCallError(err), errMsg: err.Error(),
+			msgCount: msgCount, hasImage: hasImg,
+		})
 		return nil, err
 	}
 	// Mirror what AnthropicProvider.parseSSE does when no
@@ -1013,13 +1024,115 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 			rawAssistant = raw
 		}
 	}
-	return &provider.Response{
+	resp := &provider.Response{
 		Content:      contentBuilder.String(),
 		ToolCalls:    toolCalls,
 		Thinking:     thinking,
 		Usage:        streamUsage,
 		RawAssistant: rawAssistant,
-	}, nil
+	}
+	a.recordLLMCallDiag(ctx, time.Since(start), llmDiagInfo{
+		status: "ok", resp: resp, msgCount: msgCount, hasImage: hasImg,
+	})
+	return resp, nil
+}
+
+// llmDiagInfo carries the outcome-specific fields the diagnostic recorder
+// needs; common fields (agent/session/provider/model/duration) it derives
+// itself from the agent + ctx.
+type llmDiagInfo struct {
+	status     string
+	httpStatus int
+	errMsg     string
+	resp       *provider.Response
+	msgCount   int
+	hasImage   bool
+}
+
+// recordLLMCallDiag writes one llm_call_diag row, best-effort. Best-effort
+// because diagnostics must never break the agent turn — a DB hiccup or a
+// non-DBStore store is swallowed and the turn proceeds. sessionKey is pulled
+// from the stream on ctx (the call sites don't receive it directly).
+func (a *Agent) recordLLMCallDiag(ctx context.Context, dur time.Duration, info llmDiagInfo) {
+	db, ok := a.dataStore.(*store.DBStore)
+	if !ok || db == nil {
+		return
+	}
+	prov, mdl := provider.SplitProviderModel(a.model)
+	sessionKey := ""
+	if s := streamFromContext(ctx); s != nil {
+		sessionKey = s.sessionKey
+	}
+	rec := store.LLMCallDiag{
+		AgentID:         a.agentID,
+		SessionKey:      sessionKey,
+		Provider:        prov,
+		Model:           mdl,
+		Status:          info.status,
+		HTTPStatus:      info.httpStatus,
+		ErrorMsg:        truncateRunes(info.errMsg, 500),
+		DurationMs:      dur.Milliseconds(),
+		RequestMsgCount: info.msgCount,
+		HasImage:        info.hasImage,
+	}
+	if info.resp != nil {
+		rec.ToolCallCount = len(info.resp.ToolCalls)
+		rec.ResponseChars = len(info.resp.Content)
+		rec.InputTokens = info.resp.Usage.InputTokens
+		rec.OutputTokens = info.resp.Usage.OutputTokens
+	}
+	if err := db.RecordLLMCallDiag(ctx, rec); err != nil {
+		slog.Warn("llm_call_diag record failed", "agent", a.name, "error", err)
+	}
+}
+
+// classifyCallError maps a provider error to a coarse status for the
+// diagnostic trail. context.Canceled (user stopped) and DeadlineExceeded
+// (timeout) get their own buckets; everything else is a generic "error".
+func classifyCallError(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return "error"
+}
+
+// extractHTTPStatus pulls the status code out of a provider.HTTPError if the
+// error is one; 0 when it's a network-layer failure with no HTTP response.
+func extractHTTPStatus(err error) int {
+	var he *provider.HTTPError
+	if errors.As(err, &he) {
+		return he.StatusCode
+	}
+	return 0
+}
+
+// requestHasImage reports whether any message carries an image_url content
+// part (multimodal input) — a fingerprint for attributing vision-path
+// failures without storing the image itself.
+func requestHasImage(messages []provider.Message) bool {
+	for _, m := range messages {
+		for _, p := range m.ContentParts {
+			if p.Type == "image_url" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// truncateRunes caps a string to n runes so error_msg can't blow up the row.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 // HookRegistry returns the agent's hook registry for external hook registration.
