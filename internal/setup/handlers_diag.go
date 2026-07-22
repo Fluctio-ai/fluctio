@@ -44,8 +44,17 @@ func (s *Server) handleDiagReportGenerate(w http.ResponseWriter, r *http.Request
 	}
 	ag := space.Agents.DefaultAgent()
 	if ag == nil {
+		// No explicit default agent configured — fall back to the first
+		// loaded one. The report only needs any agent's provider/model to
+		// drive the LLM; which agent supplies it doesn't affect the cross-
+		// agent failure overview.
+		if all := space.Agents.All(); len(all) > 0 {
+			ag = all[0]
+		}
+	}
+	if ag == nil {
 		jsonResponse(w, http.StatusServiceUnavailable,
-			map[string]any{"error": "no default agent configured"})
+			map[string]any{"error": "no agent available"})
 		return
 	}
 	var body struct {
