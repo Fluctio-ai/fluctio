@@ -2,10 +2,16 @@ package config
 
 import (
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 )
+
+// metaEq compares only the routing-relevant fields. InputModalities /
+// OutputModalities are projected from docs/models.json and vary
+// independently of the context-window assertions these tests check.
+func metaEq(a, b ModelMeta) bool {
+	return a.ContextWindow == b.ContextWindow && a.MaxTokens == b.MaxTokens
+}
 
 // TestBuiltinMetaTable verifies the embedded model_meta.json parses and
 // carries both ContextWindow and MaxTokens for known models.
@@ -23,12 +29,28 @@ func TestBuiltinMetaTable(t *testing.T) {
 		"grok-4-fast": {ContextWindow: 2000000, MaxTokens: 0},
 	}
 	for key, want := range cases {
-		if got := tbl[key]; !reflect.DeepEqual(got, want) {
+		if got := tbl[key]; !metaEq(got, want) {
 			t.Errorf("builtinMetaTable()[%q] = %+v, want %+v", key, got, want)
 		}
 	}
 	if len(tbl) < 600 {
 		t.Errorf("builtin meta table too small: %d entries", len(tbl))
+	}
+}
+
+// TestBuiltinMetaTableModalities verifies the inputModalities /
+// outputModalities projection from docs/models.json: a known vision model
+// carries "image" input; a known text-only model does not.
+func TestBuiltinMetaTableModalities(t *testing.T) {
+	tbl := builtinMetaTable()
+	if tbl == nil {
+		t.Fatal("builtinMetaTable returned nil")
+	}
+	if got := tbl["gpt-4o"]; !got.SupportsVision() {
+		t.Errorf("gpt-4o should be vision-capable, got inputModalities=%v", got.InputModalities)
+	}
+	if got := tbl["longcat-flash-chat"]; got.SupportsVision() {
+		t.Errorf("longcat-flash-chat should be text-only, got inputModalities=%v", got.InputModalities)
 	}
 }
 
@@ -43,14 +65,14 @@ func TestMergedMetaTableLocalOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	merged := mergedMetaTable(tmp)
-	if got := merged["claude-opus-4-8"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 999, MaxTokens: 111}) {
+	if got := merged["claude-opus-4-8"]; !metaEq(got, ModelMeta{ContextWindow: 999, MaxTokens: 111}) {
 		t.Errorf("local should wholly override builtin claude-opus-4-8: got %+v", got)
 	}
-	if got := merged["my-custom-model"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 500, MaxTokens: 50}) {
+	if got := merged["my-custom-model"]; !metaEq(got, ModelMeta{ContextWindow: 500, MaxTokens: 50}) {
 		t.Errorf("local-only entry missing: got %+v", got)
 	}
 	// Builtin entry untouched by the local file is preserved.
-	if got := merged["gpt-5"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 400000, MaxTokens: 128000}) {
+	if got := merged["gpt-5"]; !metaEq(got, ModelMeta{ContextWindow: 400000, MaxTokens: 128000}) {
 		t.Errorf("builtin entry lost after merge: got %+v", got)
 	}
 }
@@ -59,7 +81,7 @@ func TestMergedMetaTableLocalOverrides(t *testing.T) {
 // when the local override path is missing.
 func TestMergedMetaTableNoLocalFile(t *testing.T) {
 	merged := mergedMetaTable("/nonexistent/path.json")
-	if got := merged["claude-opus-4-8"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 1000000, MaxTokens: 128000}) {
+	if got := merged["claude-opus-4-8"]; !metaEq(got, ModelMeta{ContextWindow: 1000000, MaxTokens: 128000}) {
 		t.Errorf("builtin should still load without local file: got %+v", got)
 	}
 }
@@ -74,7 +96,7 @@ func TestMergedMetaTableToleratesCommentKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	merged := mergedMetaTable(tmp)
-	if got := merged["claude-opus-4-8"]; !reflect.DeepEqual(got, ModelMeta{ContextWindow: 999, MaxTokens: 111}) {
+	if got := merged["claude-opus-4-8"]; !metaEq(got, ModelMeta{ContextWindow: 999, MaxTokens: 111}) {
 		t.Errorf("valid entry should survive _comment: got %+v", got)
 	}
 	if _, present := merged["_comment"]; present {

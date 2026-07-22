@@ -2,7 +2,6 @@ package config
 
 import (
 	"os"
-	"reflect"
 	"testing"
 )
 
@@ -33,7 +32,7 @@ func TestLookupMetaSubstringLongestFirst(t *testing.T) {
 			}
 			continue
 		}
-		if !ok || !reflect.DeepEqual(got, c.want) {
+		if !ok || !metaEq(got, c.want) {
 			t.Errorf("%s: got (%+v,%v), want %+v — %s", c.id, got, ok, c.want, c.reason)
 		}
 	}
@@ -59,7 +58,7 @@ func TestLookupMetaLocalOverride(t *testing.T) {
 	}
 	for _, c := range cases {
 		got, ok := lookupMetaIn(c.id, tmp)
-		if !ok || !reflect.DeepEqual(got, c.want) {
+		if !ok || !metaEq(got, c.want) {
 			t.Errorf("%s: got (%+v,%v), want %+v", c.id, got, ok, c.want)
 		}
 	}
@@ -77,7 +76,7 @@ func TestLookupMetaCaseInsensitive(t *testing.T) {
 	want := ModelMeta{ContextWindow: 200000, MaxTokens: 8192}
 	for _, id := range []string{"Acme-Pro-Max", "ACME-PRO", "vendor/acme-pro-1"} {
 		got, ok := lookupMetaIn(id, tmp)
-		if !ok || !reflect.DeepEqual(got, want) {
+		if !ok || !metaEq(got, want) {
 			t.Errorf("%s: got (%+v,%v), want %+v", id, got, ok, want)
 		}
 	}

@@ -5,14 +5,28 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // ModelMeta is the per-model metadata projected from the builtin table.
 // ContextWindow is the input token limit; MaxTokens is the output token
 // limit (0 when the source has no maxOutputTokens for the model).
+// InputModalities / OutputModalities are projected verbatim from
+// docs/models.json (e.g. ["text","image"], ["text"]) so callers can route
+// by capability — e.g. skip image_url blocks for a text-only model, or pick
+// an image-output model for generation. omitempty: an absent slice means
+// "unknown / not projected" — treat conservatively (text-only).
 type ModelMeta struct {
-	ContextWindow int `json:"contextWindow"`
-	MaxTokens     int `json:"maxTokens"`
+	ContextWindow    int      `json:"contextWindow"`
+	MaxTokens        int      `json:"maxTokens"`
+	InputModalities  []string `json:"inputModalities,omitempty"`
+	OutputModalities []string `json:"outputModalities,omitempty"`
+}
+
+// SupportsVision reports whether the model accepts image input. Convenience
+// over InputModalities for the common routing decision.
+func (m ModelMeta) SupportsVision() bool {
+	return slices.Contains(m.InputModalities, "image")
 }
 
 //go:embed model_meta.json
