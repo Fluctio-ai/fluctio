@@ -1355,6 +1355,9 @@ func setFileResponseHeaders(w http.ResponseWriter, path string) {
 	ext := strings.ToLower(filepath.Ext(path))
 	ctype := mime.TypeByExtension(ext)
 	if ctype == "" {
+		ctype = imageMimeByExt(ext) // .jfif/.avif/.heic/.tiff… not in the system mime db
+	}
+	if ctype == "" {
 		ctype = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ctype)
@@ -1362,6 +1365,38 @@ func setFileResponseHeaders(w http.ResponseWriter, path string) {
 	if ext == ".html" || ext == ".htm" {
 		w.Header().Set("Content-Security-Policy", "sandbox allow-scripts")
 	}
+}
+
+// imageMimeByExt covers image extensions the system mime database often
+// doesn't register (.jfif, .avif, .heic, .tiff, …). Without it the workspace
+// store serving those files returns application/octet-stream and the browser
+// refuses to render them as <img>. Returns "" for non-image / unknown.
+func imageMimeByExt(ext string) string {
+	switch ext {
+	case ".jpg", ".jpeg", ".jfif":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".bmp":
+		return "image/bmp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".avif":
+		return "image/avif"
+	case ".apng":
+		return "image/apng"
+	case ".heic", ".heif":
+		return "image/heic"
+	case ".tiff", ".tif":
+		return "image/tiff"
+	case ".ico":
+		return "image/x-icon"
+	}
+	return ""
 }
 
 func (s *Server) handleAgentFileUpload(w http.ResponseWriter, r *http.Request) {

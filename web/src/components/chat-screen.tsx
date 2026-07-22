@@ -3345,7 +3345,7 @@ function ToolRoundsBundle({
 /** File extension → icon + preview kind. */
 function fileKind(path: string): { icon: typeof File; preview: "image" | "pdf" | "markdown" | "html" | "text" | "none" } {
   const ext = path.toLowerCase().split(".").pop() || "";
-  if (["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp", "ico"].includes(ext)) return { icon: ImageIcon, preview: "image" };
+  if (["png", "jpg", "jpeg", "jfif", "gif", "svg", "webp", "bmp", "ico", "avif", "apng"].includes(ext)) return { icon: ImageIcon, preview: "image" };
   if (ext === "pdf") return { icon: FileText, preview: "pdf" };
   if (ext === "md" || ext === "markdown") return { icon: FileText, preview: "markdown" };
   if (ext === "html" || ext === "htm") return { icon: FileCode, preview: "html" };
