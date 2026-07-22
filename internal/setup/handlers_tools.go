@@ -300,12 +300,16 @@ func probeArgs(category string) map[string]any {
 		return map[string]any{"url": "https://example.com", "maxLen": 200}
 	case "image_gen":
 		return map[string]any{"prompt": "a dot", "n": 1, "size": "256x256"}
+	case "vision":
+		// A small public JPG — verify the key+endpoint+model accept an
+		// image_url request end-to-end. We use an http URL rather than an
+		// inline data: URL because some OpenAI-compatible gateways reject
+		// base64 with "图片输入格式/解析错误" while still accepting a
+		// fetchable URL — which also matches how vision is actually used
+		// (image_gen emits http URLs). The model's answer doesn't matter.
+		return map[string]any{"image": "https://www.gstatic.com/webp/gallery/1.jpg", "question": "what is in this image?"}
 	case "tts":
 		return map[string]any{"text": "hi"}
-	case "vision":
-		// 1x1 PNG — cheap to send, good enough to verify the key+endpoint
-		// respond. The model's answer doesn't matter for the probe.
-		return map[string]any{"image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "question": "what is this?"}
 	}
 	return map[string]any{}
 }
