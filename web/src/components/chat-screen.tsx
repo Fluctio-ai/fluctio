@@ -2257,27 +2257,14 @@ export function ChatScreen() {
               // we skip surfacing the image; it will show up with the next
               // reply. `surfacedSrcs` tracks every image src we've
               // surfaced so bubbles can suppress duplicate inline copies.
+              // Tool-output images are NOT surfaced on the agent bubble —
+              // only images the LLM writes into its own final reply are
+              // rendered (via renderContentWithDataImages in
+              // renderRegularBubble). Raw tool result bytes stay inside the
+              // collapsible tool panel until the model chooses to surface
+              // them in its reply, instead of being forwarded unprocessed.
               const attachedImages = new Map<string, Array<{ alt: string; src: string }>>();
               const surfacedSrcs = new Set<string>();
-              let pending: Array<{ alt: string; src: string }> = [];
-              for (const m of messages) {
-                if (m.role === "tool-group" && m.toolCalls) {
-                  for (const tc of m.toolCalls) {
-                    if (!tc.result) continue;
-                    for (const p of splitDataImages(tc.result)) {
-                      if (p.type === "image") {
-                        pending.push({ alt: p.alt, src: p.src });
-                      }
-                    }
-                  }
-                  continue;
-                }
-                if (m.role === "agent" && pending.length > 0) {
-                  attachedImages.set(m.id, pending);
-                  for (const img of pending) surfacedSrcs.add(img.src);
-                  pending = [];
-                }
-              }
               // Walk messages once so we can bundle consecutive
               // tool-group rounds into a single collapsible. Without
               // this, a long ReAct turn with seven sequential rounds

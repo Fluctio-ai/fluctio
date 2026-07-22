@@ -3033,10 +3033,12 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			if a.ftsStore != nil {
 				_ = a.ftsStore.Index(a.name, msg.ChatID, "tool:"+r.toolName, resultContent, time.Now())
 			}
-
-			// Check for MEDIA: protocol in tool output
-			if mediaPaths := extractMediaPaths(resultContent); len(mediaPaths) > 0 {
-				a.sendMediaFiles(msg, mediaPaths)
+			// Persist image_gen output to /workspace and rewrite the URLs so
+			// generated images flow through the normal workspace-deliverable
+			// path (gateway ships real bytes to IM; turn-end fallback covers a
+			// reference the model forgot). Other tools' images are left alone.
+			if r.toolName == "image_gen" {
+				resultContent = a.persistImageGenOutput(ctx, msg.ChatID, msg.ProjectID, resultContent)
 			}
 
 			toolMsg := provider.Message{
@@ -3747,9 +3749,8 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			if r.err != nil {
 				slog.Warn("tool execution error", "agent", a.name, "name", r.toolName, "error", r.err)
 			}
-
-			if mediaPaths := extractMediaPaths(resultContent); len(mediaPaths) > 0 {
-				a.sendMediaFiles(msg, mediaPaths)
+			if r.toolName == "image_gen" {
+				resultContent = a.persistImageGenOutput(ctx, msg.ChatID, msg.ProjectID, resultContent)
 			}
 
 			toolMsg := provider.Message{Role: "tool", Content: resultContent, ToolCallID: tc.ID, Name: r.toolName, Metadata: meta}
@@ -4392,73 +4393,9 @@ func (a *Agent) ReloadWorkspaceFiles() {
 	}
 }
 
-// extractMediaPaths scans tool output for MEDIA: lines and returns file paths.
-// The MEDIA: protocol is used by OpenClaw skills to attach files to chat messages.
-var mdImageURLRe = regexp.MustCompile(`!\[[^\]]*\]\((https?://[^)]+)\)`)
-
-func extractMediaPaths(output string) []string {
-	var paths []string
-	// MEDIA: protocol — host file paths.
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "MEDIA:") {
-			path := strings.TrimSpace(strings.TrimPrefix(line, "MEDIA:"))
-			if path != "" {
-				if _, err := os.Stat(path); err == nil {
-					paths = append(paths, path)
-				}
-			}
-		}
-	}
-	// Markdown image URLs: ![alt](url) — e.g. image_gen tool output
-	// (图床). http(s) URLs, not host files; sendMediaFiles downloads them
-	// into MediaItems so IM channels ship bytes (QQ base64 direct upload).
-	for _, m := range mdImageURLRe.FindAllStringSubmatch(output, -1) {
-		if len(m) > 1 {
-			paths = append(paths, m[1])
-		}
-	}
-	return paths
-}
-
-// sendMediaFiles sends extracted MEDIA: files to the outbound bus.
-func (a *Agent) sendMediaFiles(msg bus.InboundMessage, mediaPaths []string) {
-	if len(mediaPaths) == 0 || a.messageBus == nil {
-		return
-	}
-	var hostPaths []string
-	var items []bus.MediaItem
-	for _, p := range mediaPaths {
-		if strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://") {
-			// URL (图床, e.g. image_gen output) — download → bytes.
-			b, err := downloadMediaURL(p)
-			if err != nil {
-				slog.Warn("sendMediaFiles url download failed", "url", p, "error", err)
-				continue
-			}
-			items = append(items, bus.MediaItem{Filename: urlBaseName(p), Bytes: b})
-		} else {
-			hostPaths = append(hostPaths, p)
-		}
-	}
-	outMsg := bus.OutboundMessage{
-		Channel:    msg.Channel,
-		AccountID:  msg.AccountID,
-		ChatID:     msg.ChatID,
-		MediaPaths: hostPaths,
-		MediaItems: items,
-		AllowSplit: a.splitReplies,
-	}
-	select {
-	case a.messageBus.Outbound <- outMsg:
-	default:
-		slog.Warn("outbound channel full, dropping media message", "agent", a.name)
-	}
-}
-
 // downloadMediaURL fetches a media URL (图床, e.g. image_gen output) with a
-// timeout and returns the bytes. Used by sendMediaFiles for markdown
-// ![](url) image references that extractMediaPaths pulled from tool output.
+// timeout and returns the bytes. Used by fetchImageBytes for inbound image
+// attachments (data: URLs are base64-decoded separately in fetchImageBytes).
 func downloadMediaURL(url string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -4475,13 +4412,6 @@ func downloadMediaURL(url string) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
-}
-
-func urlBaseName(u string) string {
-	if i := strings.LastIndex(u, "/"); i >= 0 {
-		return u[i+1:]
-	}
-	return u
 }
 
 // mcpSafeName mirrors mcp.prefixToolName's server-name sanitization so the

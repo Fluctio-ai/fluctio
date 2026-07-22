@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -395,4 +396,88 @@ func contentTypeFromExt(ext string) string {
 		return "application/zip"
 	}
 	return ""
+}
+
+// imageGenRefRe matches markdown image refs produced by the image_gen tool
+// — both remote URLs (fal/replicate图床) and inline data: URLs (gpt-image-1
+// b64_json). Used by persistImageGenOutput to find and rewrite them.
+var imageGenRefRe = regexp.MustCompile(`!\[([^\]]*)\]\((https?://[^)\s]+|data:image/[^)\s]+)\)`)
+
+// persistImageGenOutput downloads each image in an image_gen tool result,
+// writes it to the session workspace, and rewrites the markdown to point at
+// the /workspace path. Generated images then behave like any other workspace
+// deliverable: the gateway resolves /workspace/ refs to real bytes for IM
+// channels (which cannot render URLs), and the turn-end workspace fallback
+// delivers them even if the model forgets to reference one. Gateway dedupe
+// (the fallback only runs when splitMediaFromReply found no images in the
+// reply) means a referenced image is never sent twice.
+//
+// On download/decode failure the offending ref is replaced with a failure
+// notice instead of being left as a raw URL, so the model never references a
+// broken image and the gateway never tries to ship one. Call this only for
+// the image_gen tool — auto-persisting arbitrary tool output would bring
+// back the "forward every tool image" problem.
+func (a *Agent) persistImageGenOutput(ctx context.Context, sessionID, projectID, result string) string {
+	if result == "" {
+		return result
+	}
+	idx := 0
+	urlToName := map[string]string{}
+	return imageGenRefRe.ReplaceAllStringFunc(result, func(match string) string {
+		sm := imageGenRefRe.FindStringSubmatch(match)
+		if len(sm) < 3 {
+			return match
+		}
+		alt, url := sm[1], sm[2]
+		if name, ok := urlToName[url]; ok {
+			return fmt.Sprintf("![%s](/workspace/%s)", alt, name)
+		}
+		data, ext, err := decodeAttachment(ctx, url)
+		if err != nil {
+			slog.Warn("image_gen persist: download failed", "agent", a.name, "error", err)
+			return "[图片生成失败：下载失败，请重试或调整提示词]"
+		}
+		name := fmt.Sprintf("imagegen_%d%s", idx, ext)
+		idx++
+		a.writeWorkspaceBytes(ctx, sessionID, projectID, name, data)
+		urlToName[url] = name
+		return fmt.Sprintf("![%s](/workspace/%s)", alt, name)
+	})
+}
+
+// writeWorkspaceBytes writes data to the session workspace under name using
+// all three backends — host dir (no-sandbox + docker bind mount), workspace
+// Store (durable; the gateway reads /workspace/ refs and the turn-end
+// fallback from here), and the live sandbox (E2B mid-session). Best-effort
+// across backends; per-backend failures are logged, not fatal. Mirrors the
+// three-write loop in WriteSessionAttachments.
+func (a *Agent) writeWorkspaceBytes(ctx context.Context, sessionID, projectID, name string, data []byte) {
+	ext := filepath.Ext(name)
+	hostDir := ""
+	if a.registry != nil {
+		hostDir = a.registry.UserRoot()
+	}
+	if hostDir == "" {
+		hostDir = a.workspacePath
+	}
+	if hostDir != "" {
+		full := filepath.Join(hostDir, name)
+		if mkErr := os.MkdirAll(hostDir, 0o755); mkErr == nil {
+			if wErr := os.WriteFile(full, data, 0o644); wErr != nil {
+				slog.Warn("image_gen host write failed", "agent", a.name, "path", full, "error", wErr)
+			}
+		}
+	}
+	if a.workspaceStore != nil {
+		if pErr := a.workspaceStore.Put(ctx, a.agentID, projectID, sessionID, name, strings.NewReader(string(data)), int64(len(data)), contentTypeFromExt(ext)); pErr != nil {
+			slog.Warn("image_gen store put failed", "agent", a.name, "path", name, "error", pErr)
+		}
+	}
+	if a.sandboxPool != nil {
+		if ex, gErr := a.sandboxPool.Get(ctx, a.name, projectID, sessionID); gErr == nil && ex != nil {
+			if _, wErr := ex.WriteFile(ctx, "/workspace/"+name, string(data)); wErr != nil {
+				slog.Warn("image_gen sandbox write failed", "agent", a.name, "path", name, "error", wErr)
+			}
+		}
+	}
 }
