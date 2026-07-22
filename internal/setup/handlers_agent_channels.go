@@ -37,6 +37,7 @@ type channelOut struct {
 	BotToken       string `json:"botToken"` // masked
 	Enabled        bool   `json:"enabled"`
 	SharedIdentity bool   `json:"sharedIdentity"`
+	UseMarkdown    bool   `json:"useMarkdown,omitempty"`
 	FailureType    string `json:"failureType,omitempty"`
 	UpdatedAt      string `json:"updatedAt,omitempty"`
 	Source         string `json:"source,omitempty"`
@@ -155,6 +156,7 @@ func flattenChannelRows(rows []store.ConfigRecord, source string, _, _ string, f
 				BotUsername: accountID,
 				BotToken:    maskAPIKey(tok),
 				Enabled:     rec.Enabled,
+				UseMarkdown: acct.UseMarkdown,
 				FailureType: acct.FailureType,
 				UpdatedAt:   rec.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 				Source:      source,
@@ -196,6 +198,7 @@ func flattenChannelRecords(rows []store.ChannelRecord, source string) []channelO
 				BotToken:       maskAPIKey(tok),
 				Enabled:        rec.Enabled,
 				SharedIdentity: rec.SharedIdentity,
+				UseMarkdown:    acct.UseMarkdown,
 				FailureType:    acct.FailureType,
 				UpdatedAt:      rec.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 				Source:         source,
@@ -309,6 +312,7 @@ func (s *Server) handleUpdateAgentChannel(w http.ResponseWriter, r *http.Request
 
 	var req struct {
 		SharedIdentity *bool `json:"sharedIdentity"`
+		UseMarkdown    *bool `json:"useMarkdown"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -336,9 +340,31 @@ func (s *Server) handleUpdateAgentChannel(w http.ResponseWriter, r *http.Request
 	if req.SharedIdentity != nil {
 		target.SharedIdentity = *req.SharedIdentity
 	}
+	if req.UseMarkdown != nil && channelType == "qq" {
+		// useMarkdown lives on the QQ AccountConfig (msg_type 2 vs 0),
+		// stored inside target.Data. Round-trip through ChannelConfig,
+		// mutate the account, write back. No-op for non-QQ channels.
+		cc := config.ChannelConfig{}
+		if blob, err := json.Marshal(target.Data); err == nil {
+			_ = json.Unmarshal(blob, &cc)
+		}
+		if acct, ok := cc.Accounts[accountID]; ok {
+			acct.UseMarkdown = *req.UseMarkdown
+			cc.Accounts[accountID] = acct
+			if blob, err := json.Marshal(cc); err == nil {
+				var m map[string]interface{}
+				_ = json.Unmarshal(blob, &m)
+				target.Data = m
+			}
+		}
+	}
 	if err := s.dataStore.SaveChannel(r.Context(), target); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
+	}
+	s.invalidateOwner(uid, aid)
+	if ch, err := s.dataStore.LookupChannel(r.Context(), channelType, accountID); err == nil && ch != nil {
+		s.hotRegisterChannelRecord(*ch)
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }

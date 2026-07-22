@@ -2145,6 +2145,7 @@ export interface AgentChannel {
   botToken: string;    // server-masked
   enabled: boolean;
   sharedIdentity: boolean;
+  useMarkdown?: boolean; // QQ: msg_type 2 (markdown) vs 0 (plain text)
   failureType?: string; // set when adapter gave up reconnecting; UI shows reconnect prompt
   updatedAt?: string;
 }
@@ -2493,7 +2494,7 @@ export async function updateAgentChannel(
   agentId: string,
   type: string,
   accountId: string,
-  patch: { sharedIdentity?: boolean },
+  patch: { sharedIdentity?: boolean; useMarkdown?: boolean },
 ): Promise<{ ok: boolean; error?: string }> {
   const res = await apiFetch(
     `/api/agents/${agentId}/channels/${encodeURIComponent(type)}/${encodeURIComponent(accountId)}`,

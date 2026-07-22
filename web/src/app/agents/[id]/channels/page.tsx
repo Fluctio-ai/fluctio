@@ -49,6 +49,7 @@ import {
   pollAgentWeChatLoginStatus,
   disconnectAgentChannel,
   retryAgentChannel,
+  updateAgentChannel,
   type AgentChannel,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
@@ -197,6 +198,9 @@ export default function AgentChannelsPage() {
                 key={entry.type}
                 label={entry.label}
                 channel={connected}
+                agentId={agentId}
+                onUpdated={refresh}
+                onError={setError}
                 onDelete={() => setDeleteTarget(connected)}
                 onRetry={
                   connected.failureType
@@ -365,17 +369,24 @@ function CatalogCard({
 function ConnectedCard({
   label,
   channel,
+  agentId,
   onDelete,
   onRetry,
   onReconnect,
+  onUpdated,
+  onError,
 }: {
   label: string;
   channel: AgentChannel;
+  agentId: string;
   onDelete: () => void;
   onRetry?: () => void;
   onReconnect?: () => void;
+  onUpdated?: () => void;
+  onError?: (msg: string) => void;
 }) {
   const t = useT();
+  const [mdBusy, setMdBusy] = useState(false);
   // Telegram is the only provider with a public profile URL pattern
   // (t.me/<username>); Discord/Slack don't expose one from a bot
   // username alone, so we render plain text for those.
@@ -432,6 +443,26 @@ function ConnectedCard({
           </p>
         )}
       </div>
+
+      {channel.type === "qq" && (
+        <label className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2 cursor-pointer">
+          <div className="min-w-0 space-y-0.5">
+            <span className="text-xs font-medium block">{t("channels.qqUseMarkdown")}</span>
+            <span className="text-[11px] text-muted-foreground block">{t("channels.qqUseMarkdownHint")}</span>
+          </div>
+          <Switch
+            checked={!!channel.useMarkdown}
+            disabled={mdBusy}
+            onCheckedChange={async (v) => {
+              setMdBusy(true);
+              const res = await updateAgentChannel(agentId, channel.type, channel.accountId, { useMarkdown: v });
+              setMdBusy(false);
+              if (res.error) onError?.(res.error);
+              onUpdated?.();
+            }}
+          />
+        </label>
+      )}
 
       {channel.failureType && (
         <div className="flex gap-2">
