@@ -115,9 +115,11 @@ table and is edited through the dashboard or `fluctio agents config`.
 - Tokens validated before save (Telegram `getMe`, Discord `/users/@me`, Slack `auth.test`)
 - Sessions are isolated per channel + chatID, so a user's Telegram thread and Discord thread stay separate
 - Feishu supports inbound document/file attachments (delivered to the agent as workspace files)
+- QQ Official Bot (WebSocket) — markdown reply mode (msg_type 2 vs 0) is toggleable per account after connect; inbound images materialize into the session workspace
 
 ### Tools & Sandbox
 - Built-in: exec, read_file, write_file, list_dir, web_fetch, web_search, memory_search
+- Provider-backed tools (configurable chain, automatic fallback): `image_gen` (gpt-image-1 / fal flux / …), `vision` (multimodal image understanding — reads/transcodes/resizes in-process; auto-routed when the primary model is text-only), `tts` (OpenAI / ElevenLabs / MiniMax / …)
 - E2B cloud sandbox or Docker sandbox — automatic skill + workspace hydrate, post-exec sync (sandbox-side files mirrored back to the durable store after every tool call)
 - MCP server support
 - Plugin system (JSON-RPC subprocess)
@@ -143,7 +145,7 @@ table and is edited through the dashboard or `fluctio agents config`.
 
 ### Context Compaction
 - **Model-aware threshold** — the auto-compaction trigger scales with each model's context window instead of a fixed 80K: `contextWindow − systemPrompt − maxTokens − margin`. Three modes per agent (Conservative 30% / Balanced 15% / Aggressive 10% margin) under agent settings → Context; a manual threshold override is also available. Models with an unknown window fall back to 80K.
-- **Builtin metadata table** — 675 models' `contextWindow` + `maxOutputTokens` (extracted from `docs/models.json` via `scripts/extract_model_meta.py`) are compiled in. `LookupModelMeta` matches **case-insensitively by substring (longest-first)**, so `openai/LongCat-2.0` resolves through the `longcat` key.
+- **Builtin metadata table** — 675 models' `contextWindow` + `maxOutputTokens` **+ input/output modalities** (projected from `docs/models.json`) are compiled in. `LookupModelMeta` matches **case-insensitively by substring (longest-first)**, so `openai/LongCat-2.0` resolves through the `longcat` key; `SupportsVision()` decides whether inbound images are inlined as `image_url` blocks (multimodal primary model) or routed through the `vision` tool (text-only primary model).
 - **Local override** — `~/.fluctio/model-meta.json` (seeded with a commented example on first run) overrides or supplements the builtin table; same-key local wins. Edit it to add models missing from the builtin table.
 - **Compaction notice** — when auto-compaction fires, a persistent `📝 上下文已自动压缩（before → after tokens）` bubble appears mid-conversation (web + IM channels), and is excluded from the LLM-bound message stream so it never pollutes context.
 
@@ -388,4 +390,4 @@ based on Apache License 2.0 with additional conditions.
 - ❌ Removing or modifying the Fluctio branding in the dashboard UI
 
 The full Apache 2.0 text is reproduced inside the [LICENSE](LICENSE) file
-under the addendum. For commercial licensing inquiries: support@thinkany.ai.
+under the addendum.
