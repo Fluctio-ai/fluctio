@@ -1137,7 +1137,7 @@ func (a *Agent) sessionHasActiveGoal(ctx context.Context, msg bus.InboundMessage
 // with the OriginCron tag on the user message for traceability.
 const cronTriggerGuidance = "Scheduled-task trigger: the user message below is a task directive you previously set for yourself via create_cron_job. Execute it now and deliver the corresponding notification or result to the user directly. Do not acknowledge, confirm, or echo the directive, and do not treat it as a newly-requested task."
 
-func buildUserMessage(msg bus.InboundMessage) provider.Message {
+func buildUserMessage(msg bus.InboundMessage, modelID string) provider.Message {
 	origin := provider.OriginUser
 	switch msg.Source {
 	case bus.SourceGoalContext:
@@ -1163,29 +1163,153 @@ func buildUserMessage(msg bus.InboundMessage) provider.Message {
 		Origin:   origin,
 		Metadata: senderMetadata(msg),
 	}
-	imageURLs := msg.PhotoURLs
-	if msg.PhotoURL != "" {
-		imageURLs = append([]string{msg.PhotoURL}, imageURLs...)
+	// Prefer materialized local paths (no base64 truncation when the LLM
+	// later routes a path through the vision tool); fall back to raw URLs
+	// if persistence was skipped (older path / cloud store not wired).
+	imageRefs := msg.ImagePaths
+	if len(imageRefs) == 0 {
+		imageRefs = msg.PhotoURLs
+		if msg.PhotoURL != "" {
+			imageRefs = append([]string{msg.PhotoURL}, imageRefs...)
+		}
 	}
-	if len(imageURLs) == 0 {
+	if len(imageRefs) == 0 {
 		return userMsg
 	}
-	userMsg.Content = ""
-	// Skip an empty leading text part — image-only sends used to produce
-	// `[{text: ""}, {image_url}, …]` which some upstreams reject as a
-	// content-less wire message.
-	var parts []provider.ContentPart
-	if userText != "" {
-		parts = append(parts, provider.ContentPart{Type: "text", Text: userText})
+	if meta, ok := config.LookupModelMeta(modelID); ok && meta.SupportsVision() {
+		// Multimodal primary model: inline image_url parts, built from the
+		// local files by us (complete bytes — the LLM never copies base64,
+		// so no truncation). Raw http(s)/data refs pass through verbatim.
+		var parts []provider.ContentPart
+		if userText != "" {
+			parts = append(parts, provider.ContentPart{Type: "text", Text: userText})
+		}
+		for _, ref := range imageRefs {
+			url := ref
+			if !looksLikeURL(ref) {
+				du, err := tools.ReadImageAsDataURL(ref)
+				if err != nil {
+					slog.Warn("buildUserMessage: skip unreadable image", "path", ref, "error", err)
+					continue
+				}
+				url = du
+			}
+			parts = append(parts, provider.ContentPart{
+				Type: "image_url", ImageURL: &provider.ImageURL{URL: url, Detail: "auto"},
+			})
+		}
+		if len(parts) == 0 {
+			return userMsg
+		}
+		userMsg.Content = ""
+		userMsg.ContentParts = parts
+	} else {
+		// Text-only primary model: embed image refs as text so the agent
+		// can pass them to the `vision` tool. No image_url block → the
+		// model's endpoint won't 400 on an unsupported content type, and
+		// the agent isn't tempted to truncate base64 into a tool arg.
+		hint := buildImageRefHint(imageRefs)
+		if userText == "" {
+			userMsg.Content = hint
+		} else {
+			userMsg.Content = userText + "\n\n" + hint
+		}
 	}
-	for _, u := range imageURLs {
-		parts = append(parts, provider.ContentPart{
-			Type: "image_url", ImageURL: &provider.ImageURL{URL: u, Detail: "auto"},
-		})
-	}
-	userMsg.ContentParts = parts
 	return userMsg
 }
+
+// buildImageRefHint renders the text-only-model fallback notice that lists
+// materialized image paths for the agent to feed into the vision tool.
+func buildImageRefHint(refs []string) string {
+	var sb strings.Builder
+	if len(refs) == 1 {
+		sb.WriteString("用户上传了一张图片，但你（当前主模型）无法直接查看图片。如需识别图片内容，请调用 vision 工具，image 参数使用下面的路径：\n")
+	} else {
+		fmt.Fprintf(&sb, "用户上传了 %d 张图片，但你（当前主模型）无法直接查看图片。如需识别图片内容，请调用 vision 工具，image 参数依次使用下面的路径：\n", len(refs))
+	}
+	for _, r := range refs {
+		fmt.Fprintf(&sb, "- %s\n", r)
+	}
+	return sb.String()
+}
+
+func looksLikeURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "data:")
+}
+
+// persistInboundImages downloads each inbound image (data: URL decoded,
+// http(s) downloaded) into the session's uploads/ dir and records the local
+// paths on msg.ImagePaths. Doing this at ingest — not in buildUserMessage —
+// means the vision tool and the non-multimodal text-routing both get real
+// file paths the LLM can pass without truncating base64, and multimodal
+// models get image_url blocks built by us from complete bytes. Local-FS
+// only for now (cloud workspaceStore wiring is a follow-up); on failure it
+// silently leaves ImagePaths empty so buildUserMessage falls back to URLs.
+func (a *Agent) persistInboundImages(msg *bus.InboundMessage) {
+	urls := msg.PhotoURLs
+	if msg.PhotoURL != "" {
+		urls = append([]string{msg.PhotoURL}, urls...)
+	}
+	if len(urls) == 0 {
+		return
+	}
+	home, err := config.HomeDir()
+	if err != nil || home == "" {
+		return
+	}
+	dir := filepath.Join(home, "workspaces", a.name, inboundScopeDir(*msg), "uploads")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		slog.Warn("persistInboundImages: mkdir", "dir", dir, "error", err)
+		return
+	}
+	var paths []string
+	for i, u := range urls {
+		data, ext, err := fetchImageBytes(u)
+		if err != nil {
+			slog.Warn("persistInboundImages: fetch", "url", u, "error", err)
+			continue
+		}
+		full := filepath.Join(dir, fmt.Sprintf("%d_%d%s", time.Now().UnixMilli(), i, ext))
+		if err := os.WriteFile(full, data, 0o644); err != nil {
+			slog.Warn("persistInboundImages: write", "path", full, "error", err)
+			continue
+		}
+		paths = append(paths, full)
+	}
+	if len(paths) > 0 {
+		msg.ImagePaths = paths
+	}
+}
+
+// inboundScopeDir is the workspace sub-directory matching msg's scope:
+// projects/<pid> when project-scoped, else sessions/<chat-id>.
+func inboundScopeDir(msg bus.InboundMessage) string {
+	if msg.ProjectID != "" {
+		return filepath.Join("projects", msg.ProjectID)
+	}
+	_, _, cid, _ := sessionTriple(msg, msg.ProjectID)
+	return filepath.Join("sessions", cid)
+}
+
+// fetchImageBytes resolves an image reference to bytes + extension. Accepts
+// data: URLs (base64-decoded) and http(s) URLs (downloaded via the shared
+// downloadMediaURL helper). ext includes the leading dot.
+func fetchImageBytes(ref string) ([]byte, string, error) {
+	if strings.HasPrefix(ref, "data:") {
+		return decodeDataURL(ref)
+	}
+	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
+		b, err := downloadMediaURL(ref)
+		if err != nil {
+			return nil, "", err
+		}
+		return b, extFromMIME(http.DetectContentType(b)), nil
+	}
+	return nil, "", fmt.Errorf("unsupported image ref: %s", ref)
+}
+
+// decodeDataURL and extFromMIME are shared with the inbound-attachment
+// path — see attachments.go. fetchImageBytes reuses them.
 
 // RegisterWebSearchChain exposes the web_search tool to this agent using a
 // provider chain (primary + fallbacks). Pass nil to skip — the tool won't
@@ -1944,7 +2068,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	// Mirror the regular path's user-message construction so multimodal
 	// + IM-bridge payloads (PhotoURL / PhotoURLs) land in session
 	// history the same way they would on a non-plan turn.
-	userMsg := buildUserMessage(msg)
+	userMsg := buildUserMessage(msg, a.model)
 	sess.Append(userMsg)
 
 	if a.provider == nil {
@@ -2117,6 +2241,7 @@ func popLang(params map[string]any) string {
 }
 
 func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) string {
+	a.persistInboundImages(&msg)
 	// Lift the chatter's UI locale out of Params (where the web client
 	// forwards its i18n setting) into the Lang field, so slash replies can
 	// localize and the locale doesn't leak into the LLM-facing "Client
@@ -2136,7 +2261,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 		sess.BeginTurn()
-		sess.Append(buildUserMessage(msg))
+		sess.Append(buildUserMessage(msg, a.model))
 		sess.Append(provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()})
 		sess.Append(provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"})
 		sess.Append(provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()})
@@ -2301,7 +2426,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// buildUserMessage handles multi-image flatten + senderMetadata.
 	// `[SenderName]:` content-prefix policy lives there (group-only;
 	// DMs stay bare to avoid SOUL.md language-bias regressions).
-	userMsg := buildUserMessage(msg)
+	userMsg := buildUserMessage(msg, a.model)
 	sess.Append(userMsg)
 
 	// Context compaction: check if session messages are too large
@@ -3107,12 +3232,13 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 // a StreamReader for the final response. Tool call iterations use non-streaming Chat;
 // the final text response uses ChatStream for true SSE streaming.
 func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage) *provider.StreamReader {
+	a.persistInboundImages(&msg)
 	// Regex hooks: intercept messages matching a pattern and execute CLI
 	// instead of the LLM.
 	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 		sess.BeginTurn()
-		sess.Append(buildUserMessage(msg))
+		sess.Append(buildUserMessage(msg, a.model))
 		sess.Append(provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()})
 		sess.Append(provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"})
 		sess.Append(provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()})
@@ -3197,7 +3323,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// Store raw user message — buildUserMessage handles multi-image
 	// flatten + senderMetadata. Group msgs keep their `[SenderName]:`
 	// prefix (applied in buildUserMessage); DMs stay bare.
-	userMsg := buildUserMessage(msg)
+	userMsg := buildUserMessage(msg, a.model)
 	sess.Append(userMsg)
 
 	sessionMsgs := sess.GetMessages()

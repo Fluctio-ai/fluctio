@@ -67,6 +67,7 @@ type InboundMessage struct {
 	IsBotMessage    bool        // true if the message was sent by a bot
 	PhotoURL        string      // URL of attached photo (if any) — single-image legacy field
 	PhotoURLs       []string    // URLs of attached photos. Independent of PhotoURL so old single-image callers (Telegram bridge etc.) keep working untouched; new web-chat path uses this for multi-image attachments.
+	ImagePaths      []string    // Local workspace paths of attached images, materialized from PhotoURLs by the agent loop at ingest so the vision tool / non-multimodal routing can read them without the LLM truncating base64.
 	MediaItems      []MediaItem // downloaded inbound files/images to materialize into the session workspace
 	ReplyToMsgID    string      // message ID being replied to
 	// Params is a freeform structured-parameter blob supplied by the
