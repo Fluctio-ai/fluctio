@@ -18,6 +18,9 @@ func (noopSessionStore) SaveSession(context.Context, string, string, string, str
 func (noopSessionStore) AppendMessage(context.Context, string, string, provider.Message) error {
 	return nil
 }
+func (noopSessionStore) AppendMessageHidden(context.Context, string, string, provider.Message) error {
+	return nil
+}
 func (noopSessionStore) ListMessages(context.Context, string, string) ([]provider.Message, error) {
 	return nil, nil
 }

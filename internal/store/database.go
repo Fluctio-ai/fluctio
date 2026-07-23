@@ -137,6 +137,12 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionMessagesAddOrigin(ctx); err != nil {
 		return fmt.Errorf("migrate session_messages.origin: %w", err)
 	}
+	if err := d.migrateSessionMessagesLLMVisible(ctx); err != nil {
+		return fmt.Errorf("migrate session_messages.llm_visible: %w", err)
+	}
+	if err := d.migrateRegexHooksFeedToLLM(ctx); err != nil {
+		return fmt.Errorf("migrate agent_regex_hooks.feed_to_llm: %w", err)
+	}
 	if err := d.migrateAgentGoalsAddRouting(ctx); err != nil {
 		return fmt.Errorf("migrate agent_goals routing: %w", err)
 	}
@@ -598,6 +604,44 @@ func (d *DBStore) migrateSessionMessagesAddOrigin(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx,
 		`ALTER TABLE session_messages ADD COLUMN origin TEXT NOT NULL DEFAULT ''`); err != nil {
 		return fmt.Errorf("add column: %w", err)
+	}
+	return nil
+}
+
+// migrateSessionMessagesLLMVisible retrofits the llm_visible column onto
+// pre-feature installs. Default 1 backfills every existing archive row as
+// LLM/summary-visible, so nothing already stored silently drops out of
+// context after the upgrade.
+func (d *DBStore) migrateSessionMessagesLLMVisible(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "session_messages", "llm_visible")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx,
+		`ALTER TABLE session_messages ADD COLUMN llm_visible BOOLEAN NOT NULL DEFAULT 1`); err != nil {
+		return fmt.Errorf("add llm_visible: %w", err)
+	}
+	return nil
+}
+
+// migrateRegexHooksFeedToLLM retrofits the feed_to_llm column onto
+// pre-feature installs. Default FALSE backfills existing hooks as "don't
+// feed the LLM" — matching this feature's default, so legacy regex-hook
+// turns stop polluting context going forward.
+func (d *DBStore) migrateRegexHooksFeedToLLM(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "agent_regex_hooks", "feed_to_llm")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx,
+		`ALTER TABLE agent_regex_hooks ADD COLUMN feed_to_llm BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
+		return fmt.Errorf("add feed_to_llm: %w", err)
 	}
 	return nil
 }
@@ -1434,10 +1478,11 @@ func (d *DBStore) migrateSessionMessagesDropUserID(ctx context.Context) error {
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				provider TEXT NOT NULL DEFAULT '',
 				model TEXT NOT NULL DEFAULT '',
+				llm_visible BOOLEAN NOT NULL DEFAULT 1,
 				PRIMARY KEY (agent_id, session_key, seq)
 			)`,
-			`INSERT INTO session_messages_new (agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model)
-				SELECT agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model FROM session_messages`,
+			`INSERT INTO session_messages_new (agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model, llm_visible)
+				SELECT agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model, llm_visible FROM session_messages`,
 			`DROP TABLE session_messages`,
 			`ALTER TABLE session_messages_new RENAME TO session_messages`,
 		} {
@@ -2451,6 +2496,11 @@ func (d *DBStore) migrationSQL() []string {
 			-- WebChatHistory + FTS skip non-empty origin to keep
 			-- synthetic prompts out of user-visible / searchable views.
 			origin TEXT NOT NULL DEFAULT '',
+			-- llm_visible: 1 (default) feeds the LLM working set + summary;
+			-- 0 marks runtime-intercepted turns (regex-hook matches with
+			-- FeedToLLM=false) that stay in the archive for the web UI but
+			-- are filtered out of context/summary/recall queries.
+			llm_visible BOOLEAN NOT NULL DEFAULT 1,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			-- chatter_user_id mirrors sessions.chatter_user_id — see that
 			-- comment for semantics. Stored per row so a per-chatter
@@ -2778,6 +2828,10 @@ func (d *DBStore) migrationSQL() []string {
 			enabled BOOLEAN NOT NULL DEFAULT TRUE,
 			show_error BOOLEAN NOT NULL DEFAULT TRUE,
 			error_message TEXT NOT NULL DEFAULT '',
+			-- feed_to_llm: when false (default) a matched hook's exchange
+			-- is written to session_messages with llm_visible=0 so it
+			-- shows in web history but stays out of the LLM working set.
+			feed_to_llm BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -3583,26 +3637,26 @@ func (d *DBStore) AppendSessionMessage(ctx context.Context, agentID, sessionKey 
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
 			`INSERT INTO session_messages
-				(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model)
-			SELECT $1, $2, COALESCE(MAX(seq), -1) + 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+				(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model, llm_visible)
+			SELECT $1, $2, COALESCE(MAX(seq), -1) + 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 				FROM session_messages
 				WHERE agent_id = $1 AND session_key = $2`,
 			agentID, sessionKey,
 			msg.Role, msg.Content, string(contentParts), string(toolCalls),
 			msg.ToolCallID, msg.Name, string(metadata), msg.Thinking, rawAssistant, msg.Origin, ts,
-			msg.Provider, msg.Model)
+			msg.Provider, msg.Model, msg.LLMVisible)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
 		`INSERT INTO session_messages
-			(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model)
-		SELECT ?, ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			(agent_id, session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model, llm_visible)
+		SELECT ?, ?, COALESCE(MAX(seq), -1) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 			FROM session_messages
 			WHERE agent_id = ? AND session_key = ?`,
 		agentID, sessionKey,
 		msg.Role, msg.Content, string(contentParts), string(toolCalls),
 		msg.ToolCallID, msg.Name, string(metadata), msg.Thinking, rawAssistant, msg.Origin, ts,
-		msg.Provider, msg.Model,
+		msg.Provider, msg.Model, msg.LLMVisible,
 		agentID, sessionKey)
 	return err
 }
@@ -3928,7 +3982,7 @@ func (d *DBStore) ListFailedLLMCalls(ctx context.Context, since time.Time, agent
 // to sessions.messages should check len() and decide.
 func (d *DBStore) ListSessionMessages(ctx context.Context, agentID, sessionKey string) ([]SessionMessage, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model
+		fmt.Sprintf(`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model, llm_visible
 			FROM session_messages
 			WHERE agent_id = %s AND session_key = %s
 			ORDER BY seq ASC`, d.ph(1), d.ph(2)),
@@ -3941,7 +3995,7 @@ func (d *DBStore) ListSessionMessages(ctx context.Context, agentID, sessionKey s
 	for rows.Next() {
 		var m SessionMessage
 		var contentParts, toolCalls, metadata, rawAssistant string
-		if err := rows.Scan(&m.Seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp, &m.Provider, &m.Model); err != nil {
+		if err := rows.Scan(&m.Seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp, &m.Provider, &m.Model, &m.LLMVisible); err != nil {
 			return nil, err
 		}
 		if contentParts != "" && contentParts != "null" {
@@ -5256,7 +5310,7 @@ func isUniqueViolation(err error) bool {
 
 // --- Regex Hooks ---
 
-const regexHookCols = `id, agent_id, name, pattern, cli_command, sort_order, continue_on_match, enabled, show_error, error_message, created_at, updated_at`
+const regexHookCols = `id, agent_id, name, pattern, cli_command, sort_order, continue_on_match, enabled, show_error, error_message, feed_to_llm, created_at, updated_at`
 
 func (d *DBStore) ListRegexHooks(ctx context.Context, agentID string) ([]RegexHookRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
@@ -5269,7 +5323,7 @@ func (d *DBStore) ListRegexHooks(ctx context.Context, agentID string) ([]RegexHo
 	var hooks []RegexHookRecord
 	for rows.Next() {
 		var h RegexHookRecord
-		if err := rows.Scan(&h.ID, &h.AgentID, &h.Name, &h.Pattern, &h.CLICommand, &h.SortOrder, &h.ContinueOnMatch, &h.Enabled, &h.ShowError, &h.ErrorMessage, &h.CreatedAt, &h.UpdatedAt); err != nil {
+		if err := rows.Scan(&h.ID, &h.AgentID, &h.Name, &h.Pattern, &h.CLICommand, &h.SortOrder, &h.ContinueOnMatch, &h.Enabled, &h.ShowError, &h.ErrorMessage, &h.FeedToLLM, &h.CreatedAt, &h.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hooks = append(hooks, h)
@@ -5281,7 +5335,7 @@ func (d *DBStore) GetRegexHook(ctx context.Context, hookID string) (*RegexHookRe
 	row := d.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT `+regexHookCols+` FROM agent_regex_hooks WHERE id = %s`, d.ph(1)), hookID)
 	var h RegexHookRecord
-	if err := row.Scan(&h.ID, &h.AgentID, &h.Name, &h.Pattern, &h.CLICommand, &h.SortOrder, &h.ContinueOnMatch, &h.Enabled, &h.ShowError, &h.ErrorMessage, &h.CreatedAt, &h.UpdatedAt); err != nil {
+	if err := row.Scan(&h.ID, &h.AgentID, &h.Name, &h.Pattern, &h.CLICommand, &h.SortOrder, &h.ContinueOnMatch, &h.Enabled, &h.ShowError, &h.ErrorMessage, &h.FeedToLLM, &h.CreatedAt, &h.UpdatedAt); err != nil {
 		return nil, scanErr(err)
 	}
 	return &h, nil
@@ -5294,13 +5348,13 @@ func (d *DBStore) SaveRegexHook(ctx context.Context, h *RegexHookRecord) error {
 	}
 	h.UpdatedAt = now
 	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO agent_regex_hooks (%s) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-			ON CONFLICT(id) DO UPDATE SET name=%s, pattern=%s, cli_command=%s, sort_order=%s, continue_on_match=%s, enabled=%s, show_error=%s, error_message=%s, updated_at=%s`,
+		fmt.Sprintf(`INSERT INTO agent_regex_hooks (%s) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+			ON CONFLICT(id) DO UPDATE SET name=%s, pattern=%s, cli_command=%s, sort_order=%s, continue_on_match=%s, enabled=%s, show_error=%s, error_message=%s, feed_to_llm=%s, updated_at=%s`,
 			regexHookCols,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8), d.ph(9), d.ph(10), d.ph(11), d.ph(12),
-			d.ph(13), d.ph(14), d.ph(15), d.ph(16), d.ph(17), d.ph(18), d.ph(19), d.ph(20), d.ph(21)),
-		h.ID, h.AgentID, h.Name, h.Pattern, h.CLICommand, h.SortOrder, h.ContinueOnMatch, h.Enabled, h.ShowError, h.ErrorMessage, h.CreatedAt, h.UpdatedAt,
-		h.Name, h.Pattern, h.CLICommand, h.SortOrder, h.ContinueOnMatch, h.Enabled, h.ShowError, h.ErrorMessage, h.UpdatedAt)
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8), d.ph(9), d.ph(10), d.ph(11), d.ph(12), d.ph(13),
+			d.ph(14), d.ph(15), d.ph(16), d.ph(17), d.ph(18), d.ph(19), d.ph(20), d.ph(21), d.ph(22), d.ph(23)),
+		h.ID, h.AgentID, h.Name, h.Pattern, h.CLICommand, h.SortOrder, h.ContinueOnMatch, h.Enabled, h.ShowError, h.ErrorMessage, h.FeedToLLM, h.CreatedAt, h.UpdatedAt,
+		h.Name, h.Pattern, h.CLICommand, h.SortOrder, h.ContinueOnMatch, h.Enabled, h.ShowError, h.ErrorMessage, h.FeedToLLM, h.UpdatedAt)
 	return err
 }
 
@@ -5344,7 +5398,7 @@ func (d *DBStore) ListSessionMessagesBySeq(ctx context.Context, agentID, session
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
 			FROM session_messages
-			WHERE agent_id = %s AND session_key = %s
+			WHERE agent_id = %s AND session_key = %s AND llm_visible = TRUE
 			  AND (%s)
 			ORDER BY seq ASC`,
 			d.ph(1), d.ph(2), strings.Join(orClauses, " OR ")),

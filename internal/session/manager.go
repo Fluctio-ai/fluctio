@@ -176,6 +176,12 @@ type SessionStore interface {
 	GetSession(ctx context.Context, agentID, sessionKey string) ([]provider.Message, error)
 	SaveSession(ctx context.Context, agentID, sessionKey, channel, accountID, chatID, projectID string, messages []provider.Message) error
 	AppendMessage(ctx context.Context, agentID, sessionKey string, msg provider.Message) error
+	// AppendMessageHidden writes one message to the session_messages
+	// archive with llm_visible=0 so it stays out of the LLM working set,
+	// summary, and recall — while remaining visible in web history,
+	// which reads the archive directly. Used by regex-hook turns with
+	// FeedToLLM=false. The in-memory Messages slice is untouched.
+	AppendMessageHidden(ctx context.Context, agentID, sessionKey string, msg provider.Message) error
 	ListMessages(ctx context.Context, agentID, sessionKey string) ([]provider.Message, error)
 	ListWebSessions(ctx context.Context, agentID string) ([]WebSession, error)
 	DeleteSession(ctx context.Context, agentID, sessionKey string) error
@@ -517,6 +523,31 @@ func (s *Session) Append(msg provider.Message) {
 		}
 	} else {
 		s.appendToFile(msg)
+	}
+}
+
+// AppendArchivedHidden writes msgs to the session_messages archive with
+// llm_visible=0, WITHOUT adding them to the in-memory Messages slice and
+// WITHOUT calling SaveSession. The LLM working set (and its sessions-table
+// JSON mirror) therefore never holds these rows, so a GetSession reload
+// can't pull them back either; but web history, which reads the archive,
+// still shows them. Used by regex-hook turns whose hook has FeedToLLM=false.
+func (s *Session) AppendArchivedHidden(msgs []provider.Message) {
+	s.mu.Lock()
+	store := s.store
+	agentID := s.agentID
+	sessionKey := s.sessionKey
+	s.mu.Unlock()
+	if store == nil {
+		return
+	}
+	for _, m := range msgs {
+		if m.Timestamp == 0 {
+			m.Timestamp = time.Now().UnixMilli()
+		}
+		if err := store.AppendMessageHidden(s.ctx(), agentID, sessionKey, m); err != nil {
+			fmt.Fprintf(os.Stderr, "session archive hidden append error: %v\n", err)
+		}
 	}
 }
 

@@ -242,6 +242,8 @@ const zhCN: Record<string, string> = {
   "regexHooks.continueOnMatch": "匹配后继续",
   "regexHooks.enabled": "启用",
   "regexHooks.showError": "显示错误",
+  "regexHooks.feedToLLM": "写入对话上下文",
+  "regexHooks.feedToLLMHint": "开启后，命中此 hook 的交互（命令与结果）会进入 AI 的对话上下文和总结；默认关闭——这类不经 AI 处理的命令只在前端展示，不污染上下文。",
   "regexHooks.errorMessage": "错误消息",
   "regexHooks.scripts": "脚本",
   "regexHooks.uploadScript": "上传脚本",

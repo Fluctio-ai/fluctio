@@ -56,6 +56,7 @@ type saveRegexHookRequest struct {
 	Enabled         bool   `json:"enabled"`
 	ShowError       bool   `json:"showError"`
 	ErrorMessage    string `json:"errorMessage"`
+	FeedToLLM       bool   `json:"feedToLLM"`
 }
 
 func (s *Server) handleSaveRegexHook(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +91,7 @@ func (s *Server) handleSaveRegexHook(w http.ResponseWriter, r *http.Request) {
 		Enabled:         req.Enabled,
 		ShowError:       req.ShowError,
 		ErrorMessage:    req.ErrorMessage,
+		FeedToLLM:       req.FeedToLLM,
 	}
 	if err := s.dataStore.SaveRegexHook(r.Context(), hook); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

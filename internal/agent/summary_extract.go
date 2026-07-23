@@ -342,6 +342,17 @@ func persistConversationSummary(
 			"agent", agentID, "session", sessionKey, "error", err)
 		return
 	}
+	// Drop LLM-hidden rows (regex-hook turns with FeedToLLM=false) so the
+	// summarizer never sees exchanges the LLM itself never saw. ListSessionMessages
+	// is shared with the web history UI (which must show them), so the filter
+	// lives here at the LLM-side caller, not in the query.
+	visible := allMsgs[:0]
+	for i := range allMsgs {
+		if allMsgs[i].LLMVisible {
+			visible = append(visible, allMsgs[i])
+		}
+	}
+	allMsgs = visible
 	if len(allMsgs) < 2 {
 		return
 	}

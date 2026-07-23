@@ -386,16 +386,16 @@ func (d *DBStore) ListSessionMessagesAfterTime(ctx context.Context, agentID, ses
 	var err error
 	if d.dialect == "postgres" {
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
+			`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, llm_visible
 			 FROM session_messages
-			 WHERE agent_id = $1 AND session_key = $2 AND created_at > $3
+			 WHERE agent_id = $1 AND session_key = $2 AND created_at > $3 AND llm_visible = TRUE
 			 ORDER BY created_at ASC LIMIT $4`,
 			agentID, sessionKey, after, limit)
 	} else {
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at
+			`SELECT seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, llm_visible
 			 FROM session_messages
-			 WHERE agent_id = ? AND session_key = ? AND created_at > ?
+			 WHERE agent_id = ? AND session_key = ? AND created_at > ? AND llm_visible = TRUE
 			 ORDER BY created_at ASC LIMIT ?`,
 			agentID, sessionKey, after, limit)
 	}
@@ -407,7 +407,7 @@ func (d *DBStore) ListSessionMessagesAfterTime(ctx context.Context, agentID, ses
 	for rows.Next() {
 		var m SessionMessage
 		var contentParts, toolCalls, metadata, rawAssistant string
-		if err := rows.Scan(&m.Seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp); err != nil {
+		if err := rows.Scan(&m.Seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp, &m.LLMVisible); err != nil {
 			return nil, err
 		}
 		if contentParts != "" && contentParts != "null" {

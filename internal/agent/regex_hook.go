@@ -24,24 +24,29 @@ type regexHookResult struct {
 }
 
 // matchRegexHooks evaluates all enabled regex hooks for this agent against
-// the message text. Returns ("", "", false) when no hook matches — the caller
-// should proceed to the normal ReAct loop. Returns (reply, hookName, true) when at
-// least one hook matched; the reply is ready to send back to the user.
-func (a *Agent) matchRegexHooks(ctx context.Context, text string) (string, string, bool) {
+// the message text. Returns ("", "", false, false) when no hook matches —
+// the caller should proceed to the normal ReAct loop. Returns
+// (reply, hookName, true, feedToLLM) when at least one hook matched; the
+// reply is ready to send back to the user. feedToLLM is the OR of every
+// matched hook's FeedToLLM: when false, the caller writes the exchange to
+// the archive hidden (llm_visible=0) so it shows in web history but stays
+// out of the LLM working set / summary / recall.
+func (a *Agent) matchRegexHooks(ctx context.Context, text string) (string, string, bool, bool) {
 	if a.dataStore == nil || text == "" {
-		return "", "", false
+		return "", "", false, false
 	}
 
 	hooks, err := a.dataStore.ListRegexHooks(ctx, a.agentID)
 	if err != nil {
 		slog.Warn("regex hooks: list failed", "agent", a.agentID, "error", err)
-		return "", "", false
+		return "", "", false, false
 	}
 	if len(hooks) == 0 {
-		return "", "", false
+		return "", "", false, false
 	}
 
 	var results []regexHookResult
+	var feedToLLM bool
 	for _, h := range hooks {
 		if !h.Enabled {
 			continue
@@ -58,6 +63,9 @@ func (a *Agent) matchRegexHooks(ctx context.Context, text string) (string, strin
 
 		slog.Info("regex hook matched",
 			"hook_id", h.ID, "hook_name", h.Name, "agent", a.agentID)
+		if h.FeedToLLM {
+			feedToLLM = true
+		}
 
 		output, execErr := executeCLI(ctx, a.agentID, h.CLICommand, text)
 		if execErr != nil {
@@ -81,11 +89,11 @@ func (a *Agent) matchRegexHooks(ctx context.Context, text string) (string, strin
 	}
 
 	if len(results) == 0 {
-		return "", "", false
+		return "", "", false, false
 	}
 
 	if len(results) == 1 {
-		return results[0].text, results[0].name, true
+		return results[0].text, results[0].name, true, feedToLLM
 	}
 
 	var names []string
@@ -97,7 +105,7 @@ func (a *Agent) matchRegexHooks(ctx context.Context, text string) (string, strin
 		}
 		fmt.Fprintf(&buf, "---%s---\n\n%s", r.name, r.text)
 	}
-	return buf.String(), strings.Join(names, ", "), true
+	return buf.String(), strings.Join(names, ", "), true, feedToLLM
 }
 
 // executeCLI runs cmdString with text piped via stdin. Returns stdout.

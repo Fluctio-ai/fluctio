@@ -242,6 +242,8 @@ const en: Record<string, string> = {
   "regexHooks.continueOnMatch": "Continue on match",
   "regexHooks.enabled": "Enabled",
   "regexHooks.showError": "Show error",
+  "regexHooks.feedToLLM": "Feed to AI context",
+  "regexHooks.feedToLLMHint": "When on, matched exchanges (command + result) enter the AI's context and summary. Off by default — these commands skip the AI, so they show in chat but stay out of context.",
   "regexHooks.errorMessage": "Error Message",
   "regexHooks.scripts": "Scripts",
   "regexHooks.uploadScript": "Upload Script",

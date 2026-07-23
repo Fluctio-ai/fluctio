@@ -135,6 +135,15 @@ func (a *StoreAdapter) AppendMessage(ctx context.Context, agentID, sessionKey st
 	return a.st.AppendSessionMessage(ctx, agentID, sessionKey, sessionMessageFromProvider(m))
 }
 
+// AppendMessageHidden writes m to the archive marked llm_visible=false so
+// it stays out of the LLM working set / summary / recall while remaining
+// visible in web history. The in-memory session slice is untouched.
+func (a *StoreAdapter) AppendMessageHidden(ctx context.Context, agentID, sessionKey string, m provider.Message) error {
+	sm := sessionMessageFromProvider(m)
+	sm.LLMVisible = false
+	return a.st.AppendSessionMessage(ctx, agentID, sessionKey, sm)
+}
+
 // ListMessages reads the full archive for one session, in turn order.
 // Used by the chat history UI so users see the original conversation
 // even after compaction has shrunk the LLM-facing working set.
@@ -167,6 +176,7 @@ func sessionMessageFromProvider(m provider.Message) store.SessionMessage {
 		Origin:       m.Origin,
 		Provider:     m.Provider,
 		Model:        m.Model,
+		LLMVisible:   true,
 	}
 	if len(m.ToolCalls) > 0 {
 		out.ToolCalls = m.ToolCalls

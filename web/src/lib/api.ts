@@ -2221,6 +2221,7 @@ export interface RegexHook {
   enabled: boolean;
   showError: boolean;
   errorMessage: string;
+  feedToLLM: boolean;
   createdAt: string;
   updatedAt: string;
 }

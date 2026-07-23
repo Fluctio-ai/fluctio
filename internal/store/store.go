@@ -457,6 +457,12 @@ type SessionMessage struct {
 	// and on rows written before this column existed.
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
+	// LLMVisible mirrors the session_messages.llm_visible column. True
+	// (the default, column DEFAULT 1) means the row feeds the LLM working
+	// set and conversation summary. False marks runtime-intercepted turns
+	// (regex-hook matches with FeedToLLM=false) that live in the archive
+	// for the web UI but are filtered out of context/summary/recall.
+	LLMVisible bool `json:"llmVisible,omitempty"`
 }
 
 // SessionEventRecord is one row of session_events — a single delta the
@@ -733,6 +739,14 @@ type RegexHookRecord struct {
 	Enabled         bool      `json:"enabled"`
 	ShowError       bool      `json:"showError"`
 	ErrorMessage    string    `json:"errorMessage,omitempty"`
+	// FeedToLLM controls whether a matched hook's exchange (user command,
+	// synthetic tool_call, tool result, CLI reply) enters the LLM-facing
+	// working set and conversation summary. Default false: regex-hook
+	// turns bypass the LLM entirely, so they are written to session_messages
+	// with llm_visible=0 (hidden from context/summary/recall) but still
+	// shown in web history. Set true for hooks whose output the model
+	// should remember on later turns.
+	FeedToLLM       bool      `json:"feedToLLM"`
 	CreatedAt       time.Time `json:"createdAt"`
 	UpdatedAt       time.Time `json:"updatedAt"`
 }

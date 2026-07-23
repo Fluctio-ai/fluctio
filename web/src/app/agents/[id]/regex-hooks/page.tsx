@@ -57,6 +57,7 @@ type FormData = {
   continueOnMatch: boolean;
   enabled: boolean;
   showError: boolean;
+  feedToLLM: boolean;
   errorMessage: string;
 };
 
@@ -69,6 +70,7 @@ const emptyForm: FormData = {
   continueOnMatch: false,
   enabled: true,
   showError: true,
+  feedToLLM: false,
   errorMessage: "",
 };
 
@@ -121,6 +123,7 @@ export default function AgentRegexHooksPage() {
       continueOnMatch: hook.continueOnMatch,
       enabled: hook.enabled,
       showError: hook.showError,
+      feedToLLM: hook.feedToLLM,
       errorMessage: hook.errorMessage,
     });
     setEditOpen(true);
@@ -138,6 +141,7 @@ export default function AgentRegexHooksPage() {
       continueOnMatch: form.continueOnMatch,
       enabled: form.enabled,
       showError: form.showError,
+      feedToLLM: form.feedToLLM,
       errorMessage: form.errorMessage,
     });
     setSaving(false);
@@ -405,7 +409,19 @@ export default function AgentRegexHooksPage() {
                 />
                 <label className="text-sm">{t("regexHooks.showError")}</label>
               </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={form.feedToLLM}
+                  onCheckedChange={(v) =>
+                    setForm((f) => ({ ...f, feedToLLM: !!v }))
+                  }
+                />
+                <label className="text-sm">{t("regexHooks.feedToLLM")}</label>
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground">
+              {t("regexHooks.feedToLLMHint")}
+            </p>
             {form.showError && (
               <div>
                 <label className="text-sm font-medium">

@@ -2389,14 +2389,25 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// Regex hooks: intercept messages matching a pattern and execute CLI
 	// instead of the LLM. Evaluated before slash commands so fixed-format
 	// messages (e.g. "翻译 xxx") bypass the agent loop entirely.
-	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
+	if reply, hookName, matched, feedToLLM := a.matchRegexHooks(ctx, msg.Text); matched {
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
-		sess.BeginTurn()
-		sess.Append(buildUserMessage(msg, a.model))
-		sess.Append(provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()})
-		sess.Append(provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"})
-		sess.Append(provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()})
-		sess.EndTurn()
+		userMsg := buildUserMessage(msg, a.model)
+		toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
+		toolResMsg := provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"}
+		replyMsg := provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()}
+		if feedToLLM {
+			sess.BeginTurn()
+			sess.Append(userMsg)
+			sess.Append(toolCallMsg)
+			sess.Append(toolResMsg)
+			sess.Append(replyMsg)
+			sess.EndTurn()
+		} else {
+			// FeedToLLM=false: archive the exchange hidden (llm_visible=0)
+			// so it shows in web history but stays out of the LLM working
+			// set / summary / recall. emitEvent below still surfaces it live.
+			sess.AppendArchivedHidden([]provider.Message{userMsg, toolCallMsg, toolResMsg, replyMsg})
+		}
 		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "arguments": msg.Text}})
 		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "result": "matched"}})
 		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
@@ -3368,14 +3379,25 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	a.persistInboundImages(&msg)
 	// Regex hooks: intercept messages matching a pattern and execute CLI
 	// instead of the LLM.
-	if reply, hookName, matched := a.matchRegexHooks(ctx, msg.Text); matched {
+	if reply, hookName, matched, feedToLLM := a.matchRegexHooks(ctx, msg.Text); matched {
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
-		sess.BeginTurn()
-		sess.Append(buildUserMessage(msg, a.model))
-		sess.Append(provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()})
-		sess.Append(provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"})
-		sess.Append(provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()})
-		sess.EndTurn()
+		userMsg := buildUserMessage(msg, a.model)
+		toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
+		toolResMsg := provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"}
+		replyMsg := provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()}
+		if feedToLLM {
+			sess.BeginTurn()
+			sess.Append(userMsg)
+			sess.Append(toolCallMsg)
+			sess.Append(toolResMsg)
+			sess.Append(replyMsg)
+			sess.EndTurn()
+		} else {
+			// FeedToLLM=false: archive the exchange hidden (llm_visible=0)
+			// so it shows in web history but stays out of the LLM working
+			// set / summary / recall. emitEvent below still surfaces it live.
+			sess.AppendArchivedHidden([]provider.Message{userMsg, toolCallMsg, toolResMsg, replyMsg})
+		}
 		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "arguments": msg.Text}})
 		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "result": "matched"}})
 		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
