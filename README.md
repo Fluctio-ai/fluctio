@@ -129,6 +129,11 @@ table and is edited through the dashboard or `fluctio agents config`.
 - Install from [ClawHub](https://clawhub.ai) or [skills.sh](https://skills.sh)
 - Agent-private or globally shared
 
+### Regex Hooks
+- Per-agent message interception: a message matching a configured regex bypasses the LLM and runs a CLI command instead (e.g. `打卡` → `hooks/daka-hook.exe`), returning the command's stdout as the reply
+- **Context hygiene** — each hook has a *feed to AI context* toggle (off by default). When off, the matched exchange (command + result) is archived with `llm_visible=0`: it still shows in the web chat history, but is filtered out of the LLM working set, conversation summary, recall sweep, and `fetch_messages` tool. Turn it on only for hooks whose output the model should remember on later turns
+- Multiple hooks can chain on a single message (*continue on match*); if any matched hook feeds the LLM, the whole turn does
+
 ### Memory
 - MEMORY.md — long-term facts, auto-updated by heartbeat
 - Session-based context with full history preservation
