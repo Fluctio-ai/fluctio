@@ -121,7 +121,14 @@ func (s *Server) authorizeScope(w http.ResponseWriter, r *http.Request, sc, scop
 // ownership; this helper exists so the dashboard's scope-keyed routes
 // don't have to inline the conversion at every call site.
 func (s *Server) listConfigsByScope(ctx context.Context, kind, sc, scopeID string) ([]store.ConfigRecord, error) {
-	_, aid := scope.OwnershipFromScope(sc, scopeID)
+	uid, aid := scope.OwnershipFromScope(sc, scopeID)
+	if uid != "" {
+		// User scope must list user-owned rows only. Falling through to
+		// ListConfigs(ctx, kind, "") matches system-global rows (scope_id="")
+		// and leaks system config into user-scope lists — the dashboard
+		// merges user + system, so system providers then rendered twice.
+		return s.dataStore.ListConfigsByUser(ctx, kind, uid)
+	}
 	return s.dataStore.ListConfigs(ctx, kind, aid)
 }
 
