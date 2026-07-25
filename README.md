@@ -174,11 +174,36 @@ Bootstrap is **env-only**. Everything that needs to change at runtime
 (providers, models, channels, defaults, sandbox toggle) lives in the
 database and is edited through the dashboard or `fluctio agents config`.
 
+### Owner account (first-run identity)
+
+Single-user mode is **opt-in via declaring the owner**. At boot the
+gateway upserts the declared owner and enforces it as the only
+super-admin, so the platform comes up ready to log in — no web
+onboarding step required. Declare it in any of these ways (priority
+high → low):
+
+1. `FLUCTIO_OWNER_JSON` — one JSON string: `{"username":"...","password":"...","email":"...","displayName":"..."}`
+2. The four individual vars below (ignored when `FLUCTIO_OWNER_JSON` is set)
+3. `<FLUCTIO_HOME>/owner.json` — same JSON shape, file on disk
+4. Fall back to web onboarding / `fluctio agents init` (creates `admin` with a random password printed once)
+
 | Env var | Default | What it does |
 |---|---|---|
-| `FLUCTIO_HOME` | `~/.fluctio` | Where the SQLite DB and skill folders live. |
+| `FLUCTIO_OWNER_JSON` | empty | Owner identity as one JSON string; highest priority, overrides the four vars below. |
+| `FLUCTIO_USERNAME` | empty | Owner username (when `FLUCTIO_OWNER_JSON` is unset). |
+| `FLUCTIO_PASSWORD` | empty | Owner password (when `FLUCTIO_OWNER_JSON` is unset). |
+| `FLUCTIO_EMAIL` | empty | Owner email (optional). |
+| `FLUCTIO_DISPLAY_NAME` | empty | Owner display name (optional). |
+
+### Bootstrap env
+
+| Env var | Default | What it does |
+|---|---|---|
+| `FLUCTIO_HOME` | `~/.fluctio` | Where the SQLite DB, skill folders, and `owner.json` live. |
 | `FLUCTIO_PORT` | `18953` | Gateway HTTP port. |
 | `FLUCTIO_BIND` | `loopback` | `loopback` (127.0.0.1) or `all` (0.0.0.0). |
+| `FLUCTIO_DEPLOY` | empty | `hosted` marks a hosted multi-tenant deploy (disables `host_exec`, flips hosted-only code paths); unset or any other value = self-hosted. |
+| `FLUCTIO_ALLOW_HOST_EXEC` | empty (off) | `1` / `true` / `yes` registers the `host_exec` escape-hatch tool. Forced off when `FLUCTIO_DEPLOY=hosted`. |
 | `FLUCTIO_STORAGE_TYPE` | `sqlite` | `sqlite` or `postgres`. |
 | `FLUCTIO_STORAGE_DSN` | empty | Postgres DSN, e.g. `postgres://u:p@host:5432/db?sslmode=disable`. Empty = sqlite at `$FLUCTIO_HOME/fluctio.db`. |
 | `FLUCTIO_STORAGE_AUTO_MIGRATE` | `true` | Apply schema migrations on boot. |
@@ -189,10 +214,44 @@ database and is edited through the dashboard or `fluctio agents config`.
 | `FLUCTIO_REDIS_DB` | `0` | Redis logical database number. |
 | `FLUCTIO_REDIS_PREFIX` | `fluctio` | Prefix for Redis stream and lease keys. |
 | `FLUCTIO_SANDBOX_ENABLED` | dashboard | Override the Settings → Runtime toggle. |
-| `FLUCTIO_SANDBOX_BACKEND` | dashboard | `docker` or `e2b`. |
+| `FLUCTIO_SANDBOX_BACKEND` | dashboard | `docker`, `e2b`, or `boxlite`. Setting it implies sandbox enabled. |
 | `FLUCTIO_SANDBOX_IMAGE` | dashboard | Docker image (Docker backend) or template id (E2B). |
-| `FLUCTIO_OBJECT_STORE_*` | unset | S3-compatible blob store for distributed deploys (multi-pod skill / file hydration). |
+| `FLUCTIO_SANDBOX_BOXLITE_URL` | empty | BoxLite backend base URL, e.g. `https://api.boxlite.ai/v1`. |
+| `FLUCTIO_SANDBOX_BOXLITE_CLIENT_ID` | `default` | BoxLite client id. |
+| `FLUCTIO_SANDBOX_BOXLITE_PREFIX` | `default` | BoxLite workspace prefix. |
+| `E2B_API_KEY` | empty | E2B API key (E2B backend). Not `FLUCTIO_`-prefixed. |
+| `BOXLITE_API_KEY` | empty | BoxLite API key sent as `Authorization: Bearer`. Not `FLUCTIO_`-prefixed. |
+| `FLUCTIO_OBJECT_STORE_TYPE` | empty | Object-store backend type for distributed deploys (multi-pod skill / file hydration). |
+| `FLUCTIO_OBJECT_STORE_LOCAL_ROOT` | empty | Local filesystem root (local backend). |
+| `FLUCTIO_OBJECT_STORE_REGION` | empty | S3 / compatible region. |
+| `FLUCTIO_OBJECT_STORE_BUCKET` | empty | S3 / compatible bucket. |
+| `FLUCTIO_OBJECT_STORE_PREFIX` | empty | Key prefix inside the bucket. |
+| `FLUCTIO_OBJECT_STORE_ACCESSKEY` | empty | S3 / compatible access key. |
+| `FLUCTIO_OBJECT_STORE_SECRETKEY` | empty | S3 / compatible secret key. |
+| `FLUCTIO_OBJECT_STORE_ACCOUNTID` | empty | Account id (e.g. Cloudflare R2). |
+| `FLUCTIO_OBJECT_STORE_ENDPOINT` | empty | S3-compatible endpoint URL. |
+| `FLUCTIO_OBJECT_STORE_USESSL` | empty | `true` / `1` to enable TLS. |
+| `FLUCTIO_OBJECT_STORE_ALIYUN_INTERNAL` | empty | `true` / `1` to use the Alibaba Cloud internal endpoint. |
 | `FLUCTIO_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
+| `FLUCTIO_DEBUG_MODE` | empty (off) | `true` / `1` for verbose debug output (prompt dumps, request traces). |
+
+### Runtime tuning
+
+| Env var | Default | What it does |
+|---|---|---|
+| `FLUCTIO_SESSION_EVENTS_RETENTION_HOURS` | `168` (7 days) | `session_events` sweep window; `0` disables pruning. |
+| `FLUCTIO_LLM_CALL_DIAG_RETENTION_HOURS` | `72` (3 days) | LLM-call diagnostic sweep window; `0` disables pruning. |
+| `FLUCTIO_SEARXNG_ENDPOINT` | empty | SearXNG instance URL. When no `web_search` chain is configured, setting this synthesizes a one-provider SearXNG chain. |
+| `FLUCTIO_DUMP_LLM` | empty (off) | Non-empty enables dumping every LLM request payload to disk. |
+| `FLUCTIO_DUMP_LLM_FILE` | empty | Dump file path; defaults to a file under `$FLUCTIO_HOME`. |
+| `FLUCTIO_PLUGIN_CHAT_SEND_DELAY_MS` | `50` | Delay (ms) before a plugin's `chat.send` is pushed to the outbound bus. |
+
+Credential-bearing vars (`FLUCTIO_STORAGE_DSN`, `FLUCTIO_OBJECT_STORE_*`
+secrets, `FLUCTIO_REDIS_PASSWORD`, `E2B_API_KEY`, `BOXLITE_API_KEY`) are
+scrubbed from the daemon's environment after bootstrap — agent
+subprocesses can't recover them via the parent env. Treat env as a
+one-time bootstrap override; rotate credentials at runtime via the
+admin UI.
 
 Anything not on this list — providers, models, default model, skill
 catalog, channels, plugin config, scheduler — is configured at runtime
