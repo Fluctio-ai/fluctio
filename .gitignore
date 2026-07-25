@@ -99,10 +99,12 @@ run.err.*
 
 # Private local CLI (self-use, not for repo)
 /cmd/ga-hook/
+/cmd/daka-hook/
 
 # Local cross-compiled binaries for deployment testing
 /fluctio-linux
 /ga-hook-linux
+/daka-hook-linux
 
 # Local superpowers agent/worktree docs (private, not for repo)
 /.superpowers/
