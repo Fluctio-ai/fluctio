@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -35,6 +36,15 @@ import (
 func newLLMHTTPClient() *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.ResponseHeaderTimeout = 120 * time.Second
+	// Force HTTP/1.1 — LongCat's HTTP/2 path does not honor prompt
+	// caching (returns cached_tokens=0 over H2; H1 hits). Verified
+	// 2026-07-27: identical body, curl HTTP/1.1 → cached_tokens>0,
+	// gateway HTTP/2 → cached_tokens=0.
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	}
+	tr.TLSClientConfig.NextProtos = []string{"http/1.1"}
+	tr.ForceAttemptHTTP2 = false
 	return &http.Client{Transport: tr}
 }
 

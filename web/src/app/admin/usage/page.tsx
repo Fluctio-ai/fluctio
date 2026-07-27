@@ -88,6 +88,21 @@ export default function AdminUsagePage() {
     return totals.inputTokens + totals.outputTokens + totals.cacheReadTokens + totals.cacheCreationTokens;
   }, [totals]);
 
+  // cacheHitPct = cacheRead / (cacheRead + input). inputTokens is the
+  // uncached billable portion (the OpenAI adapter subtracts
+  // cached_tokens in openai.go; Anthropic excludes cache_read by
+  // definition), so hit+miss is the total prompt-adjacent traffic
+  // eligible for caching. Null when there's no usage yet or no
+  // cacheable traffic — rendered as "—".
+  const cacheHitPct = useMemo(() => {
+    if (!totals) return null;
+    const hit = totals.cacheReadTokens;
+    const miss = totals.inputTokens;
+    const denom = hit + miss;
+    if (denom <= 0) return null;
+    return (hit / denom) * 100;
+  }, [totals]);
+
   function renderKey(rawKey: string, names: Record<string, string>): string {
     if (rawKey === "") return t("adminUsage.system");
     return names[rawKey] ?? rawKey;
@@ -124,7 +139,11 @@ export default function AdminUsagePage() {
         <SummaryCard label={t("adminUsage.totalTokens")} value={fmt(totalTokens)} hint={t("adminUsage.requests", { n: totals?.requestCount ?? 0 })} />
         <SummaryCard label={t("adminUsage.input")} value={fmt(totals?.inputTokens ?? 0)} />
         <SummaryCard label={t("adminUsage.output")} value={fmt(totals?.outputTokens ?? 0)} />
-        <SummaryCard label={t("adminUsage.cache")} value={`${fmt(totals?.cacheReadTokens ?? 0)} / ${fmt(totals?.cacheCreationTokens ?? 0)}`} />
+        <SummaryCard
+          label={t("adminUsage.cache")}
+          value={cacheHitPct == null ? "—" : `${cacheHitPct.toFixed(1)}%`}
+          hint={t("adminUsage.cacheHint", { read: fmt(totals?.cacheReadTokens ?? 0), write: fmt(totals?.cacheCreationTokens ?? 0) })}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -161,7 +161,9 @@ func buildDateLine(now time.Time, tzExplicit bool) string {
 	wd := now.Weekday().String()
 	tzName := now.Location().String()
 
-	base := fmt.Sprintf("Current date/time: %s (%s, %s — the chatter's local timezone). This is NOW; do NOT call `date`. "+
+	base := fmt.Sprintf("Current date/time: %s (%s, %s — the chatter's local timezone). "+
+		"This is the time the conversation STARTED — it stays fixed across turns so the prompt prefix stays cacheable. "+
+		"For the precise CURRENT time, call the get_time tool; do NOT call shell `date`. "+
 		"Message timestamps are internal metadata and are not part of message text. When a conversation resumes after a long gap, "+
 		"you may receive a silent conversation-timing context note. Use it to distinguish the current turn from stale circumstances, "+
 		"and before ANY time-of-day remark check NOW — e.g. don't say \"good night\" in the middle of the day. "+

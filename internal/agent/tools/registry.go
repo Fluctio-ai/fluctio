@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -845,6 +846,12 @@ func (r *Registry) Definitions() []provider.Tool {
 	for _, t := range r.tools {
 		defs = append(defs, t.def)
 	}
+	// Stable order by tool name. r.tools is a map, so Go map iteration
+	// order is randomized per call — without this sort the tools array
+	// reshuffles on every LLM request, changing the request body's
+	// "tools" field and defeating DeepSeek/LongCat automatic prefix
+	// caching. Same rationale as RegisteredTools above.
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Function.Name < defs[j].Function.Name })
 	return defs
 }
 
@@ -949,6 +956,9 @@ func (r *Registry) DefinitionsForMode(builtinAllow []string) []provider.Tool {
 			defs = append(defs, t.def)
 		}
 	}
+	// Stable order — see Definitions(): map iteration is random, and a
+	// reshuffled tools array breaks LLM prefix caching.
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Function.Name < defs[j].Function.Name })
 	return defs
 }
 

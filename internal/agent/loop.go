@@ -1268,6 +1268,17 @@ func (a *Agent) sessionHasActiveGoal(ctx context.Context, msg bus.InboundMessage
 // with the OriginCron tag on the user message for traceability.
 const cronTriggerGuidance = "Scheduled-task trigger: the user message below is a task directive you previously set for yourself via create_cron_job. Execute it now and deliver the corresponding notification or result to the user directly. Do not acknowledge, confirm, or echo the directive, and do not treat it as a newly-requested task."
 
+// sessionStartTime returns the timestamp of the session's first persisted
+// message — used as the stable time anchor for BuildSystemPromptAs so the
+// system prompt renders byte-identically across turns (prefix cache). Falls
+// back to time.Now() before the first message is stored.
+func sessionStartTime(sess *session.Session) time.Time {
+	if hist := sess.GetMessages(); len(hist) > 0 && hist[0].Timestamp != 0 {
+		return time.UnixMilli(hist[0].Timestamp)
+	}
+	return time.Now()
+}
+
 func buildUserMessage(msg bus.InboundMessage, modelID string) provider.Message {
 	origin := provider.OriginUser
 	switch msg.Source {
@@ -1289,10 +1300,11 @@ func buildUserMessage(msg bus.InboundMessage, modelID string) provider.Message {
 	// when PeerKind=="group". We pass it through unchanged.
 	userText := msg.Text
 	userMsg := provider.Message{
-		Role:     "user",
-		Content:  userText,
-		Origin:   origin,
-		Metadata: senderMetadata(msg),
+		Role:      "user",
+		Content:   userText,
+		Origin:    origin,
+		Metadata:  senderMetadata(msg),
+		Timestamp: time.Now().UnixMilli(),
 	}
 	// Prefer materialized local paths (no base64 truncation when the LLM
 	// later routes a path through the vision tool); fall back to raw URLs
@@ -2209,7 +2221,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 		return noProviderMsg
 	}
 
-	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, a.memory)
+	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, a.memory, sessionStartTime(sess))
 	a.logSystemPromptFingerprint(msg.Channel, msg.ChatID, chatterUID, systemPrompt)
 	// Tool catalog injection: plan mode passes tools=nil to the LLM so
 	// it can't accidentally call anything, but that also hides the
@@ -2555,7 +2567,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeSystemPrompt, UserID: a.ownerUserID})
 
 	chatterMem := a.memory
-	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, chatterMem)
+	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, chatterMem, sessionStartTime(sess))
 	a.logSystemPromptFingerprint(msg.Channel, msg.ChatID, chatterUID, systemPrompt)
 
 	// Hook: AfterSystemPrompt
@@ -3471,7 +3483,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeSystemPrompt, UserID: a.ownerUserID})
 	chatterMem := a.memory
-	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, chatterMem)
+	systemPrompt := a.ctxBuilder.BuildSystemPromptAs(chatterUID, chatterMem, sessionStartTime(sess))
 	a.logSystemPromptFingerprint(msg.Channel, msg.ChatID, chatterUID, systemPrompt)
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: AfterSystemPrompt, UserID: a.ownerUserID})
 

@@ -141,7 +141,7 @@ func (cb *ContextBuilder) resolvedPromptMode() string {
 // owner chatting with their own agent. For public-link callers that
 // need per-chatter USER.md + memory isolation, use BuildSystemPromptAs.
 func (cb *ContextBuilder) BuildSystemPrompt() string {
-	return cb.BuildSystemPromptAs(cb.userID, cb.memory)
+	return cb.BuildSystemPromptAs(cb.userID, cb.memory, time.Now())
 }
 
 // BuildSystemPromptAs is BuildSystemPrompt with explicit chatter identity.
@@ -157,7 +157,7 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 // list, and identity files (SOUL.md / IDENTITY.md) are placed early in
 // every mode so the model internalizes "who it is" before operational
 // instructions.
-func (cb *ContextBuilder) BuildSystemPromptAs(chatterUID string, chatterMem *Memory) string {
+func (cb *ContextBuilder) BuildSystemPromptAs(chatterUID string, chatterMem *Memory, now time.Time) string {
 	if chatterUID == "" {
 		chatterUID = cb.userID
 	}
@@ -167,16 +167,19 @@ func (cb *ContextBuilder) BuildSystemPromptAs(chatterUID string, chatterMem *Mem
 
 	mode := cb.resolvedPromptMode()
 	loc, tzExplicit := cb.chatterLocation(chatterUID)
-	now := time.Now().In(loc)
+	// now is supplied by the caller. loop.go passes the session's first-
+	// message timestamp so the system prompt renders byte-identically
+	// across turns (prefix-cache friendly); other callers pass time.Now().
+	localNow := now.In(loc)
 
 	p := &promptCtx{
 		cb:         cb,
 		chatterUID: chatterUID,
 		chatterMem: chatterMem,
 		mode:       mode,
-		now:        now,
+		now:        localNow,
 		loc:        loc,
-		dateLine:   buildDateLine(now, tzExplicit),
+		dateLine:   buildDateLine(localNow, tzExplicit),
 	}
 
 	var parts []string
