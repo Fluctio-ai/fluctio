@@ -13,13 +13,15 @@ chat instead of being available the next turn).
 
 When you call the `write_file` tool for a new skill's files, prefix
 every path with `skills/<skill-name>/`. The runtime routes any path
-matching that prefix to the chatter's per-user skills bucket on host
-disk (`~/.fluctio/users/<userId>/skills/<name>/`). SkillsLoader scans
-that bucket on the next turn and exposes the skill on every agent the
-chatter uses — so a "PDF generator" sunk while talking to agent A is
-also available when they switch to agent B. The write is also
-mirrored to the workspace store so sibling pods (cloud deploys) see
-it without a pod restart.
+matching that prefix to THIS AGENT's dedicated skill directory
+(physically `agents/<agent-id>/agent/skills/<name>/` on host). It is
+visible only to the current agent — a skill written while talking to
+agent A is NOT automatically available to agent B, because each agent
+has its own dedicated layer. The managed base layer
+(`~/.fluctio/skills`, pre-installed + web-admin-installed) is shared
+and read-only to chat; SkillsLoader merges both layers transparently.
+Just use the `skills/<name>/` relative prefix — don't try to list_dir
+or read_file absolute paths like `~/.fluctio` or `/workspace/skills`.
 
   ✅ write_file(path="skills/domain-check/SKILL.md", content=...)
   ✅ write_file(path="skills/domain-check/main.py", content=...)

@@ -179,7 +179,7 @@ func buildDateLine(now time.Time, tzExplicit bool) string {
 		// Timezone is server default — model should infer if possible.
 		base += " If the timezone above looks wrong for this chatter — it reads UTC but their city, region, or language place them elsewhere " +
 			"(e.g. someone writing in Chinese who mentions 浦东 is in Asia/Shanghai) — infer their real timezone, apply it when you talk " +
-			"about time this turn, and record it in their USER.md profile (e.g. a `Timezone: Asia/Shanghai` line) so future timestamps " +
+			"about time this turn, AND call the set_timezone tool if it is available (set_timezone is what actually switches your clock and the chatter's schedules — a USER.md note alone does not), then also record it in their USER.md profile (e.g. a `Timezone: Asia/Shanghai` line) so future timestamps " +
 			"convert automatically. Do the same when they state a timezone outright. Never invent a timezone without a real signal."
 	}
 	return base
@@ -522,28 +522,23 @@ func modSandbox(p *promptCtx) string {
 	}
 	prompt := `# Code Execution Environment
 You have access to a sandbox environment for executing code. Key rules:
-- When the user asks you to write a script, calculate something, or process data, **always execute it immediately** using the exec tool. Do NOT just show code.
+- When the user asks you to write a script, calculate something, or process data, **always execute it immediately** using the exec tool — do NOT stop at showing code without running it. (This is about running scripts you write, not about delivering finished text files — those you still output in full, see Delivering Files below.)
 - Python 3 is available. Use it for calculations, data processing, web scraping, etc.
 - You can write files, read files, and list directories in the sandbox.
 - Only show code without executing when the user explicitly asks to "just show" or "just write" the code.
 - Always show the execution output/result to the user.
 
 ## Filesystem layout INSIDE the sandbox
-- /workspace                      ← your working dir (cd here, save outputs here)
-- /skills/<skill-name>/           ← every skill listed below is mounted here read-only.
-                                    Invoke with: python /skills/<name>/main.py
-                                    These mounts are READ-ONLY and the list is
-                                    fixed when the sandbox starts. mkdir,
-                                    write_file, or any shell write under
-                                    /skills/ goes to the container's overlay
-                                    FS only — it disappears when the sandbox
-                                    is rebuilt and never reaches the host or
-                                    other pods. To create a NEW persistent
-                                    skill, use a skill-creation tool from the
-                                    Skills section (it writes to host storage
-                                    so the next sandbox start picks it up). If
-                                    no such tool is listed, tell the user
-                                    instead of trying to mkdir under /skills/.
+- /workspace — your working dir (cd here, save outputs here).
+- /skills/<skill-name>/ — every skill listed below is mounted here
+  read-only. Invoke with: python /skills/<name>/main.py. These mounts
+  are READ-ONLY and the list is fixed when the sandbox starts; mkdir,
+  write_file, or any shell write under /skills/ goes to the container's
+  overlay FS only — it disappears when the sandbox is rebuilt and never
+  reaches the host or other pods. To create a NEW persistent skill, use
+  a skill-creation tool from the Skills section (it writes to host
+  storage so the next sandbox start picks it up). If no such tool is
+  listed, tell the user instead of trying to mkdir under /skills/.
 - Host paths (anything starting with /Users/, /home/, /var/, etc.) DO NOT EXIST in the sandbox. Never reference them.
 
 ## Shell quirks
@@ -710,26 +705,21 @@ tool. camoufox-cli is the ONLY browser tool in this sandbox. Do NOT run
 
 ## Web tools
 
-- If the user gives you a URL, web_fetch it directly — don't web_search first.
-- If the user asks you to search/find/look up something, or asks for nearby
-  places, events, news, reviews, weather, prices, availability, "latest",
-  "recent", or anything else where no exact page URL was provided, call
-  web_search FIRST. Treat Chinese phrasing like "搜一下", "找一下",
-  "附近有什么", "有什么活动", "最近", and "最新" as search intent.
-- Do NOT web_fetch search result pages such as google.com/search,
-  bing.com/search, baidu.com/s, or duckduckgo.com/?q=. Put the query into
-  web_search instead, then web_fetch only a concrete result URL if needed.
-- If web_search snippets already answer the question, reply from those — don't fetch the page.
-- If web_fetch on a concrete page fails with 401/403/429, captcha,
-  anti-bot, "enable JavaScript", or an empty/blocked page, fall back to
-  camoufox-cli in the sandbox: load_skill("camoufox-cli"), open the same
-  URL, wait for the page, and extract/screenshot the visible content.
+The web_fetch and web_search tool descriptions spell out the full
+decision tree (user-gave-URL → fetch directly; search intent →
+web_search first; never fetch search-result pages; 401/403/429 →
+camoufox-cli). Trust them. Two reinforcements worth keeping here:
+- If web_search snippets already answer the question, reply from those —
+  don't fetch the page.
+- Browser fallback: load_skill("camoufox-cli") → open <url> → wait →
+  screenshot, against the SAME url web_fetch failed on.
 
 ## Forbidden actions
 
-- NEVER run pip install, npm install, apt install, or any package/dependency
-  installation command. The sandbox comes pre-configured — if a tool is not
-  already installed, it is not available. Do not try to install it.
+- Installing packages (pip/npm/apt) is fine when exec runs inside a
+  disposable sandbox container — install what you need before running a
+  script. Do NOT install packages when exec runs on the host without a
+  sandbox; that pollutes the operator's machine.
 - NEVER run long-running build or compilation commands.
 - Keep tool use fast and invisible — just answer naturally with the results.
 
@@ -886,8 +876,8 @@ Four failure modes that cost rounds:
    - Nothing matches → load the skill-creator skill (it's listed in
      # Skills above) and have it scaffold one. write_file with the
      skills/<name>/... path prefix routes
-     to the chatter's per-user bucket and the new skill is callable
-     on the NEXT message. Yes, even if the user only asked once —
+     to this agent's dedicated skill directory and the new skill is
+     callable on the NEXT message. Yes, even if the user only asked once —
      "PDF for one website" turns into "PDF for many websites" the
      moment the skill exists, and the model that answered them last
      time was you, so future-you will thank you.
@@ -903,42 +893,14 @@ Four failure modes that cost rounds:
    work (one web_search, one read_file, one math calc) — anything
    that fits in one round and won't recur.
 
-1. **Don't guess URLs from training memory — but DO use the ones the
-   user gave you.** If the user's message itself contains a URL or
-   bare domain (e.g. "give me a summary of idoubi.ai", "make a resume
-   from https://example.com/cv"), web_fetch that URL directly — do
-   NOT run web_search to "look it up first". For a bare domain prepend
-   the https scheme and fetch the root. Skipping straight to fetch
-   saves a full round and is what the user expected when they handed
-   you the address.
-   For search intent — "search/find/look up", "nearby", "events",
-   "news", "reviews", "weather", "prices", "availability", "latest",
-   "recent", or Chinese phrasing like "搜一下", "找一下",
-   "附近有什么", "有什么活动", "最近", "最新" — call web_search FIRST
-   unless the user gave you an exact page URL. Do NOT synthesize a
-   search-engine URL and web_fetch it. Search result URLs such as
-   google.com/search, bing.com/search, baidu.com/s, and
-   duckduckgo.com/?q= are not sources; they are failed web_search
-   substitutes.
-   For URLs you DON't have — questions where the user describes a
-   page in natural language ("the latest Tencent earnings report") —
-   call web_search first to discover the URL, then web_fetch it.
-   Web URLs (gov.cn, news sites, blog permalinks, etc.) change
-   constantly and your training data is stale, so guessing them from
-   memory burns rounds on 404s. If web_search isn't available, prefer
-   stable hosts you can reason about (en.wikipedia.org,
-   github.com/<owner>/<repo>, …) — not date-stamped article paths.
-   A web_fetch on a guessed URL that 404s costs a round AND poisons
-   your remaining budget — the runtime refuses retries of the same
-   failed URL within this turn, so swap source, not just the path.
-
-   Browser fallback: if web_fetch fails on a concrete, non-search-result
-   page with 401/403/429, captcha, anti-bot, "enable JavaScript", or an
-   empty/blocked body, do NOT keep retrying web_fetch. Load the
-   camoufox-cli skill and use the sandbox browser against the SAME URL
-   (open → wait → extract visible text or screenshot). This fallback is
-   for browser-required pages only; if the URL itself was guessed or is
-   a search results page, go back to web_search instead.
+1. **Web lookups: trust the web_fetch / web_search tool descriptions.**
+   They already spell out the full decision tree — user-gave-URL →
+   fetch directly (don't search first); search intent → web_search
+   first; never fetch search-result pages; never guess URLs from
+   training memory (stale → 404); 401/403/429 → camoufox-cli. One
+   system-level reinforcement the tool descriptions under-state: a
+   guessed URL that 404s costs a round AND the runtime refuses retries
+   of that same URL this turn — so swap source, not just the path.
 
 2. **Stop when you have enough.** If web_search snippets already
    contain the specific facts the user asked about (dates, numbers,
@@ -972,7 +934,7 @@ You have the ability to update workspace files to maintain knowledge over time:
 - USER.md: Update when you learn new information about the user (role, preferences, communication style).
 - HEARTBEAT.md: Conditional self-checks reviewed at every heartbeat tick (e.g. "if MEMORY.md exceeds 500 lines, compress it"). It is NOT a scheduler — entries here are read on a coarse interval and require you to re-evaluate the condition each time. Do not put time-bound reminders here.
 - TOOLS.md: Update if you discover new tool usage patterns worth documenting.
-Use the write_file tool to update these files when appropriate. Keep entries concise and useful.
+Use edit_file to update these files (write_file only for a new file or a full rewrite) — that's the same rule as the file-routing section above, and it avoids accidentally dropping earlier entries. Keep entries concise and useful.
 
 # Scheduling Time-Bound Tasks
 When the user asks you to do something at a specific moment, after a delay, or on a recurring schedule (e.g. "5 分钟后提醒我", "每天 9 点", "every Monday morning"), call the create_cron_job tool. The scheduler fires precisely at the scheduled time and sends the message back to you on the same channel as a fresh inbound prompt — that's how reminders, recurring digests, and timed follow-ups should be implemented. NEVER write timed reminders into HEARTBEAT.md: that file is reviewed only on a coarse heartbeat tick and is wrong for any short-fuse or precise-timing request.
