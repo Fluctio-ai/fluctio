@@ -1240,6 +1240,19 @@ func (w *WeChat) cdnUploadAttempt(ctx context.Context, upReq wechatGetUploadURLR
 			return "", fmt.Errorf("getuploadurl returned no URL")
 		}
 	}
+	// DIAG: log upload URL source + taskid presence to tell -5104001 CDN
+	// propagation race apart from upload_full_url taskid failure. INFO for
+	// the investigation; demote to Debug once resolved.
+	urlSource := "upload_full_url"
+	if upResp.UploadParam != "" {
+		urlSource = "upload_param"
+	}
+	slog.Info("wechat cdn upload url",
+		"account", w.accountID,
+		"source", urlSource,
+		"has_taskid", strings.Contains(cdnURL, "taskid="),
+		"url_len", len(cdnURL),
+		"cipher_size", len(encrypted))
 	return wechatUploadCDNPost(ctx, encrypted, cdnURL)
 }
 
