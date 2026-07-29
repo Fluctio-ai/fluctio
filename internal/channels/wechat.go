@@ -1186,7 +1186,7 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 		FileSize:    cipherSize,
 		NoNeedThumb: true,
 		AESKey:      aeskeyHex,
-		BaseInfo:    wechatBaseInfo{},
+		BaseInfo:    wechatBaseInfo{ChannelVersion: "1.0.0"},
 	}
 	// 对齐官方（Tencent openclaw-weixin + corespeed-io/wechatbot）：getuploadurl 只
 	// 调一次、构造一次 cdnURL，retry 始终 POST 同一个 URL。-5104001 是 CDN 节点未传
