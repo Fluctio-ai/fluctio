@@ -1204,7 +1204,7 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 		}
 		lastErr = err
 		if attempt < wechatCDNUploadRetries {
-			slog.Warn("wechat cdn upload attempt failed — retrying with fresh upload URL",
+			slog.Debug("wechat cdn upload attempt failed — retrying with fresh upload URL",
 				"account", w.accountID, "attempt", attempt, "error", err)
 			wechatCDNBackoff(ctx, attempt)
 		}
@@ -1279,9 +1279,19 @@ func wechatUploadCDNPost(ctx context.Context, encrypted []byte, cdnURL string) (
 	if errMsg == "" {
 		errMsg = strings.TrimSpace(string(body))
 	}
-	// The CDN's 5xx usually carries no X-Error-Message and an empty body,
-	// so dump the full header set for diagnosis.
-	slog.Warn("wechat cdn upload non-200",
+	if errMsg == "" {
+		// The CDN's 5xx usually carries no X-Error-Message and an empty
+		// body; fall back to the numeric X-Error-Code so a total failure
+		// (all retries exhausted) is still legible at default log level.
+		if code := strings.TrimSpace(resp.Header.Get("X-Error-Code")); code != "" {
+			errMsg = "x-error-code " + code
+		}
+	}
+	// Per-attempt detail at Debug: a first-attempt 5xx that the retry
+	// covers is the normal CDN propagation race, so it shouldn't spam
+	// WARN. A total failure surfaces via the returned error → sendMedia's
+	// "wechat send media failed" WARN.
+	slog.Debug("wechat cdn upload non-200",
 		"status", resp.StatusCode, "errMsg", errMsg,
 		"headers", resp.Header, "body_len", len(body))
 	return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, errMsg)
