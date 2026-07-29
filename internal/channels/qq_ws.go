@@ -864,9 +864,13 @@ func (q *QQChannel) collectAttachments(atts []qqAttachment) ([]string, []bus.Med
 		if err != nil {
 			slog.Warn("qq attachment download failed",
 				"account", q.accountID, "url", a.URL, "error", err)
-			// QQ attachment URLs are short-lived signed links — if the
-			// eager download failed, the URL will be dead by the time
-			// web/agent retries it, so don't surface it. Skip.
+			// Download failed (SSRF guard rejected loopback, network error,
+			// dead signed link, …). Surface the ORIGINAL url in PhotoURLs
+			// anyway — losing the URL entirely is worse than a transient
+			// fetch miss: a downstream tool / user can still see "there was
+			// an image here" and retry or fall back. No MediaItem, since we
+			// have no bytes.
+			photoURLs = append(photoURLs, a.URL)
 			continue
 		}
 		finalCT := ct
