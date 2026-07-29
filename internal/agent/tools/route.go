@@ -146,7 +146,7 @@ func isExplicitHostScope(path string) bool {
 		}
 		return false
 	}
-	if !filepath.IsAbs(path) {
+	if !isAbsish(path) {
 		return false
 	}
 	if strings.HasPrefix(path, "/Users/") || strings.HasPrefix(path, "/home/") {
@@ -165,6 +165,20 @@ var hostHomeContentDirs = []string{
 	"projects", "code", "work", "src",
 }
 
+// isAbsish reports whether path is absolute either on the host platform
+// (filepath.IsAbs — C:\… on Windows) or in the POSIX sense (leading "/").
+// Sandbox path strings and the identity/skill gate tests use POSIX roots
+// (/root/.fluctio, /skills/…, /Users/…) that filepath.IsAbs rejects on
+// Windows for lack of a drive letter, yet they ARE absolute intents;
+// treating them as such keeps the gates identical on the Linux CI and on
+// Windows dev machines.
+func isAbsish(path string) bool {
+	if filepath.IsAbs(path) {
+		return true
+	}
+	return strings.HasPrefix(filepath.ToSlash(path), "/")
+}
+
 // isFluctioInternalPath reports whether path falls under Fluctio's
 // runtime-managed dirs (~/.fluctio/...). These have dedicated routing
 // (workspaceStore, identity store, …) and tools must not write to them
@@ -173,9 +187,14 @@ func isFluctioInternalPath(path string) bool {
 	if strings.HasPrefix(path, "~/.fluctio") {
 		return true
 	}
-	if filepath.IsAbs(path) {
+	if isAbsish(path) {
+		// Compare in slash form so POSIX roots ("/root/.fluctio") match
+		// even on Windows, where filepath.Clean turns them into
+		// "\root\.fluctio" and filepath.Separator is '\\'.
+		p := filepath.ToSlash(filepath.Clean(path))
 		for _, root := range fluctioInternalRoots() {
-			if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
+			r := filepath.ToSlash(root)
+			if p == r || strings.HasPrefix(p, r+"/") {
 				return true
 			}
 		}

@@ -64,7 +64,7 @@ func isIdentityFilePath(path string) bool {
 	if !identityFiles[base] {
 		return false
 	}
-	if filepath.IsAbs(path) {
+	if isAbsish(path) {
 		return true
 	}
 	return !strings.ContainsRune(clean, filepath.Separator)
@@ -125,7 +125,7 @@ func (r *Registry) isProtectedSkillManifestPath(path string) bool {
 	if filepath.Base(clean) != "SKILL.md" {
 		return false
 	}
-	if filepath.IsAbs(clean) {
+	if isAbsish(clean) {
 		return strings.Contains(filepath.ToSlash(clean), "/skills/")
 	}
 	return r.isSkillPath(path)
