@@ -76,7 +76,18 @@ func makeDeliverFile(r *Registry) ToolFunc {
 			return "", fmt.Errorf("deliver_file: dest must stay within the visible workspace")
 		}
 
-		in, err := os.Open(args.Src)
+		// src 通常是 agent 从工具结果里拿到的容器内逻辑路径 /workspace/<name>。
+		// 该文件已由 writeWorkspaceBytes 的 host 后端写到 visibleRoot；但
+		// deliver_file 跑在宿主机 gateway 进程，没有 /workspace 顶层目录，
+		// 必须把 /workspace 前缀映射回 visibleRoot 才能读到。其它绝对路径
+		// （如 /www/fluctio/agents/...）维持原样直传 os.Open。
+		src := args.Src
+		if src == "/workspace" {
+			src = visibleRoot
+		} else if strings.HasPrefix(src, "/workspace/") {
+			src = filepath.Join(visibleRoot, strings.TrimPrefix(src, "/workspace"))
+		}
+		in, err := os.Open(src)
 		if err != nil {
 			return "", fmt.Errorf("deliver_file: open src: %w", err)
 		}
