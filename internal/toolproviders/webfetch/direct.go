@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
@@ -20,10 +21,7 @@ func (Direct) Category() string     { return Category }
 func (Direct) Name() string         { return "direct" }
 func (Direct) CredentialFree() bool { return true }
 
-const (
-	directTimeout   = 30 * time.Second
-	directUserAgent = "Fluctio/1.0 (AI Agent Web Fetcher)"
-)
+const directTimeout = 30 * time.Second
 
 func (d *Direct) Execute(ctx context.Context, req toolproviders.Request) (toolproviders.Response, error) {
 	a, err := parseArgs(req.Args)
@@ -37,7 +35,7 @@ func (d *Direct) Execute(ctx context.Context, req toolproviders.Request) (toolpr
 	if err != nil {
 		return toolproviders.Response{}, err
 	}
-	httpReq.Header.Set("User-Agent", directUserAgent)
+	httpReq.Header.Set("User-Agent", httpclient.UserAgent())
 
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {

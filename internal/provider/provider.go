@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 )
 
 // newLLMHTTPClient returns an *http.Client suitable for streaming LLM
@@ -45,7 +47,7 @@ func newLLMHTTPClient() *http.Client {
 	}
 	tr.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	tr.ForceAttemptHTTP2 = false
-	return &http.Client{Transport: tr}
+	return &http.Client{Transport: httpclient.Wrap(tr)}
 }
 
 // Origin tags a Message that was produced by the runtime rather than a

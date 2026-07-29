@@ -37,10 +37,11 @@ type DockerSandbox struct {
 	// /root/.agents/skills inside the container. That's where
 	// `npx skills add -g -y` (which is how find-skills tells the agent
 	// to install community skills) writes its global install — so any
-	// skill installed mid-chat lands directly in the chatter's
-	// per-user host dir and persists across sandbox eviction. Empty
-	// means no mount, which is the right behavior for legacy / system-
-	// injected calls that don't carry a chatter identity.
+	// skill installed mid-chat lands directly in this agent's own skill
+	// dir and persists across sandbox eviction. (Legacy field name: the
+	// caller binds the agent's dedicated skills dir here, not a per-user
+	// one.) Empty means no mount, which is the right behavior for legacy
+	// / system-injected calls that don't carry an agent.
 	userSkillsHostDir string
 	// templateMount, when non-empty, is a host directory bind-mounted
 	// read-only at /template inside the container. The coding-agent
@@ -114,7 +115,7 @@ func (s *DockerSandbox) SetSkillDirs(dirs []string) {
 // SetUserSkillsHostDir tells Create() to bind-mount this host directory
 // RW at /root/.agents/skills inside the sandbox — the location
 // `npx skills add -g -y` writes to. Empty value disables the mount
-// (no per-user persistence). Caller is responsible for the directory
+// (no agent-skill persistence). Caller is responsible for the directory
 // existing; Create() will mkdir it defensively but a permission error
 // silently degrades to "no mount" rather than failing sandbox start.
 func (s *DockerSandbox) SetUserSkillsHostDir(dir string) {
@@ -295,9 +296,9 @@ func (s *DockerSandbox) Create() error {
 		}
 	}
 
-	// Per-user RW mount for `npx skills add -g -y` — the CLI writes its
+	// Agent-skill RW mount for `npx skills add -g -y` — the CLI writes its
 	// global install to /root/.agents/skills/<name>/ inside the sandbox,
-	// so binding that path to the chatter's per-user host dir means
+	// so binding that path to the agent's own skill dir means
 	// installs persist on host disk and SkillsLoader picks them up on
 	// the next turn without any extra plumbing. mkdir is defensive;
 	// silent on failure so a busted host dir degrades to "agent install
