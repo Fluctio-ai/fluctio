@@ -6,7 +6,6 @@ import (
 	"crypto/aes"
 	"crypto/md5"
 	"crypto/rand"
-	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -1267,21 +1266,6 @@ func (w *WeChat) resolveCdnUploadURL(ctx context.Context, upReq wechatGetUploadU
 	return cdnURL, nil
 }
 
-// wechatCDNClient uploads to the iLink CDN over HTTP/1.1 only. The default
-// http.Client negotiates HTTP/2 via ALPN and the WeChat iLink CDN rejects
-// that with "remote error: tls: handshake failure"; pin NextProtos to
-// http/1.1 (mirrors Tencent openclaw-weixin, whose Node fetch is HTTP/1.1).
-var wechatCDNClient = &http.Client{
-	Transport: &http.Transport{
-		TLSClientConfig:   &tls.Config{NextProtos: []string{"http/1.1"}},
-		ForceAttemptHTTP2: false,
-	},
-}
-
-// wechatCDNUserAgent identifies us to the CDN (the Go default UA is
-// sometimes blocked).
-const wechatCDNUserAgent = "fluctio-wechat/1.0"
-
 // wechatUploadCDNPost POSTs the AES-encrypted payload to the CDN once and
 // returns the X-Encrypted-Param header from the response — the opaque token
 // the bot later embeds as encrypt_query_param so the recipient's WeChat
@@ -1300,9 +1284,8 @@ func wechatUploadCDNPost(ctx context.Context, encrypted []byte, cdnURL string) (
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.Header.Set("User-Agent", wechatCDNUserAgent)
 
-	resp, err := wechatCDNClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
