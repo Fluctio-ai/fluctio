@@ -82,21 +82,21 @@ const (
 	// retried CDN POST + the second sendmessage. 120s so a full
 	// uploadToCDN retry sequence (up to 3 × (getuploadurl + 30s POST))
 	// fits even when the CDN is flaky.
-	wechatMediaSendTimeout = 120 * time.Second
+	wechatMediaSendTimeout = 300 * time.Second
 
 	// wechatCDNUploadRetries caps per-upload retries on 5xx CDN responses.
 	// Mirrors openclaw-weixin's UPLOAD_MAX_RETRIES: the iLink CDN
 	// intermittently 500s (notably a freshly-rescanned account's first
 	// upload), and a couple of retries clears it. 4xx is not retried — a
 	// client error won't be fixed by resending the same bytes.
-	wechatCDNUploadRetries = 3
+	wechatCDNUploadRetries = 5
 
 	// wechatCDNUploadAttemptTimeout caps a single CDN POST. The endpoint
 	// occasionally goes silent mid-upload (no RST, just stops responding)
 	// and one hung request would otherwise eat the whole
 	// wechatMediaSendTimeout budget, leaving no room for the retry loop.
-	// 30s is generous for a multi-MB upload; on expiry we retry.
-	wechatCDNUploadAttemptTimeout = 30 * time.Second
+	// 60s is generous for a multi-MB upload over a slow (IPv6) uplink; on expiry we retry.
+	wechatCDNUploadAttemptTimeout = 60 * time.Second
 
 	// Threshold of consecutive empty-buf SessionExpired responses before
 	// we declare the bot token dead and fire onExpired. iLink returns
@@ -1189,16 +1189,19 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 		AESKey:      aeskeyHex,
 		BaseInfo:    wechatBaseInfo{ChannelVersion: "1.0.0"},
 	}
-	// 对齐官方（Tencent openclaw-weixin + corespeed-io/wechatbot）：getuploadurl 只
-	// 调一次、构造一次 cdnURL，retry 始终 POST 同一个 URL。-5104001 是 CDN 节点未传
-	// 播预签名 URL；重新 getuploadurl 拿到的新 URL 同样没传播，每次 attempt 都撞，
-	// 而同 URL retry 给了传播时间，第二次通常就成功。
-	cdnURL, err := w.resolveCdnUploadURL(ctx, upReq, encrypted, filekeyHex)
-	if err != nil {
-		return nil, err
-	}
+	// 每次重试都重新 getuploadurl 拿全新预签名 URL。-5104001 是 CDN 节点未传播该
+	// URL，同 URL 重试还是撞同一个没传播的节点；每次换新 URL = 换 CDN 节点，撞到
+	// 已传播节点的概率更高（IPv6 上行慢 + URL 短有效期下尤其需要多给几次机会）。
 	var lastErr error
 	for attempt := 1; attempt <= wechatCDNUploadRetries; attempt++ {
+		cdnURL, err := w.resolveCdnUploadURL(ctx, upReq, encrypted, filekeyHex)
+		if err != nil {
+			lastErr = err
+			if attempt < wechatCDNUploadRetries {
+				wechatCDNBackoff(ctx, attempt)
+			}
+			continue
+		}
 		downloadParam, err := wechatUploadCDNPost(ctx, encrypted, cdnURL)
 		if err == nil {
 			if attempt > 1 {
@@ -1213,7 +1216,7 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 		}
 		lastErr = err
 		if attempt < wechatCDNUploadRetries {
-			slog.Debug("wechat cdn upload attempt failed — retrying same URL",
+			slog.Debug("wechat cdn upload attempt failed — retrying with fresh URL",
 				"account", w.accountID, "attempt", attempt, "error", err)
 			wechatCDNBackoff(ctx, attempt)
 		}
