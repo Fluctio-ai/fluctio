@@ -437,7 +437,11 @@ func (a *Agent) persistImageGenOutput(ctx context.Context, sessionID, projectID,
 			slog.Warn("image_gen persist: download failed", "agent", a.name, "error", err)
 			return "[图片生成失败：下载失败，请重试或调整提示词]"
 		}
-		name := fmt.Sprintf("imagegen_%d%s", idx, ext)
+		// Unique per-call name (ms timestamp + idx). The old imagegen_%d
+		// reused imagegen_0.png every call, so each new image overwrote
+		// the prior and every historical /workspace/imagegen_0.png ref
+		// resolved to the latest image.
+		name := fmt.Sprintf("imagegen_%d_%d%s", time.Now().UnixMilli(), idx, ext)
 		idx++
 		a.writeWorkspaceBytes(ctx, sessionID, projectID, name, data)
 		urlToName[url] = name

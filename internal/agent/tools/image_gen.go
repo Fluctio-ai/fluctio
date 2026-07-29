@@ -33,7 +33,7 @@ func RegisterImageGenChain(r *Registry, chain *toolproviders.Chain) {
 	if !chain.Available() {
 		return
 	}
-	r.Register("image_gen", "Generate images from a text prompt. Uses a configurable provider chain (OpenAI gpt-image-1, fal flux, …) with automatic fallback. Each image is saved to the workspace and the tool returns its path — reference each returned path in your reply with markdown (e.g. ![](/workspace/imagegen_0.png)) so the user sees it; do not paste any http(s) or data: URL the provider returned.", map[string]interface{}{
+	r.Register("image_gen", "Generate images from a text prompt. Uses a configurable provider chain (OpenAI gpt-image-1, fal flux, …) with automatic fallback. Each image is saved to the workspace and the tool returns its path — reference each returned path in your reply with markdown (e.g. ![](/workspace/imagegen_<id>.png)) so the user sees it; do not paste any http(s) or data: URL the provider returned.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"prompt": map[string]interface{}{
