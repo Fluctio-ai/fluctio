@@ -1188,9 +1188,17 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 		AESKey:      aeskeyHex,
 		BaseInfo:    wechatBaseInfo{},
 	}
+	// 对齐官方（Tencent openclaw-weixin + corespeed-io/wechatbot）：getuploadurl 只
+	// 调一次、构造一次 cdnURL，retry 始终 POST 同一个 URL。-5104001 是 CDN 节点未传
+	// 播预签名 URL；重新 getuploadurl 拿到的新 URL 同样没传播，每次 attempt 都撞，
+	// 而同 URL retry 给了传播时间，第二次通常就成功。
+	cdnURL, err := w.resolveCdnUploadURL(ctx, upReq, encrypted, filekeyHex)
+	if err != nil {
+		return nil, err
+	}
 	var lastErr error
 	for attempt := 1; attempt <= wechatCDNUploadRetries; attempt++ {
-		downloadParam, err := w.cdnUploadAttempt(ctx, upReq, encrypted, filekeyHex)
+		downloadParam, err := wechatUploadCDNPost(ctx, encrypted, cdnURL)
 		if err == nil {
 			if attempt > 1 {
 				slog.Info("wechat cdn upload succeeded after retry", "attempt", attempt)
@@ -1204,7 +1212,7 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 		}
 		lastErr = err
 		if attempt < wechatCDNUploadRetries {
-			slog.Debug("wechat cdn upload attempt failed — retrying with fresh upload URL",
+			slog.Debug("wechat cdn upload attempt failed — retrying same URL",
 				"account", w.accountID, "attempt", attempt, "error", err)
 			wechatCDNBackoff(ctx, attempt)
 		}
@@ -1216,7 +1224,9 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 // CDN URL → a single AES-encrypted POST — and returns the download
 // encrypted_query_param on success. uploadToCDN retries, re-minting the
 // pre-signed URL each attempt (independent CDN node/taskid).
-func (w *WeChat) cdnUploadAttempt(ctx context.Context, upReq wechatGetUploadURLRequest, encrypted []byte, filekeyHex string) (string, error) {
+// resolveCdnUploadURL 调一次 getuploadurl 并构造上传 URL（不 POST）。uploadToCDN
+// 对同一个 URL retry——对齐 Tencent openclaw-weixin 和 corespeed-io/wechatbot。
+func (w *WeChat) resolveCdnUploadURL(ctx context.Context, upReq wechatGetUploadURLRequest, encrypted []byte, filekeyHex string) (string, error) {
 	var upResp wechatGetUploadURLResponse
 	if err := w.doPost(ctx, "/ilink/bot/getuploadurl", upReq, &upResp); err != nil {
 		return "", fmt.Errorf("getuploadurl: %w", err)
@@ -1253,7 +1263,7 @@ func (w *WeChat) cdnUploadAttempt(ctx context.Context, upReq wechatGetUploadURLR
 		"has_taskid", strings.Contains(cdnURL, "taskid="),
 		"url_len", len(cdnURL),
 		"cipher_size", len(encrypted))
-	return wechatUploadCDNPost(ctx, encrypted, cdnURL)
+	return cdnURL, nil
 }
 
 // wechatUploadCDNPost POSTs the AES-encrypted payload to the CDN once and
