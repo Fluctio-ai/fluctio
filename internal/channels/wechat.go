@@ -82,6 +82,13 @@ const (
 	// the CDN leg can be slow for larger images.
 	wechatMediaSendTimeout = 90 * time.Second
 
+	// wechatCDNUploadRetries caps per-upload retries on 5xx CDN responses.
+	// Mirrors openclaw-weixin's UPLOAD_MAX_RETRIES: the iLink CDN
+	// intermittently 500s (notably a freshly-rescanned account's first
+	// upload), and a couple of retries clears it. 4xx is not retried — a
+	// client error won't be fixed by resending the same bytes.
+	wechatCDNUploadRetries = 3
+
 	// Threshold of consecutive empty-buf SessionExpired responses before
 	// we declare the bot token dead and fire onExpired. iLink returns
 	// SessionExpired when the supplied get_updates_buf is missing or
@@ -1181,8 +1188,17 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 		if upResp.UploadParam == "" {
 			return nil, fmt.Errorf("getuploadurl returned no URL")
 		}
+		// encodeURIComponent (not Go's url.QueryEscape) — matches
+		// openclaw-weixin, which the CDN's signed upload_param is keyed
+		// to. QueryEscape encodes ' ' as '+' and also encodes !*'(),
+		// drifting from the upstream and corrupting the param.
 		cdnURL = fmt.Sprintf("%s/upload?encrypted_query_param=%s&filekey=%s",
-			wechatCDNBaseURL, url.QueryEscape(upResp.UploadParam), url.QueryEscape(filekeyHex))
+			wechatCDNBaseURL, encodeURIComponent(upResp.UploadParam), encodeURIComponent(filekeyHex))
+		slog.Debug("wechat cdn upload: constructed URL from upload_param",
+			"account", w.accountID, "param_len", len(upResp.UploadParam))
+	} else {
+		slog.Debug("wechat cdn upload: using server upload_full_url",
+			"account", w.accountID)
 	}
 
 	downloadParam, err := wechatUploadCDNBytes(ctx, encrypted, cdnURL)
@@ -1201,27 +1217,75 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 // returns the X-Encrypted-Param header from the response — the opaque
 // token the bot later embeds as encrypt_query_param so the recipient's
 // WeChat client can fetch + decrypt.
+//
+// Mirrors openclaw-weixin's uploadBufferToCdn: retries up to
+// wechatCDNUploadRetries times on 5xx (the iLink CDN intermittently
+// 500s, especially on a fresh account's first upload); 4xx aborts
+// immediately since resending the same bytes won't help. On failure the
+// CDN carries the human-readable reason in the X-Error-Message response
+// header — the body is usually empty — so we surface that alongside the
+// status instead of reporting a bare "HTTP 500:" that hides the cause.
 func wechatUploadCDNBytes(ctx context.Context, encrypted []byte, cdnURL string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cdnURL, bytes.NewReader(encrypted))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	var lastErr error
+	for attempt := 1; attempt <= wechatCDNUploadRetries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, cdnURL, bytes.NewReader(encrypted))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			lastErr = err
+			if attempt < wechatCDNUploadRetries {
+				wechatCDNBackoff(ctx, attempt)
+				continue
+			}
+			break
+		}
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			downloadParam := resp.Header.Get("X-Encrypted-Param")
+			if downloadParam == "" {
+				return "", fmt.Errorf("HTTP 200 but missing X-Encrypted-Param header")
+			}
+			if attempt > 1 {
+				slog.Info("wechat cdn upload succeeded after retry", "attempt", attempt)
+			}
+			return downloadParam, nil
+		}
+
+		// Prefer the CDN's X-Error-Message header (body is usually
+		// empty); fall back to whatever body was sent.
+		errMsg := strings.TrimSpace(resp.Header.Get("X-Error-Message"))
+		if errMsg == "" {
+			errMsg = strings.TrimSpace(string(body))
+		}
+		lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, errMsg)
+
+		// 4xx (and other non-5xx) won't be fixed by retrying.
+		if resp.StatusCode < 500 {
+			break
+		}
+		if attempt < wechatCDNUploadRetries {
+			slog.Warn("wechat cdn upload server error — retrying",
+				"attempt", attempt, "status", resp.StatusCode, "errMsg", errMsg)
+			wechatCDNBackoff(ctx, attempt)
+		}
 	}
-	downloadParam := resp.Header.Get("X-Encrypted-Param")
-	if downloadParam == "" {
-		return "", fmt.Errorf("missing X-Encrypted-Param header")
+	return "", lastErr
+}
+
+// wechatCDNBackoff sleeps briefly between CDN upload retries. Cancellable
+// via ctx (the caller's media-send timeout) so a wedged CDN doesn't hold
+// the turn beyond wechatMediaSendTimeout.
+func wechatCDNBackoff(ctx context.Context, attempt int) {
+	select {
+	case <-time.After(time.Duration(attempt) * time.Second):
+	case <-ctx.Done():
 	}
-	return downloadParam, nil
 }
 
 func wechatAESECBEncrypt(plaintext, key []byte) ([]byte, error) {
@@ -1333,4 +1397,26 @@ func truncateMediaParam(m *wechatMediaInfo) string {
 
 func wechatAESECBPaddedSize(plaintextSize int) int {
 	return (plaintextSize/aes.BlockSize + 1) * aes.BlockSize
+}
+
+// encodeURIComponent mirrors JS encodeURIComponent, which the upstream
+// openclaw-weixin uses to build the CDN upload URL query string. Go's
+// url.QueryEscape differs on points that matter for the CDN's signed
+// upload_param: it encodes ' ' as '+' (not '%20') and also encodes
+// !*'(). Matching the upstream's encoding avoids corrupting the param.
+func encodeURIComponent(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case 'A' <= r && r <= 'Z', 'a' <= r && r <= 'z', '0' <= r && r <= '9':
+			b.WriteRune(r)
+		case strings.ContainsRune("-_.!~*'()", r):
+			b.WriteRune(r)
+		default:
+			for _, c := range []byte(string(r)) {
+				fmt.Fprintf(&b, "%%%02X", c)
+			}
+		}
+	}
+	return b.String()
 }
