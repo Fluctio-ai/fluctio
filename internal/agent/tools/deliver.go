@@ -87,6 +87,13 @@ func makeDeliverFile(r *Registry) ToolFunc {
 		} else if strings.HasPrefix(src, "/workspace/") {
 			src = filepath.Join(visibleRoot, strings.TrimPrefix(src, "/workspace"))
 		}
+		// 若 src 映射后已等于 dst（典型：image_gen 产物由 writeWorkspaceBytes
+		// 直接写到 visibleRoot，agent 拿 /workspace/<name> 调 deliver_file，映射后
+		// src 与默认 dest 同路径），"复制"=自己复制自己——os.Create(dst) 先把原文件
+		// 截断成 0 字节，再从同一(已空)文件读出 0 字节，原文件被毁。判同即跳过。
+		if filepath.Clean(src) == filepath.Clean(dst) {
+			return fmt.Sprintf("Already in visible workspace: %s", dst), nil
+		}
 		in, err := os.Open(src)
 		if err != nil {
 			return "", fmt.Errorf("deliver_file: open src: %w", err)
