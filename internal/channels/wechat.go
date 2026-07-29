@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/md5"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -1266,6 +1267,28 @@ func (w *WeChat) resolveCdnUploadURL(ctx context.Context, upReq wechatGetUploadU
 	return cdnURL, nil
 }
 
+// wechatCDNClient pins TLS for CDN uploads. curl -6 shows the iLink CDN
+// negotiates TLS 1.2 with TLS_RSA_WITH_AES_256_GCM_SHA384 (RSA key exchange);
+// Go 1.17+ defaults to ECDHE-only cipher suites, so its ClientHello carries
+// no cipher the CDN accepts and the handshake fails with "remote error: tls:
+// handshake failure". Explicitly enable the RSA suites (plus ECDHE fallback)
+// and cap at TLS 1.2 to mirror what curl negotiates. (IPv4 to the CDN is
+// unreachable from this host — TCP timeouts on every address — so this relies
+// on Go Happy Eyeballs picking the working IPv6 path.)
+var wechatCDNClient = &http.Client{
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{
+			MaxVersion: tls.VersionTLS12,
+			CipherSuites: []uint16{
+				tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			},
+		},
+	},
+}
+
 // wechatUploadCDNPost POSTs the AES-encrypted payload to the CDN once and
 // returns the X-Encrypted-Param header from the response — the opaque token
 // the bot later embeds as encrypt_query_param so the recipient's WeChat
@@ -1285,7 +1308,7 @@ func wechatUploadCDNPost(ctx context.Context, encrypted []byte, cdnURL string) (
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := wechatCDNClient.Do(req)
 	if err != nil {
 		return "", err
 	}
