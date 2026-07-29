@@ -232,6 +232,10 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		// at execute time (bindSession stamps them per-turn) so the
 		// fired message routes back to the originating chat.
 		tools.RegisterCronTools(ag.registry, m.opts.dataStore, m.uid, rc.ID)
+		// list_channels lets the agent discover its bound IM channels +
+		// their chat IDs, so create_cron_job can target a channel other
+		// than the current chat (e.g. deliver to WeChat while talking on QQ).
+		tools.RegisterListChannelsTool(ag.registry, m.opts.dataStore, rc.ID)
 		// set_timezone persists the chatter's IANA timezone into scope
 		// prefs — the same rows the system-prompt date line and cron
 		// scheduling resolve through. Needs the relational store, so it

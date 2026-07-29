@@ -18,6 +18,13 @@ type createCronJobArgs struct {
 	Schedule string `json:"schedule"`
 	Message  string `json:"message"`
 	Type     string `json:"type"`
+	// Optional cross-channel delivery target. When any of these is set,
+	// the schedule pushes to this (channel, accountId, chatId) instead of
+	// the chat the request originated from. Values must come from
+	// list_channels and are whitelist-checked before saving.
+	Channel   string `json:"channel,omitempty"`
+	AccountID string `json:"accountId,omitempty"`
+	ChatID    string `json:"chatId,omitempty"`
 }
 
 type deleteCronJobArgs struct {
@@ -33,7 +40,7 @@ type deleteCronJobArgs struct {
 // values onto the registry before any tool fires.
 func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 	r.Register("create_cron_job",
-		"Create a scheduled task. Use this for any user request that names a specific time, an interval, or a recurring schedule (e.g. \"5 分钟后提醒\", \"every Monday 9am\", \"each day at 8\"). When the schedule fires, the agent receives `message` as a fresh inbound prompt on the same channel the request originated from. Do NOT write timed reminders into HEARTBEAT.md — that file is only for conditional self-checks reviewed at every heartbeat tick.",
+		"Create a scheduled task. Use this for any user request that names a specific time, an interval, or a recurring schedule (e.g. \"5 分钟后提醒\", \"every Monday 9am\", \"each day at 8\"). When the schedule fires, the agent receives `message` as a fresh inbound prompt. By default it fires on the same channel/chat the request originated from; to push to a DIFFERENT channel (e.g. set the task from QQ but deliver to WeChat), pass the optional channel/accountId/chatId (look them up via list_channels). Do NOT write timed reminders into HEARTBEAT.md — that file is only for conditional self-checks reviewed at every heartbeat tick.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -53,6 +60,18 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 					"type":        "string",
 					"description": "Schedule type. Use 'once' for one-shot reminders ('5 分钟后…'), 'cron' for calendar-style recurring schedules ('每天 9 点'), or 'interval' for fixed-period polling ('每 30 分钟检查一次'). Defaults to 'cron'.",
 					"enum":        []string{"cron", "interval", "once"},
+				},
+				"channel": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional target channel to deliver to when the schedule fires (e.g. 'wechat', 'telegram', 'discord', 'feishu', 'qq'). If omitted, the task fires on the current chat's channel. Must be a channel bound to this agent — call list_channels to get valid values.",
+				},
+				"accountId": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional target bot account within the channel. Copy from list_channels. Provide together with channel/chatId when targeting another channel (especially if the channel has multiple accounts).",
+				},
+				"chatId": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional target chat identifier (group/DM id on the target channel). Copy from list_channels. Required when channel is set.",
 				},
 			},
 			"required": []string{"name", "schedule", "message"},
@@ -99,12 +118,26 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 			jobType = "cron"
 		}
 
-		// Read the originating bus address at execute time — bindSession
-		// stamps it on every turn, so this captures the channel/chatID
-		// the user was on when they asked for the reminder.
+		// Delivery target. Default to the originating chat (bindSession
+		// stamps the current turn's channel/chatID on the registry), so a
+		// plain "5 分钟后提醒" routes back to where the user asked. If the
+		// caller passed an explicit target (cross-channel push, e.g. set
+		// from QQ but deliver to WeChat), validate it against this agent's
+		// own channels first (whitelist) — see list_channels.
 		channel := r.MessageChannel()
 		accountID := r.MessageAccountID()
 		chatID := r.MessageChatID()
+		if args.Channel != "" || args.AccountID != "" || args.ChatID != "" {
+			if args.Channel == "" || args.ChatID == "" {
+				return "", fmt.Errorf("when targeting another channel, both 'channel' and 'chatId' are required (plus 'accountId' if the channel has multiple accounts). Call list_channels for valid values.")
+			}
+			if err := validateChannelTarget(ctx, st, agentID, args.Channel, args.AccountID, args.ChatID); err != nil {
+				return "", err
+			}
+			channel = args.Channel
+			accountID = args.AccountID
+			chatID = args.ChatID
+		}
 
 		// The chatter's effective timezone governs how the schedule is
 		// read: zone-less 'once' datetimes and cron wall-clock fields
@@ -217,6 +250,26 @@ func makeDeleteCronJob(st store.Store, userID string) ToolFunc {
 		}
 		return fmt.Sprintf("Cron job %s deleted.", args.ID), nil
 	}
+}
+
+// validateChannelTarget enforces the cross-channel whitelist: the target
+// (channel, accountId, chatId) must be a chat that has actually conversed
+// with this agent (a session row exists for it). This prevents a mistaken
+// or prompt-injected request from scheduling delivery to an arbitrary
+// foreign chat. A chat becomes targetable once the user has messaged the
+// agent from it at least once — which is also when list_channels can show
+// its chatId.
+func validateChannelTarget(ctx context.Context, st store.Store, agentID, channel, accountID, chatID string) error {
+	sessions, err := st.ListSessions(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("verify target channel: list sessions: %w", err)
+	}
+	for _, s := range sessions {
+		if s.Channel == channel && s.ChatID == chatID && (accountID == "" || s.AccountID == accountID) {
+			return nil
+		}
+	}
+	return fmt.Errorf("target (channel=%q, accountId=%q, chatId=%q) is not a chat of this agent. The target chat must have messaged this agent at least once; call list_channels to see valid channel/accountId/chatId triples.", channel, accountID, chatID)
 }
 
 func generateUUID() string {
