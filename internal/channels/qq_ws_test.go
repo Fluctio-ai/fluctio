@@ -920,8 +920,8 @@ func TestQQInterfaceMethods(t *testing.T) {
 	if q.AccountID() != "acct-1" {
 		t.Errorf("AccountID = %q, want acct-1", q.AccountID())
 	}
-	if q.BotUsername() != "" {
-		t.Errorf("BotUsername = %q, want empty (QQ has no username concept)", q.BotUsername())
+	if q.BotUsername() != "qqbot" {
+		t.Errorf("BotUsername = %q, want qqbot sentinel (matches the \"qqbot\" mention carried by GROUP_AT_MESSAGE_CREATE so agentByMention routes @bot; QQ has no real username)", q.BotUsername())
 	}
 }
 
