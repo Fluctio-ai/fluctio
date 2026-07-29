@@ -2,10 +2,13 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"path"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
@@ -32,6 +35,7 @@ func hydrateWorkspace(ctx context.Context, ws workspace.Store, ex Executor, agen
 		return
 	}
 	copied := 0
+	skipped := 0
 	for _, obj := range objs {
 		target := path.Join(sandboxRoot, obj.Path)
 		rc, getErr := ws.Get(ctx, agentID, projectID, sessionID, obj.Path)
@@ -45,15 +49,23 @@ func hydrateWorkspace(ctx context.Context, ws workspace.Store, ex Executor, agen
 			slog.Warn("workspace hydrate: read failed", "agent", agentID, "project", projectID, "session", sessionID, "path", obj.Path, "error", readErr)
 			continue
 		}
-		// Executor.WriteFile accepts the full sandbox path; all current
-		// implementations (docker/e2b) handle mkdir implicitly.
+		// Skip files that already exist byte-for-byte (same size). The
+		// docker sandbox bind-mounts /workspace to the host session dir, so
+		// files written earlier (writeWorkspaceBytes) are already on disk;
+		// rewriting them unconditionally wipes mtime to the hydrate moment,
+		// which breaks any caller that attributes files by mtime.
+		statOut, statErr := ex.Exec(ctx, fmt.Sprintf("stat -c %%s %q 2>/dev/null || echo -1", target), 5*time.Second)
+		if statErr == nil && strings.TrimSpace(statOut) == strconv.Itoa(len(content)) {
+			skipped++
+			continue
+		}
 		if _, wErr := ex.WriteFile(ctx, target, string(content)); wErr != nil {
 			slog.Warn("workspace hydrate: sandbox write failed", "agent", agentID, "project", projectID, "session", sessionID, "path", target, "error", wErr)
 			continue
 		}
 		copied++
 	}
-	slog.Info("workspace hydrated into sandbox", "agent", agentID, "project", projectID, "session", sessionID, "files", copied, "root", sandboxRoot)
+	slog.Info("workspace hydrated into sandbox", "agent", agentID, "project", projectID, "session", sessionID, "files", copied, "skipped", skipped, "root", sandboxRoot)
 }
 
 // defaultSandboxRoot is where hydrated files land inside the sandbox. Kept

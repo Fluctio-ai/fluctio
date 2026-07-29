@@ -1310,7 +1310,7 @@ export function ChatScreen() {
           )
             .filter((f) => !isSystemFile(f.path))
             .map((f) => ({ path: f.path, size: f.size, modTime: f.modTime }));
-          if (sessionFiles.length > 0) {
+          if (sessionFiles.length > 0 && new Set(sessionFiles.map((f) => f.modTime)).size > 1) {
             // Place each file under the agent/tool-group message whose
             // turn produced it: last candidate with timestamp <= file's
             // modTime. Falls back to the last agent message when modTime
