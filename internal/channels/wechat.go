@@ -89,6 +89,13 @@ const (
 	// client error won't be fixed by resending the same bytes.
 	wechatCDNUploadRetries = 3
 
+	// wechatCDNUploadAttemptTimeout caps a single CDN POST. The endpoint
+	// occasionally goes silent mid-upload (no RST, just stops responding)
+	// and one hung request would otherwise eat the whole
+	// wechatMediaSendTimeout budget, leaving no room for the retry loop.
+	// 30s is generous for a multi-MB upload; on expiry we retry.
+	wechatCDNUploadAttemptTimeout = 30 * time.Second
+
 	// Threshold of consecutive empty-buf SessionExpired responses before
 	// we declare the bot token dead and fire onExpired. iLink returns
 	// SessionExpired when the supplied get_updates_buf is missing or
@@ -1228,16 +1235,25 @@ func (w *WeChat) uploadToCDN(ctx context.Context, toUserID string, data []byte, 
 func wechatUploadCDNBytes(ctx context.Context, encrypted []byte, cdnURL string) (string, error) {
 	var lastErr error
 	for attempt := 1; attempt <= wechatCDNUploadRetries; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, cdnURL, bytes.NewReader(encrypted))
+		// Per-attempt timeout: a hung CDN POST (the endpoint sometimes
+		// goes silent mid-upload) shouldn't consume the whole media-send
+		// budget. Capped by the caller's ctx; on expiry Do returns a
+		// deadline error and we retry.
+		attemptCtx, cancel := context.WithTimeout(ctx, wechatCDNUploadAttemptTimeout)
+		req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, cdnURL, bytes.NewReader(encrypted))
 		if err != nil {
+			cancel()
 			return "", err
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
 
 		resp, err := http.DefaultClient.Do(req)
+		cancel()
 		if err != nil {
 			lastErr = err
 			if attempt < wechatCDNUploadRetries {
+				slog.Warn("wechat cdn upload request failed — retrying",
+					"attempt", attempt, "error", err)
 				wechatCDNBackoff(ctx, attempt)
 				continue
 			}
