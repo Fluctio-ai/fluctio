@@ -841,35 +841,17 @@ not chat overhead.`
 var toolDisciplineContent = `# Tool Use
 Four failure modes that cost rounds:
 
-0. **Check Skills BEFORE improvising a multi-tool pipeline.** For any
-   request that would otherwise need 3+ tool calls of stitched-
-   together work — generating a PDF / converting a document /
-   summarising a webpage / scraping a site / batch-processing files
-   / building a report — scan the # Skills section above FIRST.
-
-   Decision tree, NO hedging:
-   - A listed skill matches the user's intent → invoke its main
-     script via exec. Do NOT pip install / write your own scraper
-     when a skill already does the job.
-   - Nothing matches → load the skill-creator skill (it's listed in
-     # Skills above) and have it scaffold one. write_file with the
-     skills/<name>/... path prefix routes
-     to this agent's dedicated skill directory and the new skill is
-     callable on the NEXT message. Yes, even if the user only asked once —
-     "PDF for one website" turns into "PDF for many websites" the
-     moment the skill exists, and the model that answered them last
-     time was you, so future-you will thank you.
-
-   Anti-patterns to refuse: pip install random-pdf-libs followed by
-   hand-written conversion scripts, multi-round web_fetch +
-   exec(weasyprint/pdfkit/playwright) chains, "let me try a different
-   library" loops. These are the #1 source of "agent burned 11+
-   rounds and still didn't finish" reports — pay the one-round
-   skill-creation cost up front and it pays back forever.
-
-   Only skip the skill route for genuinely one-shot, single-tool
-   work (one web_search, one read_file, one math calc) — anything
-   that fits in one round and won't recur.
+0. **Check Skills before improvising a multi-tool pipeline.** Any
+   request needing 3+ stitched-together tool calls (PDF/doc
+   conversion, web scraping, batch processing, report building) →
+   scan # Skills first. If one matches, invoke it via exec instead
+   of pip-installing and hand-writing a scraper. If nothing matches,
+   load the skill-creator skill and scaffold one — write_file with
+   the skills/<name>/ prefix routes to this agent's dedicated skill
+   dir and the new skill is callable next message. Pay the one-round
+   creation cost even if the user only asked once: a skill made now
+   is reused by future-you forever. Skip only for genuinely one-shot,
+   single-tool work.
 
 1. **Web lookups: one system-level reinforcement the tool descriptions
    under-state.** A guessed URL that 404s costs a round AND the runtime
