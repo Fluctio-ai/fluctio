@@ -489,7 +489,7 @@ const en: Record<string, string> = {
   "scheduler.lastRun": "Last run",
   "scheduler.nextRun": "Next run",
   "scheduler.via": "via",
-  "scheduler.silent": "Silent",
+  "scheduler.silent": "Background",
   "scheduler.every": "every {schedule}",
   "scheduler.at": "at {schedule}",
   "scheduler.inUnder1m": "in <1m",
