@@ -64,11 +64,13 @@ func TestListChannels(t *testing.T) {
 	}
 
 	// wx-chat-A spans two session keys (a /new in the same chat) → must
-	// merge into one entry with summed message_count. wx-chat-B is a
-	// separate chat. s-other belongs to agent-2 and must not appear.
+	// merge into one deliverable row with summed message_count. wx-chat-B
+	// is a separate chat. Save wx-chat-A last so it's the most recently
+	// active → it sorts first within the wechat group. s-other belongs to
+	// agent-2 and must not appear.
+	saveTestSession(t, db, "agent-1", "s2", "wechat", "bot-wx", "wx-chat-B", 2)
 	saveTestSession(t, db, "agent-1", "s1", "wechat", "bot-wx", "wx-chat-A", 5)
 	saveTestSession(t, db, "agent-1", "s1b", "wechat", "bot-wx", "wx-chat-A", 3)
-	saveTestSession(t, db, "agent-1", "s2", "wechat", "bot-wx", "wx-chat-B", 2)
 	saveTestSession(t, db, "agent-1", "s3", "telegram", "bot-tg", "tg-123", 8)
 	saveTestSession(t, db, "agent-2", "s-other", "wechat", "bot-other", "wx-x", 1)
 
@@ -83,28 +85,19 @@ func TestListChannels(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("unmarshal (%s): %v", out, err)
 	}
-	if len(res.Channels) != 2 {
-		t.Fatalf("got %d channels, want 2: %s", len(res.Channels), out)
+	// Expect 3 flat rows: telegram/tg-123, wechat/wx-chat-A (5+3=8), wechat/wx-chat-B.
+	if len(res.Deliverable) != 3 {
+		t.Fatalf("got %d deliverable, want 3: %s", len(res.Deliverable), out)
 	}
-	// Sorted by channel type → telegram, then wechat.
-	if res.Channels[0].Channel != "telegram" || res.Channels[1].Channel != "wechat" {
-		t.Fatalf("order=%s,%s; want telegram,wechat", res.Channels[0].Channel, res.Channels[1].Channel)
+	d := res.Deliverable
+	if d[0].Channel != "telegram" || d[0].AccountID != "bot-tg" || d[0].ChatID != "tg-123" {
+		t.Fatalf("[0]=%+v, want telegram/bot-tg/tg-123", d[0])
 	}
-	wx := res.Channels[1]
-	if len(wx.Chats) != 2 {
-		t.Fatalf("wechat chats=%d, want 2 (A merged, B): %+v", len(wx.Chats), wx.Chats)
+	if d[1].Channel != "wechat" || d[1].AccountID != "bot-wx" || d[1].ChatID != "wx-chat-A" || d[1].MessageCount != 8 {
+		t.Fatalf("[1]=%+v, want wechat/bot-wx/wx-chat-A merged count 8", d[1])
 	}
-	var merged *channelChat
-	for i := range wx.Chats {
-		if wx.Chats[i].ChatID == "wx-chat-A" {
-			merged = &wx.Chats[i]
-		}
-	}
-	if merged == nil {
-		t.Fatalf("wx-chat-A missing: %+v", wx.Chats)
-	}
-	if merged.MessageCount != 8 { // 5 + 3
-		t.Fatalf("merged messageCount=%d, want 8", merged.MessageCount)
+	if d[2].Channel != "wechat" || d[2].ChatID != "wx-chat-B" || d[2].MessageCount != 2 {
+		t.Fatalf("[2]=%+v, want wechat/bot-wx/wx-chat-B count 2", d[2])
 	}
 
 	if strings.Contains(out, "wx-x") || strings.Contains(out, "bot-other") {
@@ -120,20 +113,20 @@ func TestListChannelsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out, "No deliverable channels") {
+	if !strings.Contains(out, "No deliverable targets") {
 		t.Fatalf("empty result = %q", out)
 	}
 }
 
-// TestListChannelsSkipsUnbound: a channel the agent has chatted on (so
-// sessions exist) but whose bot binding row is missing must NOT be listed
-// — its chat_id can't be delivered to. Only the bound channel appears.
+// TestListChannelsSkipsUnbound: a chat on a channel whose bot binding row
+// is missing must NOT appear — its chatId can't be delivered to. Only the
+// bound channel's chats show up as deliverable rows.
 func TestListChannelsSkipsUnbound(t *testing.T) {
 	db := newTestStore(t)
 	ctx := context.Background()
-	// wechat: session exists, NO channel row → unbound, must not appear.
+	// wechat: session exists, NO channel row → must not appear.
 	saveTestSession(t, db, "agent-1", "s-wx", "wechat", "bot-wx", "wx-chat", 3)
-	// telegram: both a channel row and a session → listed.
+	// telegram: both a channel row and a session → deliverable.
 	if err := db.SaveChannel(ctx, &store.ChannelRecord{
 		ID: "c-tg", UserID: "u1", AgentID: "agent-1", Type: "telegram", AccountID: "bot-tg", Enabled: true, Data: map[string]interface{}{},
 	}); err != nil {
@@ -152,11 +145,11 @@ func TestListChannelsSkipsUnbound(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("unmarshal (%s): %v", out, err)
 	}
-	if len(res.Channels) != 1 {
-		t.Fatalf("got %d channels, want 1 (only bound telegram): %s", len(res.Channels), out)
+	if len(res.Deliverable) != 1 {
+		t.Fatalf("got %d deliverable, want 1 (only bound telegram): %s", len(res.Deliverable), out)
 	}
-	if res.Channels[0].Channel != "telegram" {
-		t.Fatalf("channel=%s, want telegram", res.Channels[0].Channel)
+	if res.Deliverable[0].Channel != "telegram" || res.Deliverable[0].ChatID != "tg-1" {
+		t.Fatalf("deliverable=%+v, want telegram/tg-1", res.Deliverable[0])
 	}
 	if strings.Contains(out, "wx-chat") {
 		t.Fatalf("unbound wechat chat_id leaked into result: %s", out)
@@ -164,7 +157,7 @@ func TestListChannelsSkipsUnbound(t *testing.T) {
 }
 
 // TestListChannelsSkipsDisabled: a bound-but-disabled channel has no
-// registered adapter, so it must be excluded too.
+// registered adapter, so its chats must be excluded too.
 func TestListChannelsSkipsDisabled(t *testing.T) {
 	db := newTestStore(t)
 	ctx := context.Background()
@@ -181,8 +174,8 @@ func TestListChannelsSkipsDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out, "No deliverable channels") {
-		t.Fatalf("disabled-only agent should report no deliverable channels: %s", out)
+	if !strings.Contains(out, "No deliverable targets") {
+		t.Fatalf("disabled-only agent should report no deliverable targets: %s", out)
 	}
 }
 

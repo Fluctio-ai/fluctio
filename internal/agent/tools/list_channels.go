@@ -10,18 +10,18 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
-// RegisterListChannelsTool registers list_channels, which returns only
-// channels the agent can actually deliver to right now (bound AND enabled)
-// with each channel's chat IDs from past sessions. Credentials are never
-// exposed to the model.
+// RegisterListChannelsTool registers list_channels, which returns every
+// (channel, accountId, chatId) triple this agent can deliver to right now.
+// Each row is exactly what create_cron_job's optional target params need,
+// so the model copies a row verbatim into a cross-channel schedule.
 func RegisterListChannelsTool(r *Registry, st store.Store, agentID string) {
 	if r == nil || st == nil || agentID == "" {
 		return
 	}
 	r.Register("list_channels",
-		`List the channels this agent can actually deliver to right now (only bound + enabled ones), with each channel's chat IDs drawn from past sessions.
-Use this when the user wants to send or schedule something to a specific channel/chat (e.g. "也发到微信", "每天在 Telegram 提醒我"): look up the channel + accountId + chatId to pass into create_cron_job's optional channel/accountId/chatId fields.
-Only currently bound AND enabled channels are listed. A channel whose bot binding was removed or disabled has no live adapter registered, so its chat IDs cannot be delivered to and are NOT returned — returning them would give the agent ids it cannot use. If the channel the user names isn't listed, tell them to bind/enable it in channel settings first, then have them message the agent once from it so a chat_id is created. Returns channel, accountId, and chats (chatId, title, messageCount, lastActive). No credentials.`,
+		`List every (channel, accountId, chatId) triple this agent can deliver to right now, for passing into create_cron_job's optional channel/accountId/chatId target fields.
+Use this when the user wants to send or schedule something to a specific channel/chat (e.g. "也发到微信", "每天在 Telegram 提醒我"): pick the row for the target chat and copy its channel + accountId + chatId verbatim into create_cron_job.
+Delivery addressing is the SAME three fields on every IM channel (wechat/telegram/discord/qq/slack/feishu/line): the bot adapter is located by (channel, accountId) and the chat is addressed by chatId — no other id (no session_key, no guild_id) is needed. Only currently bound AND enabled channels are listed, and only chats that have actually messaged the agent (so a usable chatId exists): an unbound/disabled channel has no live adapter, so its chats can't be delivered to and are omitted. If the channel the user names isn't listed, tell them to bind/enable it in channel settings and message the agent once from it, then retry. Each row also carries title/messageCount/lastActive to help tell chats apart. No credentials are ever included.`,
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -30,48 +30,44 @@ Only currently bound AND enabled channels are listed. A channel whose bot bindin
 	)
 }
 
-// channelChat is one chat (group or DM) that has talked to the agent on a
-// given channel. The same chatId can span several session keys (a chatter
-// typing /new starts a fresh session in the same chat); we collapse those
-// to one entry, keeping the most recently active session's title/time and
-// summing message counts across sessions.
-type channelChat struct {
+// deliverableItem is one chat the agent can push to. The three id fields
+// are exactly the union of what create_cron_job's target needs and what
+// every IM channel's SendMessage consumes: the adapter is keyed by
+// (channel, accountId) and the chat is addressed by chatId. title /
+// messageCount / lastActive only help the model distinguish multiple
+// chats on the same channel.
+type deliverableItem struct {
+	Channel      string    `json:"channel"`
+	AccountID    string    `json:"accountId"`
 	ChatID       string    `json:"chatId"`
 	Title        string    `json:"title,omitempty"`
 	MessageCount int       `json:"messageCount"`
 	LastActive   time.Time `json:"lastActive"`
 }
 
-type channelEntry struct {
-	Channel   string        `json:"channel"`
-	AccountID string        `json:"accountId,omitempty"`
-	Chats     []channelChat `json:"chats,omitempty"`
-}
-
 type listChannelsResult struct {
-	AgentID  string         `json:"agentId"`
-	Channels []channelEntry `json:"channels"`
+	AgentID     string            `json:"agentId"`
+	Deliverable []deliverableItem `json:"deliverable"`
 }
 
 func makeListChannels(st store.Store, agentID string) ToolFunc {
 	return func(ctx context.Context, _ json.RawMessage) (string, error) {
-		// Only channels currently bound AND enabled can actually receive a
-		// delivery: the gateway registers adapters from the channels table,
-		// and a disabled/unbound channel has no adapter to carry the
-		// outbound. Listing anything else hands the agent ids it cannot
-		// push to, so filter strictly.
+		// A chat is only deliverable if its bot adapter is currently
+		// registered, and the gateway only registers adapters for
+		// channels-table rows that are bound AND enabled. Build that
+		// allowlist first.
 		all, err := st.ListAllChannels(ctx)
 		if err != nil {
 			return "", fmt.Errorf("list channels: %w", err)
 		}
-		var bound []store.ChannelRecord
+		bound := map[string]bool{}
 		for _, ch := range all {
 			if ch.AgentID == agentID && ch.Enabled {
-				bound = append(bound, ch)
+				bound[ch.Type+"\x00"+ch.AccountID] = true
 			}
 		}
 
-		// Collapse each session into one chat per (channel, accountID, chatId).
+		// Collapse sessions into one entry per (channel, accountID, chatId).
 		sessions, err := st.ListSessions(ctx, agentID)
 		if err != nil {
 			return "", fmt.Errorf("list sessions: %w", err)
@@ -99,36 +95,37 @@ func makeListChannels(st store.Store, agentID string) ToolFunc {
 				a.title = s.Title // prefer the title from the most recent session
 			}
 		}
-		chatsByCA := map[string][]channelChat{}
-		for k, a := range aggs {
-			ca := k.channel + "\x00" + k.accountID
-			chatsByCA[ca] = append(chatsByCA[ca], channelChat{
-				ChatID: k.chatID, Title: a.title, MessageCount: a.count, LastActive: a.last,
-			})
-		}
-		for ca := range chatsByCA {
-			cs := chatsByCA[ca]
-			sort.Slice(cs, func(i, j int) bool { return cs[i].LastActive.After(cs[j].LastActive) })
-		}
 
+		// Emit one deliverable row per chat whose channel is bound+enabled.
+		// Chats on unbound/disabled channels are omitted: their chatId can't
+		// be delivered to, so returning it would mislead the model.
 		result := listChannelsResult{AgentID: agentID}
-		for _, ch := range bound {
-			ca := ch.Type + "\x00" + ch.AccountID
-			result.Channels = append(result.Channels, channelEntry{
-				Channel:   ch.Type,
-				AccountID: ch.AccountID,
-				Chats:     chatsByCA[ca],
+		for k, a := range aggs {
+			if !bound[k.channel+"\x00"+k.accountID] {
+				continue
+			}
+			result.Deliverable = append(result.Deliverable, deliverableItem{
+				Channel:      k.channel,
+				AccountID:    k.accountID,
+				ChatID:       k.chatID,
+				Title:        a.title,
+				MessageCount: a.count,
+				LastActive:   a.last,
 			})
 		}
-		sort.Slice(result.Channels, func(i, j int) bool {
-			if result.Channels[i].Channel != result.Channels[j].Channel {
-				return result.Channels[i].Channel < result.Channels[j].Channel
+		sort.Slice(result.Deliverable, func(i, j int) bool {
+			di, dj := result.Deliverable[i], result.Deliverable[j]
+			if di.Channel != dj.Channel {
+				return di.Channel < dj.Channel
 			}
-			return result.Channels[i].AccountID < result.Channels[j].AccountID
+			if di.AccountID != dj.AccountID {
+				return di.AccountID < dj.AccountID
+			}
+			return di.LastActive.After(dj.LastActive) // most recently active first
 		})
 
-		if len(result.Channels) == 0 {
-			return "No deliverable channels for this agent. If the user names a channel that isn't listed, it is not currently bound/enabled — ask them to bind it in settings and message the agent once from it, then retry.", nil
+		if len(result.Deliverable) == 0 {
+			return "No deliverable targets for this agent. If the user names a channel that isn't listed, it is not currently bound/enabled — ask them to bind it in settings and message the agent once from it, then retry.", nil
 		}
 		data, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
