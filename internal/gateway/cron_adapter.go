@@ -6,6 +6,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/cron"
 	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/users"
 )
 
 // cronStoreAdapter bridges store.Store to cron.StoreInterface. The cron
@@ -27,8 +28,33 @@ func (a *cronStoreAdapter) GetDueCronJobs(ctx context.Context, now time.Time) ([
 	for _, r := range rows {
 		owner, ok := ownerByAgent[r.AgentID]
 		if !ok {
-			if ag, err := a.st.GetAgent(ctx, r.AgentID); err == nil && ag != nil {
-				owner = ag.UserID
+			// Owner must resolve for silent jobs: they fire on the internal
+			// "heartbeat" channel, where processInbound can't resolve owner
+			// via LookupChannel (no adapter registers for heartbeat), so
+			// they'd be dropped as "cannot resolve owner". Foreground jobs
+			// get a second chance in processInbound; silent jobs need it
+			// here. agents.user_id was dropped in the single-user flatten,
+			// so prefer the channel binding's user_id, then fall back to
+			// the platform super_admin (single-user owner of everything).
+			if r.Channel != "" && r.AccountID != "" {
+				if ch, err := a.st.LookupChannel(ctx, r.Channel, r.AccountID); err == nil && ch != nil {
+					owner = ch.UserID
+				}
+			}
+			if owner == "" {
+				if ag, err := a.st.GetAgent(ctx, r.AgentID); err == nil && ag != nil {
+					owner = ag.UserID
+				}
+			}
+			if owner == "" {
+				if us, err := a.st.ListUsers(ctx); err == nil {
+					for _, u := range us {
+						if u.Role == users.RoleSuperAdmin && u.Status == "active" {
+							owner = u.ID
+							break
+						}
+					}
+				}
 			}
 			ownerByAgent[r.AgentID] = owner
 		}
