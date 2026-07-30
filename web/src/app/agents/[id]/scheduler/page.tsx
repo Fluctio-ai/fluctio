@@ -265,11 +265,20 @@ function JobRow({
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
               {fmtSchedule(job, t)}
             </code>
-            {job.channel && !job.silent && (
+            {job.channel && (
               <span className="text-[11px] text-muted-foreground">
                 {t("scheduler.via")} {job.channel}
               </span>
             )}
+            <label className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer">
+              <Switch
+                checked={!!job.silent}
+                disabled={silentBusy}
+                onCheckedChange={(v) => onSetSilent(v)}
+                aria-label={t("scheduler.silent")}
+              />
+              {t("scheduler.silent")}
+            </label>
           </div>
           <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <MessageSquare className="size-3.5 mt-0.5 shrink-0" />
@@ -286,16 +295,7 @@ function JobRow({
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <label className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer">
-            <Switch
-              checked={!!job.silent}
-              disabled={silentBusy}
-              onCheckedChange={(v) => onSetSilent(v)}
-              aria-label={t("scheduler.silent")}
-            />
-            {t("scheduler.silent")}
-          </label>
+        <div className="flex items-center gap-1 shrink-0">
           <Switch
             checked={job.enabled}
             disabled={busy}
