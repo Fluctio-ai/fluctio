@@ -40,7 +40,7 @@ type deleteCronJobArgs struct {
 // values onto the registry before any tool fires.
 func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 	r.Register("create_cron_job",
-		"Create a scheduled task. Use this for any user request that names a specific time, an interval, or a recurring schedule (e.g. \"5 分钟后提醒\", \"every Monday 9am\", \"each day at 8\"). When the schedule fires, the agent receives `message` as a fresh inbound prompt. By default it fires on the same channel/chat the request originated from; to push to a DIFFERENT channel (e.g. set the task from QQ but deliver to WeChat), pass the optional channel/accountId/chatId (look them up via list_channels). Do NOT write timed reminders into HEARTBEAT.md — that file is only for conditional self-checks reviewed at every heartbeat tick.",
+		"Create a scheduled task. Use this for any user request that names a specific time, an interval, or a recurring schedule (e.g. \"5 分钟后提醒\", \"every Monday 9am\", \"each day at 8\"). When the schedule fires, the agent receives `message` as a fresh inbound prompt. By default it fires on the same channel/chat the request originated from. To push to a DIFFERENT channel (e.g. set the task from QQ but deliver to WeChat): FIRST call list_channels to list chats you can deliver to, THEN copy the ENTIRE (channel, accountId, chatId) triple from the target chat's row into channel/accountId/chatId below — pass all three together, never just one or two, because an incomplete address cannot be delivered to. Do NOT write timed reminders into HEARTBEAT.md — that file is only for conditional self-checks reviewed at every heartbeat tick.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -63,15 +63,15 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 				},
 				"channel": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional target channel to deliver to when the schedule fires (e.g. 'wechat', 'telegram', 'discord', 'feishu', 'qq'). If omitted, the task fires on the current chat's channel. Must be a channel bound to this agent — call list_channels to get valid values.",
+					"description": "Target channel to deliver to (e.g. 'wechat', 'telegram', 'discord', 'feishu', 'qq'). Omit channel/accountId/chatId ALTOGETHER to fire on the current chat. To target a different channel, call list_channels and copy the full (channel, accountId, chatId) triple from the target chat's row — the three fields go together.",
 				},
 				"accountId": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional target bot account within the channel. If omitted, the bound bot for this chat is auto-resolved — pass it only when the channel has multiple bound accounts and you need a specific one.",
+					"description": "Target bot account within the channel. Copy from the SAME list_channels row as channel and chatId — pass the full triple together. (If you omit it the bound bot is auto-resolved, but always copy the whole row to be safe.)",
 				},
 				"chatId": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional target chat identifier (group/DM id on the target channel). Copy from list_channels. Required when channel is set.",
+					"description": "Target chat identifier (group/DM id on the target channel). Copy from the SAME list_channels row as channel and accountId.",
 				},
 			},
 			"required": []string{"name", "schedule", "message"},
