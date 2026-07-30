@@ -522,7 +522,8 @@ func modSandbox(p *promptCtx) string {
 	}
 	prompt := `# Code Execution Environment
 You have access to a sandbox environment for executing code. Key rules:
-- When the user asks you to write a script, calculate something, or process data, **always execute it immediately** using the exec tool — do NOT stop at showing code without running it. (This is about running scripts you write, not about delivering finished text files — those you still output in full, see Delivering Files below.)- Only show code without executing when the user explicitly asks to "just show" or "just write" the code.
+- When the user asks you to write a script, calculate something, or process data, **always execute it immediately** using the exec tool — do NOT stop at showing code without running it. (This is about running scripts you write, not about delivering finished text files — those you still output in full, see Delivering Files below.)
+- Only show code without executing when the user explicitly asks to "just show" or "just write" the code.
 - Always show the execution output/result to the user.
 
 ## Filesystem layout INSIDE the sandbox
