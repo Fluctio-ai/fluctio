@@ -19,6 +19,20 @@ func TestCreateCronJobPersistsMessageAccountID(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
+	// Bound telegram channel + a session so resolveChannelTarget accepts
+	// the push target (new model: no "default to current chat" — a push
+	// target must be explicit and whitelisted).
+	ctx := context.Background()
+	if err := db.SaveChannel(ctx, &store.ChannelRecord{
+		ID: "c-tg", UserID: "user-1", AgentID: "agent-1", Type: "telegram", AccountID: "dclaw_official_bot", Enabled: true, Data: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("save channel: %v", err)
+	}
+	sess := &store.SessionRecord{Channel: "telegram", AccountID: "dclaw_official_bot", ChatID: "8169894742", UpdatedAt: time.Now(), Messages: []store.SessionMessage{{Role: "user", Content: "hi", Timestamp: time.Now()}}}
+	if err := db.SaveSession(ctx, "agent-1", "s1", sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
 	r := NewRegistry(t.TempDir(), t.TempDir())
 	r.SetOwnerUserID("user-1")
 	r.SetOwnerUserID("user-1")
@@ -26,10 +40,13 @@ func TestCreateCronJobPersistsMessageAccountID(t *testing.T) {
 	RegisterCronTools(r, db, "user-1", "agent-1")
 
 	args, err := json.Marshal(createCronJobArgs{
-		Name:     "telegram reminder",
-		Type:     "once",
-		Schedule: time.Now().Add(time.Hour).Format(time.RFC3339),
-		Message:  "提醒我",
+		Name:      "telegram reminder",
+		Type:      "once",
+		Schedule:  time.Now().Add(time.Hour).Format(time.RFC3339),
+		Message:   "提醒我",
+		Channel:   "telegram",
+		AccountID: "dclaw_official_bot",
+		ChatID:    "8169894742",
 	})
 	if err != nil {
 		t.Fatalf("marshal args: %v", err)

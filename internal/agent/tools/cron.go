@@ -18,17 +18,13 @@ type createCronJobArgs struct {
 	Schedule string `json:"schedule"`
 	Message  string `json:"message"`
 	Type     string `json:"type"`
-	// Optional cross-channel delivery target. When any of these is set,
-	// the schedule pushes to this (channel, accountId, chatId) instead of
-	// the chat the request originated from. Values must come from
-	// list_channels and are whitelist-checked before saving.
+	// Delivery (push) target. A non-empty (channel, accountId, chatId)
+	// means push the result to that chat when the schedule fires; all
+	// empty means run in the background with NO delivery to any chat
+	// (IM or web). Values come from list_channels and are whitelist-checked.
 	Channel   string `json:"channel,omitempty"`
 	AccountID string `json:"accountId,omitempty"`
 	ChatID    string `json:"chatId,omitempty"`
-	// Silent: run as a background task — the scheduler fires it on an
-	// internal channel with no IM adapter, so the agent processes `message`
-	// but no reply is delivered to any chat. Ignore for cross-channel pushes.
-	Silent bool `json:"silent,omitempty"`
 }
 
 type deleteCronJobArgs struct {
@@ -44,7 +40,7 @@ type deleteCronJobArgs struct {
 // values onto the registry before any tool fires.
 func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 	r.Register("create_cron_job",
-		"Create a scheduled task. Use this for any user request that names a specific time, an interval, or a recurring schedule (e.g. \"5 分钟后提醒\", \"every Monday 9am\", \"each day at 8\"). When the schedule fires, the agent receives `message` as a fresh inbound prompt. By default it fires on the same channel/chat the request originated from. To push to a DIFFERENT channel (e.g. set the task from QQ but deliver to WeChat): FIRST call list_channels to list chats you can deliver to, THEN copy the ENTIRE (channel, accountId, chatId) triple from the target chat's row into channel/accountId/chatId below — pass all three together, never just one or two, because an incomplete address cannot be delivered to. Do NOT write timed reminders into HEARTBEAT.md — that file is only for conditional self-checks reviewed at every heartbeat tick. silent is widely misread as \"quietly push the result\" — it is NOT. When silent=true the task runs on schedule but ZERO messages reach any chat: no content, no notification, nothing — the user receives nothing. Reserve it for pure background self-maintenance the user does NOT need to see (e.g. the agent tidies its own MEMORY.md on a schedule, runs a daily self-review it logs internally). If the user expects to receive ANYTHING in any chat — the news, a reminder, a report, even a one-line heads-up — silent MUST be false, otherwise the task silently produces nothing for them. When in doubt, do NOT set silent.",
+		"Create a scheduled task. Use this for any user request that names a specific time, an interval, or a recurring schedule (e.g. \"5 分钟后提醒\", \"every Monday 9am\", \"each day at 8\"). When the schedule fires, the agent receives `message` as a fresh inbound prompt. Delivery is decided by the push TARGET: set channel/accountId/chatId (copy a row from list_channels) and the result is pushed to that chat; leave all three empty and the job runs in the BACKGROUND with NO delivery to any chat (IM or web) — for self-maintenance the user doesn't see. There is no separate 'silent' flag: a push target means push, no push target means background. To push: FIRST call list_channels, THEN copy the ENTIRE (channel, accountId, chatId) triple — pass all three together, never just one or two (an incomplete address can't be delivered). If the user expects to receive anything, you MUST set a push target; with no target the user gets nothing. Do NOT write timed reminders into HEARTBEAT.md — that file is only for conditional self-checks reviewed at every heartbeat tick.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -67,7 +63,7 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 				},
 				"channel": map[string]interface{}{
 					"type":        "string",
-					"description": "Target channel to deliver to (e.g. 'wechat', 'telegram', 'discord', 'feishu', 'qq'). Omit channel/accountId/chatId ALTOGETHER to fire on the current chat. To target a different channel, call list_channels and copy the full (channel, accountId, chatId) triple from the target chat's row — the three fields go together.",
+					"description": "Push target channel (e.g. 'wechat', 'telegram', 'discord', 'feishu', 'qq'). Copy the full (channel, accountId, chatId) triple from a list_channels row to push the result to that chat. Leave channel/accountId/chatId ALL EMPTY to run the job in the BACKGROUND with no delivery to any chat (IM or web). A push target means push; no target means background — there is no separate silent flag.",
 				},
 				"accountId": map[string]interface{}{
 					"type":        "string",
@@ -76,10 +72,6 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 				"chatId": map[string]interface{}{
 					"type":        "string",
 					"description": "Target chat identifier (group/DM id on the target channel). Copy from the SAME list_channels row as channel and accountId.",
-				},
-				"silent": map[string]interface{}{
-					"type":        "boolean",
-					"description": "DEFAULT FALSE. NOT 'quietly push the result' — when true, the task runs on schedule but ZERO messages reach any chat (no content, no notification; the user gets nothing). Only set true for pure background self-maintenance the user doesn't see (agent tidies its own memory/files). If the user should receive ANYTHING (news, reminder, report, a heads-up), this MUST be false. Mutually exclusive with targeting another channel.",
 				},
 			},
 			"required": []string{"name", "schedule", "message"},
@@ -126,18 +118,15 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 			jobType = "cron"
 		}
 
-		// Delivery target. Default to the originating chat (bindSession
-		// stamps the current turn's channel/chatID on the registry), so a
-		// plain "5 分钟后提醒" routes back to where the user asked. If the
-		// caller passed an explicit target (cross-channel push, e.g. set
-		// from QQ but deliver to WeChat), validate it against this agent's
-		// own channels first (whitelist) — see list_channels.
-		channel := r.MessageChannel()
-		accountID := r.MessageAccountID()
-		chatID := r.MessageChatID()
+		// Delivery is decided by the push target: a non-empty
+		// (channel, accountId, chatId) triple pushes the result to that
+		// chat when the schedule fires; all empty runs the job in the
+		// background with NO delivery to any chat (IM or web). There is
+		// no separate silent flag — having a target IS the push decision.
+		var channel, accountID, chatID string
 		if args.Channel != "" || args.AccountID != "" || args.ChatID != "" {
 			if args.Channel == "" || args.ChatID == "" {
-				return "", fmt.Errorf("when targeting another channel, 'channel' and 'chatId' are required (accountId is optional — the bound bot is auto-resolved). Call list_channels for valid values.")
+				return "", fmt.Errorf("a push target needs both 'channel' and 'chatId' (accountId is auto-resolved). Call list_channels for valid values. To run in the background instead, omit channel/accountId/chatId entirely.")
 			}
 			resolved, err := resolveChannelTarget(ctx, st, agentID, args.Channel, args.AccountID, args.ChatID)
 			if err != nil {
@@ -200,7 +189,7 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 			Channel:   channel,
 			AccountID: accountID,
 			ChatID:    chatID,
-			Silent:    args.Silent,
+			Silent:    channel == "",
 			// "" = server-local; the scheduler's LocationOf maps it
 			// the same way LoadLocationOrLocal did above, so creation
 			// and recurrence agree.

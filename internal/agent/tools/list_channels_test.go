@@ -319,7 +319,7 @@ func TestCreateCronJobSilent(t *testing.T) {
 
 	args, _ := json.Marshal(createCronJobArgs{
 		Name: "silent tidy", Type: "interval",
-		Schedule: "1h", Message: "compact MEMORY.md if large", Silent: true,
+		Schedule: "1h", Message: "compact MEMORY.md if large",
 	})
 	if _, err := r.Execute(ctx, "create_cron_job", string(args)); err != nil {
 		t.Fatalf("create silent: %v", err)
@@ -360,7 +360,7 @@ func TestListCronJobsEnhanced(t *testing.T) {
 	}
 	// Silent background job (no delivery target → no sessionKey).
 	sl, _ := json.Marshal(createCronJobArgs{
-		Name: "sl", Type: "interval", Schedule: "1h", Message: "tidy", Silent: true,
+		Name: "sl", Type: "interval", Schedule: "1h", Message: "tidy",
 	})
 	if _, err := r.Execute(ctx, "create_cron_job", string(sl)); err != nil {
 		t.Fatalf("create sl: %v", err)
