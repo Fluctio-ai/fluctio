@@ -280,19 +280,20 @@ func (a *Agent) SetSandboxPool(p sandbox.ExecutorPool) {
 // Mutating the shared registry across concurrent chats would race, but
 // the current invariant is one chat-in-flight per agent — the gateway
 // serializes per-agent turns. Documenting it here in case that changes.
-func (a *Agent) bindSession(ctx context.Context, channel, accountID, sessionID, projectID string) {
-	a.registry.SetSessionID(sessionID)
+func (a *Agent) bindSession(ctx context.Context, channel, accountID, chatID, sessionKey, projectID string) {
+	a.registry.SetSessionID(sessionKey)
 	a.registry.SetProjectID(projectID)
-	// Scope the on-disk user root to this session/project so host-mode
-	// file tools (write_file/read_file/edit_file/list_dir via rootForPath)
-	// and host exec land in sessions/<sid>/ (per-chat isolation) or
-	// projects/<pid>/ (shared across the project's chats) — matching
-	// runtime.scopeFor and docker's per-session /workspace/<sid>. Without
-	// it host files pile up at the agent root, shared across every chat
-	// (the host-vs-docker scope mismatch that made /yes's scope meaningless).
+	// Scope the on-disk user root to this session so host-mode file tools
+	// (write_file/read_file/edit_file/list_dir via rootForPath) and host
+	// exec land in sessions/<sessionKey>/ — per-session, so a /new starts
+	// a fresh empty file set instead of inheriting the prior session's
+	// files — or projects/<pid>/ (shared across the project's chats). The
+	// session branch keys on session_key, NOT the channel chat_id; chat_id
+	// is kept separately (SetMessageContext below) for delivery addressing.
+	// Matches runtime.scopeFor and docker's per-session /workspace/<sid>.
 	scopeDir := ""
-	if a.workspacePath != "" && (sessionID != "" || projectID != "") {
-		seg := "sessions/" + sessionID
+	if a.workspacePath != "" && (sessionKey != "" || projectID != "") {
+		seg := "sessions/" + sessionKey
 		if projectID != "" {
 			seg = "projects/" + projectID
 		}
@@ -358,16 +359,16 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, sessionID, 
 	a.registry.SetCodingSubdir("")
 	if a.projectRuntime != nil {
 		if uid := a.registry.EffectiveUserID(); uid != "" {
-			if _, err := a.projectRuntime.Get(ctx, uid, a.name, projectID, sessionID); err == nil {
+			if _, err := a.projectRuntime.Get(ctx, uid, a.name, projectID, sessionKey); err == nil {
 				a.registry.SetCodingSubdir(coderuntime.AppSubdir)
 			}
 		}
 	}
-	a.registry.SetMessageContext(channel, accountID, sessionID)
+	a.registry.SetMessageContext(channel, accountID, chatID)
 	if a.sandboxPool == nil {
 		return
 	}
-	ex, err := a.sandboxPool.Get(ctx, a.name, projectID, sessionID)
+	ex, err := a.sandboxPool.Get(ctx, a.name, projectID, sessionKey)
 	if err != nil {
 		// Error level (not warn) — when sandbox is required and we
 		// can't bind, the next exec call will refuse with the
@@ -375,7 +376,7 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, sessionID, 
 		// upstream cause (docker daemon down, image pull failed, …) is
 		// captured next to the user-facing error.
 		slog.Error("sandbox executor unavailable; exec will refuse host fallback",
-			"agent", a.name, "session", sessionID, "error", err)
+			"agent", a.name, "session", sessionKey, "error", err)
 		return
 	}
 	a.registry.SetExecutor(ex)
@@ -1400,7 +1401,12 @@ func (a *Agent) persistInboundImages(msg *bus.InboundMessage) {
 	if err != nil || home == "" {
 		return
 	}
-	dir := filepath.Join(home, "workspaces", a.name, inboundScopeDir(*msg), "uploads")
+	// Resolve the session_key (s-...) so uploads land in sessions/<sessionKey>/,
+	// matching the workspace scope bindSession set — a /new doesn't carry
+	// the previous session's uploads. sessions.Get is idempotent on the
+	// triple, so the later Get in HandleMessage reuses this same session.
+	sess := a.sessions.Get(sessionTriple(*msg, msg.ProjectID))
+	dir := filepath.Join(home, "workspaces", a.name, inboundScopeDir(msg.ProjectID, sess.SessionKey()), "uploads")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		slog.Warn("persistInboundImages: mkdir", "dir", dir, "error", err)
 		return
@@ -1424,14 +1430,15 @@ func (a *Agent) persistInboundImages(msg *bus.InboundMessage) {
 	}
 }
 
-// inboundScopeDir is the workspace sub-directory matching msg's scope:
-// projects/<pid> when project-scoped, else sessions/<chat-id>.
-func inboundScopeDir(msg bus.InboundMessage) string {
-	if msg.ProjectID != "" {
-		return filepath.Join("projects", msg.ProjectID)
+// inboundScopeDir is the workspace sub-directory matching the turn's scope:
+// projects/<pid> when project-scoped, else sessions/<sessionKey>. The
+// session branch uses the session_key (s-...), NOT the channel chat_id,
+// so a /new (fresh session_key) starts an empty uploads set too.
+func inboundScopeDir(projectID, sessionKey string) string {
+	if projectID != "" {
+		return filepath.Join("projects", projectID)
 	}
-	_, _, cid, _ := sessionTriple(msg, msg.ProjectID)
-	return filepath.Join("sessions", cid)
+	return filepath.Join("sessions", sessionKey)
 }
 
 // fetchImageBytes resolves an image reference to bytes + extension. Accepts
@@ -2521,7 +2528,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// + writes get session-scoped paths and (when a sandbox pool is
 	// wired) the executor used by exec/read_file/list_dir is tied to a
 	// session-private container.
-	a.bindSession(ctx, msg.Channel, msg.AccountID, msg.ChatID, msg.ProjectID)
+	a.bindSession(ctx, msg.Channel, msg.AccountID, msg.ChatID, sess.SessionKey(), msg.ProjectID)
 	// Flag whether this turn's chatter is the agent owner / channel
 	// admin. File tools use this to refuse identity-file reads from
 	// regular chatters (SOUL/IDENTITY/BOOTSTRAP/... leak as verbatim
@@ -3463,7 +3470,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		prov, mdl := provider.SplitProviderModel(a.model)
 		sess.SetProviderModel(prov, mdl)
 	}
-	a.bindSession(ctx, msg.Channel, msg.AccountID, msg.ChatID, msg.ProjectID)
+	a.bindSession(ctx, msg.Channel, msg.AccountID, msg.ChatID, sess.SessionKey(), msg.ProjectID)
 	a.registry.SetCallerIsAdmin(a.singleUser || a.isAdminChatter(msg))
 	slog.Info("diag: identity gate (stream)", "agent", a.agentID, "singleUser", a.singleUser, "isAdmin", a.isAdminChatter(msg), "channel", msg.Channel, "msgUserID", msg.UserID, "ownerUserID", a.ownerUserID)
 	a.registry.SetGoalSessionKey(sess.SessionKey())

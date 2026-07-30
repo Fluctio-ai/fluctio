@@ -888,22 +888,22 @@ func (s *Server) workspaceSessionScope(ctx context.Context, agentID, urlToken st
 	if uid == "" {
 		return ""
 	}
-	_, _, chatID, err := s.dataStore.LookupSessionTriple(ctx, agentID, tok)
-	if err != nil || chatID == "" {
+	// Ownership check only — workspace is namespaced by session_key now,
+	// so the token IS the scope segment; we don't remap to chat_id.
+	if _, _, _, err := s.dataStore.LookupSessionTriple(ctx, agentID, tok); err != nil {
 		return ""
 	}
-	return chatID
+	return tok
 }
 
-// remapSessionPath translates the leading sessions/<X>/ segment of a
-// workspace file path from the URL's session_key (s-...) to the chat_id
-// the artifact was actually stored under. The agent runtime namespaces
-// workspace writes by chat_id, but the chat client renders model-emitted
-// /workspace/<name> links against the current session_key — for IM
-// sessions those differ (session_key is s-..., chat_id is e.g.
-// "<openid>@im.wechat"), so a /files/sessions/<session_key>/<file>
-// request would 404 without this remap. Mirrors the session_key→chat_id
-// step fileScopeForRequest already does for the list/zip endpoints.
+// remapSessionPath is now a no-op (kept so the path-shape helper stays
+// co-located with the on-disk layout). Workspace writes and the chat
+// client both namespace by session_key now (per-session file isolation:
+// a /new starts a fresh file set instead of inheriting the prior
+// session's files), so seg already matches the stored path and
+// workspaceSessionScope returns it unchanged — the function reduces to
+// "return rel" in every case. The old remap existed because the runtime
+// stored by chat_id while the client addressed files by session_key.
 //
 // No-op when <X> isn't a session_key this caller owns (already a
 // chat_id, foreign session, anonymous caller, or a non-session path);
@@ -1050,9 +1050,9 @@ func (s *Server) fileScopeForRequest(r *http.Request, agentID string) fileScope 
 		}
 		return rejectAllScope()
 	}
-	chatID := s.workspaceSessionScope(r.Context(), agentID, rawSession)
-	if chatID == "" {
-		// sessionId didn't resolve to a chat THIS caller owns — either
+	scopeKey := s.workspaceSessionScope(r.Context(), agentID, rawSession)
+	if scopeKey == "" {
+		// sessionId didn't resolve to a session THIS caller owns — either
 		// it doesn't exist or it belongs to another user. Either way,
 		// surface nothing. Pre-fix behavior was to widen back to
 		// "accept all", which on a public agent meant non-owners could
@@ -1060,7 +1060,7 @@ func (s *Server) fileScopeForRequest(r *http.Request, agentID string) fileScope 
 		return rejectAllScope()
 	}
 	if pid := s.resolveSessionProject(r.Context(), r, agentID, rawSession); pid != "" {
-		ownPrefix := "projects/" + pid + "/" + chatID + "/"
+		ownPrefix := "projects/" + pid + "/" + scopeKey + "/"
 		rootPrefix := "projects/" + pid + "/"
 		return fileScope{
 			acceptPath: func(p string) bool {
@@ -1075,13 +1075,13 @@ func (s *Server) fileScopeForRequest(r *http.Request, agentID string) fileScope 
 				}
 				return false
 			},
-			archiveSuffix: pid + "-" + chatID,
+			archiveSuffix: pid + "-" + scopeKey,
 		}
 	}
-	prefix := "sessions/" + chatID + "/"
+	prefix := "sessions/" + scopeKey + "/"
 	return fileScope{
 		acceptPath:    func(p string) bool { return strings.HasPrefix(p, prefix) },
-		archiveSuffix: chatID,
+		archiveSuffix: scopeKey,
 	}
 }
 
