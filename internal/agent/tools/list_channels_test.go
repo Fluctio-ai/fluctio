@@ -51,7 +51,8 @@ func TestListChannels(t *testing.T) {
 	db := newTestStore(t)
 	ctx := context.Background()
 
-	// Two channels on agent-1 + one on agent-2 that must NOT leak.
+	// Two bound+enabled channels on agent-1 + one on agent-2 that must NOT
+	// leak (different agent).
 	for _, ch := range []store.ChannelRecord{
 		{ID: "ch-wx", UserID: "u1", AgentID: "agent-1", Type: "wechat", AccountID: "bot-wx", Enabled: true, Data: map[string]interface{}{}},
 		{ID: "ch-tg", UserID: "u1", AgentID: "agent-1", Type: "telegram", AccountID: "bot-tg", Enabled: true, Data: map[string]interface{}{}},
@@ -119,8 +120,69 @@ func TestListChannelsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out, "No IM channels") {
+	if !strings.Contains(out, "No deliverable channels") {
 		t.Fatalf("empty result = %q", out)
+	}
+}
+
+// TestListChannelsSkipsUnbound: a channel the agent has chatted on (so
+// sessions exist) but whose bot binding row is missing must NOT be listed
+// — its chat_id can't be delivered to. Only the bound channel appears.
+func TestListChannelsSkipsUnbound(t *testing.T) {
+	db := newTestStore(t)
+	ctx := context.Background()
+	// wechat: session exists, NO channel row → unbound, must not appear.
+	saveTestSession(t, db, "agent-1", "s-wx", "wechat", "bot-wx", "wx-chat", 3)
+	// telegram: both a channel row and a session → listed.
+	if err := db.SaveChannel(ctx, &store.ChannelRecord{
+		ID: "c-tg", UserID: "u1", AgentID: "agent-1", Type: "telegram", AccountID: "bot-tg", Enabled: true, Data: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("save tg channel: %v", err)
+	}
+	saveTestSession(t, db, "agent-1", "s-tg", "telegram", "bot-tg", "tg-1", 1)
+
+	r := NewRegistry(t.TempDir(), t.TempDir())
+	RegisterListChannelsTool(r, db, "agent-1")
+
+	out, err := r.Execute(ctx, "list_channels", "{}")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var res listChannelsResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("unmarshal (%s): %v", out, err)
+	}
+	if len(res.Channels) != 1 {
+		t.Fatalf("got %d channels, want 1 (only bound telegram): %s", len(res.Channels), out)
+	}
+	if res.Channels[0].Channel != "telegram" {
+		t.Fatalf("channel=%s, want telegram", res.Channels[0].Channel)
+	}
+	if strings.Contains(out, "wx-chat") {
+		t.Fatalf("unbound wechat chat_id leaked into result: %s", out)
+	}
+}
+
+// TestListChannelsSkipsDisabled: a bound-but-disabled channel has no
+// registered adapter, so it must be excluded too.
+func TestListChannelsSkipsDisabled(t *testing.T) {
+	db := newTestStore(t)
+	ctx := context.Background()
+	if err := db.SaveChannel(ctx, &store.ChannelRecord{
+		ID: "c-wx", UserID: "u1", AgentID: "agent-1", Type: "wechat", AccountID: "bot-wx", Enabled: false, Data: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("save channel: %v", err)
+	}
+	saveTestSession(t, db, "agent-1", "s1", "wechat", "bot-wx", "wx-chat", 2)
+
+	r := NewRegistry(t.TempDir(), t.TempDir())
+	RegisterListChannelsTool(r, db, "agent-1")
+	out, err := r.Execute(ctx, "list_channels", "{}")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out, "No deliverable channels") {
+		t.Fatalf("disabled-only agent should report no deliverable channels: %s", out)
 	}
 }
 

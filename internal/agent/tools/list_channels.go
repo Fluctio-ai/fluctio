@@ -10,23 +10,18 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
-// RegisterListChannelsTool registers list_channels, which lets the agent
-// discover the IM channels bound to it and the chat IDs that have
-// interacted with it on each channel. The agent uses this to address a
-// specific channel/chat when scheduling cross-channel delivery — e.g.
-// create_cron_job targeting WeChat while the current conversation is on
-// QQ. Only the agent's own bound channels are listed, and credentials
-// (bot tokens) are never exposed to the model.
+// RegisterListChannelsTool registers list_channels, which returns only
+// channels the agent can actually deliver to right now (bound AND enabled)
+// with each channel's chat IDs from past sessions. Credentials are never
+// exposed to the model.
 func RegisterListChannelsTool(r *Registry, st store.Store, agentID string) {
 	if r == nil || st == nil || agentID == "" {
 		return
 	}
 	r.Register("list_channels",
-		"List every IM channel bound to this agent, plus the chat IDs that have messaged it on each channel. "+
-			"Use this whenever the user wants to send or schedule something to a specific channel/chat other than the current one "+
-			"(e.g. \"也发到微信\", \"每天在 Telegram 提醒我\", \"推送到飞书群\"), so you can look up the exact channel + accountId + chatId "+
-			"to pass into create_cron_job's optional channel/accountId/chatId fields. Returns each channel's type, accountId, "+
-			"enabled flag, and the chats under it (chatId, title, messageCount, lastActive). Sensitive credentials are never included.",
+		`List the channels this agent can actually deliver to right now (only bound + enabled ones), with each channel's chat IDs drawn from past sessions.
+Use this when the user wants to send or schedule something to a specific channel/chat (e.g. "也发到微信", "每天在 Telegram 提醒我"): look up the channel + accountId + chatId to pass into create_cron_job's optional channel/accountId/chatId fields.
+Only currently bound AND enabled channels are listed. A channel whose bot binding was removed or disabled has no live adapter registered, so its chat IDs cannot be delivered to and are NOT returned — returning them would give the agent ids it cannot use. If the channel the user names isn't listed, tell them to bind/enable it in channel settings first, then have them message the agent once from it so a chat_id is created. Returns channel, accountId, and chats (chatId, title, messageCount, lastActive). No credentials.`,
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -50,7 +45,6 @@ type channelChat struct {
 type channelEntry struct {
 	Channel   string        `json:"channel"`
 	AccountID string        `json:"accountId,omitempty"`
-	Enabled   bool          `json:"enabled"`
 	Chats     []channelChat `json:"chats,omitempty"`
 }
 
@@ -61,27 +55,27 @@ type listChannelsResult struct {
 
 func makeListChannels(st store.Store, agentID string) ToolFunc {
 	return func(ctx context.Context, _ json.RawMessage) (string, error) {
-		// ListAllChannels + filter by agentID so every binding on this
-		// agent is covered regardless of who bound it (owner vs. a system/
-		// public row with user_id=''). ListChannels(userID, agentID) only
-		// matches one user_id, and there is no agent-only query, so the
-		// full scan (small set in single-user mode) is the reliable path.
+		// Only channels currently bound AND enabled can actually receive a
+		// delivery: the gateway registers adapters from the channels table,
+		// and a disabled/unbound channel has no adapter to carry the
+		// outbound. Listing anything else hands the agent ids it cannot
+		// push to, so filter strictly.
 		all, err := st.ListAllChannels(ctx)
 		if err != nil {
 			return "", fmt.Errorf("list channels: %w", err)
 		}
-		var channels []store.ChannelRecord
+		var bound []store.ChannelRecord
 		for _, ch := range all {
-			if ch.AgentID == agentID {
-				channels = append(channels, ch)
+			if ch.AgentID == agentID && ch.Enabled {
+				bound = append(bound, ch)
 			}
 		}
+
+		// Collapse each session into one chat per (channel, accountID, chatId).
 		sessions, err := st.ListSessions(ctx, agentID)
 		if err != nil {
 			return "", fmt.Errorf("list sessions: %w", err)
 		}
-
-		// Collapse sessions into one entry per (channel, accountID, chatId).
 		type chatKey struct{ channel, accountID, chatID string }
 		type agg struct {
 			title string
@@ -105,8 +99,6 @@ func makeListChannels(st store.Store, agentID string) ToolFunc {
 				a.title = s.Title // prefer the title from the most recent session
 			}
 		}
-
-		// Index chats by (channel, accountID) for attachment to channels.
 		chatsByCA := map[string][]channelChat{}
 		for k, a := range aggs {
 			ca := k.channel + "\x00" + k.accountID
@@ -120,12 +112,11 @@ func makeListChannels(st store.Store, agentID string) ToolFunc {
 		}
 
 		result := listChannelsResult{AgentID: agentID}
-		for _, ch := range channels {
+		for _, ch := range bound {
 			ca := ch.Type + "\x00" + ch.AccountID
 			result.Channels = append(result.Channels, channelEntry{
 				Channel:   ch.Type,
 				AccountID: ch.AccountID,
-				Enabled:   ch.Enabled,
 				Chats:     chatsByCA[ca],
 			})
 		}
@@ -137,7 +128,7 @@ func makeListChannels(st store.Store, agentID string) ToolFunc {
 		})
 
 		if len(result.Channels) == 0 {
-			return "No IM channels bound to this agent yet.", nil
+			return "No deliverable channels for this agent. If the user names a channel that isn't listed, it is not currently bound/enabled — ask them to bind it in settings and message the agent once from it, then retry.", nil
 		}
 		data, err := json.MarshalIndent(result, "", "  ")
 		if err != nil {
