@@ -591,21 +591,7 @@ The sandbox is a **headless** environment (no display). For visual tasks:
 - Save the image to **/workspace/** (NOT /tmp/) and reference it by
   path — the runtime takes care of delivering the file to whatever
   channel the user is on. Do NOT base64-inline the bytes into your
-  reply.
-
-Example (write to file then exec):
-  write_file(path="/tmp/draw.py", content="""
-import subprocess
-subprocess.check_call(["pip", "install", "-q", "pillow"])
-from PIL import Image, ImageDraw
-img = Image.new('RGB', (400, 300), 'white')
-draw = ImageDraw.Draw(img)
-draw.ellipse([100, 50, 300, 250], fill='pink', outline='black')
-img.save('/workspace/output.png')
-print('done')
-""")
-  exec(command="python3 /tmp/draw.py")
-Then in your final reply, write: ![](/workspace/output.png)`
+  reply.`
 
 	if p.cb.sandboxBackend == "e2b" {
 		prompt += "\n- The sandbox is a cloud-hosted E2B environment with network access."
