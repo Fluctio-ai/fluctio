@@ -30,7 +30,7 @@ func newTestStore(t *testing.T) *store.DBStore {
 
 // saveTestSession inserts a session whose message_count is derived from
 // msgs (the store sets message_count = len(messages) on save). updated_at
-// is set by the store to now().
+// is set by the store to now(), so call order controls recency.
 func saveTestSession(t *testing.T, db *store.DBStore, agentID, key, channel, accountID, chatID string, msgs int) {
 	t.Helper()
 	s := &store.SessionRecord{
@@ -63,15 +63,14 @@ func TestListChannels(t *testing.T) {
 		}
 	}
 
-	// wx-chat-A spans two session keys (a /new in the same chat) → must
-	// merge into one deliverable row with summed message_count. wx-chat-B
-	// is a separate chat. Save wx-chat-A last so it's the most recently
-	// active → it sorts first within the wechat group. s-other belongs to
-	// agent-2 and must not appear.
+	// wx-chat-A has two sessions (a /new in the same chat) → must collapse
+	// to ONE row, reflecting the newest session. wx-chat-B is a separate
+	// conversation. Save order controls last-active recency. s-other is a
+	// different agent's and must not appear.
 	saveTestSession(t, db, "agent-1", "s2", "wechat", "bot-wx", "wx-chat-B", 2)
 	saveTestSession(t, db, "agent-1", "s1", "wechat", "bot-wx", "wx-chat-A", 5)
-	saveTestSession(t, db, "agent-1", "s1b", "wechat", "bot-wx", "wx-chat-A", 3)
-	saveTestSession(t, db, "agent-1", "s3", "telegram", "bot-tg", "tg-123", 8)
+	saveTestSession(t, db, "agent-1", "s1b", "wechat", "bot-wx", "wx-chat-A", 7) // newest for wx-chat-A
+	saveTestSession(t, db, "agent-1", "s3", "telegram", "bot-tg", "tg-123", 4)
 	saveTestSession(t, db, "agent-2", "s-other", "wechat", "bot-other", "wx-x", 1)
 
 	r := NewRegistry(t.TempDir(), t.TempDir())
@@ -85,16 +84,16 @@ func TestListChannels(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("unmarshal (%s): %v", out, err)
 	}
-	// Expect 3 flat rows: telegram/tg-123, wechat/wx-chat-A (5+3=8), wechat/wx-chat-B.
+	// Expect 3 rows (wx-chat-A collapsed): telegram/tg-123, wechat/wx-chat-A (newest, count 7), wechat/wx-chat-B.
 	if len(res.Deliverable) != 3 {
 		t.Fatalf("got %d deliverable, want 3: %s", len(res.Deliverable), out)
 	}
 	d := res.Deliverable
-	if d[0].Channel != "telegram" || d[0].AccountID != "bot-tg" || d[0].ChatID != "tg-123" {
-		t.Fatalf("[0]=%+v, want telegram/bot-tg/tg-123", d[0])
+	if d[0].Channel != "telegram" || d[0].AccountID != "bot-tg" || d[0].ChatID != "tg-123" || d[0].MessageCount != 4 {
+		t.Fatalf("[0]=%+v, want telegram/bot-tg/tg-123 count 4", d[0])
 	}
-	if d[1].Channel != "wechat" || d[1].AccountID != "bot-wx" || d[1].ChatID != "wx-chat-A" || d[1].MessageCount != 8 {
-		t.Fatalf("[1]=%+v, want wechat/bot-wx/wx-chat-A merged count 8", d[1])
+	if d[1].Channel != "wechat" || d[1].AccountID != "bot-wx" || d[1].ChatID != "wx-chat-A" || d[1].MessageCount != 7 {
+		t.Fatalf("[1]=%+v, want wechat/bot-wx/wx-chat-A count 7 (newest session)", d[1])
 	}
 	if d[2].Channel != "wechat" || d[2].ChatID != "wx-chat-B" || d[2].MessageCount != 2 {
 		t.Fatalf("[2]=%+v, want wechat/bot-wx/wx-chat-B count 2", d[2])
@@ -102,6 +101,47 @@ func TestListChannels(t *testing.T) {
 
 	if strings.Contains(out, "wx-x") || strings.Contains(out, "bot-other") {
 		t.Fatalf("result leaks another agent's data: %s", out)
+	}
+}
+
+// TestListChannelsPicksBoundAccount: when the same chat has sessions under
+// both a bound account and an unbound one (e.g. WeChat rebound to a new
+// bot), the row must use the bound account even if the unbound session is
+// newer — delivery can only route through the registered adapter.
+func TestListChannelsPicksBoundAccount(t *testing.T) {
+	db := newTestStore(t)
+	ctx := context.Background()
+	if err := db.SaveChannel(ctx, &store.ChannelRecord{
+		ID: "c-wx", UserID: "u1", AgentID: "agent-1", Type: "wechat", AccountID: "bot-wx", Enabled: true, Data: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("save channel: %v", err)
+	}
+	// Same chat, two accounts: bound bot-wx (older) + unbound bot-old (newer).
+	saveTestSession(t, db, "agent-1", "s1", "wechat", "bot-wx", "chat-X", 5)
+	saveTestSession(t, db, "agent-1", "s2", "wechat", "bot-old", "chat-X", 10) // newer but unbound
+
+	r := NewRegistry(t.TempDir(), t.TempDir())
+	RegisterListChannelsTool(r, db, "agent-1")
+	out, err := r.Execute(ctx, "list_channels", "{}")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	var res listChannelsResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("unmarshal (%s): %v", out, err)
+	}
+	if len(res.Deliverable) != 1 {
+		t.Fatalf("got %d rows, want 1: %s", len(res.Deliverable), out)
+	}
+	d := res.Deliverable[0]
+	if d.AccountID != "bot-wx" {
+		t.Fatalf("accountId=%q, want bound bot-wx (not the newer unbound bot-old)", d.AccountID)
+	}
+	if d.MessageCount != 5 {
+		t.Fatalf("messageCount=%d, want 5 from the bound session", d.MessageCount)
+	}
+	if strings.Contains(out, "bot-old") {
+		t.Fatalf("unbound account leaked: %s", out)
 	}
 }
 
@@ -118,15 +158,14 @@ func TestListChannelsEmpty(t *testing.T) {
 	}
 }
 
-// TestListChannelsSkipsUnbound: a chat on a channel whose bot binding row
-// is missing must NOT appear — its chatId can't be delivered to. Only the
-// bound channel's chats show up as deliverable rows.
+// TestListChannelsSkipsUnbound: a chat whose every session is under an
+// unbound account has no registered adapter → must not appear.
 func TestListChannelsSkipsUnbound(t *testing.T) {
 	db := newTestStore(t)
 	ctx := context.Background()
-	// wechat: session exists, NO channel row → must not appear.
+	// wechat: session under bot-wx, but NO channel row → unbound.
 	saveTestSession(t, db, "agent-1", "s-wx", "wechat", "bot-wx", "wx-chat", 3)
-	// telegram: both a channel row and a session → deliverable.
+	// telegram: bound + a session → deliverable.
 	if err := db.SaveChannel(ctx, &store.ChannelRecord{
 		ID: "c-tg", UserID: "u1", AgentID: "agent-1", Type: "telegram", AccountID: "bot-tg", Enabled: true, Data: map[string]interface{}{},
 	}); err != nil {

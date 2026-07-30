@@ -11,17 +11,18 @@ import (
 )
 
 // RegisterListChannelsTool registers list_channels, which returns every
-// (channel, accountId, chatId) triple this agent can deliver to right now.
-// Each row is exactly what create_cron_job's optional target params need,
-// so the model copies a row verbatim into a cross-channel schedule.
+// chat this agent can deliver to right now as one self-contained row per
+// conversation. Each row is exactly what create_cron_job's optional target
+// params need, so the model copies a row verbatim into a cross-channel
+// schedule.
 func RegisterListChannelsTool(r *Registry, st store.Store, agentID string) {
 	if r == nil || st == nil || agentID == "" {
 		return
 	}
 	r.Register("list_channels",
-		`List every (channel, accountId, chatId) triple this agent can deliver to right now, for passing into create_cron_job's optional channel/accountId/chatId target fields.
-Use this when the user wants to send or schedule something to a specific channel/chat (e.g. "也发到微信", "每天在 Telegram 提醒我"): pick the row for the target chat and copy its channel + accountId + chatId verbatim into create_cron_job.
-Delivery addressing is the SAME three fields on every IM channel (wechat/telegram/discord/qq/slack/feishu/line): the bot adapter is located by (channel, accountId) and the chat is addressed by chatId — no other id (no session_key, no guild_id) is needed. Only currently bound AND enabled channels are listed, and only chats that have actually messaged the agent (so a usable chatId exists): an unbound/disabled channel has no live adapter, so its chats can't be delivered to and are omitted. If the channel the user names isn't listed, tell them to bind/enable it in channel settings and message the agent once from it, then retry. Each row also carries title/messageCount/lastActive to help tell chats apart. No credentials are ever included.`,
+		`List every chat this agent can deliver to right now, one row per conversation, for passing into create_cron_job's optional channel/accountId/chatId target fields.
+Use this when the user wants to send or schedule something to a specific channel/chat (e.g. "也发到微信", "每天在 Telegram 提醒我"): pick the row for the target conversation and copy its channel + accountId + chatId verbatim into create_cron_job.
+Rows are de-duplicated by conversation: a /new in the same chat starts a fresh session (and on some channels a new account_id) but does NOT create extra rows — only one row per (channel, chatId). Within a conversation, the row reflects the most recent session whose bot account is currently bound+enabled, because delivery can only route through a registered adapter. Chats with no bound adapter are omitted (they can't be delivered to). Delivery addressing is the same three fields on every IM channel (wechat/telegram/discord/qq/slack/feishu/line) — no session_key or guild_id is needed. If the channel the user names isn't listed, tell them to bind/enable it in channel settings and message the agent once from it, then retry. Each row also carries title/messageCount/lastActive to help tell conversations apart. No credentials are ever included.`,
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -30,12 +31,11 @@ Delivery addressing is the SAME three fields on every IM channel (wechat/telegra
 	)
 }
 
-// deliverableItem is one chat the agent can push to. The three id fields
-// are exactly the union of what create_cron_job's target needs and what
-// every IM channel's SendMessage consumes: the adapter is keyed by
-// (channel, accountId) and the chat is addressed by chatId. title /
-// messageCount / lastActive only help the model distinguish multiple
-// chats on the same channel.
+// deliverableItem is one conversation the agent can push to. The three id
+// fields are exactly what create_cron_job's target needs and what every IM
+// channel's SendMessage consumes: the adapter is keyed by (channel,
+// accountId) and the chat is addressed by chatId. title / messageCount /
+// lastActive only help the model distinguish multiple conversations.
 type deliverableItem struct {
 	Channel      string    `json:"channel"`
 	AccountID    string    `json:"accountId"`
@@ -54,8 +54,7 @@ func makeListChannels(st store.Store, agentID string) ToolFunc {
 	return func(ctx context.Context, _ json.RawMessage) (string, error) {
 		// A chat is only deliverable if its bot adapter is currently
 		// registered, and the gateway only registers adapters for
-		// channels-table rows that are bound AND enabled. Build that
-		// allowlist first.
+		// channels-table rows that are bound AND enabled.
 		all, err := st.ListAllChannels(ctx)
 		if err != nil {
 			return "", fmt.Errorf("list channels: %w", err)
@@ -67,59 +66,60 @@ func makeListChannels(st store.Store, agentID string) ToolFunc {
 			}
 		}
 
-		// Collapse sessions into one entry per (channel, accountID, chatId).
 		sessions, err := st.ListSessions(ctx, agentID)
 		if err != nil {
 			return "", fmt.Errorf("list sessions: %w", err)
 		}
-		type chatKey struct{ channel, accountID, chatID string }
-		type agg struct {
-			title string
-			count int
-			last  time.Time
+
+		// Group sessions by (channel, chatId). A /new in the same chat
+		// starts a fresh session_key — and on some channels a fresh
+		// account_id — but it's the SAME upstream conversation, so it must
+		// collapse to one deliverable row, not many. Within a group, pick
+		// the most recent session whose account is bound+enabled: that's
+		// the adapter the scheduler will actually route through. Sessions
+		// on unbound accounts (e.g. an older rebound bot) are skipped.
+		type gKey struct{ channel, chatID string }
+		type sess struct {
+			accountID string
+			title     string
+			count     int
+			last      time.Time
 		}
-		aggs := map[chatKey]*agg{}
+		groups := map[gKey][]sess{}
 		for _, s := range sessions {
 			if s.Channel == "" || s.ChatID == "" {
 				continue
 			}
-			k := chatKey{s.Channel, s.AccountID, s.ChatID}
-			a := aggs[k]
-			if a == nil {
-				a = &agg{}
-				aggs[k] = a
-			}
-			a.count += s.MessageCount
-			if s.UpdatedAt.After(a.last) {
-				a.last = s.UpdatedAt
-				a.title = s.Title // prefer the title from the most recent session
-			}
+			k := gKey{s.Channel, s.ChatID}
+			groups[k] = append(groups[k], sess{s.AccountID, s.Title, s.MessageCount, s.UpdatedAt})
 		}
 
-		// Emit one deliverable row per chat whose channel is bound+enabled.
-		// Chats on unbound/disabled channels are omitted: their chatId can't
-		// be delivered to, so returning it would mislead the model.
 		result := listChannelsResult{AgentID: agentID}
-		for k, a := range aggs {
-			if !bound[k.channel+"\x00"+k.accountID] {
-				continue
+		for k, ss := range groups {
+			sort.Slice(ss, func(i, j int) bool { return ss[i].last.After(ss[j].last) }) // newest first
+			var pick *sess
+			for i := range ss {
+				if bound[k.channel+"\x00"+ss[i].accountID] {
+					pick = &ss[i]
+					break
+				}
+			}
+			if pick == nil {
+				continue // no bound adapter for this conversation → can't deliver
 			}
 			result.Deliverable = append(result.Deliverable, deliverableItem{
 				Channel:      k.channel,
-				AccountID:    k.accountID,
+				AccountID:    pick.accountID,
 				ChatID:       k.chatID,
-				Title:        a.title,
-				MessageCount: a.count,
-				LastActive:   a.last,
+				Title:        pick.title,
+				MessageCount: pick.count,
+				LastActive:   pick.last,
 			})
 		}
 		sort.Slice(result.Deliverable, func(i, j int) bool {
 			di, dj := result.Deliverable[i], result.Deliverable[j]
 			if di.Channel != dj.Channel {
 				return di.Channel < dj.Channel
-			}
-			if di.AccountID != dj.AccountID {
-				return di.AccountID < dj.AccountID
 			}
 			return di.LastActive.After(dj.LastActive) // most recently active first
 		})
