@@ -25,6 +25,10 @@ type createCronJobArgs struct {
 	Channel   string `json:"channel,omitempty"`
 	AccountID string `json:"accountId,omitempty"`
 	ChatID    string `json:"chatId,omitempty"`
+	// Silent: run as a background task — the scheduler fires it on an
+	// internal channel with no IM adapter, so the agent processes `message`
+	// but no reply is delivered to any chat. Ignore for cross-channel pushes.
+	Silent bool `json:"silent,omitempty"`
 }
 
 type deleteCronJobArgs struct {
@@ -72,6 +76,10 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 				"chatId": map[string]interface{}{
 					"type":        "string",
 					"description": "Target chat identifier (group/DM id on the target channel). Copy from the SAME list_channels row as channel and accountId.",
+				},
+				"silent": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Background task: when true, the schedule fires but NO reply is delivered to any chat — the agent processes `message` internally (e.g. periodic self-maintenance, memory tidy). Omit (or false) for normal reminders/notifications that must reach the user. Mutually exclusive with targeting another channel.",
 				},
 			},
 			"required": []string{"name", "schedule", "message"},
@@ -192,6 +200,7 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 			Channel:   channel,
 			AccountID: accountID,
 			ChatID:    chatID,
+			Silent:    args.Silent,
 			// "" = server-local; the scheduler's LocationOf maps it
 			// the same way LoadLocationOrLocal did above, so creation
 			// and recurrence agree.
@@ -226,13 +235,44 @@ func makeListCronJobs(st store.Store, userID, agentID string) ToolFunc {
 		if err != nil {
 			return "", fmt.Errorf("list cron jobs: %w", err)
 		}
-		filtered := jobs
-
-		if len(filtered) == 0 {
+		if len(jobs) == 0 {
 			return "No cron jobs found for this agent.", nil
 		}
 
-		data, _ := json.MarshalIndent(filtered, "", "  ")
+		// Attach each foreground job's target session (key + title) so the
+		// full delivery address is visible alongside channel/accountId/chatId
+		// and the silent flag. Silent jobs have no delivery target.
+		sessions, _ := st.ListSessions(ctx, agentID)
+		type sessKey struct{ channel, accountID, chatID string }
+		latest := map[sessKey]store.SessionMeta{}
+		for _, s := range sessions {
+			if s.Channel == "" || s.ChatID == "" {
+				continue
+			}
+			k := sessKey{s.Channel, s.AccountID, s.ChatID}
+			if cur, ok := latest[k]; !ok || s.UpdatedAt.After(cur.UpdatedAt) {
+				latest[k] = s
+			}
+		}
+
+		type cronJobView struct {
+			store.CronJobRecord
+			SessionKey   string `json:"sessionKey,omitempty"`
+			SessionTitle string `json:"sessionTitle,omitempty"`
+		}
+		views := make([]cronJobView, 0, len(jobs))
+		for _, j := range jobs {
+			v := cronJobView{CronJobRecord: j}
+			if !j.Silent {
+				if s, ok := latest[sessKey{j.Channel, j.AccountID, j.ChatID}]; ok {
+					v.SessionKey = s.Key
+					v.SessionTitle = s.Title
+				}
+			}
+			views = append(views, v)
+		}
+
+		data, _ := json.MarshalIndent(views, "", "  ")
 		return string(data), nil
 	}
 }

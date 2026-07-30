@@ -773,8 +773,12 @@ type CronJobRecord struct {
 	// destination channel was missing/unreachable. UpdateCronJobRun
 	// resets it to 0; IncrementCronJobFailure bumps it. The scheduler
 	// deletes the row once it crosses an internal threshold.
-	FailureCount int       `json:"failureCount,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"`
+	FailureCount int `json:"failureCount,omitempty"`
+	// Silent marks a background task: the scheduler fires it on an internal
+	// channel with no IM adapter, so the agent processes `message` but the
+	// reply is not delivered to any chat. Default false (foreground).
+	Silent    bool      `json:"silent"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // StorageType identifies the storage backend.

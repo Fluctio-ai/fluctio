@@ -44,6 +44,7 @@ func (a *cronStoreAdapter) GetDueCronJobs(ctx context.Context, now time.Time) ([
 			ChatID:      r.ChatID,
 			AccountID:   r.AccountID,
 			Timezone:    r.Timezone,
+			Silent:      r.Silent,
 		})
 	}
 	return out, nil

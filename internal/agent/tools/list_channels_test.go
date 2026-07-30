@@ -308,3 +308,89 @@ func TestCreateCronJobCrossChannelTarget(t *testing.T) {
 		t.Fatalf("job target=(%s,%s,%s); want wechat,bot-wx,wx-chat-A", j.Channel, j.AccountID, j.ChatID)
 	}
 }
+
+func TestCreateCronJobSilent(t *testing.T) {
+	db := newTestStore(t)
+	ctx := context.Background()
+	r := NewRegistry(t.TempDir(), t.TempDir())
+	r.SetOwnerUserID("user-1")
+	r.SetMessageContext("telegram", "bot-tg", "tg-current")
+	RegisterCronTools(r, db, "user-1", "agent-1")
+
+	args, _ := json.Marshal(createCronJobArgs{
+		Name: "silent tidy", Type: "interval",
+		Schedule: "1h", Message: "compact MEMORY.md if large", Silent: true,
+	})
+	if _, err := r.Execute(ctx, "create_cron_job", string(args)); err != nil {
+		t.Fatalf("create silent: %v", err)
+	}
+	jobs, err := db.ListCronJobsByAgent(ctx, "agent-1")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(jobs) != 1 || !jobs[0].Silent {
+		t.Fatalf("expected 1 silent job, got %+v", jobs)
+	}
+}
+
+// TestListCronJobsEnhanced verifies list_cron_jobs attaches the target
+// session's key+title to foreground jobs and surfaces the silent flag.
+func TestListCronJobsEnhanced(t *testing.T) {
+	db := newTestStore(t)
+	ctx := context.Background()
+	if err := db.SaveChannel(ctx, &store.ChannelRecord{
+		ID: "c", UserID: "u1", AgentID: "agent-1", Type: "wechat", AccountID: "bot-wx", Enabled: true, Data: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("save channel: %v", err)
+	}
+	saveTestSession(t, db, "agent-1", "s1", "wechat", "bot-wx", "wx-chat", 3)
+
+	r := NewRegistry(t.TempDir(), t.TempDir())
+	r.SetOwnerUserID("user-1")
+	RegisterCronTools(r, db, "user-1", "agent-1")
+
+	// Foreground job targeting the wechat chat (should get sessionKey/title).
+	fg, _ := json.Marshal(createCronJobArgs{
+		Name: "fg", Type: "once",
+		Schedule: time.Now().Add(time.Hour).Format(time.RFC3339),
+		Message: "hi", Channel: "wechat", AccountID: "bot-wx", ChatID: "wx-chat",
+	})
+	if _, err := r.Execute(ctx, "create_cron_job", string(fg)); err != nil {
+		t.Fatalf("create fg: %v", err)
+	}
+	// Silent background job (no delivery target → no sessionKey).
+	sl, _ := json.Marshal(createCronJobArgs{
+		Name: "sl", Type: "interval", Schedule: "1h", Message: "tidy", Silent: true,
+	})
+	if _, err := r.Execute(ctx, "create_cron_job", string(sl)); err != nil {
+		t.Fatalf("create sl: %v", err)
+	}
+
+	out, err := r.Execute(ctx, "list_cron_jobs", "{}")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var views []map[string]any
+	if err := json.Unmarshal([]byte(out), &views); err != nil {
+		t.Fatalf("unmarshal (%s): %v", out, err)
+	}
+	if len(views) != 2 {
+		t.Fatalf("want 2 jobs, got %d: %s", len(views), out)
+	}
+	byName := map[string]map[string]any{}
+	for _, v := range views {
+		byName[v["name"].(string)] = v
+	}
+	if byName["fg"]["silent"] != false {
+		t.Fatalf("fg should be foreground: %v", byName["fg"]["silent"])
+	}
+	if byName["fg"]["sessionKey"] != "s1" {
+		t.Fatalf("fg sessionKey=%v, want s1", byName["fg"]["sessionKey"])
+	}
+	if byName["sl"]["silent"] != true {
+		t.Fatalf("sl should be silent: %v", byName["sl"]["silent"])
+	}
+	if _, hasKey := byName["sl"]["sessionKey"]; hasKey {
+		t.Fatalf("silent job should have no sessionKey: %v", byName["sl"]["sessionKey"])
+	}
+}

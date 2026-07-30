@@ -88,6 +88,9 @@ type StoreJob struct {
 	// captured from the chatter at creation time. Legacy rows carry
 	// "UTC" (the old hardcoded value); empty means server-local.
 	Timezone string
+	// Silent: fire on an internal channel with no IM adapter so the agent
+	// runs the task but no reply is delivered to any chat (background task).
+	Silent bool
 }
 
 // globalNotify wakes the DB-mode scheduler when a cron tool creates or
@@ -245,7 +248,7 @@ func (s *Scheduler) processDueJobs(ctx context.Context) {
 		// endpoint — both are always reachable (replies go through
 		// the plugin's channel.send, not an IM adapter). Empty
 		// channel is a legacy row that doesn't route through any bot.
-		if s.channels != nil && j.Channel != "" && j.Channel != "web" && j.Channel != "api" {
+		if !j.Silent && s.channels != nil && j.Channel != "" && j.Channel != "web" && j.Channel != "api" {
 			if !s.channels.Has(j.Channel, j.AccountID) {
 				count, ferr := s.store.IncrementCronJobFailure(ctx, j.ID)
 				if ferr != nil {
@@ -277,10 +280,23 @@ func (s *Scheduler) processDueJobs(ctx context.Context) {
 			text = fmt.Sprintf("[Cron Job: %s] This is a scheduled task trigger.", j.Name)
 		}
 
+		// Silent jobs fire on the internal heartbeat channel (no IM adapter
+		// registers for it) so the agent runs `message` but the reply is
+		// discarded — a background/self task. Foreground jobs route to their
+		// stored (channel, accountId, chatId). OwnerUserID is set either way
+		// so processInbound can resolve the agent without a channel lookup.
+		fireChannel := j.Channel
+		fireAccount := j.AccountID
+		fireChat := j.ChatID
+		if j.Silent {
+			fireChannel = "heartbeat"
+			fireAccount = ""
+			fireChat = "cron_" + j.ID
+		}
 		s.bus.Inbound <- bus.InboundMessage{
-			Channel:     j.Channel,
-			AccountID:   j.AccountID,
-			ChatID:      j.ChatID,
+			Channel:     fireChannel,
+			AccountID:   fireAccount,
+			ChatID:      fireChat,
 			UserID:      "cron",
 			OwnerUserID: j.OwnerUserID,
 			AgentID:     j.AgentID,
