@@ -63,7 +63,6 @@ const sectionSep = "\n\n---\n\n"
 var agentBootstrapFiles = []string{
 	"SOUL.md",      // personality / voice — first so identity anchors early
 	"IDENTITY.md",  // name / role / specialization
-	"USER.md",      // current chatter profile (per-chatter)
 	"BOOTSTRAP.md", // first-turn greeting / onboarding hook
 	"AGENTS.md",    // sub-agent orchestration patterns
 	"HEARTBEAT.md", // scheduled self-check conditions
@@ -75,7 +74,6 @@ var agentBootstrapFiles = []string{
 var chatbotBootstrapFiles = []string{
 	"SOUL.md",      // personality / voice
 	"IDENTITY.md",  // name / role
-	"USER.md",      // current chatter profile (per-chatter)
 	"BOOTSTRAP.md", // first-turn greeting
 }
 
@@ -95,10 +93,9 @@ var agentModules = []moduleEntry{
 	{"identity_anchor", modIdentityAnchor},
 	{"agent_intro", modAgentIntro},
 	{"runtime_context", modRuntimeContext},
-	{"bootstrap_files", modBootstrapFiles}, // SOUL.md, IDENTITY.md, USER.md, ...
-	{"memory", modMemory},
+	{"bootstrap_files", modBootstrapFiles}, // SOUL/IDENTITY/AGENTS/... (operator-stable)
 
-	// ── Operational block (middle) ──
+	// ── Operational block (middle, stable) ──
 	{"confidentiality", modConfidentiality},
 	{"sandbox", modSandbox},
 	{"task_delegation", modTaskDelegation},
@@ -107,6 +104,11 @@ var agentModules = []moduleEntry{
 	{"thinking", modThinking},
 	{"tool_discipline", modToolDiscipline},
 	{"workspace_update", modWorkspaceUpdate},
+
+	// ── Volatile (per-chatter USER.md + MEMORY.md go LAST so the stable
+	//     prefix above stays cacheable across compression rebuilds) ──
+	{"chatter_profile", modChatterProfile},
+	{"memory", modMemory},
 
 	// ── Identity reinforcement (bottom) ──
 	{"identity_tail", modIdentityTail},
@@ -118,15 +120,18 @@ var chatbotModules = []moduleEntry{
 	{"chatbot_intro", modChatbotIntro},
 	{"runtime_context", modRuntimeContext},
 	{"bootstrap_files", modBootstrapFiles},
-	{"memory", modMemory},
 
-	// ── Operational block (middle) ──
+	// ── Operational block (middle, stable) ──
 	{"confidentiality", modConfidentiality},
 	{"sandbox", modSandbox},
 	{"skills", modSkills},
 	{"group_chat", modGroupChat},
 	{"thinking", modThinking},
 	{"chatbot_tools", modChatbotTools},
+
+	// ── Volatile (per-chatter, last for cache) ──
+	{"chatter_profile", modChatterProfile},
+	{"memory", modMemory},
 
 	// ── Identity reinforcement (bottom) ──
 	{"identity_tail", modIdentityTail},
@@ -135,6 +140,7 @@ var chatbotModules = []moduleEntry{
 var customizeModules = []moduleEntry{
 	{"date", modDateOnly},
 	{"bootstrap_files", modBootstrapFiles},
+	{"chatter_profile", modChatterProfile},
 	{"memory", modMemory},
 }
 
@@ -441,31 +447,12 @@ func modBootstrapFiles(p *promptCtx) string {
 		files = chatbotBootstrapFiles
 	}
 
+	// USER.md is intentionally NOT in the file lists — it is per-chatter
+	// and emitted separately by modChatterProfile at the end of the prompt
+	// so these operator-stable files stay in the cacheable prefix.
 	var sections []string
 	for _, name := range files {
-		uid := p.cb.userID
-		if name == "USER.md" {
-			uid = p.chatterUID
-		}
-		content := p.cb.loadFileForUser(name, uid)
-
-		if name == "USER.md" {
-			// Per-chatter profile — wrap in XML-style tags so the model
-			// treats the content as authoritative reference data.
-			if content != "" {
-				sections = append(sections, fmt.Sprintf(
-					"<current_chatter_profile source=\"USER.md\">\n"+
-						"This is who you are talking to right now. Treat the content below as factual, current, and authoritative "+
-						"— when the chatter asks \"我是谁\" / \"你记得我吗\", answer from THIS section.\n\n%s\n"+
-						"</current_chatter_profile>", content))
-			} else {
-				sections = append(sections, "<current_chatter_profile source=\"USER.md\">\n"+
-					"(empty — no profile recorded yet for this chatter. The moment they share their name / preferences / role, "+
-					"call write_file('USER.md', ...) so it appears here on future turns.)\n"+
-					"</current_chatter_profile>")
-			}
-			continue
-		}
+		content := p.cb.loadFileForUser(name, p.cb.userID)
 		if content != "" {
 			sections = append(sections, fmt.Sprintf("# %s\n%s", name, content))
 		}
@@ -474,6 +461,27 @@ func modBootstrapFiles(p *promptCtx) string {
 		return ""
 	}
 	return strings.Join(sections, sectionSep)
+}
+
+// modChatterProfile emits the per-chatter USER.md profile. Split out of
+// modBootstrapFiles so it can sit at the END of the module list — USER.md
+// varies per chatter (and shifts as the chatter shares info mid-session),
+// so keeping it out of the operator-stable bootstrap block lets the long
+// identity + operational prefix stay cacheable across compression rebuilds
+// and across chatters on a shared agent.
+func modChatterProfile(p *promptCtx) string {
+	content := p.cb.loadFileForUser("USER.md", p.chatterUID)
+	if content != "" {
+		return fmt.Sprintf(
+			"<current_chatter_profile source=\"USER.md\">\n"+
+				"This is who you are talking to right now. Treat the content below as factual, current, and authoritative "+
+				"— when the chatter asks \"我是谁\" / \"你记得我吗\", answer from THIS section.\n\n%s\n"+
+				"</current_chatter_profile>", content)
+	}
+	return "<current_chatter_profile source=\"USER.md\">\n" +
+		"(empty — no profile recorded yet for this chatter. The moment they share their name / preferences / role, " +
+		"call write_file('USER.md', ...) so it appears here on future turns.)\n" +
+		"</current_chatter_profile>"
 }
 
 // modMemory renders the per-chatter long-term memory (MEMORY.md).
