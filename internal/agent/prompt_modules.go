@@ -565,13 +565,6 @@ When the user asks you to create a file (document, script, data, etc.):
   path that the tool returned in its "file" field.
 - NEVER just say "file saved" without showing content or referencing
   the workspace path.
-- For images from the **image_gen** tool: they are saved to /workspace
-  automatically and the tool result hands you the /workspace path. You MUST
-  reference each one in your final reply (e.g. ![](/workspace/imagegen_<id>.png))
-  so the user actually sees it — never just say "image generated" without
-  the reference, and never paste the original http(s)/data URL the tool
-  returned. If a result says "图片生成失败", tell the user the generation
-  failed rather than referencing a missing image.
 
 ## Important: Multi-line Scripts
 For multi-line code, ALWAYS use write_file first, then exec:
