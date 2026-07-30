@@ -67,7 +67,7 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 				},
 				"accountId": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional target bot account within the channel. Copy from list_channels. Provide together with channel/chatId when targeting another channel (especially if the channel has multiple accounts).",
+					"description": "Optional target bot account within the channel. If omitted, the bound bot for this chat is auto-resolved — pass it only when the channel has multiple bound accounts and you need a specific one.",
 				},
 				"chatId": map[string]interface{}{
 					"type":        "string",
@@ -129,13 +129,14 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 		chatID := r.MessageChatID()
 		if args.Channel != "" || args.AccountID != "" || args.ChatID != "" {
 			if args.Channel == "" || args.ChatID == "" {
-				return "", fmt.Errorf("when targeting another channel, both 'channel' and 'chatId' are required (plus 'accountId' if the channel has multiple accounts). Call list_channels for valid values.")
+				return "", fmt.Errorf("when targeting another channel, 'channel' and 'chatId' are required (accountId is optional — the bound bot is auto-resolved). Call list_channels for valid values.")
 			}
-			if err := validateChannelTarget(ctx, st, agentID, args.Channel, args.AccountID, args.ChatID); err != nil {
+			resolved, err := resolveChannelTarget(ctx, st, agentID, args.Channel, args.AccountID, args.ChatID)
+			if err != nil {
 				return "", err
 			}
 			channel = args.Channel
-			accountID = args.AccountID
+			accountID = resolved
 			chatID = args.ChatID
 		}
 
@@ -252,24 +253,54 @@ func makeDeleteCronJob(st store.Store, userID string) ToolFunc {
 	}
 }
 
-// validateChannelTarget enforces the cross-channel whitelist: the target
-// (channel, accountId, chatId) must be a chat that has actually conversed
-// with this agent (a session row exists for it). This prevents a mistaken
-// or prompt-injected request from scheduling delivery to an arbitrary
-// foreign chat. A chat becomes targetable once the user has messaged the
-// agent from it at least once — which is also when list_channels can show
-// its chatId.
-func validateChannelTarget(ctx context.Context, st store.Store, agentID, channel, accountID, chatID string) error {
-	sessions, err := st.ListSessions(ctx, agentID)
+// resolveChannelTarget verifies (channel, chatId) is a real chat of this
+// agent and returns the bot account_id that should deliver to it: the
+// account that is bound+enabled in the channels table and has the most
+// recent session for this chat. The scheduler's pre-fire check keys the
+// adapter by (channel, accountID), so an empty account_id reads as
+// "destination channel missing" and the job gets auto-deleted after 3
+// ticks — auto-resolving from the bound account avoids depending on the
+// caller to pass accountId (a model that omits it would otherwise save a
+// job that can never fire). If the caller does pass accountId, it must
+// match a bound session of this chat.
+func resolveChannelTarget(ctx context.Context, st store.Store, agentID, channel, accountID, chatID string) (string, error) {
+	all, err := st.ListAllChannels(ctx)
 	if err != nil {
-		return fmt.Errorf("verify target channel: list sessions: %w", err)
+		return "", fmt.Errorf("verify target: list channels: %w", err)
 	}
-	for _, s := range sessions {
-		if s.Channel == channel && s.ChatID == chatID && (accountID == "" || s.AccountID == accountID) {
-			return nil
+	bound := map[string]bool{}
+	for _, ch := range all {
+		if ch.AgentID == agentID && ch.Enabled && ch.Type == channel {
+			bound[ch.AccountID] = true
 		}
 	}
-	return fmt.Errorf("target (channel=%q, accountId=%q, chatId=%q) is not a chat of this agent. The target chat must have messaged this agent at least once; call list_channels to see valid channel/accountId/chatId triples.", channel, accountID, chatID)
+	sessions, err := st.ListSessions(ctx, agentID)
+	if err != nil {
+		return "", fmt.Errorf("verify target: list sessions: %w", err)
+	}
+	var pickAccount string
+	var pickTime time.Time
+	found := false
+	for _, s := range sessions {
+		if s.Channel != channel || s.ChatID != chatID {
+			continue
+		}
+		if accountID != "" && s.AccountID != accountID {
+			continue
+		}
+		if !bound[s.AccountID] {
+			continue
+		}
+		if !found || s.UpdatedAt.After(pickTime) {
+			pickAccount = s.AccountID
+			pickTime = s.UpdatedAt
+			found = true
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("target (channel=%q, accountId=%q, chatId=%q) has no session on a bound+enabled channel of this agent. Have the target chat message the agent once and ensure the channel is bound; call list_channels for valid channel/accountId/chatId triples.", channel, accountID, chatID)
+	}
+	return pickAccount, nil
 }
 
 func generateUUID() string {

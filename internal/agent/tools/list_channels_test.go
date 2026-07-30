@@ -218,27 +218,43 @@ func TestListChannelsSkipsDisabled(t *testing.T) {
 	}
 }
 
-func TestValidateChannelTarget(t *testing.T) {
+func TestResolveChannelTarget(t *testing.T) {
 	db := newTestStore(t)
 	ctx := context.Background()
+	if err := db.SaveChannel(ctx, &store.ChannelRecord{
+		ID: "c-wx", UserID: "u1", AgentID: "agent-1", Type: "wechat", AccountID: "bot-wx", Enabled: true, Data: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("save channel: %v", err)
+	}
 	saveTestSession(t, db, "agent-1", "s1", "wechat", "bot-wx", "wx-chat-A", 1)
 
-	// Valid: matches a session that exists for this agent.
-	if err := validateChannelTarget(ctx, db, "agent-1", "wechat", "bot-wx", "wx-chat-A"); err != nil {
-		t.Fatalf("expected accept, got: %v", err)
+	// Valid + accountId auto-resolved to the bound bot (the bug fix: a
+	// model that omits accountId must still get a fire-able job).
+	acc, err := resolveChannelTarget(ctx, db, "agent-1", "wechat", "", "wx-chat-A")
+	if err != nil || acc != "bot-wx" {
+		t.Fatalf("expected bot-wx auto-resolved, got %q err=%v", acc, err)
 	}
-	// Reject: chatId this agent never talked to.
-	if err := validateChannelTarget(ctx, db, "agent-1", "wechat", "bot-wx", "foreign"); err == nil {
-		t.Fatal("expected reject for foreign chatId")
+	// Explicit matching accountId resolves too.
+	if acc, err := resolveChannelTarget(ctx, db, "agent-1", "wechat", "bot-wx", "wx-chat-A"); err != nil || acc != "bot-wx" {
+		t.Fatalf("explicit accountId failed: %q %v", acc, err)
 	}
-	// Reject: known chatId but wrong channel.
-	if err := validateChannelTarget(ctx, db, "agent-1", "telegram", "bot-tg", "wx-chat-A"); err == nil {
-		t.Fatal("expected reject for wrong channel")
+	// Reject: foreign chatId.
+	if _, err := resolveChannelTarget(ctx, db, "agent-1", "wechat", "", "foreign"); err == nil {
+		t.Fatal("expected reject foreign chatId")
 	}
-	// Reject: a chatId that exists only under another agent.
-	saveTestSession(t, db, "agent-2", "s2", "wechat", "bot-wx", "shared-chat", 1)
-	if err := validateChannelTarget(ctx, db, "agent-1", "wechat", "bot-wx", "shared-chat"); err == nil {
-		t.Fatal("expected reject for other-agent chat")
+	// Reject: wrong channel.
+	if _, err := resolveChannelTarget(ctx, db, "agent-1", "telegram", "", "wx-chat-A"); err == nil {
+		t.Fatal("expected reject wrong channel")
+	}
+	// Reject: chat exists only under an unbound account.
+	saveTestSession(t, db, "agent-1", "s2", "wechat", "bot-old", "chat-X", 1)
+	if _, err := resolveChannelTarget(ctx, db, "agent-1", "wechat", "", "chat-X"); err == nil {
+		t.Fatal("expected reject chat with no bound adapter")
+	}
+	// Reject: chat exists only under another agent.
+	saveTestSession(t, db, "agent-2", "s3", "wechat", "bot-wx", "shared", 1)
+	if _, err := resolveChannelTarget(ctx, db, "agent-1", "wechat", "", "shared"); err == nil {
+		t.Fatal("expected reject other-agent chat")
 	}
 }
 
@@ -249,6 +265,11 @@ func TestValidateChannelTarget(t *testing.T) {
 func TestCreateCronJobCrossChannelTarget(t *testing.T) {
 	db := newTestStore(t)
 	ctx := context.Background()
+	if err := db.SaveChannel(ctx, &store.ChannelRecord{
+		ID: "c-wx", UserID: "u1", AgentID: "agent-1", Type: "wechat", AccountID: "bot-wx", Enabled: true, Data: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("save channel: %v", err)
+	}
 	saveTestSession(t, db, "agent-1", "s-wx", "wechat", "bot-wx", "wx-chat-A", 1)
 
 	r := NewRegistry(t.TempDir(), t.TempDir())
