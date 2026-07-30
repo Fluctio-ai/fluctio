@@ -2206,6 +2206,8 @@ export interface AgentCronJob {
   lastRun?: string;
   nextRun?: string;
   createdAt: string;
+  // silent: background task — fires on an internal channel, no IM delivery.
+  silent?: boolean;
 }
 
 // --- Regex Hooks ---

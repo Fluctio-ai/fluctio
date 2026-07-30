@@ -239,11 +239,15 @@ function JobRow({
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
               {fmtSchedule(job, t)}
             </code>
-            {job.channel && (
+            {job.silent ? (
+              <Badge variant="secondary" className="text-[10px]">
+                {t("scheduler.silent")}
+              </Badge>
+            ) : job.channel ? (
               <span className="text-[11px] text-muted-foreground">
                 {t("scheduler.via")} {job.channel}
               </span>
-            )}
+            ) : null}
           </div>
           <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <MessageSquare className="size-3.5 mt-0.5 shrink-0" />

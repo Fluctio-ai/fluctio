@@ -489,6 +489,7 @@ const zhCN: Record<string, string> = {
   "scheduler.lastRun": "上次运行",
   "scheduler.nextRun": "下次运行",
   "scheduler.via": "通过",
+  "scheduler.silent": "静默",
   "scheduler.every": "每 {schedule}",
   "scheduler.at": "于 {schedule}",
   "scheduler.inUnder1m": "不到1分钟后",
