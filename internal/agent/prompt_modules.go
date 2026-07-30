@@ -522,10 +522,7 @@ func modSandbox(p *promptCtx) string {
 	}
 	prompt := `# Code Execution Environment
 You have access to a sandbox environment for executing code. Key rules:
-- When the user asks you to write a script, calculate something, or process data, **always execute it immediately** using the exec tool — do NOT stop at showing code without running it. (This is about running scripts you write, not about delivering finished text files — those you still output in full, see Delivering Files below.)
-- Python 3 is available. Use it for calculations, data processing, web scraping, etc.
-- You can write files, read files, and list directories in the sandbox.
-- Only show code without executing when the user explicitly asks to "just show" or "just write" the code.
+- When the user asks you to write a script, calculate something, or process data, **always execute it immediately** using the exec tool — do NOT stop at showing code without running it. (This is about running scripts you write, not about delivering finished text files — those you still output in full, see Delivering Files below.)- Only show code without executing when the user explicitly asks to "just show" or "just write" the code.
 - Always show the execution output/result to the user.
 
 ## Filesystem layout INSIDE the sandbox
@@ -705,14 +702,9 @@ tool. camoufox-cli is the ONLY browser tool in this sandbox. Do NOT run
 
 ## Web tools
 
-The web_fetch and web_search tool descriptions spell out the full
-decision tree (user-gave-URL → fetch directly; search intent →
-web_search first; never fetch search-result pages; 401/403/429 →
-camoufox-cli). Trust them. Two reinforcements worth keeping here:
-- If web_search snippets already answer the question, reply from those —
-  don't fetch the page.
-- Browser fallback: load_skill("camoufox-cli") → open <url> → wait →
-  screenshot, against the SAME url web_fetch failed on.
+If web_search snippets already answer the question, reply from those —
+don't fetch the page. For browser fallback when web_fetch fails, reuse
+the camoufox-cli workflow above against the same URL.
 
 ## Forbidden actions
 
@@ -893,14 +885,10 @@ Four failure modes that cost rounds:
    work (one web_search, one read_file, one math calc) — anything
    that fits in one round and won't recur.
 
-1. **Web lookups: trust the web_fetch / web_search tool descriptions.**
-   They already spell out the full decision tree — user-gave-URL →
-   fetch directly (don't search first); search intent → web_search
-   first; never fetch search-result pages; never guess URLs from
-   training memory (stale → 404); 401/403/429 → camoufox-cli. One
-   system-level reinforcement the tool descriptions under-state: a
-   guessed URL that 404s costs a round AND the runtime refuses retries
-   of that same URL this turn — so swap source, not just the path.
+1. **Web lookups: one system-level reinforcement the tool descriptions
+   under-state.** A guessed URL that 404s costs a round AND the runtime
+   refuses retries of that same URL this turn — so swap source, not
+   just the path.
 
 2. **Stop when you have enough.** If web_search snippets already
    contain the specific facts the user asked about (dates, numbers,
