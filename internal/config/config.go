@@ -457,6 +457,13 @@ type AgentDefaults struct {
 	// take a parallel burst.
 	MaxParallelToolCalls int    `json:"maxParallelToolCalls,omitempty"`
 	Thinking             string `json:"thinking,omitempty"`
+	// Guidance selects how firmly the framework prompt constrains the
+	// model: "" (default) or "guided" = firm operational rules (identity
+	// override, execute-don't-describe discipline) — the safe default for
+	// sub-flagship models; "autonomous" = softer, judgement-led phrasing
+	// for top-tier models. Confidentiality / reachability / safety
+	// boundaries are NOT weakened by "autonomous".
+	Guidance             string `json:"guidance,omitempty"`
 	PolicyPreset         string `json:"policy,omitempty"`
 	// PromptMode lives here so the agent-scope `agents.defaults`
 	// config row (written by CLI and dashboard) round-trips into
@@ -500,6 +507,8 @@ type AgentEntry struct {
 	MCPServers           map[string]MCPServerConfig `json:"mcpServers,omitempty"`
 	AlwaysLoadSkills     []string                   `json:"alwaysLoadSkills,omitempty"`
 	Thinking             string                     `json:"thinking,omitempty"`
+	// Guidance mirrors Agents.Defaults.Guidance for this agent.
+	Guidance             string                     `json:"guidance,omitempty"`
 	Sandbox              SandboxCfg                 `json:"sandbox,omitempty"`
 	PolicyPreset         string                     `json:"policy,omitempty"`
 	// PromptMode selects how heavily the framework system prompt
@@ -772,6 +781,9 @@ type ResolvedAgent struct {
 	MaxToolIterations    int
 	MaxParallelToolCalls int
 	Thinking             string
+	// Guidance mirrors Agents.Defaults.Guidance (resolved). See
+	// Defaults.Guidance for semantics.
+	Guidance             string
 	Skills               SkillsConfig
 	MCPServers           map[string]MCPServerConfig
 	Sandbox              SandboxCfg
@@ -906,6 +918,7 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 		MaxToolIterations:    cfg.Agents.Defaults.MaxToolIterations,
 		MaxParallelToolCalls: cfg.Agents.Defaults.MaxParallelToolCalls,
 		Thinking:             cfg.Agents.Defaults.Thinking,
+		Guidance:             cfg.Agents.Defaults.Guidance,
 		Sandbox:              cfg.Sandbox,
 		PolicyPreset:         cfg.Agents.Defaults.PolicyPreset,
 	}
@@ -924,6 +937,9 @@ func (cfg *Config) MergedAgentConfig(entry AgentEntry) ResolvedAgent {
 	}
 	if entry.Thinking != "" {
 		resolved.Thinking = entry.Thinking
+	}
+	if entry.Guidance != "" {
+		resolved.Guidance = entry.Guidance
 	}
 	if entry.Sandbox.Enabled {
 		resolved.Sandbox = entry.Sandbox

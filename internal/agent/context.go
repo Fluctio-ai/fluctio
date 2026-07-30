@@ -37,6 +37,7 @@ type ContextBuilder struct {
 	displayName    string
 	groupCtx       *GroupContext
 	thinking       string // off, low, medium, high, adaptive
+	guidance       string // "" or "guided" = firm rules; "autonomous" = soft, judgement-led
 	sandboxEnabled bool
 	sandboxBackend string
 	// promptMode selects how heavily the framework system prompt
@@ -223,6 +224,15 @@ func (cb *ContextBuilder) SetGroupContext(gc *GroupContext) {
 // SetThinking configures the thinking/reasoning level.
 func (cb *ContextBuilder) SetThinking(level string) {
 	cb.thinking = level
+}
+
+// SetGuidance records the operational-constraint strength: "" (default)
+// or "guided" = firm identity + execute-don't-describe discipline (safe
+// for sub-flagship models); "autonomous" = softer judgement-led phrasing
+// (top-tier models). Prompt modules read this to pick anchor phrasing
+// and tool-discipline tone. Safety boundaries are unaffected either way.
+func (cb *ContextBuilder) SetGuidance(g string) {
+	cb.guidance = g
 }
 
 func (cb *ContextBuilder) buildThinkingPrompt() string {

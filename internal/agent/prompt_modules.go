@@ -200,6 +200,16 @@ func modIdentityAnchor(p *promptCtx) string {
 	// Claude / an AI assistant by Anthropic" when a display name is set.
 	// The phrasing is intentionally forceful — softer versions ("use
 	// that as your name unless…") were reliably ignored by Sonnet/Haiku.
+	name := p.cb.displayName
+	if p.cb.guidance == "autonomous" {
+		// Top-tier models keep the persona from SOUL.md/IDENTITY.md
+		// without the "NOT Claude" override hammer on every turn.
+		return fmt.Sprintf("# Identity\nYou are **%s**. Your personality, "+
+			"name, and behavioral rules are defined in SOUL.md and "+
+			"IDENTITY.md below — adopt that persona.", name)
+	}
+	// Sub-flagship models reliably drop the persona unless the identity
+	// is stated forcefully; softer phrasing was ignored by Sonnet/Haiku.
 	return fmt.Sprintf(
 		"# IDENTITY OVERRIDE (non-negotiable)\n"+
 			"You are **%s**. This is your name and your ONLY identity.\n"+
@@ -207,7 +217,7 @@ func modIdentityAnchor(p *promptCtx) string {
 			"When anyone asks \"你是谁\" / \"who are you\", answer as **%s** — "+
 			"never mention Claude, Anthropic, or any base-model identity.\n"+
 			"Your full personality and behavioral rules are defined in SOUL.md and IDENTITY.md below. Follow them exactly.",
-		p.cb.displayName, p.cb.displayName)
+		name, name)
 }
 
 // modDateOnly emits just the date line — used by Customize mode where
@@ -520,9 +530,16 @@ func modSandbox(p *promptCtx) string {
 	if !p.cb.sandboxEnabled {
 		return ""
 	}
+	// First rule differs by guidance: sub-flagship models stall at just
+	// showing code without the firm "always execute" directive; top-tier
+	// models execute on their own and the imperative only clutters.
+	executeRule := "- When the user asks you to write a script, calculate something, or process data, **always execute it immediately** using the exec tool — do NOT stop at showing code without running it. (This is about running scripts you write, not about delivering finished text files — those you still output in full, see Delivering Files below.)"
+	if p.cb.guidance == "autonomous" {
+		executeRule = "- When you write a script to solve a task, execute it with the exec tool so the user sees the result, not just the code."
+	}
 	prompt := `# Code Execution Environment
 You have access to a sandbox environment for executing code. Key rules:
-- When the user asks you to write a script, calculate something, or process data, **always execute it immediately** using the exec tool — do NOT stop at showing code without running it. (This is about running scripts you write, not about delivering finished text files — those you still output in full, see Delivering Files below.)
+` + executeRule + `
 - Only show code without executing when the user explicitly asks to "just show" or "just write" the code.
 - Always show the execution output/result to the user.
 

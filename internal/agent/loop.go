@@ -556,7 +556,7 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 		registry:             registry,
 		sessions:             session.NewManager(rc.Home + "/sessions"),
 		memory:               memory,
-		ctxBuilder:           newContextBuilderWithSandbox(rc.Home, workspace, memory, skillsSummary, rc.Thinking, rc.Sandbox.Enabled, rc.Sandbox.Backend, rc.PromptMode),
+		ctxBuilder:           newContextBuilderWithSandbox(rc.Home, workspace, memory, skillsSummary, rc.Thinking, rc.Guidance, rc.Sandbox.Enabled, rc.Sandbox.Backend, rc.PromptMode),
 		hooks:                hooks,
 		model:                rc.Model,
 		maxTokens:            rc.MaxTokens,
@@ -644,16 +644,17 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	return ag
 }
 
-func newContextBuilderWithThinking(home string, memory *Memory, skillsSummary string, thinking string) *ContextBuilder {
+func newContextBuilderWithThinking(home string, memory *Memory, skillsSummary string, thinking string, guidance string) *ContextBuilder {
 	cb := NewContextBuilder(home, memory, skillsSummary)
 	if thinking != "" {
 		cb.SetThinking(thinking)
 	}
+	cb.SetGuidance(guidance)
 	return cb
 }
 
-func newContextBuilderWithSandbox(home, workspace string, memory *Memory, skillsSummary string, thinking string, sandboxEnabled bool, sandboxBackend string, promptMode string) *ContextBuilder {
-	cb := newContextBuilderWithThinking(home, memory, skillsSummary, thinking)
+func newContextBuilderWithSandbox(home, workspace string, memory *Memory, skillsSummary string, thinking string, guidance string, sandboxEnabled bool, sandboxBackend string, promptMode string) *ContextBuilder {
+	cb := newContextBuilderWithThinking(home, memory, skillsSummary, thinking, guidance)
 	cb.SetWorkspace(workspace)
 	cb.sandboxEnabled = sandboxEnabled
 	cb.sandboxBackend = sandboxBackend
