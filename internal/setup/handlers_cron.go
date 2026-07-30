@@ -63,7 +63,8 @@ func (s *Server) handleToggleAgentCronJob(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req struct {
-		Enabled bool `json:"enabled"`
+		Enabled *bool `json:"enabled,omitempty"`
+		Silent  *bool `json:"silent,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
@@ -74,7 +75,12 @@ func (s *Server) handleToggleAgentCronJob(w http.ResponseWriter, r *http.Request
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "job not found for this agent"})
 		return
 	}
-	job.Enabled = req.Enabled
+	if req.Enabled != nil {
+		job.Enabled = *req.Enabled
+	}
+	if req.Silent != nil {
+		job.Silent = *req.Silent
+	}
 	if err := s.dataStore.SaveCronJob(r.Context(), job); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

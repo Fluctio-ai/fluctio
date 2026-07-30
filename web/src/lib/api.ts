@@ -2360,6 +2360,22 @@ export async function toggleAgentCronJob(
   return res.json();
 }
 
+export async function setAgentCronJobSilent(
+  agentId: string,
+  jobId: string,
+  silent: boolean,
+): Promise<{ ok: boolean; job?: AgentCronJob; error?: string }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/cron/${encodeURIComponent(jobId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ silent }),
+    },
+  );
+  return res.json();
+}
+
 export async function listAgentChannels(agentId: string): Promise<AgentChannel[]> {
   const res = await apiFetch(`/api/agents/${agentId}/channels`);
   if (!res.ok) return [];

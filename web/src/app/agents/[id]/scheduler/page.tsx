@@ -27,6 +27,7 @@ import {
   listAgentCronJobs,
   deleteAgentCronJob,
   toggleAgentCronJob,
+  setAgentCronJobSilent,
   type AgentCronJob,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
@@ -91,6 +92,7 @@ export default function AgentSchedulerPage() {
   // Track in-flight toggles by job id so the row reflects optimistic
   // state and the switch doesn't double-fire while the request is open.
   const [toggling, setToggling] = useState<Record<string, boolean>>({});
+  const [silencing, setSilencing] = useState<Record<string, boolean>>({});
 
   const refresh = useCallback(() => {
     if (!agentId) return;
@@ -125,6 +127,24 @@ export default function AgentSchedulerPage() {
     if (res.error || !res.ok) {
       setError(res.error || t("scheduler.updateFailed"));
       // Revert by refetching the canonical state.
+      refresh();
+    }
+  };
+
+  const handleSetSilent = async (job: AgentCronJob, silent: boolean) => {
+    if (!agentId || silencing[job.id]) return;
+    setSilencing((m) => ({ ...m, [job.id]: true }));
+    setJobs((prev) =>
+      prev.map((j) => (j.id === job.id ? { ...j, silent } : j)),
+    );
+    const res = await setAgentCronJobSilent(agentId, job.id, silent);
+    setSilencing((m) => {
+      const { [job.id]: _drop, ...rest } = m;
+      void _drop;
+      return rest;
+    });
+    if (res.error || !res.ok) {
+      setError(res.error || t("scheduler.updateFailed"));
       refresh();
     }
   };
@@ -178,7 +198,9 @@ export default function AgentSchedulerPage() {
               key={job.id}
               job={job}
               busy={!!toggling[job.id]}
+              silentBusy={!!silencing[job.id]}
               onToggle={(enabled) => handleToggle(job, enabled)}
+              onSetSilent={(silent) => handleSetSilent(job, silent)}
               onDelete={() => setDeleteTarget(job)}
             />
           ))}
@@ -214,12 +236,16 @@ export default function AgentSchedulerPage() {
 function JobRow({
   job,
   busy,
+  silentBusy,
   onToggle,
+  onSetSilent,
   onDelete,
 }: {
   job: AgentCronJob;
   busy: boolean;
+  silentBusy: boolean;
   onToggle: (enabled: boolean) => void;
+  onSetSilent: (silent: boolean) => void;
   onDelete: () => void;
 }) {
   const t = useT();
@@ -239,15 +265,11 @@ function JobRow({
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
               {fmtSchedule(job, t)}
             </code>
-            {job.silent ? (
-              <Badge variant="secondary" className="text-[10px]">
-                {t("scheduler.silent")}
-              </Badge>
-            ) : job.channel ? (
+            {job.channel && !job.silent && (
               <span className="text-[11px] text-muted-foreground">
                 {t("scheduler.via")} {job.channel}
               </span>
-            ) : null}
+            )}
           </div>
           <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <MessageSquare className="size-3.5 mt-0.5 shrink-0" />
@@ -264,7 +286,16 @@ function JobRow({
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <label className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer">
+            <Switch
+              checked={!!job.silent}
+              disabled={silentBusy}
+              onCheckedChange={(v) => onSetSilent(v)}
+              aria-label={t("scheduler.silent")}
+            />
+            {t("scheduler.silent")}
+          </label>
           <Switch
             checked={job.enabled}
             disabled={busy}
