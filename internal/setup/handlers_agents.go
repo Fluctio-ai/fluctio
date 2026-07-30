@@ -163,6 +163,20 @@ func (s *Server) agentScopePromptMode(r *http.Request, agentID string) string {
 	return ""
 }
 
+// agentScopeGuidance reads the per-agent guidance override ("autonomous"
+// vs "guided"). Empty = no override; callers fall back to the default
+// ("guided") at prompt-build time.
+func (s *Server) agentScopeGuidance(r *http.Request, agentID string) string {
+	rec, err := s.dataStore.GetConfigByName(r.Context(), store.KindSetting, agentID, "agents.defaults")
+	if err != nil || rec == nil {
+		return ""
+	}
+	if v, ok := rec.Data["guidance"].(string); ok {
+		return v
+	}
+	return ""
+}
+
 // agentScopePlugins reads the per-agent plugin enable overlay. Returns
 // nil when no row exists. Keyed pluginID → bool; missing keys fall
 // through to the system-wide plugin entry's enabled state.
@@ -426,6 +440,9 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// PromptMode also drives the built-in tool surface; there is
 		// no separate allowlist field by design (extend via plugins).
 		PromptMode *string `json:"promptMode,omitempty"`
+		// Guidance per-agent override: nil = leave unchanged; ptr-to-
+		// string = "autonomous" | "guided" (empty clears the override).
+		Guidance *string `json:"guidance,omitempty"`
 		// SplitReplies per-agent override: nil = leave unchanged,
 		// non-nil pointer-to-bool = set explicit value (true/false).
 		// Distinct from "clear" which is a separate signal — the
@@ -594,6 +611,18 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.Guidance != nil {
+		g := strings.TrimSpace(*req.Guidance)
+		switch g {
+		case "":
+			defaultsPatch["guidance"] = nil
+		case "autonomous", "guided":
+			defaultsPatch["guidance"] = g
+		default:
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "guidance must be one of: autonomous, guided"})
+			return
+		}
+	}
 	if req.SplitRepliesReset {
 		// Reset wins over set in the same request — the dashboard's
 		// "Inherit" pill writes this flag.
@@ -642,6 +671,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			"name":           rec.Name,
 			"model":          s.agentScopeModel(r, rec.ID),
 			"promptMode":     s.agentScopePromptMode(r, rec.ID),
+			"guidance":       s.agentScopeGuidance(r, rec.ID),
 			"splitReplies":   s.agentScopeSplitReplies(r, rec.ID),
 			"autoPersist":    s.agentScopeAutoPersist(r, rec.ID),
 			"sharedIdentity": s.agentScopeSharedIdentity(r, s.effectiveUserID(r), rec.ID),
@@ -677,6 +707,7 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 			"role":           role,
 			"model":          s.agentScopeModel(r, rec.ID),
 			"promptMode":     s.agentScopePromptMode(r, rec.ID),
+			"guidance":       s.agentScopeGuidance(r, rec.ID),
 			"splitReplies":   s.agentScopeSplitReplies(r, rec.ID),
 			"autoPersist":    s.agentScopeAutoPersist(r, rec.ID),
 			"sharedIdentity": s.agentScopeSharedIdentity(r, s.effectiveUserID(r), rec.ID),

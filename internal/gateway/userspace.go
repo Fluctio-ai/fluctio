@@ -421,6 +421,9 @@ func (sp *UserSpace) EnsureAgent(ctx context.Context, st store.Store, mb *bus.Me
 			if ovr.Thinking != "" {
 				rc.Thinking = ovr.Thinking
 			}
+			if ovr.Guidance != "" {
+				rc.Guidance = ovr.Guidance
+			}
 			if ovr.PolicyPreset != "" {
 				rc.PolicyPreset = ovr.PolicyPreset
 			}
@@ -635,6 +638,9 @@ func loadUserSpace(ctx context.Context, userID string, mb *bus.MessageBus, st st
 			}
 			if agentOverride.Thinking != "" {
 				rc.Thinking = agentOverride.Thinking
+			}
+			if agentOverride.Guidance != "" {
+				rc.Guidance = agentOverride.Guidance
 			}
 			if agentOverride.PolicyPreset != "" {
 				rc.PolicyPreset = agentOverride.PolicyPreset
