@@ -37,6 +37,13 @@ const MODE_LABEL_KEY: Record<string, string> = {
   customize: "context.modeCustomize",
 };
 
+type GuidanceValue = "autonomous" | "guided";
+
+const GUIDANCE_LABEL_KEY: Record<GuidanceValue, string> = {
+  guided: "context.guidanceGuided",
+  autonomous: "context.guidanceAutonomous",
+};
+
 export default function AgentContextPage() {
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
@@ -44,6 +51,9 @@ export default function AgentContextPage() {
 
   // "" = no override saved; runtime falls back to "agent".
   const [promptMode, setPromptMode] = useState<PromptModeValue>("");
+  // guidance: "guided" (default, firm rules) vs "autonomous" (soft).
+  // Backend "" is normalized to "guided" on load.
+  const [guidance, setGuidance] = useState<GuidanceValue>("guided");
   // Per-agent multi-bubble toggle. Applies to every IM channel the
   // agent is bound to. False is the default; null on the wire is
   // treated as false here.
@@ -90,6 +100,7 @@ export default function AgentContextPage() {
       } else {
         setPromptMode("");
       }
+      setGuidance(agentRec?.guidance === "autonomous" ? "autonomous" : "guided");
       setSplitReplies(agentRec?.splitReplies === true);
       setAutoPersist(agentRec?.autoPersist === true);
       setSharedIdentity(agentRec?.sharedIdentity === true);
@@ -160,6 +171,20 @@ export default function AgentContextPage() {
       flashSaved();
     } catch {
       setPromptMode(prev);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGuidanceChange = async (next: GuidanceValue) => {
+    const prev = guidance;
+    setGuidance(next);
+    setSaving(true);
+    try {
+      await updateAgent(agentId, { guidance: next });
+      flashSaved();
+    } catch {
+      setGuidance(prev);
     } finally {
       setSaving(false);
     }
@@ -372,6 +397,42 @@ export default function AgentContextPage() {
             {t("context.pluginToolsExample")}
           </span>
         </div>
+      </div>
+
+      {/* Guidance: autonomous vs guided operational-constraint strength */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Brain className="h-4 w-4 text-primary" />
+            <h3 className="font-medium">{t("context.guidance")}</h3>
+            {guidance === "guided" ? (
+              <Badge variant="outline" className="text-[10px]">
+                {t("context.default")}
+              </Badge>
+            ) : (
+              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px]">
+                {t("context.guidanceAutonomous")}
+              </Badge>
+            )}
+          </div>
+        </div>
+        <Select
+          value={guidance}
+          onValueChange={(v: string | null) => {
+            if (v === "autonomous" || v === "guided") {
+              handleGuidanceChange(v);
+            }
+          }}
+          disabled={saving}
+        >
+          <SelectTrigger className="text-sm max-w-[240px]">
+            <SelectValue>{t(GUIDANCE_LABEL_KEY[guidance])}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="guided">{t("context.guidanceGuided")}</SelectItem>
+            <SelectItem value="autonomous">{t("context.guidanceAutonomous")}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Reply language — IM channels can't forward the web client's

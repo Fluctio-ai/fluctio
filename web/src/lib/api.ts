@@ -62,6 +62,11 @@ export interface AgentDetail {
   // function of this mode — there's no separate allowlist field by
   // design. Extend tools via Plugin or MCP, not per-agent toggles.
   promptMode?: string;
+  // guidance: per-agent operational-constraint strength. "" / undefined
+  // = no override (runtime defaults to "guided"); "guided" = firm rules
+  // (sub-flagship models); "autonomous" = soft, judgement-led phrasing
+  // (top-tier models).
+  guidance?: string;
   // splitReplies is the per-agent multi-bubble override. Applies to
   // every IM channel uniformly — when on, the agent may emit the
   // SplitMessageMarker between bubbles and the dispatcher honors it.
@@ -1419,6 +1424,9 @@ export interface AgentUpdatePayload {
   // (only the date anchor + bootstrap files — author writes the whole
   // system prompt themselves via SOUL.md / IDENTITY.md). Pass "" to clear.
   promptMode?: "" | "agent" | "chatbot" | "customize";
+  // Guidance per-agent override: "guided" (default, firm) or
+  // "autonomous" (soft). Pass "" to clear the override.
+  guidance?: "" | "autonomous" | "guided";
   // Multi-bubble per-agent override (applies to all IM channels).
   // Tri-state: omit to leave the saved value alone; pass true/false to
   // set explicit; pass `splitRepliesReset: true` to delete the override
