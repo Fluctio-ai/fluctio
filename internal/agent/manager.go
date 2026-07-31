@@ -313,6 +313,14 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			var kbStore *kb.KBStore
 			if dbs, ok := m.opts.dataStore.(*store.DBStore); ok {
 				kbStore = kb.NewKBStore(dbs.DB(), dbs.Dialect())
+				if ag.memoryCfg.KBEmbedding && ag.embedder != nil && ag.embedder.Available() {
+					var rr embedding.Reranker
+					if ag.memoryCfg.Reranker.Enabled {
+						rc := ag.memoryCfg.Reranker
+						rr = embedding.NewJinaReranker(rc.APIBase, rc.APIKey, rc.Model)
+					}
+					kbStore.SetRetriever(ag.embedder, rr)
+				}
 			}
 			kbCfg := rc.KB
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {

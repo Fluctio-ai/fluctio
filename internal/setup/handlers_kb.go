@@ -1,12 +1,16 @@
 package setup
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
@@ -232,15 +236,31 @@ func (s *Server) handleKBSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 // kbStoreFor creates a KBStore for the given agent if the dataStore is available.
+// When KBEmbedding is on and an embedder is configured it also equips the store
+// with the embedder (+ optional reranker) so admin-panel search uses vector
+// recall — same path the agent's own KB tools use.
 func (s *Server) kbStoreFor(agentID string) *kb.KBStore {
-
 	if s.dataStore == nil {
 		return nil
 	}
-	if dbs, ok := s.dataStore.(*store.DBStore); ok {
-		return kb.NewKBStore(dbs.DB(), dbs.Dialect())
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok {
+		return nil
 	}
-	return nil
+	ks := kb.NewKBStore(dbs.DB(), dbs.Dialect())
+	var mem config.MemoryCfg
+	if err := scope.SettingInto(context.Background(), dbs, "memory", "", agentID, &mem); err == nil &&
+		mem.KBEmbedding && mem.Embedding.Enabled {
+		emb := embedding.NewOpenAICompatEmbedder(mem.Embedding.APIBase, mem.Embedding.APIKey, mem.Embedding.Model, mem.Embedding.Dim, mem.Embedding.DimEnabled)
+		if emb.Available() {
+			var rr embedding.Reranker
+			if mem.Reranker.Enabled {
+				rr = embedding.NewJinaReranker(mem.Reranker.APIBase, mem.Reranker.APIKey, mem.Reranker.Model)
+			}
+			ks.SetRetriever(emb, rr)
+		}
+	}
+	return ks
 }
 
 // handleKBMCP handles MCP JSON-RPC 2.0 requests for an agent's knowledge base.

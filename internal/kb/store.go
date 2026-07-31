@@ -3,14 +3,17 @@ package kb
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/google/uuid"
 )
 
@@ -54,12 +57,24 @@ func softClipUTF8(s string, maxBytes int) string {
 }
 
 type KBStore struct {
-	db      *sql.DB
-	dialect string
+	db       *sql.DB
+	dialect  string
+	embedder embedding.Embedder // optional; nil → keyword/bigram search
+	reranker embedding.Reranker // optional; nil → embedding scores only
 }
 
 func NewKBStore(db *sql.DB, dialect string) *KBStore {
 	return &KBStore{db: db, dialect: dialect}
+}
+
+// SetRetriever equips the store with an embedder (and optional reranker) so
+// Search uses vector recall + cross-encoder re-rank instead of keyword
+// bigram scoring. Either may be nil; a nil embedder keeps the legacy path.
+// Called once when the agent wires up its KB tools — only when KBEmbedding
+// is on and an embedder is configured.
+func (s *KBStore) SetRetriever(emb embedding.Embedder, rr embedding.Reranker) {
+	s.embedder = emb
+	s.reranker = rr
 }
 
 func (s *KBStore) ph(n int) string {
@@ -134,6 +149,15 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 	}
 	sourceLimit := int(math.Round(float64(limit) * sourceRatio))
 	otherLimit := limit - sourceLimit
+
+	// Vector path: when an embedder is wired up, recall by semantic
+	// similarity and (optionally) cross-encoder re-rank. Falls through to
+	// the keyword path on any failure (off / unconfigured / empty store).
+	if s.embedder != nil && s.embedder.Available() {
+		if rr := s.searchWikiByVector(ctx, agentID, query, limit, preFilterLimit, threshold); len(rr) > 0 {
+			return rr, nil
+		}
+	}
 
 	// Wiki-only: source pages (raw-content-derived) + concept/entity/query
 	// pages, each bigram-scored within its bucket. kb_entries is NOT searched
@@ -239,6 +263,136 @@ func (s *KBStore) searchWikiByType(ctx context.Context, agentID, query string, s
 		results = append(results, scoredToResults(scoreCandidates(otherPages, query, otherLimit, threshold))...)
 	}
 	return results
+}
+
+// searchWikiByVector is the embedding + reranker path. It embeds the query,
+// cosine-scores every stored wiki page vector, takes the top candidates,
+// then optionally re-ranks with the cross-encoder. Returns nil on any
+// failure so Search falls back to the keyword path. Unlike searchWikiByType
+// it does not split source/other buckets — reranker relevance surfaces the
+// right mix on its own.
+func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string, limit, preFilterLimit int, threshold float64) []KBResult {
+	qvecs, err := s.embedder.Embed(ctx, []string{query})
+	if err != nil || len(qvecs) != 1 {
+		return nil
+	}
+	q := qvecs[0]
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.page_id, e.embedding, wp.title, wp.summary, wp.body, wp.page_type, wp.slug
+		 FROM wiki_page_embeddings e
+		 JOIN wiki_pages wp ON wp.id = e.page_id
+		 WHERE e.agent_id = `+s.ph(1), agentID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	type cand struct {
+		id, title, summary, body, pageType string
+		score                              float64
+	}
+	var cands []cand
+	for rows.Next() {
+		var pid string
+		var blob []byte
+		var title, summary, body, pageType, slug string
+		if err := rows.Scan(&pid, &blob, &title, &summary, &body, &pageType, &slug); err != nil {
+			return nil
+		}
+		vec := kbFloat32FromBlob(blob)
+		if len(vec) != len(q) {
+			continue // dim mismatch (stale vector from a different model)
+		}
+		cands = append(cands, cand{pid, title, summary, body, pageType, kbCosine(q, vec)})
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
+
+	// Re-rank the top candidates with the cross-encoder when available; its
+	// normalised 0..1 score replaces cosine so the threshold gate and
+	// downstream ranking consume the same scale.
+	pool := cands
+	if preFilterLimit > 0 && len(pool) > preFilterLimit*2 {
+		pool = pool[:preFilterLimit*2]
+	}
+	if s.reranker != nil && s.reranker.Available() && len(pool) > 1 {
+		docs := make([]string, len(pool))
+		for i, c := range pool {
+			docs[i] = c.summary
+			if docs[i] == "" {
+				docs[i] = c.title
+			}
+		}
+		if scored, err := s.reranker.Rerank(ctx, query, docs, limit); err == nil && len(scored) > 0 {
+			reranked := make([]cand, 0, len(scored))
+			for _, sd := range scored {
+				if sd.Index < 0 || sd.Index >= len(pool) {
+					continue
+				}
+				c := pool[sd.Index]
+				c.score = sd.Score
+				reranked = append(reranked, c)
+			}
+			pool = reranked
+		}
+	}
+
+	results := make([]KBResult, 0, limit)
+	for _, c := range pool {
+		if c.score < threshold {
+			continue
+		}
+		content := c.summary
+		if content == "" {
+			content = c.body
+		}
+		snippet := content
+		if len(snippet) > 300 {
+			snippet = softClipUTF8(snippet, 300)
+		}
+		results = append(results, KBResult{
+			SourceID:    c.id,
+			SourceTitle: c.title,
+			SourceKind:  "wiki",
+			PageType:    c.pageType,
+			Content:     content,
+			Snippet:     snippet,
+			Rank:        c.score,
+		})
+		if len(results) >= limit {
+			break
+		}
+	}
+	return results
+}
+
+// kbFloat32FromBlob decodes a little-endian float32 BLOB into a vector.
+// Mirrors wiki.float32FromBlob / store.float32FromBlob.
+func kbFloat32FromBlob(buf []byte) []float32 {
+	if len(buf) == 0 || len(buf)%4 != 0 {
+		return nil
+	}
+	vec := make([]float32, len(buf)/4)
+	for i := range vec {
+		bits := binary.LittleEndian.Uint32(buf[i*4:])
+		vec[i] = math.Float32frombits(bits)
+	}
+	return vec
+}
+
+// kbCosine is cosine similarity over float32 vectors.
+func kbCosine(a, b []float32) float64 {
+	var dot, na, nb float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		na += float64(a[i]) * float64(a[i])
+		nb += float64(b[i]) * float64(b[i])
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
 // searchWikiPrefilter uses LIKE with individual query tokens to get candidate pages.
