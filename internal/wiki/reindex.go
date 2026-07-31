@@ -16,11 +16,14 @@ type ReindexResult struct {
 	Failed    int
 }
 
-// ReindexEmbeddings re-embeds every wiki page for an agent. When force is
-// true it first clears existing vectors (model switch / mass re-vectorize).
-// Pages with empty summary+title are skipped. perCallDelay paces the
-// embedding API; zero disables it. Best-effort: a failed embed is counted
-// and skipped, never aborts the pass.
+// ReindexEmbeddings embeds the agent's wiki pages. When force is true it
+// first clears existing vectors and re-embeds every page (model switch /
+// mass re-vectorize); when false it only embeds pages that don't yet have a
+// vector (incremental backfill — already-vectorized pages are skipped, so
+// day-to-day runs only pay for what's missing). Pages with empty
+// summary+title are skipped. perCallDelay paces the embedding API; zero
+// disables it. Best-effort: a failed embed is counted and skipped, never
+// aborts the pass.
 func ReindexEmbeddings(ctx context.Context, ws *WikiStore, emb embedding.Embedder, agentID string, force bool, perCallDelay time.Duration) (ReindexResult, error) {
 	res := ReindexResult{}
 	if ws == nil || emb == nil || !emb.Available() || agentID == "" {
@@ -31,6 +34,20 @@ func ReindexEmbeddings(ctx context.Context, ws *WikiStore, emb embedding.Embedde
 			return res, err
 		}
 	}
+	// Incremental mode (force=false): skip pages that already have a vector,
+	// embedding only the ones that are missing one. On force=true everything
+	// was just cleared above, so nothing is skipped.
+	var have map[string]bool
+	if !force {
+		existing, err := ws.ListPageEmbeddingsByAgent(ctx, agentID)
+		if err != nil {
+			return res, err
+		}
+		have = make(map[string]bool, len(existing))
+		for _, e := range existing {
+			have[e.PageID] = true
+		}
+	}
 	pages, _, err := ws.ListPages(ctx, agentID, "", 5000, 0)
 	if err != nil {
 		return res, err
@@ -38,6 +55,9 @@ func ReindexEmbeddings(ctx context.Context, ws *WikiStore, emb embedding.Embedde
 	for _, p := range pages {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
+		}
+		if have != nil && have[p.ID] {
+			continue // already vectorized — leave it alone in incremental mode
 		}
 		text := p.Summary
 		if strings.TrimSpace(text) == "" {

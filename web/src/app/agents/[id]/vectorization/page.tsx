@@ -128,12 +128,13 @@ export default function AgentMemoryPage() {
     }
   };
 
-  const handleWikiReindex = async () => {
+  const handleWikiReindex = async (force: boolean) => {
     if (!wikiEmbedding) return;
+    if (force && !window.confirm(t("memory.wikiReindexForceConfirm") || "将清空现有向量并对全部 wiki 页面重新 embedding，确定?")) return;
     setWikiReindexing(true);
     setWikiReindexMsg(null);
     try {
-      const res = await reindexWikiEmbeddings(agentId);
+      const res = await reindexWikiEmbeddings(agentId, force);
       if (res.ok) {
         const failedPart = res.failed ? ` · ${res.failed} failed` : "";
         setWikiReindexMsg(`${res.processed ?? 0} processed${failedPart}`);
@@ -349,10 +350,13 @@ export default function AgentMemoryPage() {
             <Switch checked={wikiEmbedding} onCheckedChange={(v: boolean) => setWikiEmbedding(v)} />
           </div>
           {wikiEmbedding && (
-            <div className="flex items-center gap-3 pt-1">
-              <Button variant="outline" size="sm" className="h-8" onClick={handleWikiReindex} disabled={wikiReindexing || saving}>
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Button variant="outline" size="sm" className="h-8" onClick={() => handleWikiReindex(false)} disabled={wikiReindexing || saving}>
                 {wikiReindexing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-                {wikiReindexing ? (t("memory.reindexing") || "Reindexing…") : (t("memory.wikiReindex") || "重新向量化维基")}
+                {wikiReindexing ? (t("memory.reindexing") || "Reindexing…") : (t("memory.wikiReindex") || "补缺失向量")}
+              </Button>
+              <Button variant="ghost" size="sm" className="h-8 text-muted-foreground" onClick={() => handleWikiReindex(true)} disabled={wikiReindexing || saving}>
+                {t("memory.wikiReindexForce") || "强制全部重向量化"}
               </Button>
               {wikiReindexMsg && <span className="text-xs text-muted-foreground">{wikiReindexMsg}</span>}
             </div>

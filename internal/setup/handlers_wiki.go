@@ -48,7 +48,8 @@ func (s *Server) handleWikiReindexEmbed(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	res, err := wiki.ReindexEmbeddings(ctx, ws, emb, id, true, 100*time.Millisecond)
+	force := r.URL.Query().Get("force") == "true"
+	res, err := wiki.ReindexEmbeddings(ctx, ws, emb, id, force, 100*time.Millisecond)
 	if err != nil {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return

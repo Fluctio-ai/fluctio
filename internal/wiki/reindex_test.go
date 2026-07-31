@@ -77,3 +77,33 @@ func TestReindexEmbeddings(t *testing.T) {
 		t.Errorf("embeddings after re-run = %d, want 2 (idempotent)", len(embs2))
 	}
 }
+
+// TestReindexEmbeddingsIncremental: force=false skips pages that already
+// have a vector, embedding only the missing one.
+func TestReindexEmbeddingsIncremental(t *testing.T) {
+	db := setupWikiTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	ws := NewWikiStore(db, "sqlite")
+
+	ws.UpsertPage(ctx, &WikiPage{ID: "e:foo", AgentID: "a1", PageType: "entity", Slug: "foo", Title: "Foo", Body: "b", Summary: "s", SourceIDs: []string{}, Tags: []string{}})
+	ws.UpsertPage(ctx, &WikiPage{ID: "e:bar", AgentID: "a1", PageType: "entity", Slug: "bar", Title: "Bar", Body: "b", Summary: "s", SourceIDs: []string{}, Tags: []string{}})
+
+	// pre-vectorize foo as if it were already done
+	if err := ws.SavePageEmbedding(ctx, "a1", "e:foo", []float32{0.5, 0.5}, "old"); err != nil {
+		t.Fatalf("pre-embed: %v", err)
+	}
+
+	// incremental: only bar is missing → processed=1, foo left alone
+	res, err := ReindexEmbeddings(ctx, ws, mockEmbedder{}, "a1", false, 0)
+	if err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+	if res.Processed != 1 {
+		t.Errorf("processed = %d, want 1 (only the missing page)", res.Processed)
+	}
+	embs, _ := ws.ListPageEmbeddingsByAgent(ctx, "a1")
+	if len(embs) != 2 {
+		t.Errorf("embeddings = %d, want 2 after backfill", len(embs))
+	}
+}

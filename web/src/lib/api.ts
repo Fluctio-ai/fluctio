@@ -1836,11 +1836,12 @@ export async function reindexAgentMemory(agentId: string): Promise<{ ok?: boolea
   return res.json().catch(() => ({ ok: true }));
 }
 
-// reindexWikiEmbeddings re-vectorizes all wiki pages for an agent (force
-// rebuild after a model switch or after enabling WikiEmbedding on a wiki
-// that already had pages).
-export async function reindexWikiEmbeddings(agentId: string): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {
-  const res = await apiFetch(`/api/agents/${agentId}/wiki/reindex-embed`, { method: "POST" });
+// reindexWikiEmbeddings re-vectorizes wiki pages for an agent. By default it
+// only embeds pages that lack a vector (incremental backfill); pass force=true
+// to clear and re-embed every page (model switch).
+export async function reindexWikiEmbeddings(agentId: string, force?: boolean): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {
+  const url = `/api/agents/${agentId}/wiki/reindex-embed${force ? "?force=true" : ""}`;
+  const res = await apiFetch(url, { method: "POST" });
   if (!res.ok) return { error: `HTTP ${res.status}` };
   return res.json().catch(() => ({ ok: true }));
 }
