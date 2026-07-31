@@ -75,7 +75,7 @@ export default function WikiPage() {
   // pages and loads more as the user scrolls to the bottom. A continuous
   // list (not pagination) keeps the three-pane interlink intact — the
   // selected page never disappears onto another page.
-  const [visibleCount, setVisibleCount] = useState(30);
+  const [visibleCount, setVisibleCount] = useState(20);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
   // Resizable panes + right-pane collapse (Step B). Widths in px; the
@@ -399,11 +399,15 @@ export default function WikiPage() {
               })
             )}
             {visibleCount < pages.length && (
-              <div
-                ref={sentinelRef}
-                className="py-2 text-center text-xs text-muted-foreground"
-              >
-                {t("common.loading")}
+              <div ref={sentinelRef} className="py-2 flex justify-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-muted-foreground"
+                  onClick={() => setVisibleCount((c) => Math.min(c + 20, pages.length))}
+                >
+                  {t("wiki.loadMore")}
+                </Button>
               </div>
             )}
           </div>
