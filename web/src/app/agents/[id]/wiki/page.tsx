@@ -261,7 +261,10 @@ export default function WikiPage() {
         networkRef.current = null;
       }
     };
-  }, [agentId]);
+    // Re-run when the right pane re-mounts after a collapse/expand:
+    // collapsing unmounts the graphRef div, so on expand the network
+    // has to be rebuilt against the freshly mounted DOM node.
+  }, [agentId, rightCollapsed]);
 
   // Selection sync: focus + highlight the matching node whenever the
   // selected page changes (left-list click OR graph-node click).
