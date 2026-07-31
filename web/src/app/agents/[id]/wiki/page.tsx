@@ -20,9 +20,10 @@ import {
   BookOpenIcon,
   ChevronRightIcon,
   DatabaseIcon,
-  EyeIcon,
   LightbulbIcon,
   NetworkIcon,
+  PanelRightCloseIcon,
+  PanelRightOpenIcon,
   TrashIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -48,11 +49,10 @@ import { cn } from "@/lib/utils";
 //   Right  — knowledge graph (vis-network), always mounted
 // All three panes are interlinked: selecting a page (left list or graph
 // node click) updates the center preview AND focuses/highlights the
-// node in the graph. The auto-gen settings + generate actions used to
-// live here inline; they've moved to the Settings dialog's Knowledge
-// tab (WikiAutoGenSettingsCard), so this page is display-only.
+// node in the graph. Panes are resizable via draggable dividers; the
+// right pane can collapse to a thin rail. Auto-gen settings + generate
+// actions live in the Settings dialog (WikiAutoGenSettingsCard).
 const PAGE_TYPE_SECTIONS = (t: ReturnType<typeof useT>) => [
-  { type: "overview", label: t("wiki.overview"), icon: EyeIcon },
   { type: "entity", label: t("wiki.entity"), icon: DatabaseIcon },
   { type: "concept", label: t("wiki.concept"), icon: LightbulbIcon },
   { type: "source", label: t("wiki.source"), icon: BookOpenIcon },
@@ -71,12 +71,17 @@ export default function WikiPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Resizable panes + right-pane collapse (Step B). Widths in px; the
+  // drag handlers clamp to min/max so a pane can't be sized off-screen.
+  const [leftWidth, setLeftWidth] = useState(256);
+  const [rightWidth, setRightWidth] = useState(480);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
+
   // The right-pane graph is always mounted. networkRef persists the
   // vis-network instance across renders so we can focus/select nodes
   // when the selected page changes. handleSelectPageRef lets the
   // graph's click handler call the latest selector without forcing the
-  // network-build effect to depend on (and thus rebuild on) every
-  // selectedPageId change.
+  // network-build effect to depend on (and rebuild on) every change.
   const graphRef = useRef<HTMLDivElement>(null);
   const networkRef = useRef<import("vis-network").Network | null>(null);
   const handleSelectPageRef = useRef<(id: string) => void>(() => {});
@@ -110,8 +115,6 @@ export default function WikiPage() {
     },
     [agentId],
   );
-  // Keep the ref current so the graph click handler always calls the
-  // latest closure without re-running the network-build effect.
   handleSelectPageRef.current = handleSelectPage;
 
   const openDelete = useCallback((page: WikiPage) => {
@@ -133,6 +136,35 @@ export default function WikiPage() {
       setDeleteError(e instanceof Error ? e.message : t("wiki.deleteFailed"));
     }
   }, [agentId, deleteTarget, selectedPageId, loadData, t]);
+
+  // Drag a vertical divider to resize the left/right panes. Pointer
+  // events attach to the document so the drag keeps tracking even when
+  // the cursor leaves the thin handle. Left handle: drag right = grow;
+  // right handle: drag left = grow (delta inverted).
+  const startDrag = (e: React.PointerEvent, which: "left" | "right") => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startLeft = leftWidth;
+    const startRight = rightWidth;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      if (which === "left") {
+        setLeftWidth(Math.min(520, Math.max(200, startLeft + dx)));
+      } else {
+        setRightWidth(Math.min(760, Math.max(320, startRight - dx)));
+      }
+    };
+    const up = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
 
   // Group pages by type for the left-pane sections.
   const grouped = useMemo(() => {
@@ -166,8 +198,7 @@ export default function WikiPage() {
     );
   }, [selectedPage, titleMap]);
 
-  // Build the graph once per agent. Right pane is always mounted now,
-  // so this no longer gates on a showGraph toggle.
+  // Build the graph once per agent. Right pane is always mounted.
   useEffect(() => {
     if (!graphRef.current || !agentId) return;
     let cancelled = false;
@@ -215,9 +246,7 @@ export default function WikiPage() {
         edges: { smooth: true },
       });
       networkRef.current = network;
-      // Three-pane interlink: clicking a graph node selects that page
-      // (center preview updates + the selection-sync effect below
-      // re-focuses the graph on the same node).
+      // Three-pane interlink: clicking a graph node selects that page.
       network.on("click", (params: { nodes?: string[] }) => {
         if (params.nodes?.length) {
           handleSelectPageRef.current?.(params.nodes[0]);
@@ -234,9 +263,8 @@ export default function WikiPage() {
     };
   }, [agentId]);
 
-  // Selection sync: whenever the selected page changes (left-list click
-  // OR graph-node click), focus + highlight the matching node so the
-  // graph stays coupled to the preview.
+  // Selection sync: focus + highlight the matching node whenever the
+  // selected page changes (left-list click OR graph-node click).
   useEffect(() => {
     const net = networkRef.current;
     if (!net || !selectedPageId) return;
@@ -255,7 +283,10 @@ export default function WikiPage() {
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* Left: page list grouped by type */}
-      <div className="w-56 shrink-0 border-r bg-muted/30 flex flex-col">
+      <div
+        style={{ width: leftWidth }}
+        className="shrink-0 border-r bg-muted/30 flex flex-col"
+      >
         <div className="p-3 border-b">
           <h3 className="text-sm font-semibold">{t("wiki.title")}</h3>
           {stats && (
@@ -280,6 +311,7 @@ export default function WikiPage() {
             ) : (
               PAGE_TYPE_SECTIONS(t).map((section) => {
                 const sectionPages = grouped[section.type] || [];
+                if (sectionPages.length === 0) return null;
                 return (
                   <div key={section.type} className="mb-2">
                     <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground">
@@ -323,11 +355,17 @@ export default function WikiPage() {
         </ScrollArea>
       </div>
 
+      {/* Left/center resize handle */}
+      <div
+        onPointerDown={(e) => startDrag(e, "left")}
+        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+      />
+
       {/* Center: markdown preview */}
       <div className="flex-1 flex flex-col min-w-0">
         {selectedPage ? (
           <ScrollArea className="flex-1">
-            <div className="p-6 max-w-4xl">
+            <div className="p-6 max-w-5xl">
               <div className="flex items-center gap-2 mb-4">
                 <Badge variant="outline">{selectedPage.page_type}</Badge>
                 <h1 className="text-xl font-bold">{selectedPage.title}</h1>
@@ -382,14 +420,45 @@ export default function WikiPage() {
         )}
       </div>
 
-      {/* Right: knowledge graph (always mounted, interlinked) */}
-      <div className="w-80 shrink-0 border-l flex flex-col">
-        <div className="p-3 border-b flex items-center gap-2">
-          <NetworkIcon className="h-4 w-4" />
-          <h3 className="text-sm font-semibold">{t("wiki.knowledgeGraph")}</h3>
+      {/* Center/right resize handle + right-pane collapse */}
+      {!rightCollapsed && (
+        <div
+          onPointerDown={(e) => startDrag(e, "right")}
+          className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+        />
+      )}
+      {!rightCollapsed ? (
+        <div
+          style={{ width: rightWidth }}
+          className="shrink-0 border-l flex flex-col"
+        >
+          <div className="p-3 border-b flex items-center gap-2">
+            <NetworkIcon className="h-4 w-4" />
+            <h3 className="text-sm font-semibold">{t("wiki.knowledgeGraph")}</h3>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 ml-auto"
+              onClick={() => setRightCollapsed(true)}
+              title={t("wiki.collapseGraph")}
+            >
+              <PanelRightCloseIcon className="h-4 w-4" />
+            </Button>
+          </div>
+          <div ref={graphRef} className="flex-1" />
         </div>
-        <div ref={graphRef} className="flex-1" />
-      </div>
+      ) : (
+        <button
+          onClick={() => setRightCollapsed(false)}
+          className="shrink-0 border-l px-1 py-3 flex flex-col items-center gap-1 text-xs text-muted-foreground hover:bg-accent"
+          title={t("wiki.expandGraph")}
+        >
+          <PanelRightOpenIcon className="h-4 w-4" />
+          <span className="[writing-mode:vertical-rl] rotate-180">
+            {t("wiki.knowledgeGraph")}
+          </span>
+        </button>
+      )}
 
       <AlertDialog
         open={!!deleteTarget}

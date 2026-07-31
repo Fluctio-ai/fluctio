@@ -840,6 +840,8 @@ const zhCN: Record<string, string> = {
   "wiki.generateUnprocessed": "生成未处理的 Wiki",
   "wiki.forceRegenAll": "强制重新生成所有 Wiki",
   "wiki.knowledgeGraph": "知识图谱",
+  "wiki.collapseGraph": "收起图谱",
+  "wiki.expandGraph": "展开图谱",
   "wiki.wikiGraphTitle": "{name} 的 Wiki 知识图谱",
   "wiki.noPages": "暂无 Wiki 页面。请在知识库设置中生成。",
   "wiki.selectPagePrompt": "选择左侧的页面或右侧的图谱节点查看内容。",
