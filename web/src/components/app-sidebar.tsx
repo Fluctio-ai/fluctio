@@ -15,6 +15,7 @@ import {
 import { AgentSwitcher, AgentSwitcherItem } from "@/components/team-switcher";
 import { NavMain, NavItem } from "@/components/nav-main";
 import { NavSessions, SessionItem } from "@/components/nav-projects";
+import { NavKnowledge } from "@/components/nav-knowledge";
 import { NavProjectsList } from "@/components/nav-projects-list";
 import { NavUser } from "@/components/nav-user";
 import { AgentSettingsDialog } from "@/components/agent-settings-dialog";
@@ -306,6 +307,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
             project CRUD is read-write for whoever opened the agent, but
             agent configuration (skills, channels, models) stays the
             owner's. */}
+        {activeAgentId && <NavKnowledge agentId={activeAgentId} />}
         {activeAgentId && (
           <NavProjectsList
             agentId={activeAgentId}

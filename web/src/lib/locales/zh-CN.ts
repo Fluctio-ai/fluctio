@@ -56,7 +56,7 @@ const zhCN: Record<string, string> = {
   "nav.manageAgents": "管理智能体",
   "nav.group.agent": "智能体",
   "nav.group.user": "用户",
-  "nav.group.knowledge": "知识",
+  "nav.group.knowledge": "知识库",
   "nav.role.admin": "管理员",
   "nav.role.user": "用户",
 
@@ -1548,6 +1548,8 @@ const zhCN: Record<string, string> = {
   "slash.personality_list": "🎭 人格列表\n─────────────────\n{names}\n\n用法: /personality <名称>",
   "nav.group.projects": "项目",
   "nav.group.chats": "对话",
+  "nav.knowledge.sources": "数据源",
+  "nav.knowledge.wiki": "维基",
   "common.name": "名称",
   "common.description": "描述",
   "common.deleting": "删除中…",

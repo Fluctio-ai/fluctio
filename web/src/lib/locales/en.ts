@@ -1548,6 +1548,8 @@ Info
   "slash.personality_list": "🎭 Personalities\n─────────────────\n{names}\n\nUsage: /personality <name>",
   "nav.group.projects": "Projects",
   "nav.group.chats": "Chats",
+  "nav.knowledge.sources": "Data Sources",
+  "nav.knowledge.wiki": "Wiki",
   "common.name": "Name",
   "common.description": "Description",
   "common.deleting": "Deleting…",
