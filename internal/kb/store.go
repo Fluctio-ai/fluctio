@@ -160,6 +160,7 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 	// the keyword path on any failure (off / unconfigured / empty store).
 	if s.embedder != nil && s.embedder.Available() {
 		if rr := s.searchWikiByVector(ctx, agentID, query, limit, preFilterLimit, threshold); len(rr) > 0 {
+			slog.Info("kb search: vector path (wiki)", "agent", agentID, "results", len(rr))
 			return rr, nil
 		}
 	}
@@ -188,6 +189,7 @@ func (s *KBStore) SearchRawKB(ctx context.Context, agentID, query string, source
 	// keyword LIKE on any failure (off / unconfigured / empty store).
 	if s.embedder != nil && s.embedder.Available() && strings.TrimSpace(query) != "" {
 		if rr := s.searchRawByVector(ctx, agentID, query, sourceIDs, limit); len(rr) > 0 {
+			slog.Info("kb raw search: vector path", "agent", agentID, "results", len(rr))
 			return rr, nil
 		}
 	}
