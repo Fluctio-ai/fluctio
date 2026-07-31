@@ -841,6 +841,8 @@ const en: Record<string, string> = {
   "wiki.forceRegenAll": "Force regenerate all Wiki",
   "wiki.knowledgeGraph": "Knowledge Graph",
   "wiki.wikiGraphTitle": "Wiki Knowledge Graph — {name}",
+  "wiki.noPages": "No wiki pages yet. Generate them from the Knowledge settings.",
+  "wiki.selectPagePrompt": "Select a page on the left or a graph node on the right to preview.",
   "wiki.forceRegenFull": "Force regenerate all",
   "wiki.pageStats": "{pages} pages · {links} links",
   "wiki.sourcesProcessed": "{done} of {total} sources processed, ",

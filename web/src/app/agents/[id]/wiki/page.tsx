@@ -6,15 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,45 +18,39 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   BookOpenIcon,
-  BrainIcon,
   ChevronRightIcon,
   DatabaseIcon,
   EyeIcon,
-  FlaskConicalIcon,
   LightbulbIcon,
   NetworkIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  SparklesIcon,
   TrashIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { ExternalAnchor } from "@/components/markdown-link";
-import { ChatMarkdown } from "@/components/chat-markdown";
 import {
   type WikiPage,
   type WikiStats,
   getWikiStats,
   listWikiPages,
   getWikiPage,
-  deleteWikiPage,
-  generateWiki,
-  getWikiProgress,
   getWikiGraph,
-  listKBSources,
-  type KBSource,
-  type WikiAutoGenCfg,
-  type WikiAutogenStatus,
-  getAgentMemory,
-  setAgentMemory,
-  getWikiAutogenStatus,
+  deleteWikiPage,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { cn } from "@/lib/utils";
 
+// WikiPage is the three-pane wiki browser at /agents/<id>/wiki/.
+//   Left   — page list grouped by type (overview/entity/concept/source)
+//   Center — markdown preview of the selected page
+//   Right  — knowledge graph (vis-network), always mounted
+// All three panes are interlinked: selecting a page (left list or graph
+// node click) updates the center preview AND focuses/highlights the
+// node in the graph. The auto-gen settings + generate actions used to
+// live here inline; they've moved to the Settings dialog's Knowledge
+// tab (WikiAutoGenSettingsCard), so this page is display-only.
 const PAGE_TYPE_SECTIONS = (t: ReturnType<typeof useT>) => [
   { type: "overview", label: t("wiki.overview"), icon: EyeIcon },
   { type: "entity", label: t("wiki.entity"), icon: DatabaseIcon },
@@ -85,21 +70,16 @@ export default function WikiPage() {
   const [deleteTarget, setDeleteTarget] = useState<WikiPage | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [progress, setProgress] = useState<{ done: number; total: number; status: string } | null>(null);
-  const [filterType, setFilterType] = useState<string>("all");
-  const [showGraph, setShowGraph] = useState(false);
+
+  // The right-pane graph is always mounted. networkRef persists the
+  // vis-network instance across renders so we can focus/select nodes
+  // when the selected page changes. handleSelectPageRef lets the
+  // graph's click handler call the latest selector without forcing the
+  // network-build effect to depend on (and thus rebuild on) every
+  // selectedPageId change.
   const graphRef = useRef<HTMLDivElement>(null);
-
-  // KB sources for generation
-  const [kbSources, setKbSources] = useState<KBSource[]>([]);
-
-  // Background auto-generation config (memory.wikiAutoGen). Loaded once,
-  // saved via spread so we never clobber sibling memory fields.
-  const [wikiCfg, setWikiCfg] = useState<WikiAutoGenCfg>({ enabled: false });
-  const [wikiSaving, setWikiSaving] = useState(false);
-  const wikiSavingRef = useRef(false);
-  const [autogenStatus, setAutogenStatus] = useState<WikiAutogenStatus | null>(null);
+  const networkRef = useRef<import("vis-network").Network | null>(null);
+  const handleSelectPageRef = useRef<(id: string) => void>(() => {});
 
   const loadData = useCallback(async () => {
     if (!agentId) return;
@@ -107,67 +87,17 @@ export default function WikiPage() {
     try {
       const [s, p] = await Promise.all([
         getWikiStats(agentId),
-        listWikiPages(agentId, filterType === "all" ? undefined : filterType),
+        listWikiPages(agentId),
       ]);
       setStats(s);
       setPages(p.pages ?? []);
     } catch {}
     setLoading(false);
-  }, [agentId, filterType]);
+  }, [agentId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  // Load KB sources for generation UI
-  useEffect(() => {
-    if (!agentId) return;
-    listKBSources(agentId).then(setKbSources).catch(() => {});
-  }, [agentId]);
-
-  // Load auto-gen config
-  useEffect(() => {
-    if (!agentId) return;
-    getAgentMemory(agentId)
-      .then((m) => setWikiCfg(m.memory?.wikiAutoGen || { enabled: false }))
-      .catch(() => {});
-  }, [agentId]);
-
-  // Poll auto-gen status while enabled so the status line reflects the last sweep.
-  useEffect(() => {
-    if (!agentId || !wikiCfg.enabled) {
-      setAutogenStatus(null);
-      return;
-    }
-    let cancelled = false;
-    const fetchStatus = () =>
-      getWikiAutogenStatus(agentId)
-        .then((s) => {
-          if (!cancelled) setAutogenStatus(s);
-        })
-        .catch(() => {});
-    fetchStatus();
-    const id = setInterval(fetchStatus, 10000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [agentId, wikiCfg.enabled]);
-
-  const saveWikiCfg = async (next: WikiAutoGenCfg) => {
-    if (wikiSavingRef.current) return;
-    wikiSavingRef.current = true;
-    setWikiCfg(next);
-    setWikiSaving(true);
-    try {
-      const cur = await getAgentMemory(agentId).catch(() => null);
-      const base = cur?.memory || {};
-      await setAgentMemory(agentId, { ...base, wikiAutoGen: next });
-    } finally {
-      setWikiSaving(false);
-      wikiSavingRef.current = false;
-    }
-  };
 
   const handleSelectPage = useCallback(
     async (pageId: string) => {
@@ -180,52 +110,9 @@ export default function WikiPage() {
     },
     [agentId],
   );
-
-  const handleGenerate = useCallback(async (force?: boolean) => {
-    if (!agentId || kbSources.length === 0) return;
-    setGenerating(true);
-    setProgress({ done: 0, total: kbSources.length, status: "running" });
-    try {
-      await generateWiki(
-        agentId,
-        kbSources.map((s) => s.id),
-        force,
-      );
-    } catch {
-      setGenerating(false);
-      setProgress(null);
-    }
-  }, [agentId, kbSources]);
-
-  useEffect(() => {
-    if (!agentId || !generating) return;
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const p = await getWikiProgress(agentId);
-        if (cancelled) return;
-        if (p.status === "idle") return;
-        setProgress({ done: p.done ?? 0, total: p.total ?? 0, status: p.status });
-        if (p.status === "done") {
-          setGenerating(false);
-          loadData();
-        }
-      } catch {}
-    };
-    poll();
-    const id = setInterval(poll, 2000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [agentId, generating, loadData]);
-
-  const handleForceGenerate = useCallback(() => {
-    if (!window.confirm(t("wiki.forceRegenConfirm"))) return;
-    handleGenerate(true);
-  }, [handleGenerate, t]);
-
-  const unprocessedCount = kbSources.filter((s) => !s.wiki_generated_at).length;
+  // Keep the ref current so the graph click handler always calls the
+  // latest closure without re-running the network-build effect.
+  handleSelectPageRef.current = handleSelectPage;
 
   const openDelete = useCallback((page: WikiPage) => {
     setDeleteError(null);
@@ -247,24 +134,49 @@ export default function WikiPage() {
     }
   }, [agentId, deleteTarget, selectedPageId, loadData, t]);
 
-  const handleLoadGraph = useCallback(async () => {
-    if (!agentId) return;
-    setShowGraph(true);
-  }, [agentId]);
+  // Group pages by type for the left-pane sections.
+  const grouped = useMemo(() => {
+    const m: Record<string, WikiPage[]> = {};
+    for (const p of pages) {
+      if (!m[p.page_type]) m[p.page_type] = [];
+      m[p.page_type].push(p);
+    }
+    return m;
+  }, [pages]);
 
-  // Render vis-network graph
+  // titleMap resolves a wiki-link target ("page_type:slug") to its
+  // display title so rendered links read as the target page's name.
+  const titleMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const p of pages) {
+      m[`${p.page_type}:${p.slug}`] = p.title;
+    }
+    return m;
+  }, [pages]);
+
+  // Rewrite [[type:slug]] / [[type:slug|alias]] wiki links into markdown
+  // links on a relative /wiki-link/ path (survives ReactMarkdown's URL
+  // sanitizer; the a-renderer below intercepts it).
+  const renderedBody = useMemo(() => {
+    if (!selectedPage) return "";
+    return (selectedPage.body || "").replace(
+      /\[\[(\w+:[\w-]+)(?:\|([^\]]+))?\]\]/g,
+      (_, link, display) =>
+        `[${display || titleMap[link] || link}](/wiki-link/${link})`,
+    );
+  }, [selectedPage, titleMap]);
+
+  // Build the graph once per agent. Right pane is always mounted now,
+  // so this no longer gates on a showGraph toggle.
   useEffect(() => {
-    if (!showGraph || !graphRef.current || !agentId) return;
-    let network: import("vis-network").Network | null = null;
+    if (!graphRef.current || !agentId) return;
     let cancelled = false;
-
     const init = async () => {
       const [{ Network }, { DataSet }] = await Promise.all([
         import("vis-network/standalone"),
         import("vis-data/standalone"),
       ]);
-      if (cancelled) return;
-
+      if (cancelled || !graphRef.current) return;
       const g = await getWikiGraph(agentId);
       if (cancelled) return;
 
@@ -275,7 +187,6 @@ export default function WikiPage() {
         source: "#f59e0b",
         query: "#ef4444",
       };
-
       const nodes = new DataSet(
         g.nodes.map((n) => ({
           id: n.id,
@@ -287,7 +198,6 @@ export default function WikiPage() {
           size: 20,
         })),
       );
-
       const edges = new DataSet(
         (g.edges ?? []).map((e, i) => ({
           id: i + 1,
@@ -299,244 +209,123 @@ export default function WikiPage() {
           width: 1,
         })),
       );
-
-      network = new Network(graphRef.current!, { nodes, edges }, {
+      const network = new Network(graphRef.current, { nodes, edges }, {
         physics: { stabilization: { iterations: 100 }, solver: "forceAtlas2Based" },
         interaction: { hover: true, tooltipDelay: 200 },
         edges: { smooth: true },
       });
+      networkRef.current = network;
+      // Three-pane interlink: clicking a graph node selects that page
+      // (center preview updates + the selection-sync effect below
+      // re-focuses the graph on the same node).
+      network.on("click", (params: { nodes?: string[] }) => {
+        if (params.nodes?.length) {
+          handleSelectPageRef.current?.(params.nodes[0]);
+        }
+      });
     };
-
     init();
-    return () => { cancelled = true; if (network) network.destroy(); };
-  }, [showGraph, agentId]);
+    return () => {
+      cancelled = true;
+      if (networkRef.current) {
+        networkRef.current.destroy();
+        networkRef.current = null;
+      }
+    };
+  }, [agentId]);
 
-  // Group pages by type
-  const grouped = useMemo(() => {
-    const m: Record<string, WikiPage[]> = {};
-    for (const p of pages) {
-      if (!m[p.page_type]) m[p.page_type] = [];
-      m[p.page_type].push(p);
+  // Selection sync: whenever the selected page changes (left-list click
+  // OR graph-node click), focus + highlight the matching node so the
+  // graph stays coupled to the preview.
+  useEffect(() => {
+    const net = networkRef.current;
+    if (!net || !selectedPageId) return;
+    try {
+      net.selectNodes([selectedPageId]);
+      net.focus(selectedPageId, {
+        scale: 1.2,
+        animation: { duration: 400, easingFunction: "easeInOutQuad" },
+      });
+    } catch {
+      // Node may not exist in the graph (e.g. a page with no edges);
+      // selecting it is best-effort, not fatal.
     }
-    return m;
-  }, [pages]);
-
-  // titleMap resolves a wiki-link target ("page_type:slug") to its display
-  // title, so rendered links read as the target page's name rather than its
-  // slug. Falls back to the raw "type:slug" if the target isn't in the
-  // current listing (e.g. filtered out).
-  const titleMap = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const p of pages) {
-      m[`${p.page_type}:${p.slug}`] = p.title;
-    }
-    return m;
-  }, [pages]);
-
-  // Rewrite [[type:slug]] wiki links into standard markdown links. Two forms
-  // occur in the wild: [[type:slug]] (the prompt asks for this) and
-  // [[type:slug|display text]] (an Obsidian-style alias the LLM emits too),
-  // so the regex accepts an optional "|alias". The href uses a relative
-  // "/wiki-link/" path rather than a "wiki:" pseudo-protocol — ReactMarkdown's
-  // URL sanitizer strips unknown schemes to "", which would drop the link;
-  // a relative path survives, and the a renderer below intercepts it.
-  const renderedBody = useMemo(() => {
-    if (!selectedPage) return "";
-    return (selectedPage.body || "").replace(
-      /\[\[(\w+:[\w-]+)(?:\|([^\]]+))?\]\]/g,
-      (_, link, display) =>
-        `[${display || titleMap[link] || link}](/wiki-link/${link})`,
-    );
-  }, [selectedPage, titleMap]);
+  }, [selectedPageId]);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
-      {/* Left: Tree navigation */}
-      <div className="w-64 shrink-0 border-r bg-muted/30 flex flex-col">
+      {/* Left: page list grouped by type */}
+      <div className="w-56 shrink-0 border-r bg-muted/30 flex flex-col">
         <div className="p-3 border-b">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold">{t("wiki.title")}</h3>
-              {generating && progress && (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <RefreshCwIcon className="h-3 w-3 animate-spin" />
-                  {t("wiki.generatingProgress", { done: progress.done, total: progress.total })}
-                </span>
-              )}
-            </div>
-            <div className="flex gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => handleGenerate()}
-                disabled={generating || unprocessedCount === 0}
-                title={unprocessedCount === 0 ? t("wiki.allProcessed") : t("wiki.generateUnprocessed")}
-              >
-                <SparklesIcon className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={handleForceGenerate}
-                disabled={generating || kbSources.length === 0}
-                title={t("wiki.forceRegenAll")}
-              >
-                <RefreshCwIcon className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={handleLoadGraph}
-                title={t("wiki.knowledgeGraph")}
-              >
-                <NetworkIcon className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
+          <h3 className="text-sm font-semibold">{t("wiki.title")}</h3>
           {stats && (
             <p className="text-xs text-muted-foreground mt-1">
-              {t("wiki.pageStats", { pages: stats.total_pages, links: stats.total_edges })}
+              {t("wiki.pageStats", {
+                pages: stats.total_pages,
+                links: stats.total_edges,
+              })}
             </p>
           )}
         </div>
-
-        {/* Auto-generation config */}
-        <div className="p-3 border-b space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium">{t("wiki.autoGen")}</span>
-            <Switch
-              checked={wikiCfg.enabled}
-              onCheckedChange={(v) => saveWikiCfg({ ...wikiCfg, enabled: v })}
-              disabled={wikiSaving}
-            />
-          </div>
-          {wikiCfg.enabled && (
-            <>
-              <div className="flex items-center justify-between gap-2">
-                <label className="text-xs text-muted-foreground">{t("wiki.autoGenInterval")}</label>
-                <div className="flex items-center gap-1.5">
-                  <Input
-                    type="number"
-                    min={1}
-                    className="w-16 h-7 text-xs"
-                    value={wikiCfg.interval ? Math.round(wikiCfg.interval / 3600000000000) : 6}
-                    onChange={(e) => {
-                      const hours = Math.max(1, Number(e.target.value) || 6);
-                      saveWikiCfg({ ...wikiCfg, interval: hours * 3600000000000 });
-                    }}
-                    disabled={wikiSaving}
-                  />
-                  <span className="text-xs text-muted-foreground">{t("wiki.autoGenHours")}</span>
-                </div>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <label className="text-xs text-muted-foreground">{t("wiki.autoGenMaxTokens")}</label>
-                <Input
-                  type="number"
-                  min={0}
-                  step={512}
-                  className="w-20 h-7 text-xs"
-                  value={wikiCfg.maxTokens && wikiCfg.maxTokens > 0 ? wikiCfg.maxTokens : 8192}
-                  onChange={(e) => {
-                    const v = Math.max(0, Number(e.target.value) || 0);
-                    saveWikiCfg({ ...wikiCfg, maxTokens: v });
-                  }}
-                  disabled={wikiSaving}
-                />
-              </div>
-              <p className="text-[11px] leading-tight text-muted-foreground">{t("wiki.autoGenHint")}</p>
-              {autogenStatus && (
-                <div className="text-[11px] leading-tight text-muted-foreground space-y-0.5 pt-1">
-                  <div>
-                    {t("wiki.autoGenLastRun")}:{" "}
-                    {autogenStatus.last_run
-                      ? new Date(autogenStatus.last_run).toLocaleString()
-                      : t("wiki.autoGenNever")}
-                  </div>
-                  {autogenStatus.last_status &&
-                    autogenStatus.last_status !== "ok" &&
-                    autogenStatus.last_status !== "no_sources" && (
-                      <div className="text-warning">
-                        {t(`wiki.autoGenStatus.${autogenStatus.last_status}`)}
-                        {autogenStatus.last_error ? ` — ${autogenStatus.last_error}` : ""}
-                      </div>
-                    )}
-                  {typeof autogenStatus.pending === "number" &&
-                    autogenStatus.pending > 0 && (
-                      <div>{t("wiki.autoGenPending", { n: autogenStatus.pending })}</div>
-                    )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
         <ScrollArea className="flex-1">
           <div className="p-2">
-            {PAGE_TYPE_SECTIONS(t).map((section) => {
-              const sectionPages = grouped[section.type] || [];
-              return (
-                <div key={section.type} className="mb-2">
-                  <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground">
-                    <section.icon className="h-3 w-3" />
-                    {section.label}
-                    {sectionPages.length > 0 && (
-                      <span className="ml-auto">{sectionPages.length}</span>
-                    )}
-                  </div>
-                  {sectionPages.map((page) => (
-                    <div
-                      key={page.id}
-                      role="button"
-                      tabIndex={0}
-                      className={cn(
-                        "group w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-accent flex items-center gap-1.5 cursor-pointer",
-                        selectedPageId === page.id && "bg-accent font-medium",
+            {loading ? (
+              <p className="text-xs text-muted-foreground px-2 py-1.5">
+                {t("common.loading")}
+              </p>
+            ) : pages.length === 0 ? (
+              <p className="text-xs text-muted-foreground px-2 py-1.5">
+                {t("wiki.noPages")}
+              </p>
+            ) : (
+              PAGE_TYPE_SECTIONS(t).map((section) => {
+                const sectionPages = grouped[section.type] || [];
+                return (
+                  <div key={section.type} className="mb-2">
+                    <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground">
+                      <section.icon className="h-3 w-3" />
+                      {section.label}
+                      {sectionPages.length > 0 && (
+                        <span className="ml-auto">{sectionPages.length}</span>
                       )}
-                      onClick={() => handleSelectPage(page.id)}
-                    >
-                      <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
-                      <span className="truncate flex-1">{page.title}</span>
-                      <button
-                        type="button"
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openDelete(page);
-                        }}
-                        aria-label={t("common.delete")}
-                      >
-                        <TrashIcon className="h-3.5 w-3.5" />
-                      </button>
                     </div>
-                  ))}
-                </div>
-              );
-            })}
+                    {sectionPages.map((page) => (
+                      <div
+                        key={page.id}
+                        role="button"
+                        tabIndex={0}
+                        className={cn(
+                          "group w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-accent flex items-center gap-1.5 cursor-pointer",
+                          selectedPageId === page.id && "bg-accent font-medium",
+                        )}
+                        onClick={() => handleSelectPage(page.id)}
+                      >
+                        <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
+                        <span className="truncate flex-1">{page.title}</span>
+                        <button
+                          type="button"
+                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openDelete(page);
+                          }}
+                          aria-label={t("common.delete")}
+                        >
+                          <TrashIcon className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })
+            )}
           </div>
         </ScrollArea>
       </div>
 
-      {/* Center: Markdown preview */}
+      {/* Center: markdown preview */}
       <div className="flex-1 flex flex-col min-w-0">
-        {showGraph ? (
-          <div className="flex-1 flex flex-col">
-            <div className="p-3 border-b flex items-center gap-2">
-              <h3 className="text-sm font-semibold">{t("wiki.knowledgeGraph")}</h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowGraph(false)}
-              >
-                返回
-              </Button>
-            </div>
-            <div ref={graphRef} className="flex-1" />
-          </div>
-        ) : selectedPage ? (
+        {selectedPage ? (
           <ScrollArea className="flex-1">
             <div className="p-6 max-w-4xl">
               <div className="flex items-center gap-2 mb-4">
@@ -558,16 +347,7 @@ export default function WikiPage() {
                   components={{
                     a: (props) => {
                       const { href, children } = props;
-                      // Wiki internal links carry a "wiki:" pseudo-protocol
-                      // (produced by the [[type:slug]] source rewrite in
-                      // renderedBody). Intercept and route to the page
-                      // selector instead of letting the browser navigate.
                       if (href && href.startsWith("/wiki-link/")) {
-                        // Render as a <button>, NOT <a href> — any href lets
-                        // the browser/Next.js router treat the click as
-                        // navigation and hijack it away from the wiki view.
-                        // The link target is "/wiki-link/<type>:<slug>" from
-                        // the [[...]] source rewrite in renderedBody.
                         return (
                           <button
                             type="button"
@@ -590,43 +370,27 @@ export default function WikiPage() {
             </div>
           </ScrollArea>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            <div className="text-center">
+          <div className="flex-1 flex items-center justify-center text-muted-foreground text-center px-4">
+            <div>
               <BookOpenIcon className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <h2 className="text-lg font-semibold mb-1">{t("wiki.wikiGraphTitle", { name: agentName })}</h2>
-              <p className="text-sm mb-4">
-                {agentName
-                  ? `${agentName} 的结构化知识库`
-                  : "从知识库源生成结构化 Wiki 页面"}
-              </p>
-              {pages.length === 0 && kbSources.length > 0 && (
-                <div className="space-y-2">
-                  <Button onClick={() => handleGenerate()} disabled={generating || unprocessedCount === 0}>
-                    <SparklesIcon className="h-4 w-4 mr-2" />
-                    {generating ? "生成中..." : `生成 Wiki (${unprocessedCount} 待处理)`}
-                  </Button>
-                  {unprocessedCount < kbSources.length && (
-                    <p className="text-xs text-muted-foreground">
-                      {t("wiki.sourcesProcessed", { done: kbSources.length - unprocessedCount, total: kbSources.length })}
-                      <button
-                        className="underline hover:text-foreground ml-1"
-                        onClick={handleForceGenerate}
-                      >
-                        {t("wiki.forceRegenFull")}
-                      </button>
-                    </p>
-                  )}
-                </div>
-              )}
-              {kbSources.length === 0 && (
-                <p className="text-xs">
-                  请先在知识库管理中添加数据源
-                </p>
-              )}
+              <h2 className="text-lg font-semibold mb-1">
+                {t("wiki.wikiGraphTitle", { name: agentName })}
+              </h2>
+              <p className="text-sm">{t("wiki.selectPagePrompt")}</p>
             </div>
           </div>
         )}
       </div>
+
+      {/* Right: knowledge graph (always mounted, interlinked) */}
+      <div className="w-80 shrink-0 border-l flex flex-col">
+        <div className="p-3 border-b flex items-center gap-2">
+          <NetworkIcon className="h-4 w-4" />
+          <h3 className="text-sm font-semibold">{t("wiki.knowledgeGraph")}</h3>
+        </div>
+        <div ref={graphRef} className="flex-1" />
+      </div>
+
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(o) => {
@@ -640,7 +404,8 @@ export default function WikiPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>{t("wiki.deletePageTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {deleteError ?? t("wiki.deletePageConfirm", { name: deleteTarget?.title ?? "" })}
+              {deleteError ??
+                t("wiki.deletePageConfirm", { name: deleteTarget?.title ?? "" })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

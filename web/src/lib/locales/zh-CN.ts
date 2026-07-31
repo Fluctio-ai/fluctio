@@ -841,6 +841,8 @@ const zhCN: Record<string, string> = {
   "wiki.forceRegenAll": "强制重新生成所有 Wiki",
   "wiki.knowledgeGraph": "知识图谱",
   "wiki.wikiGraphTitle": "{name} 的 Wiki 知识图谱",
+  "wiki.noPages": "暂无 Wiki 页面。请在知识库设置中生成。",
+  "wiki.selectPagePrompt": "选择左侧的页面或右侧的图谱节点查看内容。",
   "wiki.forceRegenFull": "强制重新生成全部",
   "wiki.pageStats": "{pages} 页 · {links} 链接",
   "wiki.sourcesProcessed": "{done} 个源已处理，共 {total} 个",
