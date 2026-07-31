@@ -567,6 +567,30 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if fsPath == "" {
 		fsPath = "."
 	}
+	// Next 16 RSC flight URLs are flat (dot-separated, e.g.
+	// overview/__next.overview.__PAGE__.txt) but the built files are
+	// nested (overview/__next.overview/__PAGE__.txt). Convert any
+	// __next.*.txt flat URL to its nested file UP FRONT so the real RSC
+	// payload is served app-wide. Without this, the generic fallbacks
+	// below serve index.html (HTML) for a .txt RSC request, the App
+	// Router caches HTML-as-RSC, and the next soft navigation to that
+	// route hard-reloads. (agent subroutes under /agents/<id>/ also hit
+	// the default-fallback branch below because <id> has no built tree.)
+	if idx := strings.Index(fsPath, "__next."); idx >= 0 && strings.HasSuffix(fsPath, ".txt") {
+		prefix := fsPath[:idx]
+		core := strings.TrimPrefix(strings.TrimSuffix(fsPath[idx:], ".txt"), "__next.")
+		if segs := strings.Split(core, "."); len(segs) > 1 {
+			nested := prefix + "__next." + segs[0] + "/" + strings.Join(segs[1:], "/") + ".txt"
+			if f, err := h.fs.Open(nested); err == nil {
+				stat, statErr := f.Stat()
+				f.Close()
+				if statErr == nil && !stat.IsDir() {
+					http.ServeFileFS(w, r, h.fs, nested)
+					return
+				}
+			}
+		}
+	}
 	if f, err := h.fs.Open(fsPath); err == nil {
 		stat, statErr := f.Stat()
 		f.Close()
