@@ -552,7 +552,18 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if path != "/" && strings.HasSuffix(path, "/") {
 		path = strings.TrimSuffix(path, "/")
 	}
-	fsPath := strings.TrimPrefix(path, "/")
+	// Trim BOTH slashes: the leading one (request path always starts with
+	// "/") and any trailing one. A trailing slash on a directory-style
+	// URL like /agents/<id>/chat/ used to leave fsPath ending in "chat/",
+	// which split into ["chat", ""] — and the dynamic-segment fallback
+	// below then mistook the empty tail segment for a dynamic value,
+	// substituting "_" and serving the chat/_/index.html session
+	// placeholder instead of chat/index.html. That wrong placeholder made
+	// Next's App Router hard-reload on every fresh-chat navigation
+	// (project/<pid>/ was unaffected because pid is always non-empty).
+	// Trimming the trailing slash collapses "chat/" back to "chat" so the
+	// dirFallback (agents/default/chat/index.html) is served correctly.
+	fsPath := strings.Trim(path, "/")
 	if fsPath == "" {
 		fsPath = "."
 	}
