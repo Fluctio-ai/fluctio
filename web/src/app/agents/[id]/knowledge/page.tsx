@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -32,11 +33,13 @@ import {
   generateWiki,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
+import { cn } from "@/lib/utils";
 
-// AgentKnowledgePage is the data-source browser mounted at
-// /agents/<id>/knowledge/ (sidebar "Knowledge" → "Data Sources").
-// Display-only list + ingest/preview; the KB *settings* (auto-query)
-// live in the Settings dialog's Knowledge tab via <KBSettingsCard/>.
+// AgentKnowledgePage is the two-pane data-source browser at
+// /agents/<id>/knowledge/ (sidebar "Knowledge" → "Data Sources"). Left
+// pane lists sources; clicking one loads its chunks into the right pane
+// (replaces the old preview dialog). Ingest (text/URL) lives in dialogs.
+// KB *settings* are in the Settings dialog's Knowledge tab.
 export default function AgentKnowledgePage() {
   const t = useT();
   const agentId = useAgentIdFromURL();
@@ -45,12 +48,13 @@ export default function AgentKnowledgePage() {
   const [stats, setStats] = useState<KBStats | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Right pane: chunks of the selected source.
+  const [selectedSource, setSelectedSource] = useState<KBSource | null>(null);
+  const [entries, setEntries] = useState<KBEntry[]>([]);
+  const [entriesLoading, setEntriesLoading] = useState(false);
+
   const [textDialogOpen, setTextDialogOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewSource, setPreviewSource] = useState<KBSource | null>(null);
-  const [previewEntries, setPreviewEntries] = useState<KBEntry[]>([]);
-  const [previewLoading, setPreviewLoading] = useState(false);
   const [textTitle, setTextTitle] = useState("");
   const [textContent, setTextContent] = useState("");
   const [urlValue, setUrlValue] = useState("");
@@ -72,6 +76,18 @@ export default function AgentKnowledgePage() {
   }, [agentId]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const handleSelectSource = useCallback(async (src: KBSource) => {
+    if (!agentId) return;
+    setSelectedSource(src);
+    setEntries([]);
+    setEntriesLoading(true);
+    try {
+      const es = await listKBEntries(agentId, src.id);
+      setEntries(es);
+    } catch { setEntries([]); }
+    setEntriesLoading(false);
+  }, [agentId]);
 
   const handleIngestText = useCallback(async () => {
     if (!agentId || !textContent.trim()) return;
@@ -105,76 +121,120 @@ export default function AgentKnowledgePage() {
     if (!agentId) return;
     try {
       const res = await deleteKBSource(agentId, sourceId);
-      if ("error" in res) alert(res.error); else loadData();
+      if ("error" in res) alert(res.error); else {
+        if (selectedSource?.id === sourceId) {
+          setSelectedSource(null);
+          setEntries([]);
+        }
+        loadData();
+      }
     } catch {}
-  }, [agentId, loadData]);
-
-  const handlePreviewSource = useCallback(async (src: KBSource) => {
-    if (!agentId) return;
-    setPreviewSource(src);
-    setPreviewOpen(true);
-    setPreviewLoading(true);
-    try {
-      const entries = await listKBEntries(agentId, src.id);
-      setPreviewEntries(entries);
-    } catch { setPreviewEntries([]); }
-    setPreviewLoading(false);
-  }, [agentId]);
+  }, [agentId, loadData, selectedSource]);
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("knowledge.dataSources")}</h2>
-          {stats && (
-            <p className="text-sm text-muted-foreground mt-1">
-              {stats.source_count} {t("knowledge.sources")} · {stats.entry_count} {t("knowledge.entries")} · {(stats.total_chars / 1024).toFixed(1)} KB
-            </p>
-          )}
+    <div className="flex h-[calc(100vh-3.5rem)]">
+      {/* Left: source list */}
+      <div className="w-80 shrink-0 border-r bg-muted/30 flex flex-col">
+        <div className="p-3 border-b space-y-2">
+          <div>
+            <h3 className="text-sm font-semibold">{t("knowledge.dataSources")}</h3>
+            {stats && (
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {stats.source_count} {t("knowledge.sources")} · {stats.entry_count} {t("knowledge.entries")} · {(stats.total_chars / 1024).toFixed(1)} KB
+              </p>
+            )}
+          </div>
+          <div className="flex gap-1.5">
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setTextDialogOpen(true)}>
+              <FileTextIcon className="h-3 w-3 mr-1" /> {t("knowledge.text")}
+            </Button>
+            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setUrlDialogOpen(true)}>
+              <GlobeIcon className="h-3 w-3 mr-1" /> {t("knowledge.url")}
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-1.5">
-          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setTextDialogOpen(true)}>
-            <FileTextIcon className="h-3 w-3 mr-1" /> {t("knowledge.text")}
-          </Button>
-          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setUrlDialogOpen(true)}>
-            <GlobeIcon className="h-3 w-3 mr-1" /> {t("knowledge.url")}
-          </Button>
-        </div>
+        <ScrollArea className="flex-1">
+          <div className="p-2">
+            {loading ? (
+              <p className="text-xs text-muted-foreground px-2 py-1.5">{t("common.loading")}</p>
+            ) : sources.length === 0 ? (
+              <p className="text-xs text-muted-foreground px-2 py-1.5">{t("knowledge.noSources")}</p>
+            ) : (
+              sources.map((src) => (
+                <div
+                  key={src.id}
+                  role="button"
+                  tabIndex={0}
+                  className={cn(
+                    "group w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-accent flex items-center gap-2 cursor-pointer",
+                    selectedSource?.id === src.id && "bg-accent",
+                  )}
+                  onClick={() => handleSelectSource(src)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate">{src.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {src.entry_count} entries · {(src.total_chars / 1024).toFixed(1)} KB
+                      {src.source_type && (
+                        <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1.5">
+                          {src.source_type}
+                        </Badge>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteSource(src.id);
+                    }}
+                    aria-label={t("common.delete")}
+                  >
+                    <TrashIcon className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </ScrollArea>
       </div>
 
-      {/* Data Sources list */}
-      <div className="rounded-lg border border-border bg-card p-5 space-y-3">
-        {loading ? (
-          <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
-        ) : sources.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-1">
-            {t("knowledge.noSources")}
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {sources.map((src) => (
-              <div
-                key={src.id}
-                className="flex items-center gap-2 rounded-md border px-3 py-1.5 cursor-pointer hover:bg-accent/50 transition-colors"
-                onClick={() => handlePreviewSource(src)}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm truncate">{src.title}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {src.entry_count} entries · {(src.total_chars / 1024).toFixed(1)} KB
-                    {src.source_type && (
-                      <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1.5">
-                        {src.source_type}
-                      </Badge>
-                    )}
-                  </p>
-                </div>
-                <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleDeleteSource(src.id)}>
-                  <TrashIcon className="h-3 w-3" />
-                </Button>
+      {/* Right: chunks of the selected source */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {selectedSource ? (
+          <>
+            <div className="p-4 border-b">
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold truncate">{selectedSource.title}</h1>
+                {selectedSource.source_type && (
+                  <Badge variant="outline" className="text-[10px]">{selectedSource.source_type}</Badge>
+                )}
               </div>
-            ))}
+              <p className="text-xs text-muted-foreground mt-1">
+                {selectedSource.entry_count} {t("knowledge.entries")} · {((selectedSource.total_chars ?? 0) / 1024).toFixed(1)} KB
+              </p>
+            </div>
+            <ScrollArea className="flex-1">
+              <div className="p-4 space-y-3 max-w-4xl">
+                {entriesLoading ? (
+                  <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
+                ) : entries.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("knowledge.noEntries")}</p>
+                ) : (
+                  entries.map((entry) => (
+                    <div key={entry.id} className="rounded-md border bg-muted/30 p-3">
+                      <p className="text-[10px] text-muted-foreground mb-1">{t("knowledge.chunk")} {entry.chunk_index}</p>
+                      <pre className="text-sm whitespace-pre-wrap font-sans">{entry.content}</pre>
+                    </div>
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </>
+        ) : (
+          <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground p-4 text-center">
+            {t("knowledge.selectSourcePrompt")}
           </div>
         )}
       </div>
@@ -226,33 +286,6 @@ export default function AgentKnowledgePage() {
               {submitting ? t("knowledge.fetching") : t("knowledge.add")}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Preview Dialog */}
-      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{previewSource?.title || t("knowledge.sourcePreview")}</DialogTitle>
-            <DialogDescription>
-              {previewSource?.entry_count} {t("knowledge.entries")} · {((previewSource?.total_chars ?? 0) / 1024).toFixed(1)} KB
-              {previewSource?.source_type && ` · ${previewSource.source_type}`}
-            </DialogDescription>
-          </DialogHeader>
-          {previewLoading ? (
-            <p className="text-sm text-muted-foreground py-4">{t("common.loading")}</p>
-          ) : previewEntries.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">{t("knowledge.noEntries")}</p>
-          ) : (
-            <div className="space-y-3">
-              {previewEntries.map((entry) => (
-                <div key={entry.id} className="rounded-md border bg-muted/30 p-3">
-                  <p className="text-[10px] text-muted-foreground mb-1">{t("knowledge.chunk")} {entry.chunk_index}</p>
-                  <pre className="text-sm whitespace-pre-wrap font-sans">{entry.content}</pre>
-                </div>
-              ))}
-            </div>
-          )}
         </DialogContent>
       </Dialog>
     </div>

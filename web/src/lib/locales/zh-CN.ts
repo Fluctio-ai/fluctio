@@ -580,6 +580,7 @@ const zhCN: Record<string, string> = {
   "knowledge.fetching": "获取中...",
   "knowledge.sourcePreview": "数据源预览",
   "knowledge.noEntries": "未找到记录。",
+  "knowledge.selectSourcePrompt": "选择左侧的数据源以查看其分块内容。",
   "knowledge.chunk": "分块",
   "knowledge.failedAddText": "添加文本失败",
   "knowledge.failedFetchURL": "获取 URL 失败",

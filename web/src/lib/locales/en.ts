@@ -580,6 +580,7 @@ const en: Record<string, string> = {
   "knowledge.fetching": "Fetching...",
   "knowledge.sourcePreview": "Source Preview",
   "knowledge.noEntries": "No entries found.",
+  "knowledge.selectSourcePrompt": "Select a data source on the left to view its chunks.",
   "knowledge.chunk": "Chunk",
   "knowledge.failedAddText": "Failed to add text",
   "knowledge.failedFetchURL": "Failed to fetch URL",
