@@ -14,6 +14,7 @@ import {
   getAgentMemory,
   setAgentMemory,
   reindexAgentMemory,
+  reindexWikiEmbeddings,
   type MemoryConfig,
   type MemoryEmbeddingConfig,
   type MemoryRerankerConfig,
@@ -48,6 +49,8 @@ export default function AgentMemoryPage() {
   // Apply-scope toggles: which modules share the embedder/reranker above.
   const [kbEmbedding, setKbEmbedding] = useState(false);
   const [wikiEmbedding, setWikiEmbedding] = useState(false);
+  const [wikiReindexing, setWikiReindexing] = useState(false);
+  const [wikiReindexMsg, setWikiReindexMsg] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -122,6 +125,25 @@ export default function AgentMemoryPage() {
       setReindexMsg(`Failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setReindexing(false);
+    }
+  };
+
+  const handleWikiReindex = async () => {
+    if (!wikiEmbedding) return;
+    setWikiReindexing(true);
+    setWikiReindexMsg(null);
+    try {
+      const res = await reindexWikiEmbeddings(agentId);
+      if (res.ok) {
+        const failedPart = res.failed ? ` · ${res.failed} failed` : "";
+        setWikiReindexMsg(`${res.processed ?? 0} processed${failedPart}`);
+      } else {
+        setWikiReindexMsg(`Failed: ${res.error || ""}`);
+      }
+    } catch (e) {
+      setWikiReindexMsg(`Failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setWikiReindexing(false);
     }
   };
 
@@ -326,6 +348,15 @@ export default function AgentMemoryPage() {
             </div>
             <Switch checked={wikiEmbedding} onCheckedChange={(v: boolean) => setWikiEmbedding(v)} />
           </div>
+          {wikiEmbedding && (
+            <div className="flex items-center gap-3 pt-1">
+              <Button variant="outline" size="sm" className="h-8" onClick={handleWikiReindex} disabled={wikiReindexing || saving}>
+                {wikiReindexing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                {wikiReindexing ? (t("memory.reindexing") || "Reindexing…") : (t("memory.wikiReindex") || "重新向量化维基")}
+              </Button>
+              {wikiReindexMsg && <span className="text-xs text-muted-foreground">{wikiReindexMsg}</span>}
+            </div>
+          )}
         </div>
       </div>
     </div>

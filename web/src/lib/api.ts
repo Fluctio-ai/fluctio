@@ -1836,6 +1836,15 @@ export async function reindexAgentMemory(agentId: string): Promise<{ ok?: boolea
   return res.json().catch(() => ({ ok: true }));
 }
 
+// reindexWikiEmbeddings re-vectorizes all wiki pages for an agent (force
+// rebuild after a model switch or after enabling WikiEmbedding on a wiki
+// that already had pages).
+export async function reindexWikiEmbeddings(agentId: string): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/wiki/reindex-embed`, { method: "POST" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+
 // testEmbedding pings /v1/embeddings with the inline credentials from the
 // form (not the saved row), so the operator can verify apiBase/apiKey/
 // model before saving. Mirrors the Models page's testProvider flow.

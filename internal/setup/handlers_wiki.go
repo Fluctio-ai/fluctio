@@ -18,6 +18,48 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/wiki"
 )
 
+func (s *Server) handleWikiReindexEmbed(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWritable(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	if rec := s.requireAgentOwner(w, r, id); rec == nil {
+		return
+	}
+	db, ok := s.dataStore.(*store.DBStore)
+	if !ok || db == nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "vector store not available"})
+		return
+	}
+	var mem config.MemoryCfg
+	if err := scope.SettingInto(r.Context(), db, "memory", "", id, &mem); err != nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "memory cfg read failed"})
+		return
+	}
+	emb := wiki.EmbedderFromMemoryCfg(mem)
+	if emb == nil || !emb.Available() {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "wiki embedding not enabled or embedding endpoint not configured"})
+		return
+	}
+	ws := s.wikiStoreFor(id)
+	if ws == nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "wiki store not available"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	res, err := wiki.ReindexEmbeddings(ctx, ws, emb, id, true, 100*time.Millisecond)
+	if err != nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"ok":        true,
+		"processed": res.Processed,
+		"failed":    res.Failed,
+	})
+}
+
 func (s *Server) handleWikiStats(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	ws := s.wikiStoreFor(agentID)

@@ -603,6 +603,7 @@ const zhCN: Record<string, string> = {
   "memory.kbEmbeddingDesc": "知识库搜索走向量召回 + 重排（关闭则用关键词 FTS+LIKE）。",
   "memory.wikiEmbedding": "维基",
   "memory.wikiEmbeddingDesc": "维基索引按语义相关度选取页面（关闭则全量列出）。",
+  "memory.wikiReindex": "重新向量化维基",
   "memory.settingsDesc": "为智能体启用跨会话的记忆召回。",
   "memory.enabled": "启用",
   "memory.providerPlaceholder": "openai",
