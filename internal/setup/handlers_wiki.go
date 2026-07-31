@@ -298,6 +298,29 @@ func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force boo
 			bumpWikiProgress(agentID, true)
 		}
 	}
+
+	// Cross-source dead-link cleanup: per-source Generate can leave
+	// [[links]] pointing at pages a later source's DeletePagesBySource
+	// removed (e.g. a merged page that the owning source deleted). Walk
+	// every page body once more against the final page set and degrade
+	// dead links to plain text.
+	if finalPages, _, ferr := ws.ListPages(ctx, agentID, "", 500, 0); ferr == nil {
+		finalIDs := map[string]bool{}
+		for _, p := range finalPages {
+			finalIDs[p.ID] = true
+		}
+		for i := range finalPages {
+			p := &finalPages[i]
+			if !strings.Contains(p.Body, "[[") {
+				continue
+			}
+			cleaned := wiki.PostProcessLinks(p.Body, map[string]string{}, finalIDs)
+			if cleaned != p.Body {
+				p.Body = cleaned
+				_ = ws.UpsertPage(ctx, p)
+			}
+		}
+	}
 	if v, ok := wikiGenProgressMap.Load(agentID); ok {
 		p := v.(*wikiGenProgress)
 		p.Status = "done"
