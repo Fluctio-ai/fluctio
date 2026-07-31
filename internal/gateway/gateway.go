@@ -920,6 +920,7 @@ const (
 	NSSkillsInstall  = "skills.install"
 	NSSkillsEntries  = "skills.entries"
 	NSMemory         = "memory"
+	NSVectorization  = "vectorization"
 	NSPrivacy        = "privacy"
 	NSSkillsLearner  = "skillsLearner"
 	NSHeartbeat      = "heartbeat"

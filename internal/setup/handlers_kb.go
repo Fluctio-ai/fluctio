@@ -248,14 +248,14 @@ func (s *Server) kbStoreFor(agentID string) *kb.KBStore {
 		return nil
 	}
 	ks := kb.NewKBStore(dbs.DB(), dbs.Dialect())
-	var mem config.MemoryCfg
-	if err := scope.SettingInto(context.Background(), dbs, "memory", "", agentID, &mem); err == nil &&
-		mem.KBEmbedding && mem.Embedding.Enabled {
-		emb := embedding.NewOpenAICompatEmbedder(mem.Embedding.APIBase, mem.Embedding.APIKey, mem.Embedding.Model, mem.Embedding.Dim, mem.Embedding.DimEnabled)
+	var vec config.VectorCfg
+	if err := scope.SettingInto(context.Background(), dbs, "vectorization", "", agentID, &vec); err == nil &&
+		vec.KBEmbedding && vec.Embedding.Enabled {
+		emb := embedding.NewOpenAICompatEmbedder(vec.Embedding.APIBase, vec.Embedding.APIKey, vec.Embedding.Model, vec.Embedding.Dim, vec.Embedding.DimEnabled)
 		if emb.Available() {
 			var rr embedding.Reranker
-			if mem.Reranker.Enabled {
-				rr = embedding.NewJinaReranker(mem.Reranker.APIBase, mem.Reranker.APIKey, mem.Reranker.Model)
+			if vec.Reranker.Enabled {
+				rr = embedding.NewJinaReranker(vec.Reranker.APIBase, vec.Reranker.APIKey, vec.Reranker.Model)
 			}
 			ks.SetRetriever(emb, rr)
 		}

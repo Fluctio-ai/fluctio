@@ -1804,6 +1804,21 @@ export async function setAgentMemory(agentId: string, memory: AgentMemory): Prom
   return res.json().catch(() => ({ ok: true }));
 }
 
+export async function getAgentVectorization(agentId: string): Promise<{ vectorization?: VectorizationConfig }> {
+  const res = await apiFetch(`/api/agents/${agentId}/vectorization`);
+  if (!res.ok) return {};
+  return res.json().catch(() => ({}));
+}
+
+export async function setAgentVectorization(agentId: string, vectorization: VectorizationConfig): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/vectorization`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vectorization }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+
 // --- Memory config types (agent memory settings page) ---
 export interface MemoryEmbeddingConfig {
   enabled: boolean;
@@ -1826,6 +1841,16 @@ export interface MemoryConfig {
   reranker?: MemoryRerankerConfig;
   settings?: { enabled?: boolean };
   summaryModel?: string;
+  kbEmbedding?: boolean;
+  wikiEmbedding?: boolean;
+  [k: string]: any;
+}
+// VectorizationConfig is the split-out vector namespace (embedding /
+// reranker / kbEmbedding / wikiEmbedding). Settings + summaryModel stay
+// on MemoryConfig; these four moved to /api/agents/{id}/vectorization.
+export interface VectorizationConfig {
+  embedding?: MemoryEmbeddingConfig;
+  reranker?: MemoryRerankerConfig;
   kbEmbedding?: boolean;
   wikiEmbedding?: boolean;
   [k: string]: any;

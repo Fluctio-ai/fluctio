@@ -241,6 +241,11 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionEventsDropUserID(ctx); err != nil {
 		return fmt.Errorf("migrate session_events drop user_id: %w", err)
 	}
+	// Split vector fields (embedding/reranker/kbEmbedding/wikiEmbedding)
+	// out of "memory" setting rows into "vectorization" rows. Idempotent.
+	if err := d.migrateVectorConfigSplit(ctx); err != nil {
+		return fmt.Errorf("migrate vector config split: %w", err)
+	}
 	// Drop projects + project_runtimes.user_id; PKs collapse to
 	// (agent_id, project_id). flatten has already merged any dup rows.
 	if err := d.migrateProjectsDropUserID(ctx); err != nil {
@@ -1579,6 +1584,85 @@ func (d *DBStore) migrateSessionEventsDropUserID(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx,
 		`CREATE INDEX IF NOT EXISTS idx_session_events_created ON session_events (created_at)`); err != nil {
 		return fmt.Errorf("recreate idx_session_events_created: %w", err)
+	}
+	return nil
+}
+
+// migrateVectorConfigSplit copies the vector fields (embedding, reranker,
+// kbEmbedding, wikiEmbedding) from each "memory" setting row into a new
+// "vectorization" setting row under the same scope, so memory/KB/wiki
+// retrieval can read them from their own namespace. Idempotent: skips
+// scopes that already have a vectorization row; never touches the memory
+// row (kept as the migration source + legacy fallback).
+func (d *DBStore) migrateVectorConfigSplit(ctx context.Context) error {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT scope, scope_id, data FROM configs
+		 WHERE kind = 'setting' AND name = 'memory'`)
+	if err != nil {
+		return fmt.Errorf("vector split: query memory rows: %w", err)
+	}
+	defer rows.Close()
+
+	type pending struct {
+		scope, scopeID, blob string
+	}
+	var todos []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.scope, &p.scopeID, &p.blob); err != nil {
+			return fmt.Errorf("vector split: scan memory row: %w", err)
+		}
+		if p.blob == "" {
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal([]byte(p.blob), &data); err != nil {
+			continue
+		}
+		// Only carry over rows that actually hold vector config.
+		if _, has := data["embedding"]; !has {
+			continue
+		}
+		todos = append(todos, p)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("vector split: iterate memory rows: %w", err)
+	}
+
+	for _, p := range todos {
+		// Idempotent: a vectorization row already in this scope means
+		// we've migrated it before.
+		var existing string
+		qErr := d.db.QueryRowContext(ctx,
+			`SELECT data FROM configs
+			 WHERE kind = 'setting' AND name = 'vectorization' AND scope_id = ?`,
+			p.scopeID).Scan(&existing)
+		if qErr == nil {
+			continue
+		}
+		if !errors.Is(qErr, sql.ErrNoRows) {
+			return fmt.Errorf("vector split: check existing: %w", qErr)
+		}
+
+		var data map[string]any
+		_ = json.Unmarshal([]byte(p.blob), &data)
+		vec := map[string]any{}
+		for _, k := range []string{"embedding", "reranker", "kbEmbedding", "wikiEmbedding"} {
+			if v, ok := data[k]; ok {
+				vec[k] = v
+			}
+		}
+		vecBlob, err := json.Marshal(vec)
+		if err != nil {
+			return fmt.Errorf("vector split: marshal vectorization: %w", err)
+		}
+		now := time.Now().UTC()
+		if _, err := d.db.ExecContext(ctx,
+			`INSERT INTO configs (id, kind, scope, scope_id, name, enabled, data, created_at, updated_at)
+			 VALUES (?, 'setting', ?, ?, 'vectorization', 1, ?, ?, ?)`,
+			randomConfigID(), p.scope, p.scopeID, string(vecBlob), now, now); err != nil {
+			return fmt.Errorf("vector split: insert vectorization row: %w", err)
+		}
 	}
 	return nil
 }

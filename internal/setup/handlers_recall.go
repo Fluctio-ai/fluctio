@@ -146,10 +146,10 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Full path when embedding is configured + reachable.
-	var mem config.MemoryCfg
-	if err := scope.SettingInto(ctx, db, "memory", s.effectiveUserID(r), id, &mem); err == nil && mem.Embedding.Enabled {
+	var vec config.VectorCfg
+	if err := scope.SettingInto(ctx, db, "vectorization", s.effectiveUserID(r), id, &vec); err == nil && vec.Embedding.Enabled {
 		emb := embedding.ProbeEmbedder(ctx, embedding.NewOpenAICompatEmbedder(
-			mem.Embedding.APIBase, mem.Embedding.APIKey, mem.Embedding.Model, mem.Embedding.Dim, mem.Embedding.DimEnabled))
+			vec.Embedding.APIBase, vec.Embedding.APIKey, vec.Embedding.Model, vec.Embedding.Dim, vec.Embedding.DimEnabled))
 		if emb.Available() {
 			hits, err := db.SearchConversationSummariesFTS(ctx, id, req.Query, limit*3)
 			if err == nil {

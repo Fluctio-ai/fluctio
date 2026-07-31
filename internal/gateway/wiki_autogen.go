@@ -76,11 +76,11 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 		}, messages, 4)
 	}
 
-	var mem config.MemoryCfg
-	if err := scope.SettingInto(ctx, dbs, "memory", "", agentID, &mem); err != nil {
-		slog.Debug("wiki autogen: memory cfg read failed", "agent", agentID, "error", err)
+	var vec config.VectorCfg
+	if err := scope.SettingInto(ctx, dbs, "vectorization", "", agentID, &vec); err != nil {
+		slog.Debug("wiki autogen: vectorization cfg read failed", "agent", agentID, "error", err)
 	}
-	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromMemoryCfg(mem))
+	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromVectorCfg(vec))
 	created, failed := 0, 0
 	var firstErr string
 	for _, s := range toProcess {

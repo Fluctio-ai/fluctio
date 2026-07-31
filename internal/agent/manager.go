@@ -288,15 +288,19 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					ag.memoryCfg.AutoPersist.EveryNTurns = 5
 				}
 				ag.summaryModel = mem.SummaryModel
-				if mem.Embedding.Enabled {
-					ec := mem.Embedding
+				// Vector config (embedding/reranker) lives under its own
+				// "vectorization" namespace now, split out from memory.
+				var vec config.VectorCfg
+				_ = scope.SettingInto(context.Background(), db, "vectorization", m.uid, rc.ID, &vec)
+				if vec.Embedding.Enabled {
+					ec := vec.Embedding
 					emb := embedding.ProbeEmbedder(context.Background(),
 						embedding.NewOpenAICompatEmbedder(ec.APIBase, ec.APIKey, ec.Model, ec.Dim, ec.DimEnabled))
 					ag.embedder = emb
 					ag.registry.SetEmbedder(emb)
 				}
-				if mem.Reranker.Enabled {
-					rr := mem.Reranker
+				if vec.Reranker.Enabled {
+					rr := vec.Reranker
 					ag.registry.SetReranker(embedding.NewJinaReranker(rr.APIBase, rr.APIKey, rr.Model))
 				}
 			}

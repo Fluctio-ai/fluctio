@@ -48,11 +48,11 @@ func (g *Gateway) sweepAllAgentsImplicitFeedback(ctx context.Context) {
 	}
 	cfg := store.DefaultImplicitFeedbackConfig
 	for _, ag := range agents {
-		var mem config.MemoryCfg
-		if err := scope.SettingInto(ctx, db, NSMemory, ag.UserID, ag.ID, &mem); err != nil {
+		var vec config.VectorCfg
+		if err := scope.SettingInto(ctx, db, NSVectorization, ag.UserID, ag.ID, &vec); err != nil {
 			continue
 		}
-		if !mem.Embedding.Enabled {
+		if !vec.Embedding.Enabled {
 			continue
 		}
 		// Failure-driven gate: skip the embedder probe + sweep when no
@@ -67,7 +67,7 @@ func (g *Gateway) sweepAllAgentsImplicitFeedback(ctx context.Context) {
 		if !pending {
 			continue
 		}
-		ec := mem.Embedding
+		ec := vec.Embedding
 		emb := embedding.ProbeEmbedder(ctx,
 			embedding.NewOpenAICompatEmbedder(ec.APIBase, ec.APIKey, ec.Model, ec.Dim, ec.DimEnabled))
 		if !emb.Available() {

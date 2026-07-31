@@ -13,9 +13,12 @@ import { Database, Boxes, Settings2, Layers, Check, Loader2, RefreshCw } from "l
 import {
   getAgentMemory,
   setAgentMemory,
+  getAgentVectorization,
+  setAgentVectorization,
   reindexAgentMemory,
   reindexWikiEmbeddings,
   type MemoryConfig,
+  type VectorizationConfig,
   type MemoryEmbeddingConfig,
   type MemoryRerankerConfig,
 } from "@/lib/api";
@@ -54,34 +57,40 @@ export default function AgentMemoryPage() {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await getAgentMemory(agentId);
-      const mem: MemoryConfig = res.memory || {};
-      if (mem.embedding) {
-        setEmbedding({
-          enabled: mem.embedding.enabled ?? false,
-          provider: mem.embedding.provider || "",
-          model: mem.embedding.model || "",
-          apiKey: mem.embedding.apiKey || "",
-          apiBase: mem.embedding.apiBase || "",
-          dim: mem.embedding.dim || 1024,
-          dimEnabled: mem.embedding.dimEnabled ?? false,
-        });
-      }
-      if (mem.reranker) {
-        setReranker({
-          enabled: mem.reranker.enabled ?? false,
-          provider: mem.reranker.provider || "",
-          model: mem.reranker.model || "",
-          apiKey: mem.reranker.apiKey || "",
-          apiBase: mem.reranker.apiBase || "",
-        });
-      }
+      // Vector fields live under /vectorization; settings + summaryModel
+      // remain under /memory (they aren't vector config).
+      const [memRes, vecRes] = await Promise.all([
+        getAgentMemory(agentId),
+        getAgentVectorization(agentId),
+      ]);
+      const mem: MemoryConfig = memRes.memory || {};
       if (mem.settings) {
         setSettings({ enabled: mem.settings.enabled ?? true });
       }
       setSummaryModel(mem.summaryModel || "");
-      setKbEmbedding(mem.kbEmbedding ?? false);
-      setWikiEmbedding(mem.wikiEmbedding ?? false);
+      const vec: VectorizationConfig = vecRes.vectorization || {};
+      if (vec.embedding) {
+        setEmbedding({
+          enabled: vec.embedding.enabled ?? false,
+          provider: vec.embedding.provider || "",
+          model: vec.embedding.model || "",
+          apiKey: vec.embedding.apiKey || "",
+          apiBase: vec.embedding.apiBase || "",
+          dim: vec.embedding.dim || 1024,
+          dimEnabled: vec.embedding.dimEnabled ?? false,
+        });
+      }
+      if (vec.reranker) {
+        setReranker({
+          enabled: vec.reranker.enabled ?? false,
+          provider: vec.reranker.provider || "",
+          model: vec.reranker.model || "",
+          apiKey: vec.reranker.apiKey || "",
+          apiBase: vec.reranker.apiBase || "",
+        });
+      }
+      setKbEmbedding(vec.kbEmbedding ?? false);
+      setWikiEmbedding(vec.wikiEmbedding ?? false);
     } finally {
       setLoading(false);
     }
@@ -94,13 +103,14 @@ export default function AgentMemoryPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Spread the existing memory first so we don't clobber sibling
-      // fields this page doesn't edit (wikiAutoGen, autoPersist, …) —
-      // writing only {embedding,reranker,settings,summaryModel} previously
-      // wiped wiki auto-gen settings every time the Memory page was saved.
+      // Vector fields → vectorization namespace.
+      await setAgentVectorization(agentId, { embedding, reranker, kbEmbedding, wikiEmbedding } as any);
+      // Non-vector fields → memory namespace. Spread the existing memory
+      // first so we don't clobber sibling fields this page doesn't edit
+      // (wikiAutoGen, autoPersist, …).
       const cur = await getAgentMemory(agentId).catch(() => null);
       const base = (cur?.memory || {}) as MemoryConfig;
-      await setAgentMemory(agentId, { ...base, embedding, reranker, settings, summaryModel, kbEmbedding, wikiEmbedding } as any);
+      await setAgentMemory(agentId, { ...base, settings, summaryModel } as any);
       flashSaved();
       await refresh();
     } finally {

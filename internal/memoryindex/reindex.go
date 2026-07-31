@@ -198,13 +198,13 @@ func runOnce(ctx context.Context, db *store.DBStore, perCallDelay time.Duration)
 // only invokes this when there's real work, and the per-summary Embed
 // calls validate reachability naturally.
 func embedderForAgent(ctx context.Context, db *store.DBStore, ownerUserID, agentID string) embedding.Embedder {
-	var mem config.MemoryCfg
-	if err := scope.SettingInto(ctx, db, "memory", ownerUserID, agentID, &mem); err != nil {
+	var vec config.VectorCfg
+	if err := scope.SettingInto(ctx, db, "vectorization", ownerUserID, agentID, &vec); err != nil {
 		return nil
 	}
-	if !mem.Embedding.Enabled {
+	if !vec.Embedding.Enabled {
 		return nil
 	}
-	ec := mem.Embedding
+	ec := vec.Embedding
 	return embedding.NewOpenAICompatEmbedder(ec.APIBase, ec.APIKey, ec.Model, ec.Dim, ec.DimEnabled)
 }

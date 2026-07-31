@@ -31,12 +31,12 @@ func (s *Server) handleWikiReindexEmbed(w http.ResponseWriter, r *http.Request) 
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "vector store not available"})
 		return
 	}
-	var mem config.MemoryCfg
-	if err := scope.SettingInto(r.Context(), db, "memory", "", id, &mem); err != nil {
-		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "memory cfg read failed"})
+	var vec config.VectorCfg
+	if err := scope.SettingInto(r.Context(), db, "vectorization", "", id, &vec); err != nil {
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "vectorization cfg read failed"})
 		return
 	}
-	emb := wiki.EmbedderFromMemoryCfg(mem)
+	emb := wiki.EmbedderFromVectorCfg(vec)
 	if emb == nil || !emb.Available() {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "wiki embedding not enabled or embedding endpoint not configured"})
 		return
@@ -325,13 +325,13 @@ func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force boo
 		}, messages, 4)
 	}
 
-	var mem config.MemoryCfg
+	var vec config.VectorCfg
 	if dbs, ok := s.dataStore.(*store.DBStore); ok {
-		if err := scope.SettingInto(ctx, dbs, "memory", "", agentID, &mem); err != nil {
-			slog.Debug("wiki generate: memory cfg read failed", "agent", agentID, "error", err)
+		if err := scope.SettingInto(ctx, dbs, "vectorization", "", agentID, &vec); err != nil {
+			slog.Debug("wiki generate: vectorization cfg read failed", "agent", agentID, "error", err)
 		}
 	}
-	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromMemoryCfg(mem))
+	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromVectorCfg(vec))
 	for _, sid := range toProcess {
 		r := gen.Generate(ctx, agentID, sid)
 		if r.Error != "" {

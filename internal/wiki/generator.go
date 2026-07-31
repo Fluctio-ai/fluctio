@@ -42,10 +42,20 @@ func NewGenerator(ws *WikiStore, kbs *kb.KBStore, invoker LLMInvoker, embedder e
 // Embedding is disabled — the caller then falls back to the flat list. No
 // probe; reachability is proven by the first Embed call.
 func EmbedderFromMemoryCfg(mem config.MemoryCfg) embedding.Embedder {
-	if !mem.WikiEmbedding || !mem.Embedding.Enabled {
+	return EmbedderFromVectorCfg(config.VectorCfg{
+		Embedding:     mem.Embedding,
+		WikiEmbedding: mem.WikiEmbedding,
+	})
+}
+
+// EmbedderFromVectorCfg builds an embedder for wiki vector retrieval
+// from the split VectorCfg. Prefer this over EmbedderFromMemoryCfg for
+// callers that read the "vectorization" namespace.
+func EmbedderFromVectorCfg(vec config.VectorCfg) embedding.Embedder {
+	if !vec.WikiEmbedding || !vec.Embedding.Enabled {
 		return nil
 	}
-	ec := mem.Embedding
+	ec := vec.Embedding
 	return embedding.NewOpenAICompatEmbedder(ec.APIBase, ec.APIKey, ec.Model, ec.Dim, ec.DimEnabled)
 }
 

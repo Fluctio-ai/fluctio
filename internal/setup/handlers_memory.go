@@ -133,16 +133,16 @@ func (s *Server) handleReindexAgentMemory(w http.ResponseWriter, r *http.Request
 	}
 
 	// Resolve the agent's effective embedding config (system→owner→agent).
-	var mem config.MemoryCfg
-	if err := scope.SettingInto(r.Context(), db, "memory", s.effectiveUserID(r), id, &mem); err != nil {
+	var vec config.VectorCfg
+	if err := scope.SettingInto(r.Context(), db, "vectorization", s.effectiveUserID(r), id, &vec); err != nil {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	if !mem.Embedding.Enabled {
+	if !vec.Embedding.Enabled {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "embedding not enabled for this agent"})
 		return
 	}
-	ec := mem.Embedding
+	ec := vec.Embedding
 	emb := embedding.NewOpenAICompatEmbedder(ec.APIBase, ec.APIKey, ec.Model, ec.Dim, ec.DimEnabled)
 	if !emb.Available() {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "apiBase and apiKey are required"})

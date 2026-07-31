@@ -345,6 +345,18 @@ type RerankerCfg struct {
 	APIBase  string `json:"apiBase,omitempty"`
 }
 
+// VectorCfg holds the vector-processing settings shared across memory,
+// KB, and wiki retrieval. Split out of MemoryCfg because KB and wiki
+// also consume embedding/reranker — the "memory" namespace they used to
+// live under was a misnomer. Persisted under NSVectorization; the legacy
+// MemoryCfg copy remains as the migration source for old installs.
+type VectorCfg struct {
+	Embedding     EmbeddingCfg `json:"embedding,omitempty"`
+	Reranker      RerankerCfg  `json:"reranker,omitempty"`
+	KBEmbedding   bool         `json:"kbEmbedding,omitempty"`
+	WikiEmbedding bool         `json:"wikiEmbedding,omitempty"`
+}
+
 type AutoPersistCfg struct {
 	Enabled     bool   `json:"enabled"`
 	EveryNTurns int    `json:"everyNTurns,omitempty"`
