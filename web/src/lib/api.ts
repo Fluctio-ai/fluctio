@@ -1826,6 +1826,8 @@ export interface MemoryConfig {
   reranker?: MemoryRerankerConfig;
   settings?: { enabled?: boolean };
   summaryModel?: string;
+  kbEmbedding?: boolean;
+  wikiEmbedding?: boolean;
   [k: string]: any;
 }
 export async function reindexAgentMemory(agentId: string): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {

@@ -395,7 +395,7 @@ const analysisSystemPrompt = `你是一位知识库分析员。阅读来源文�
 
 # 硬性约束（违反任何一条即视为废稿）
 1. pages 必须包含且仅包含 1 个 source 页面，其 slug 必须等于来源元数据中的 id。
-2. 除 source 页外，新建页面 3-8 个。宁缺毋滥：只建有实质内容的深页，禁止一句话存根。
+2. 除 source 页外，新建页面 1-8 个，由 LLM 自选，宁缺毋滥：只建有实质内容的深页，禁止一句话存根。
 3. slug 规则：全小写 ASCII 字母/数字/连字符，≤48 字符，plan 内全局唯一。实体/概念在「现存知识库索引」中已存在时，必须原样复用其 slug，禁止另造近似 slug。
 4. wikilinks 的 src 和 dst 必须采用 "type:slug" 形式，且必须指向 pages 列表内的页面或现存索引中的页面，禁止悬空。
 5. relation 只能取：defines / cites / supplements / parent_of / child_of / excepts。

@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { MemoryTestButton } from "@/components/memory-test-button";
-import { Database, Boxes, Settings2, Check, Loader2, RefreshCw } from "lucide-react";
+import { Database, Boxes, Settings2, Layers, Check, Loader2, RefreshCw } from "lucide-react";
 import {
   getAgentMemory,
   setAgentMemory,
@@ -45,6 +45,9 @@ export default function AgentMemoryPage() {
     enabled: false, provider: "", model: "", apiKey: "", apiBase: "",
   });
   const [settings, setSettings] = useState<{ enabled?: boolean }>({ enabled: true });
+  // Apply-scope toggles: which modules share the embedder/reranker above.
+  const [kbEmbedding, setKbEmbedding] = useState(false);
+  const [wikiEmbedding, setWikiEmbedding] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -74,6 +77,8 @@ export default function AgentMemoryPage() {
         setSettings({ enabled: mem.settings.enabled ?? true });
       }
       setSummaryModel(mem.summaryModel || "");
+      setKbEmbedding(mem.kbEmbedding ?? false);
+      setWikiEmbedding(mem.wikiEmbedding ?? false);
     } finally {
       setLoading(false);
     }
@@ -92,7 +97,7 @@ export default function AgentMemoryPage() {
       // wiped wiki auto-gen settings every time the Memory page was saved.
       const cur = await getAgentMemory(agentId).catch(() => null);
       const base = (cur?.memory || {}) as MemoryConfig;
-      await setAgentMemory(agentId, { ...base, embedding, reranker, settings, summaryModel } as any);
+      await setAgentMemory(agentId, { ...base, embedding, reranker, settings, summaryModel, kbEmbedding, wikiEmbedding } as any);
       flashSaved();
       await refresh();
     } finally {
@@ -295,6 +300,33 @@ export default function AgentMemoryPage() {
             />
           </div>
         )}
+      </div>
+
+      {/* Apply scope — which modules share the embedder/reranker above */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-start gap-3 min-w-0">
+          <Layers className="h-4 w-4 text-primary mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <h3 className="font-medium">{t("memory.applyScope") || "应用范围"}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{t("memory.applyScopeDesc")}</p>
+          </div>
+        </div>
+        <div className="mt-4 pt-4 border-t border-border space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h4 className="text-sm font-medium">{t("memory.kbEmbedding") || "知识库"}</h4>
+              <p className="text-xs text-muted-foreground mt-1">{t("memory.kbEmbeddingDesc")}</p>
+            </div>
+            <Switch checked={kbEmbedding} onCheckedChange={(v: boolean) => setKbEmbedding(v)} />
+          </div>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h4 className="text-sm font-medium">{t("memory.wikiEmbedding") || "维基"}</h4>
+              <p className="text-xs text-muted-foreground mt-1">{t("memory.wikiEmbeddingDesc")}</p>
+            </div>
+            <Switch checked={wikiEmbedding} onCheckedChange={(v: boolean) => setWikiEmbedding(v)} />
+          </div>
+        </div>
       </div>
     </div>
   );

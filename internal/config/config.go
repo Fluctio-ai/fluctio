@@ -262,6 +262,12 @@ type MemoryCfg struct {
 	// Reranker configures the optional cross-encoder second-stage
 	// reranker for memory_search recall. Disabled by default.
 	Reranker RerankerCfg `json:"reranker,omitempty"`
+	// KBEmbedding routes knowledge-base search through the shared
+	// embedder + reranker above when true. Off → FTS+LIKE fallback.
+	KBEmbedding bool `json:"kbEmbedding,omitempty"`
+	// WikiEmbedding routes wiki indexExcerpt through the shared embedder
+	// when true (semantic page selection instead of the flat 200 cap).
+	WikiEmbedding bool `json:"wikiEmbedding,omitempty"`
 	// SummaryModel overrides the model used to distill conversation
 	// summaries (defaults to the agent's primary model when empty).
 	SummaryModel string `json:"summaryModel,omitempty"`
