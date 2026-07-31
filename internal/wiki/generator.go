@@ -97,10 +97,15 @@ func (g *Generator) Generate(ctx context.Context, agentID, sourceID string) *Gen
 		}
 	}
 	if !hasSource {
-		slug := slugify(plan.Summary)
+		// Source pages use the KB source id as their slug so that
+		// [[source:UUID]] links — which the LLM emits using the source id
+		// from the dispatch plan / sources list — actually resolve.
+		// slugify(summary) produced a long Chinese slug that never matched
+		// the UUID the LLM used in [[links]], leaving every source link
+		// dead (22 links, only 4 resolved before this fix).
 		pages = append(pages, planPage{
 			PageType: PageTypeSource,
-			Slug:     slug,
+			Slug:     sourceID,
 			Title:    plan.Summary,
 		})
 	}
