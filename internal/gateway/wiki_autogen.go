@@ -76,7 +76,11 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 		}, messages, 4)
 	}
 
-	gen := wiki.NewGenerator(ws, kbs, invoker)
+	var mem config.MemoryCfg
+	if err := scope.SettingInto(ctx, dbs, "memory", "", agentID, &mem); err != nil {
+		slog.Debug("wiki autogen: memory cfg read failed", "agent", agentID, "error", err)
+	}
+	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromMemoryCfg(mem))
 	created, failed := 0, 0
 	var firstErr string
 	for _, s := range toProcess {

@@ -5,10 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 )
@@ -18,14 +22,31 @@ type LLMInvoker func(ctx context.Context, messages []provider.Message) (string, 
 
 // Generator creates wiki pages from KB source content using two-step CoT.
 type Generator struct {
-	store   *WikiStore
-	kbStore *kb.KBStore
-	invoke  LLMInvoker
+	store    *WikiStore
+	kbStore  *kb.KBStore
+	invoke   LLMInvoker
+	embedder embedding.Embedder
 }
 
-// NewGenerator creates a wiki generator.
-func NewGenerator(ws *WikiStore, kbs *kb.KBStore, invoker LLMInvoker) *Generator {
-	return &Generator{store: ws, kbStore: kbs, invoke: invoker}
+// NewGenerator creates a wiki generator. embedder is optional: pass nil or
+// an unavailable embedder to keep the flat first-200 indexExcerpt (vector
+// retrieval off / endpoint unconfigured). When available, indexExcerpt
+// retrieves the pages most semantically related to each source, and pages
+// are embedded as they're written.
+func NewGenerator(ws *WikiStore, kbs *kb.KBStore, invoker LLMInvoker, embedder embedding.Embedder) *Generator {
+	return &Generator{store: ws, kbStore: kbs, invoke: invoker, embedder: embedder}
+}
+
+// EmbedderFromMemoryCfg builds an embedder for wiki vector retrieval from
+// the agent's merged memory config. Returns nil when WikiEmbedding or
+// Embedding is disabled — the caller then falls back to the flat list. No
+// probe; reachability is proven by the first Embed call.
+func EmbedderFromMemoryCfg(mem config.MemoryCfg) embedding.Embedder {
+	if !mem.WikiEmbedding || !mem.Embedding.Enabled {
+		return nil
+	}
+	ec := mem.Embedding
+	return embedding.NewOpenAICompatEmbedder(ec.APIBase, ec.APIKey, ec.Model, ec.Dim, ec.DimEnabled)
 }
 
 // GenerateResult holds the outcome of a wiki generation run.
@@ -55,7 +76,7 @@ func (g *Generator) Generate(ctx context.Context, agentID, sourceID string) *Gen
 	}
 
 	// Step 1: Analysis — LLM reads source text + existing index, outputs structured plan
-	indexExcerpt := g.buildIndexExcerpt(ctx, agentID)
+	indexExcerpt := g.buildIndexExcerpt(ctx, agentID, sourceText)
 	sourceTitle := g.readSourceTitle(ctx, agentID, sourceID)
 	analysisPrompt := buildAnalysisPrompt(sourceID, sourceTitle, sourceText, indexExcerpt)
 	analysisText, err := g.invoke(ctx, []provider.Message{
@@ -216,6 +237,7 @@ func (g *Generator) Generate(ctx context.Context, agentID, sourceID string) *Gen
 			result.PagesUpdated++
 		}
 		result.PageIDs = append(result.PageIDs, pageID)
+		g.embedPage(ctx, wikiPage)
 	}
 
 	// Step 3: Create wikilinks. Validate both endpoints exist (in this
@@ -304,24 +326,116 @@ func (g *Generator) readSourceTitle(ctx context.Context, agentID, sourceID strin
 	return ""
 }
 
-// buildIndexExcerpt creates a summary of existing wiki pages for context.
-func (g *Generator) buildIndexExcerpt(ctx context.Context, agentID string) string {
+// buildIndexExcerpt creates a summary of existing wiki pages for the
+// analysis prompt. When an embedder is configured it retrieves the pages
+// most semantically related to this source (RAG-style) instead of the flat
+// first-200 list — keeping the index focused and token-light as the wiki
+// grows past 200 pages. Falls back to flat on any embed/store failure.
+func (g *Generator) buildIndexExcerpt(ctx context.Context, agentID, sourceText string) string {
 	if g.store == nil {
 		return ""
+	}
+	if g.embedder != nil && g.embedder.Available() && strings.TrimSpace(sourceText) != "" {
+		if pages := g.relevantPages(ctx, agentID, sourceText, 40); len(pages) > 0 {
+			return g.formatExcerpt(pages)
+		}
+		// empty store or embed failure → fall through to flat list
 	}
 	pages, _, err := g.store.ListPages(ctx, agentID, "", 200, 0)
 	if err != nil || len(pages) == 0 {
 		return ""
 	}
+	return g.formatExcerpt(pages)
+}
+
+// formatExcerpt renders pages as "- [[type:slug]] — summary/title" lines.
+func (g *Generator) formatExcerpt(pages []WikiPage) string {
 	var lines []string
 	for _, p := range pages {
-		if p.Summary != "" {
-			lines = append(lines, fmt.Sprintf("- [[%s:%s]] — %s", p.PageType, p.Slug, p.Summary))
-		} else {
-			lines = append(lines, fmt.Sprintf("- [[%s:%s]] — %s", p.PageType, p.Slug, p.Title))
+		text := p.Summary
+		if strings.TrimSpace(text) == "" {
+			text = p.Title
 		}
+		lines = append(lines, fmt.Sprintf("- [[%s:%s]] — %s", p.PageType, p.Slug, text))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// relevantPages embeds the source text and returns the top-N most similar
+// existing wiki pages (cosine, scored in-memory). Returns nil on any
+// failure so buildIndexExcerpt falls back to the flat list.
+func (g *Generator) relevantPages(ctx context.Context, agentID, sourceText string, topN int) []WikiPage {
+	vecs, err := g.embedder.Embed(ctx, []string{sourceText})
+	if err != nil || len(vecs) != 1 {
+		return nil
+	}
+	q := vecs[0]
+	embs, err := g.store.ListPageEmbeddingsByAgent(ctx, agentID)
+	if err != nil || len(embs) == 0 {
+		return nil
+	}
+	type sc struct {
+		id    string
+		score float64
+	}
+	scores := make([]sc, 0, len(embs))
+	for _, e := range embs {
+		if len(e.Vec) != len(q) {
+			continue // dim mismatch (model switched) — skip stale vector
+		}
+		scores = append(scores, sc{e.PageID, cosineSim(q, e.Vec)})
+	}
+	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
+	if len(scores) > topN {
+		scores = scores[:topN]
+	}
+	pages := make([]WikiPage, 0, len(scores))
+	for _, s := range scores {
+		p, _ := g.store.GetPage(ctx, s.id)
+		if p != nil {
+			pages = append(pages, *p)
+		}
+	}
+	return pages
+}
+
+// cosineSim is standard cosine similarity over float32 vectors.
+func cosineSim(a, b []float32) float64 {
+	var dot, na, nb float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		na += float64(a[i]) * float64(a[i])
+		nb += float64(b[i]) * float64(b[i])
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
+}
+
+// embedPage best-effort embeds a page's summary (or title fallback) and
+// stores the vector so future runs retrieve it semantically. Errors are
+// logged at debug and swallowed — embedding is an enhancement, never
+// blocks page creation.
+func (g *Generator) embedPage(ctx context.Context, p *WikiPage) {
+	if g.embedder == nil || !g.embedder.Available() {
+		return
+	}
+	text := p.Summary
+	if strings.TrimSpace(text) == "" {
+		text = p.Title
+	}
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	vecs, err := g.embedder.Embed(ctx, []string{text})
+	if err != nil || len(vecs) != 1 {
+		slog.Debug("wiki: page embed failed", "page_id", p.ID, "error", err)
+		return
+	}
+	if err := g.store.SavePageEmbedding(ctx, p.AgentID, p.ID, vecs[0], g.embedder.Model()); err != nil {
+		slog.Debug("wiki: page embedding save failed", "page_id", p.ID, "error", err)
+	}
 }
 
 // --- Plan types ---

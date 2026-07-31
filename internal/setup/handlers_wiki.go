@@ -282,7 +282,13 @@ func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force boo
 		}, messages, 4)
 	}
 
-	gen := wiki.NewGenerator(ws, kbs, invoker)
+	var mem config.MemoryCfg
+	if dbs, ok := s.dataStore.(*store.DBStore); ok {
+		if err := scope.SettingInto(ctx, dbs, "memory", "", agentID, &mem); err != nil {
+			slog.Debug("wiki generate: memory cfg read failed", "agent", agentID, "error", err)
+		}
+	}
+	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromMemoryCfg(mem))
 	for _, sid := range toProcess {
 		r := gen.Generate(ctx, agentID, sid)
 		if r.Error != "" {
