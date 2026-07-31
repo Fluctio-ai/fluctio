@@ -456,6 +456,18 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_wiki_links_src ON wiki_links (src_page_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wiki_links_dst ON wiki_links (dst_page_id)`,
+		// wiki_page_embeddings stores one embedding vector per wiki page for
+		// RAG-style indexExcerpt retrieval (vector-processing stage 2).
+		// Separate table so wiki_pages schema/scan stays stable.
+		`CREATE TABLE IF NOT EXISTS wiki_page_embeddings (
+			page_id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			embedding BLOB,
+			dim INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_wiki_page_emb_agent ON wiki_page_embeddings (agent_id)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {

@@ -3,11 +3,12 @@ package wiki
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
-
 )
 
 type WikiStore struct {
@@ -278,9 +279,85 @@ func (s *WikiStore) DeletePage(ctx context.Context, id string) error {
 	defer tx.Rollback()
 
 	tx.Exec(`DELETE FROM wiki_links WHERE src_page_id = `+s.ph(1)+` OR dst_page_id = `+s.ph(2), id, id)
+	tx.Exec(`DELETE FROM wiki_page_embeddings WHERE page_id = `+s.ph(1), id)
 	_, err = tx.Exec(`DELETE FROM wiki_pages WHERE id = `+s.ph(1), id)
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// --- Page embeddings (vector-processing stage 2) ---
+
+// float32ToBlob encodes a float32 vector as a little-endian byte slice for
+// BLOB storage. Mirrors internal/store.float32ToBlob.
+func float32ToBlob(vec []float32) []byte {
+	buf := make([]byte, len(vec)*4)
+	for i, v := range vec {
+		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
+	}
+	return buf
+}
+
+// float32FromBlob is the inverse of float32ToBlob. Returns nil for empty or
+// mis-sized input.
+func float32FromBlob(buf []byte) []float32 {
+	if len(buf) == 0 || len(buf)%4 != 0 {
+		return nil
+	}
+	vec := make([]float32, len(buf)/4)
+	for i := range vec {
+		bits := binary.LittleEndian.Uint32(buf[i*4:])
+		vec[i] = math.Float32frombits(bits)
+	}
+	return vec
+}
+
+// PageEmbedding pairs a wiki page ID with its decoded embedding vector.
+type PageEmbedding struct {
+	PageID string
+	Vec    []float32
+}
+
+// SavePageEmbedding upserts the embedding vector for a wiki page.
+func (s *WikiStore) SavePageEmbedding(ctx context.Context, agentID, pageID string, vec []float32, model string) error {
+	q := `INSERT INTO wiki_page_embeddings (page_id, agent_id, embedding, dim, model, updated_at)
+		VALUES (` + s.ph(1) + `,` + s.ph(2) + `,` + s.ph(3) + `,` + s.ph(4) + `,` + s.ph(5) + `,CURRENT_TIMESTAMP)
+		ON CONFLICT(page_id) DO UPDATE SET agent_id=excluded.agent_id, embedding=excluded.embedding,
+			dim=excluded.dim, model=excluded.model, updated_at=CURRENT_TIMESTAMP`
+	_, err := s.db.ExecContext(ctx, q, pageID, agentID, float32ToBlob(vec), len(vec), model)
+	return err
+}
+
+// ClearPageEmbeddingsForAgent deletes every embedding row for an agent
+// (the "force re-embed" path clears before re-vectorizing all pages).
+func (s *WikiStore) ClearPageEmbeddingsForAgent(ctx context.Context, agentID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM wiki_page_embeddings WHERE agent_id = `+s.ph(1), agentID)
+	return err
+}
+
+// ListPageEmbeddingsByAgent returns all stored (page_id, vector) pairs for
+// an agent. Vectors decode in-memory; cosine scoring happens in the caller,
+// keeping SQL simple and dialect-agnostic (no vec0/pgvector dependency).
+func (s *WikiStore) ListPageEmbeddingsByAgent(ctx context.Context, agentID string) ([]PageEmbedding, error) {
+	q := `SELECT page_id, embedding FROM wiki_page_embeddings WHERE agent_id = ` + s.ph(1)
+	rows, err := s.db.QueryContext(ctx, q, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PageEmbedding
+	for rows.Next() {
+		var pid string
+		var blob []byte
+		if err := rows.Scan(&pid, &blob); err != nil {
+			return nil, err
+		}
+		vec := float32FromBlob(blob)
+		if len(vec) == 0 {
+			continue
+		}
+		out = append(out, PageEmbedding{PageID: pid, Vec: vec})
+	}
+	return out, rows.Err()
 }
