@@ -127,6 +127,11 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("commit: %w", err)
 	}
+	// Best-effort async embed of the just-ingested chunks so SearchRawKB can
+	// reach them by vector. Never blocks ingest; silent on failure.
+	if s.embedder != nil && s.embedder.Available() {
+		go s.embedSourceEntries(context.Background(), agentID, sourceID)
+	}
 	return sourceID, nil
 }
 
@@ -178,8 +183,14 @@ func (s *KBStore) SearchRawKB(ctx context.Context, agentID, query string, source
 		limit = 5
 	}
 	sourceIDs = s.resolveSourceIDs(ctx, agentID, sourceIDs)
-	// kb_entries_fts was never created (see migrateKBWiki), so searchFTS is a
-	// dead always-error path — go straight to searchLike.
+	// Vector path: when an embedder is wired, cosine-search chunk vectors
+	// within the requested sources (and optionally re-rank). Falls back to
+	// keyword LIKE on any failure (off / unconfigured / empty store).
+	if s.embedder != nil && s.embedder.Available() && strings.TrimSpace(query) != "" {
+		if rr := s.searchRawByVector(ctx, agentID, query, sourceIDs, limit); len(rr) > 0 {
+			return rr, nil
+		}
+	}
 	return s.searchLike(ctx, agentID, query, sourceIDs, limit)
 }
 
@@ -365,6 +376,15 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 		}
 	}
 	return results
+}
+
+// kbFloat32ToBlob encodes a float32 vector as a little-endian byte slice.
+func kbFloat32ToBlob(vec []float32) []byte {
+	buf := make([]byte, len(vec)*4)
+	for i, v := range vec {
+		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
+	}
+	return buf
 }
 
 // kbFloat32FromBlob decodes a little-endian float32 BLOB into a vector.
@@ -564,6 +584,143 @@ func (s *KBStore) searchLike(ctx context.Context, agentID, query string, sourceI
 		results = append(results, r)
 	}
 	return results, nil
+}
+
+// SaveEntryEmbedding upserts the embedding for one raw kb_entries chunk.
+func (s *KBStore) SaveEntryEmbedding(ctx context.Context, agentID string, entryID int, vec []float32, model string) error {
+	q := `INSERT INTO kb_entry_embeddings (entry_id, agent_id, embedding, dim, model, updated_at)
+		VALUES (` + s.ph(1) + `,` + s.ph(2) + `,` + s.ph(3) + `,` + s.ph(4) + `,` + s.ph(5) + `,CURRENT_TIMESTAMP)
+		ON CONFLICT(entry_id) DO UPDATE SET agent_id=excluded.agent_id, embedding=excluded.embedding,
+			dim=excluded.dim, model=excluded.model, updated_at=CURRENT_TIMESTAMP`
+	_, err := s.db.ExecContext(ctx, q, entryID, agentID, kbFloat32ToBlob(vec), len(vec), model)
+	return err
+}
+
+// ClearEntryEmbeddingsForAgent deletes every kb_entry_embeddings row for an agent.
+func (s *KBStore) ClearEntryEmbeddingsForAgent(ctx context.Context, agentID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM kb_entry_embeddings WHERE agent_id = `+s.ph(1), agentID)
+	return err
+}
+
+// searchRawByVector is the embedding path for raw kb_entries chunks: embed the
+// query, cosine-score every stored chunk vector within the requested sources,
+// then optionally cross-encoder re-rank. Returns nil on any failure so
+// SearchRawKB falls back to searchLike. Emits KBResult with SourceKind="kb".
+func (s *KBStore) searchRawByVector(ctx context.Context, agentID, query string, sourceIDs []string, limit int) []KBResult {
+	qvecs, err := s.embedder.Embed(ctx, []string{query})
+	if err != nil || len(qvecs) != 1 {
+		return nil
+	}
+	q := qvecs[0]
+	var args []interface{}
+	args = append(args, agentID)
+	sourceCond := ""
+	if len(sourceIDs) > 0 {
+		phs := make([]string, len(sourceIDs))
+		for i, sid := range sourceIDs {
+			phs[i] = s.ph(i + 2)
+			args = append(args, sid)
+		}
+		sourceCond = " AND ke.source_id IN (" + strings.Join(phs, ",") + ")"
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.embedding, ke.content, ke.source_id, ke.chunk_index, COALESCE(s.title, s.source_ref, '')
+		 FROM kb_entry_embeddings e
+		 JOIN kb_entries ke ON ke.id = e.entry_id
+		 JOIN kb_sources s ON s.id = ke.source_id
+		 WHERE e.agent_id = `+s.ph(1)+sourceCond, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	type cand struct {
+		content, sourceID, title string
+		chunk                    int
+		score                    float64
+	}
+	var cands []cand
+	for rows.Next() {
+		var blob []byte
+		var c cand
+		if err := rows.Scan(&blob, &c.content, &c.sourceID, &c.chunk, &c.title); err != nil {
+			return nil
+		}
+		vec := kbFloat32FromBlob(blob)
+		if len(vec) != len(q) {
+			continue
+		}
+		c.score = kbCosine(q, vec)
+		cands = append(cands, c)
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
+	pool := cands
+	if len(pool) > limit*3 {
+		pool = pool[:limit*3]
+	}
+	if s.reranker != nil && s.reranker.Available() && len(pool) > 1 {
+		docs := make([]string, len(pool))
+		for i, c := range pool {
+			docs[i] = c.content
+		}
+		if scored, err := s.reranker.Rerank(ctx, query, docs, limit); err == nil && len(scored) > 0 {
+			reranked := make([]cand, 0, len(scored))
+			for _, sd := range scored {
+				if sd.Index < 0 || sd.Index >= len(pool) {
+					continue
+				}
+				c := pool[sd.Index]
+				c.score = sd.Score
+				reranked = append(reranked, c)
+			}
+			pool = reranked
+		}
+	}
+	results := make([]KBResult, 0, limit)
+	for _, c := range pool {
+		snippet := c.content
+		if len(snippet) > 300 {
+			snippet = softClipUTF8(snippet, 300)
+		}
+		results = append(results, KBResult{
+			SourceID:    c.sourceID,
+			SourceTitle: c.title,
+			SourceKind:  "kb",
+			ChunkIndex:  c.chunk,
+			Content:     c.content,
+			Snippet:     snippet,
+			Rank:        c.score,
+		})
+		if len(results) >= limit {
+			break
+		}
+	}
+	return results
+}
+
+// embedSourceEntries embeds every chunk of one source (best-effort, called
+// asynchronously after IngestText so the embed API never blocks content ingest).
+func (s *KBStore) embedSourceEntries(ctx context.Context, agentID, sourceID string) {
+	if s.embedder == nil || !s.embedder.Available() {
+		return
+	}
+	entries, err := s.ListEntries(ctx, agentID, sourceID, 10000, 0)
+	if err != nil || len(entries) == 0 {
+		return
+	}
+	texts := make([]string, len(entries))
+	for i, e := range entries {
+		texts[i] = e.Content
+	}
+	vecs, err := s.embedder.Embed(ctx, texts)
+	if err != nil || len(vecs) != len(entries) {
+		return
+	}
+	for i, e := range entries {
+		_ = s.SaveEntryEmbedding(ctx, agentID, e.ID, vecs[i], s.embedder.Model())
+	}
 }
 
 // buildFTSQuery converts a user query into an FTS5 MATCH expression.

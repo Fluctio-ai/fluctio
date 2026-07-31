@@ -26,6 +26,19 @@ func setupKBVectorTestDB(t *testing.T) *sql.DB {
 			page_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, embedding BLOB,
 			dim INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '',
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+		`CREATE TABLE kb_sources (
+			id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, title TEXT NOT NULL,
+			source_type TEXT NOT NULL, source_ref TEXT NOT NULL,
+			entry_count INTEGER NOT NULL DEFAULT 0, total_chars INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, wiki_generated_at TIMESTAMP)`,
+		`CREATE TABLE kb_entries (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT, source_id TEXT NOT NULL,
+			chunk_index INTEGER NOT NULL DEFAULT 0, content TEXT NOT NULL, agent_id TEXT NOT NULL)`,
+		`CREATE TABLE kb_entry_embeddings (
+			entry_id INTEGER PRIMARY KEY, agent_id TEXT NOT NULL, embedding BLOB,
+			dim INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("exec %q: %v", stmt, err)
@@ -115,7 +128,50 @@ func TestSearchNoEmbedderFallsBack(t *testing.T) {
 	}
 }
 
-// TestSearchVectorDimMismatchSkipsStale: a vector stored under a different
+// TestSearchRawByVector verifies the kb_entries embedding path returns chunks
+// within the requested sources with SourceKind="kb".
+func TestSearchRawByVector(t *testing.T) {
+	db := setupKBVectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	db.ExecContext(ctx, `INSERT INTO kb_sources (id, agent_id, title, source_type, source_ref) VALUES ('src1', 'a1', 'Title1', 'text', 'ref')`)
+	db.ExecContext(ctx, `INSERT INTO kb_entries (uuid, agent_id, source_id, chunk_index, content) VALUES ('u1', 'a1', 'src1', 0, 'chunk zero')`)
+	db.ExecContext(ctx, `INSERT INTO kb_entries (uuid, agent_id, source_id, chunk_index, content) VALUES ('u2', 'a1', 'src1', 1, 'chunk one')`)
+	// AUTOINCREMENT ids are 1 and 2; embed both.
+	db.ExecContext(ctx, `INSERT INTO kb_entry_embeddings (entry_id, agent_id, embedding, dim, model) VALUES (1, 'a1', ?, 3, 'mock')`, vecToBlob([]float32{1, 0, 0}))
+	db.ExecContext(ctx, `INSERT INTO kb_entry_embeddings (entry_id, agent_id, embedding, dim, model) VALUES (2, 'a1', ?, 3, 'mock')`, vecToBlob([]float32{1, 0, 0}))
+
+	ks := NewKBStore(db, "sqlite")
+	ks.SetRetriever(mockEmbedder{}, nil)
+
+	results, err := ks.SearchRawKB(ctx, "a1", "anything", []string{"src1"}, 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 vector results, got %d: %+v", len(results), results)
+	}
+	if results[0].SourceKind != "kb" {
+		t.Errorf("SourceKind = %q, want kb", results[0].SourceKind)
+	}
+}
+
+// TestSearchRawNoEmbedderFallsBack: without SetRetriever the keyword LIKE
+// path runs and must not panic on an empty store.
+func TestSearchRawNoEmbedderFallsBack(t *testing.T) {
+	db := setupKBVectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	ks := NewKBStore(db, "sqlite") // no SetRetriever
+	results, err := ks.SearchRawKB(ctx, "a1", "anything", nil, 5)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected 0 results on empty store, got %d", len(results))
+	}
+}
 // model/dim is skipped, the vector path yields nothing, and Search falls
 // back to keyword (no LIKE match → empty) without error.
 func TestSearchVectorDimMismatchSkipsStale(t *testing.T) {

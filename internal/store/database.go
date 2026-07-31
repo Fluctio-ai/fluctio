@@ -468,6 +468,17 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_wiki_page_emb_agent ON wiki_page_embeddings (agent_id)`,
+		// kb_entry_embeddings stores one embedding per raw kb_entries chunk for
+		// vector recall in SearchRawKB (the LLM's second-pass raw-chunk lookup).
+		`CREATE TABLE IF NOT EXISTS kb_entry_embeddings (
+			entry_id INTEGER PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			embedding BLOB,
+			dim INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_entry_emb_agent ON kb_entry_embeddings (agent_id)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {
