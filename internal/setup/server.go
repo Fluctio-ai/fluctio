@@ -589,6 +589,31 @@ func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(fsPath, "agents/") {
 		parts := strings.SplitN(fsPath, "/", 3)
 		if len(parts) >= 3 && parts[1] != "default" {
+			// Next 16 RSC flight URLs are flat (dot-separated, e.g.
+			// chat/__next.agents.$d$id.chat.__PAGE__.txt) but the built
+			// files are nested (chat/__next.agents/$d$id/chat/__PAGE__.txt).
+			// A flat directFallback misses the nested file, so for URLs
+			// containing a __next.*.txt tail convert flat→nested and serve
+			// the real RSC payload — otherwise the dynamic-segment fallback
+			// below mis-substitutes and serves the session-placeholder
+			// HTML, which makes the App Router hard-reload on fresh-chat
+			// navigation (session routes are unaffected because they're not
+			// prefetched on a wiki/knowledge page).
+			if idx := strings.Index(parts[2], "__next."); idx >= 0 && strings.HasSuffix(parts[2], ".txt") {
+				prefix := parts[2][:idx]
+				core := strings.TrimPrefix(strings.TrimSuffix(parts[2][idx:], ".txt"), "__next.")
+				if segs := strings.Split(core, "."); len(segs) > 1 {
+					nestedPath := "agents/default/" + prefix + "__next." + segs[0] + "/" + strings.Join(segs[1:], "/") + ".txt"
+					if f, err := h.fs.Open(nestedPath); err == nil {
+						stat, statErr := f.Stat()
+						f.Close()
+						if statErr == nil && !stat.IsDir() {
+							http.ServeFileFS(w, r, h.fs, nestedPath)
+							return
+						}
+					}
+				}
+			}
 			directFallback := "agents/default/" + parts[2]
 			if f, err := h.fs.Open(directFallback); err == nil {
 				stat, statErr := f.Stat()
