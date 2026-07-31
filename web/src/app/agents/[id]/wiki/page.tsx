@@ -71,6 +71,13 @@ export default function WikiPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Dynamic loading: the left pane renders the first `visibleCount`
+  // pages and loads more as the user scrolls to the bottom. A continuous
+  // list (not pagination) keeps the three-pane interlink intact — the
+  // selected page never disappears onto another page.
+  const [visibleCount, setVisibleCount] = useState(30);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
   // Resizable panes + right-pane collapse (Step B). Widths in px; the
   // drag handlers clamp to min/max so a pane can't be sized off-screen.
   const [leftWidth, setLeftWidth] = useState(256);
@@ -166,15 +173,23 @@ export default function WikiPage() {
     document.body.style.userSelect = "none";
   };
 
-  // Group pages by type for the left-pane sections.
+  // Group the first `visibleCount` pages by type for the left-pane
+  // sections. Slicing BEFORE grouping keeps per-type counts consistent
+  // with what's actually shown. titleMap still uses the full list so
+  // in-body [[wiki links]] resolve to the target page's title even when
+  // that page is outside the visible window.
+  const visiblePages = useMemo(
+    () => pages.slice(0, visibleCount),
+    [pages, visibleCount],
+  );
   const grouped = useMemo(() => {
     const m: Record<string, WikiPage[]> = {};
-    for (const p of pages) {
+    for (const p of visiblePages) {
       if (!m[p.page_type]) m[p.page_type] = [];
       m[p.page_type].push(p);
     }
     return m;
-  }, [pages]);
+  }, [visiblePages]);
 
   // titleMap resolves a wiki-link target ("page_type:slug") to its
   // display title so rendered links read as the target page's name.
@@ -283,6 +298,21 @@ export default function WikiPage() {
     }
   }, [selectedPageId]);
 
+  // Infinite-scroll: when the sentinel at the bottom of the left pane
+  // enters the viewport, reveal the next batch. No-op once everything is
+  // visible (the sentinel unmounts in that case).
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) {
+        setVisibleCount((c) => Math.min(c + 30, pages.length));
+      }
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [pages.length]);
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* Left: page list grouped by type */}
@@ -353,6 +383,14 @@ export default function WikiPage() {
                   </div>
                 );
               })
+            )}
+            {visibleCount < pages.length && (
+              <div
+                ref={sentinelRef}
+                className="py-2 text-center text-xs text-muted-foreground"
+              >
+                {t("common.loading")}
+              </div>
             )}
           </div>
         </ScrollArea>
