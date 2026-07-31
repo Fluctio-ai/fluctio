@@ -85,7 +85,23 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
                 <SidebarMenuButton
                   isActive={active}
                   tooltip={item.title}
-                  onClick={() => navigateOnce(item.url)}
+                  onClick={() => {
+                    const here =
+                      pathname === item.url ||
+                      pathname === item.url.replace(/\/$/, "");
+                    if (here) {
+                      // Already on this page — clicking the active item
+                      // resets the pane (deselect the wiki page / data
+                      // source) instead of being a silent no-op.
+                      window.dispatchEvent(
+                        new CustomEvent("fluctio:nav-reselect", {
+                          detail: { url: item.url },
+                        }),
+                      );
+                      return;
+                    }
+                    navigateOnce(item.url);
+                  }}
                   onMouseEnter={() => router.prefetch(item.url)}
                 >
                   <item.icon />

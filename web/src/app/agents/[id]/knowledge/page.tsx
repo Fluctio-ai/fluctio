@@ -77,6 +77,20 @@ export default function AgentKnowledgePage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Re-selecting the active "Data Sources" sidebar item clears the right
+  // pane (the URL is unchanged, so navigateOnce would otherwise no-op).
+  useEffect(() => {
+    const onReselect = (e: Event) => {
+      const url = (e as CustomEvent<{ url?: string }>).detail?.url ?? "";
+      if (url.includes("/knowledge/")) {
+        setSelectedSource(null);
+        setEntries([]);
+      }
+    };
+    window.addEventListener("fluctio:nav-reselect", onReselect);
+    return () => window.removeEventListener("fluctio:nav-reselect", onReselect);
+  }, []);
+
   const handleSelectSource = useCallback(async (src: KBSource) => {
     if (!agentId) return;
     setSelectedSource(src);

@@ -298,6 +298,20 @@ export default function WikiPage() {
     }
   }, [selectedPageId]);
 
+  // Re-selecting the active "Wiki" sidebar item clears the center preview
+  // (the URL is unchanged, so navigateOnce would otherwise no-op).
+  useEffect(() => {
+    const onReselect = (e: Event) => {
+      const url = (e as CustomEvent<{ url?: string }>).detail?.url ?? "";
+      if (url.includes("/wiki/")) {
+        setSelectedPageId(null);
+        setSelectedPage(null);
+      }
+    };
+    window.addEventListener("fluctio:nav-reselect", onReselect);
+    return () => window.removeEventListener("fluctio:nav-reselect", onReselect);
+  }, []);
+
   // Infinite-scroll: when the sentinel at the bottom of the left pane
   // enters the viewport, reveal the next batch. No-op once everything is
   // visible (the sentinel unmounts in that case).
