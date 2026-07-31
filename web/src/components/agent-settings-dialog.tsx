@@ -2,7 +2,6 @@
 
 import * as React from "react";
 import {
-  BookMarkedIcon,
   BookOpenIcon,
   BrainIcon,
   Bug,
@@ -36,8 +35,8 @@ import AgentPluginsPage from "@/app/agents/[id]/plugins/page";
 import AgentChannelsPage from "@/app/agents/[id]/channels/page";
 import AgentSchedulerPage from "@/app/agents/[id]/scheduler/page";
 import AgentRegexHooksPage from "@/app/agents/[id]/regex-hooks/page";
-import AgentKnowledgePage from "@/app/agents/[id]/knowledge/page";
-import AgentWikiPage from "@/app/agents/[id]/wiki/page";
+import { KBSettingsCard } from "@/components/kb-settings-card";
+import { WikiAutoGenSettingsCard } from "@/components/wiki-autogen-settings-card";
 import AgentMemoryPage from "@/app/agents/[id]/memory/page";
 import AgentRecallTuningPage from "@/app/agents/[id]/recall-tuning/page";
 import AgentMCPPage from "@/app/agents/[id]/mcp/page";
@@ -60,7 +59,6 @@ export type AgentSettingsTab =
   | "scheduler"
   | "regex-hooks"
   | "knowledge"
-  | "wiki"
   | "memory"
   | "usage"
   | "account"
@@ -83,7 +81,6 @@ const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> 
   { id: "scheduler", label: "settings.scheduler", icon: ClockIcon },
   { id: "regex-hooks", label: "settings.regexHooks", icon: Regex },
   { id: "knowledge", label: "settings.knowledge", icon: BookOpenIcon },
-  { id: "wiki", label: "settings.wiki", icon: BookMarkedIcon },
   { id: "memory", label: "settings.memory", icon: DatabaseIcon },
   { id: "recall-tuning", label: "settings.recallTuning", icon: SlidersHorizontal },
   { id: "usage", label: "settings.usage", icon: CoinsIcon },
@@ -211,8 +208,12 @@ export function AgentSettingsDialog({
           {tab === "channels" && <AgentChannelsPage />}
           {tab === "scheduler" && <AgentSchedulerPage />}
           {tab === "regex-hooks" && <AgentRegexHooksPage />}
-          {tab === "knowledge" && <AgentKnowledgePage />}
-          {tab === "wiki" && <AgentWikiPage />}
+          {tab === "knowledge" && (
+            <div className="mx-auto w-full max-w-2xl space-y-4 p-4">
+              <KBSettingsCard />
+              <WikiAutoGenSettingsCard />
+            </div>
+          )}
           {tab === "memory" && <AgentMemoryPage />}
           {tab === "recall-tuning" && <AgentRecallTuningPage />}
           {tab === "usage" && <AgentUsagePage />}
