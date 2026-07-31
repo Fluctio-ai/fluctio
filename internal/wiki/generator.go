@@ -110,6 +110,32 @@ func (g *Generator) Generate(ctx context.Context, agentID, sourceID string) *Gen
 		})
 	}
 
+	// Assign short ref labels (E1.. for existing pages, N1.. for new ones)
+	// and build a ref→type:slug map plus a ref-based index for the prompt.
+	// Generation uses [[ref]] links (short, stable) instead of fragile
+	// type:slug strings; postProcessLinks maps them back to canonical
+	// [[type:slug]] after the body is generated.
+	refMap := map[string]string{}
+	validIDs := map[string]bool{}
+	var refIndex strings.Builder
+	if existing, _, err := g.store.ListPages(ctx, agentID, "", 200, 0); err == nil {
+		for i := range existing {
+			ref := fmt.Sprintf("E%d", i+1)
+			refMap[ref] = existing[i].ID
+			validIDs[existing[i].ID] = true
+			fmt.Fprintf(&refIndex, "- [[%s]] — %s\n", ref, existing[i].Title)
+		}
+	}
+	for i := range pages {
+		ref := fmt.Sprintf("N%d", i+1)
+		pages[i].Ref = ref
+		id := pages[i].ID()
+		refMap[ref] = id
+		validIDs[id] = true
+		fmt.Fprintf(&refIndex, "- [[%s]] — %s（本次新建）\n", ref, pages[i].Title)
+	}
+	refIndexExcerpt := strings.TrimSpace(refIndex.String())
+
 	// Step 2: Generate each page
 	for _, pp := range pages {
 		pageID := pp.ID()
@@ -133,7 +159,7 @@ func (g *Generator) Generate(ctx context.Context, agentID, sourceID string) *Gen
 			body = sourceText
 		} else {
 			// LLM-generated page
-			genPrompt := buildGenerationPrompt(pp, sourceID, sourceText, indexExcerpt, analysisText)
+			genPrompt := buildGenerationPrompt(pp, sourceID, sourceText, refIndexExcerpt, analysisText)
 			genText, err := g.invoke(ctx, []provider.Message{
 				{Role: "system", Content: generationSystemPrompt},
 				{Role: "user", Content: genPrompt},
@@ -143,7 +169,7 @@ func (g *Generator) Generate(ctx context.Context, agentID, sourceID string) *Gen
 				result.PagesFailed++
 				continue
 			}
-			body = stripFrontmatter(stripCodeFences(genText))
+			body = postProcessLinks(stripFrontmatter(stripCodeFences(genText)), refMap, validIDs)
 		}
 
 		summary := firstParagraph(body, 240)
@@ -283,6 +309,10 @@ type planPage struct {
 	Tags      []string `json:"tags"`
 	Aliases   []string `json:"aliases"`
 	Sources   []string `json:"sources"`
+	// Ref is a short label (N1, N2...) assigned by code after analysis,
+	// used as the [[ref]] link target during generation so the LLM doesn't
+	// have to remember long slugs. Not part of the LLM's JSON output.
+	Ref string `json:"-"`
 }
 
 func (p planPage) ID() string {
@@ -379,7 +409,8 @@ const generationSystemPrompt = `你是知识库维护者，负责撰写一篇知
 - 仅输出页面的完整 markdown 正文，直接以「# 标题」开头。
 - 不要解释、不要任何外围包裹。
 - 严禁输出 YAML frontmatter（开头的 --- 块），也不要在正文里列出 type、slug、title、tags、aliases、sources 等元数据字段——这些由系统单独存储，写进正文会污染页面。
-- 交叉引用使用 [[type:slug]] 语法。对每个提及的知识库页面均慷慨使用。
+- 交叉引用使用 [[ref]] 语法（ref 是短标签，如 E1、N1），对每个提及的知识库页面均慷慨使用。
+- **ref 严格取材**：[[ref]] 里的 ref 必须完全等于"可引用页面"列表中列出的某个标签（如 [[N1]]、[[E3]]）。严禁编造 ref 或改用 type:slug 形式。若要提及的概念不在列表中，用纯文字描述即可，不要套 [[ ]]。系统会在生成后把 [[ref]] 自动映射成正式链接。
 - 所有主张如源自某来源，必须以括号引用标注来源出处。不得编造来源。
 
 页面结构指导：
@@ -443,7 +474,7 @@ func buildGenerationPrompt(pp planPage, sourceID, sourceText, indexExcerpt, anal
 	}
 	indexSection := ""
 	if indexExcerpt != "" {
-		indexSection = fmt.Sprintf(`现存知识库索引：
+		indexSection = fmt.Sprintf(`可引用页面（正文中用 [[ref]] 链接，ref 必须取自本列表，严禁编造）：
 """
 %s
 """
@@ -464,6 +495,7 @@ func buildGenerationPrompt(pp planPage, sourceID, sourceText, indexExcerpt, anal
 		sources = []string{sourceID}
 	}
 	return fmt.Sprintf(`待撰写页面（以下元数据仅供参考你识别页面身份，严禁写入输出正文）：
+- ref:       %s（本页面的引用标签）
 - type:      %s
 - slug:      %s
 - title:     %s
@@ -477,7 +509,7 @@ func buildGenerationPrompt(pp planPage, sourceID, sourceText, indexExcerpt, anal
 %s
 """
 
-撰写完整的 markdown 页面。使用中文。使用 [[wikilinks]] 链接相关页面。标注来源出处。`, pp.PageType, pp.Slug, pp.Title, pp.Tags, pp.Aliases, sources, pp.Rationale, indexSection, analysisSection, truncated)
+撰写完整的 markdown 页面。使用中文。使用 [[ref]] 链接相关页面（ref 取自上方"可引用页面"列表）。标注来源出处。`, pp.Ref, pp.PageType, pp.Slug, pp.Title, pp.Tags, pp.Aliases, sources, pp.Rationale, indexSection, analysisSection, truncated)
 }
 
 // --- Helpers ---
@@ -518,6 +550,38 @@ func extractPlan(text string) *wikiPlan {
 		}
 	}
 	return nil
+}
+
+// wikiLinkRe matches a wiki [[link]] with an optional |alias.
+var wikiLinkRe = regexp.MustCompile(`\[\[([^\]\|]+)(?:\|([^\]]+))?\]\]`)
+
+// postProcessLinks rewrites [[ref]] links in a generated page body back to
+// canonical [[type:slug]] using refMap, and degrades any link whose target
+// isn't a known page id (unknown ref, or a type:slug the LLM wrote directly
+// that doesn't exist) to plain text — so a generated page never ships with
+// dead links regardless of how the LLM behaved.
+func postProcessLinks(body string, refMap map[string]string, validIDs map[string]bool) string {
+	return wikiLinkRe.ReplaceAllStringFunc(body, func(m string) string {
+		sub := wikiLinkRe.FindStringSubmatch(m)
+		target := strings.TrimSpace(sub[1])
+		alias := sub[2]
+		// ref label → canonical type:slug
+		if id, ok := refMap[target]; ok {
+			target = id
+		}
+		// Drop dead links (unknown ref / non-existent slug) to plain text.
+		if !validIDs[target] {
+			text := alias
+			if strings.TrimSpace(text) == "" {
+				text = target
+			}
+			return text
+		}
+		if alias != "" {
+			return "[[" + target + "|" + alias + "]]"
+		}
+		return "[[" + target + "]]"
+	})
 }
 
 // frontmatterRe matches a leading YAML frontmatter block (a pair of ---
