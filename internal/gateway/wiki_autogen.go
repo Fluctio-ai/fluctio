@@ -67,11 +67,13 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 		maxTokens = 8192
 	}
 	invoker := func(ctx context.Context, messages []provider.Message) (string, error) {
-		resp, err := prov.Chat(ctx, messages, nil, model, maxTokens, 0.3)
-		if err != nil {
-			return "", err
-		}
-		return resp.Content, nil
+		return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
+			resp, err := prov.Chat(ctx, msgs, nil, model, maxTokens, 0.3)
+			if err != nil {
+				return "", err
+			}
+			return resp.Content, nil
+		}, messages, 4)
 	}
 
 	gen := wiki.NewGenerator(ws, kbs, invoker)

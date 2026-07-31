@@ -273,11 +273,13 @@ func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force boo
 
 	slog.Info("wiki generate: using model", "model", model, "agent", agentID)
 	invoker := func(ctx context.Context, messages []provider.Message) (string, error) {
-		resp, err := prov.Chat(ctx, messages, nil, model, 8192, 0.3)
-		if err != nil {
-			return "", err
-		}
-		return resp.Content, nil
+		return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
+			resp, err := prov.Chat(ctx, msgs, nil, model, 8192, 0.3)
+			if err != nil {
+				return "", err
+			}
+			return resp.Content, nil
+		}, messages, 4)
 	}
 
 	gen := wiki.NewGenerator(ws, kbs, invoker)
