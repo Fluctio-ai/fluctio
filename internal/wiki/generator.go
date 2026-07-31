@@ -209,15 +209,16 @@ func (g *Generator) readSourceText(ctx context.Context, agentID, sourceID string
 	if g.kbStore == nil {
 		return ""
 	}
-	entries, _, err := g.kbStore.ListAllEntries(ctx, agentID, "", 10000, 0)
+	// ListEntries filters by source_id server-side and orders by chunk_index,
+	// so chunks reassemble in original document order. ListAllEntries orders by
+	// row id and would scramble the text across slices.
+	entries, err := g.kbStore.ListEntries(ctx, agentID, sourceID, 10000, 0)
 	if err != nil {
 		return ""
 	}
 	var chunks []string
 	for _, e := range entries {
-		if e.SourceID == sourceID {
-			chunks = append(chunks, e.Content)
-		}
+		chunks = append(chunks, e.Content)
 	}
 	return strings.Join(chunks, "\n\n")
 }
