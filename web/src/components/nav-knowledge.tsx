@@ -41,7 +41,22 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
       if (here) return;
       if (inFlightTargetRef.current === target) return;
       inFlightTargetRef.current = target;
+      const before = window.location.pathname;
       router.push(target);
+      // Safety net: under static-export + spaHandler a router.push can
+      // stall (RSC fetch slow / silent no-op), leaving pathname unchanged
+      // and inFlightTargetRef stuck on `target` — the "sidebar item
+      // won't click" symptom. After 2s reset inFlight so later clicks
+      // work, and if the URL still hasn't moved force a hard navigation.
+      // Mirrors NavMain's fallback.
+      setTimeout(() => {
+        if (inFlightTargetRef.current === target) {
+          inFlightTargetRef.current = null;
+        }
+        if (window.location.pathname === before) {
+          window.location.href = target;
+        }
+      }, 2000);
     },
     [pathname, router],
   );
