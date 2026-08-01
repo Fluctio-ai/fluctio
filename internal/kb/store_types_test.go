@@ -117,3 +117,49 @@ func TestListTodosDueWithin(t *testing.T) {
 		t.Errorf("no-window pending = %d, want 2", len(all))
 	}
 }
+
+// TestSearchRecallsFlashTodoByVector proves the stage-2 recall gap is closed:
+// flash/todo sources (which skip wiki generation) are reachable by the main
+// Search via their chunk vectors, not just article/wiki hits.
+func TestSearchRecallsFlashTodoByVector(t *testing.T) {
+	db := setupKBVectorTestDB(t)
+	db.SetMaxOpenConns(1) // :memory: is per-connection; pin one conn so the async embed goroutine and the queries share the same DB
+	store := NewKBStore(db, "sqlite")
+	store.SetRetriever(mockEmbedder{}, nil) // vector path on; mock embeds everything as [1,0,0]
+	ctx := context.Background()
+	const agent = "agt_recall"
+
+	flashID, err := store.SaveFlash(ctx, agent, "灵感 about milk and 牛奶")
+	if err != nil {
+		t.Fatalf("SaveFlash: %v", err)
+	}
+	todoID, err := store.SaveTodo(ctx, agent, "去买 milk 牛奶", "pending", "", "")
+	if err != nil {
+		t.Fatalf("SaveTodo: %v", err)
+	}
+	// SaveFlash/SaveTodo fire embed async; run it synchronously here so the
+	// vectors are committed before Search (the async goroutine may not win the
+	// race in-test). embedSourceEntries is idempotent with the async one.
+	store.embedSourceEntries(ctx, agent, flashID)
+	store.embedSourceEntries(ctx, agent, todoID)
+
+	results, err := store.Search(ctx, agent, "milk 牛奶", 5, 0, 0.5, 0.0)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	var sawFlash, sawTodo bool
+	for _, r := range results {
+		switch r.ContentType {
+		case "flash":
+			sawFlash = true
+		case "todo":
+			sawTodo = true
+		}
+	}
+	if !sawFlash {
+		t.Errorf("flash not recalled by Search: %+v", results)
+	}
+	if !sawTodo {
+		t.Errorf("todo not recalled by Search: %+v", results)
+	}
+}

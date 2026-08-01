@@ -159,9 +159,15 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 	// similarity and (optionally) cross-encoder re-rank. Falls through to
 	// the keyword path on any failure (off / unconfigured / empty store).
 	if s.embedder != nil && s.embedder.Available() {
-		if rr := s.searchWikiByVector(ctx, agentID, query, limit, preFilterLimit, threshold); len(rr) > 0 {
-			slog.Info("kb search: vector path (wiki)", "agent", agentID, "results", len(rr))
-			return rr, nil
+		wikiRR := s.searchWikiByVector(ctx, agentID, query, limit, preFilterLimit, threshold)
+		// Flash/todo sources skip wiki generation, so searchWikiByVector can't
+		// reach them — recall them straight from their chunk vectors and merge
+		// (capped) so a relevant inspiration/todo can surface with the articles.
+		ftRR := s.searchFlashTodoByVector(ctx, agentID, query, limit, threshold)
+		if len(wikiRR) > 0 || len(ftRR) > 0 {
+			merged := mergeKBResults(wikiRR, ftRR, limit)
+			slog.Info("kb search: vector path (wiki+flash/todo)", "agent", agentID, "wiki", len(wikiRR), "flashtodo", len(ftRR), "results", len(merged))
+			return merged, nil
 		}
 	}
 

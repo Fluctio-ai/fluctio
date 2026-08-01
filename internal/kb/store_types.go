@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -256,4 +257,132 @@ func (s *KBStore) ListTodos(ctx context.Context, agentID, status string, dueWith
 		todos = append(todos, t)
 	}
 	return todos, nil
+}
+
+// searchFlashTodoByVector recalls flash/todo sources by semantic similarity.
+// Flashes and todos skip wiki generation (they're short, single-chunk sources),
+// so searchWikiByVector can't reach them — this queries their chunk vectors
+// directly (kb_entry_embeddings JOIN kb_sources WHERE type IN flash/todo),
+// cosine-scores, optionally cross-encoder re-ranks, then thresholds. Returns
+// nil on any failure so Search proceeds wiki-only. KBResult.ContentType is
+// stamped ("flash"/"todo") and a todo's status is folded into SourceTitle so
+// callers can tell these hits apart from article recall.
+func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query string, limit int, threshold float64) []KBResult {
+	if limit <= 0 {
+		limit = 5
+	}
+	if s.embedder == nil || !s.embedder.Available() {
+		return nil
+	}
+	qvecs, err := s.embedder.Embed(ctx, []string{query})
+	if err != nil || len(qvecs) != 1 {
+		return nil
+	}
+	q := qvecs[0]
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT e.embedding, ke.content, ke.source_id, COALESCE(s.title,''), s.type, s.status, s.end_at
+		 FROM kb_entry_embeddings e
+		 JOIN kb_entries ke ON ke.id = e.entry_id
+		 JOIN kb_sources s ON s.id = ke.source_id
+		 WHERE e.agent_id = `+s.ph(1)+` AND s.type IN ('flash','todo')`, agentID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	type cand struct {
+		content, sourceID, title, kbType, status, endAt string
+		score                                           float64
+	}
+	var cands []cand
+	for rows.Next() {
+		var blob []byte
+		var c cand
+		if err := rows.Scan(&blob, &c.content, &c.sourceID, &c.title, &c.kbType, &c.status, &c.endAt); err != nil {
+			return nil
+		}
+		vec := kbFloat32FromBlob(blob)
+		if len(vec) != len(q) {
+			continue
+		}
+		c.score = kbCosine(q, vec)
+		cands = append(cands, c)
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
+	pool := cands
+	if len(pool) > limit*3 {
+		pool = pool[:limit*3]
+	}
+	if s.reranker != nil && s.reranker.Available() && len(pool) > 1 {
+		docs := make([]string, len(pool))
+		for i, c := range pool {
+			docs[i] = c.content
+		}
+		if scored, err := s.reranker.Rerank(ctx, query, docs, limit); err == nil && len(scored) > 0 {
+			reranked := make([]cand, 0, len(scored))
+			for _, sd := range scored {
+				if sd.Index < 0 || sd.Index >= len(pool) {
+					continue
+				}
+				c := pool[sd.Index]
+				c.score = sd.Score
+				reranked = append(reranked, c)
+			}
+			pool = reranked
+		}
+	}
+	results := make([]KBResult, 0, limit)
+	for _, c := range pool {
+		if c.score < threshold {
+			continue
+		}
+		snippet := c.content
+		if len(snippet) > 300 {
+			snippet = softClipUTF8(snippet, 300)
+		}
+		title := c.title
+		if c.kbType == "todo" && c.status != "" {
+			title = fmt.Sprintf("%s [%s]", c.title, c.status)
+		}
+		results = append(results, KBResult{
+			SourceID:    c.sourceID,
+			SourceTitle: title,
+			SourceKind:  "kb",
+			ContentType: c.kbType,
+			Content:     c.content,
+			Snippet:     snippet,
+			Rank:        c.score,
+		})
+		if len(results) >= limit {
+			break
+		}
+	}
+	return results
+}
+
+// mergeKBResults combines wiki (article) hits with flash/todo hits, capping the
+// flash/todo contribution to ceil(limit/3) so short-form recall supplements —
+// not swamps — article recall, then re-ranks the merged set by score and caps
+// to limit. Both inputs are already score-sorted from their recall functions.
+func mergeKBResults(wiki, ft []KBResult, limit int) []KBResult {
+	if limit <= 0 {
+		limit = 5
+	}
+	flashQuota := (limit + 2) / 3 // ceil(limit/3)
+	if flashQuota < 1 {
+		flashQuota = 1
+	}
+	if len(ft) > flashQuota {
+		ft = ft[:flashQuota]
+	}
+	merged := make([]KBResult, 0, len(wiki)+len(ft))
+	merged = append(merged, wiki...)
+	merged = append(merged, ft...)
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Rank > merged[j].Rank })
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
 }

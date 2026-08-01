@@ -38,8 +38,9 @@ type KBEntry struct {
 type KBResult struct {
 	SourceID    string  `json:"source_id"`
 	SourceTitle string  `json:"source_title"`
-	SourceKind  string  `json:"source_kind"`         // "wiki" or "kb"
-	PageType    string  `json:"page_type,omitempty"` // wiki page type: source/concept/entity/query
+	SourceKind  string  `json:"source_kind"`           // "wiki" or "kb"
+	PageType    string  `json:"page_type,omitempty"`   // wiki page type: source/concept/entity/query
+	ContentType string  `json:"content_type,omitempty"` // kb source type: flash/todo (set only via flash/todo vector recall)
 	ChunkIndex  int     `json:"chunk_index"`
 	Content     string  `json:"content"`
 	Snippet     string  `json:"snippet"`
