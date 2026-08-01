@@ -363,6 +363,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/kb/stats", auth(s.handleGetKBStats))
 	mux.HandleFunc("POST /api/agents/{id}/kb/search", auth(s.handleKBSearch))
 	mux.HandleFunc("POST /api/agents/{id}/kb/mcp", auth(s.handleKBMCP))
+	mux.HandleFunc("POST /api/agents/{id}/kb/flash", auth(s.handleKBSaveFlash))
+	mux.HandleFunc("POST /api/agents/{id}/kb/todo", auth(s.handleKBSaveTodo))
+	mux.HandleFunc("PATCH /api/agents/{id}/kb/todos/{sourceId}", auth(s.handleKBUpdateTodo))
+	mux.HandleFunc("GET /api/agents/{id}/kb/todos", auth(s.handleKBListTodos))
 
 	// Wiki: LLM-generated structured pages derived from KB sources.
 	mux.HandleFunc("GET /api/agents/{id}/wiki/stats", auth(s.handleWikiStats))

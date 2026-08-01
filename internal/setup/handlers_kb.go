@@ -3,8 +3,10 @@ package setup
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
@@ -261,6 +263,136 @@ func (s *Server) kbStoreFor(agentID string) *kb.KBStore {
 		}
 	}
 	return ks
+}
+
+// handleKBSaveFlash stores one inspiration flash (灵感闪记) — a short,
+// un-chunked note — for the agent. Backs the flash tab's "记一笔" input.
+func (s *Server) handleKBSaveFlash(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Content == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	id, err := kbStore.SaveFlash(r.Context(), agentID, req.Content)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"source_id": id})
+}
+
+// handleKBSaveTodo creates a todo item with optional status/start_at/end_at.
+func (s *Server) handleKBSaveTodo(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+		Status  string `json:"status,omitempty"`
+		StartAt string `json:"start_at,omitempty"`
+		EndAt   string `json:"end_at,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Content == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	id, err := kbStore.SaveTodo(r.Context(), agentID, req.Content, req.Status, req.StartAt, req.EndAt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"source_id": id})
+}
+
+// handleKBUpdateTodo mutates a todo's status/timing. Only non-empty fields land.
+func (s *Server) handleKBUpdateTodo(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	sourceID := r.PathValue("sourceId")
+	if agentID == "" || sourceID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Status  string `json:"status,omitempty"`
+		StartAt string `json:"start_at,omitempty"`
+		EndAt   string `json:"end_at,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := kbStore.UpdateTodo(r.Context(), agentID, sourceID, req.Status, req.StartAt, req.EndAt); err != nil {
+		if errors.Is(err, kb.ErrTodoNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// handleKBListTodos lists the agent's todos, optionally filtered by status
+// ("" / "active" / a specific status) and a due-within-hours window.
+func (s *Server) handleKBListTodos(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	status := r.URL.Query().Get("status")
+	dueWithin := 0
+	if v := r.URL.Query().Get("due_within_hours"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			dueWithin = n
+		}
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	todos, err := kbStore.ListTodos(r.Context(), agentID, status, dueWithin)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if todos == nil {
+		todos = []kb.KBSource{}
+	}
+	writeJSON(w, http.StatusOK, todos)
 }
 
 // handleKBMCP handles MCP JSON-RPC 2.0 requests for an agent's knowledge base.
