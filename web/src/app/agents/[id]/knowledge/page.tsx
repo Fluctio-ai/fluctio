@@ -38,6 +38,9 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 
 type Tab = "article" | "flash" | "todo";
 type TodoStatus = "pending" | "in_progress" | "done" | "cancelled";
@@ -77,15 +80,15 @@ function datetimeLocalValue(iso: string): string {
 export default function AgentKnowledgePage() {
   const t = useT();
   const [tab, setTab] = useState<Tab>("article");
-  const tabs: ReadonlyArray<[Tab, string, string]> = [
-    ["article", "📄", "knowledge.articles"],
-    ["flash", "💡", "knowledge.flashes"],
-    ["todo", "✅", "knowledge.todos"],
+  const tabs: ReadonlyArray<[Tab, string]> = [
+    ["article", "knowledge.articles"],
+    ["flash", "knowledge.flashes"],
+    ["todo", "knowledge.todos"],
   ];
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       <div className="flex gap-1 border-b bg-muted/30 px-3 py-1.5">
-        {tabs.map(([key, icon, label]) => (
+        {tabs.map(([key, label]) => (
           <button
             key={key}
             type="button"
@@ -97,7 +100,7 @@ export default function AgentKnowledgePage() {
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {icon} {t(label)}
+            {t(label)}
           </button>
         ))}
       </div>
@@ -201,7 +204,6 @@ function ArticleView() {
       <div className="w-80 shrink-0 border-r bg-muted/30 flex flex-col">
         <div className="p-3 border-b space-y-2">
           <div>
-            <h3 className="text-sm font-semibold">{t("knowledge.dataSources")}</h3>
             {stats && (
               <p className="text-xs text-muted-foreground mt-0.5">
                 {stats.source_count} {t("knowledge.sources")} · {stats.entry_count} {t("knowledge.entries")} · {(stats.total_chars / 1024).toFixed(1)} KB
@@ -266,16 +268,27 @@ function ArticleView() {
               </p>
             </div>
             <ScrollArea className="flex-1">
-              <div className="p-4 space-y-3 max-w-4xl">
+              <div className="p-4 max-w-4xl space-y-1">
                 {entriesLoading ? (
                   <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
                 ) : entries.length === 0 ? (
                   <p className="text-sm text-muted-foreground">{t("knowledge.noEntries")}</p>
                 ) : (
-                  entries.map((entry) => (
-                    <div key={entry.id} className="rounded-md border bg-muted/30 p-3">
-                      <p className="text-[10px] text-muted-foreground mb-1">{t("knowledge.chunk")} {entry.chunk_index}</p>
-                      <pre className="text-sm whitespace-pre-wrap font-sans">{entry.content}</pre>
+                  entries.map((entry, i) => (
+                    <div key={entry.id} className="relative">
+                      <span className="absolute right-0 top-0 text-[10px] text-muted-foreground/40 select-none pointer-events-none">
+                        #{entry.chunk_index}
+                      </span>
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                          {entry.content}
+                        </ReactMarkdown>
+                      </div>
+                      {i < entries.length - 1 && (
+                        <p className="text-center text-muted-foreground/40 text-xs my-2 select-none pointer-events-none">
+                          * * *
+                        </p>
+                      )}
                     </div>
                   ))
                 )}
@@ -510,7 +523,16 @@ function TodoView() {
       <ScrollArea className="flex-1">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
           {TODO_STATUSES.map((st) => (
-            <div key={st} className="flex flex-col rounded-lg bg-muted/30 min-h-[200px]">
+            <div
+              key={st}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const id = e.dataTransfer.getData("text/plain");
+                if (id) handleMove(id, st);
+              }}
+              className="flex flex-col rounded-lg bg-muted/30 min-h-[200px] transition-colors"
+            >
               <div className="p-2 border-b flex items-center justify-between">
                 <span className={cn("text-xs font-semibold uppercase tracking-wide", statusAccent(st))}>
                   {t("knowledge.status_" + st)}
@@ -525,7 +547,6 @@ function TodoView() {
                     key={src.id}
                     src={src}
                     content={content}
-                    onMove={handleMove}
                     onDelete={handleDelete}
                   />
                 ))}
@@ -568,22 +589,24 @@ function TodoView() {
 function TodoCard({
   src,
   content,
-  onMove,
   onDelete,
 }: {
   src: KBSource;
   content: string;
-  onMove: (id: string, status: TodoStatus) => void;
   onDelete: (id: string) => void;
 }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
   const overdue = src.end_at && new Date(src.end_at).getTime() < Date.now() && (src.status === "pending" || src.status === "in_progress");
-  const next: TodoStatus | null =
-    src.status === "pending" ? "in_progress" :
-    src.status === "in_progress" ? "done" : null;
   return (
-    <div className="group rounded-md border bg-background p-2.5 text-sm shadow-sm">
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/plain", src.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      title={t("knowledge.move")}
+      className="group rounded-md border bg-background p-2.5 text-sm shadow-sm cursor-grab active:cursor-grabbing hover:border-primary/40 transition-colors"
+    >
       <p className={cn("whitespace-pre-wrap", src.status === "cancelled" && "line-through text-muted-foreground")}>
         {content}
       </p>
@@ -592,35 +615,7 @@ function TodoCard({
           {t("knowledge.dueLabel")}: {datetimeLocalValue(src.end_at).replace("T", " ")}
         </p>
       )}
-      <div className="mt-2 flex items-center gap-1">
-        {next && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-6 px-2 text-[11px]"
-            onClick={() => onMove(src.id, next)}
-          >
-            → {t("knowledge.status_" + next)}
-          </Button>
-        )}
-        <button
-          type="button"
-          className="ml-auto text-[10px] text-muted-foreground hover:text-foreground"
-          onClick={() => setOpen((v) => !v)}
-        >
-          {t("knowledge.move")}
-        </button>
-        {open && (
-          <select
-            className="absolute z-10 text-[11px] rounded border bg-background shadow-md"
-            value={src.status}
-            onChange={(e) => { onMove(src.id, e.target.value as TodoStatus); setOpen(false); }}
-          >
-            {TODO_STATUSES.map((s) => (
-              <option key={s} value={s}>{t("knowledge.status_" + s)}</option>
-            ))}
-          </select>
-        )}
+      <div className="mt-2 flex justify-end">
         <button
           type="button"
           className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
