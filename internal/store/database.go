@@ -490,6 +490,28 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 			return fmt.Errorf("kb/wiki migration: %w", err)
 		}
 	}
+	// kb_sources content-type columns: type (article/flash/todo), todo status +
+	// start/end times, and reminded_at (due-push dedup). Added idempotently so
+	// older DBs get the columns without recreating the table; fresh DBs already
+	// have them via the ALTER too (CREATE TABLE IF NOT EXISTS skips on existing).
+	for _, c := range []struct{ name, decl string }{
+		{"type", "TEXT NOT NULL DEFAULT 'article'"},
+		{"status", "TEXT NOT NULL DEFAULT ''"},
+		{"start_at", "TEXT NOT NULL DEFAULT ''"},
+		{"end_at", "TEXT NOT NULL DEFAULT ''"},
+		{"reminded_at", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		has, err := d.tableHasColumn(ctx, "kb_sources", c.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE kb_sources ADD COLUMN %s %s`, c.name, c.decl)); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

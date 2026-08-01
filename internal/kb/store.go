@@ -760,7 +760,8 @@ func (s *KBStore) ListSources(ctx context.Context, agentID string, limit, offset
 		limit = 20
 	}
 	rows, err := s.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at
+		fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
+			type, status, start_at, end_at, reminded_at
 			FROM kb_sources WHERE agent_id = %s ORDER BY created_at DESC LIMIT %s OFFSET %s`,
 			s.ph(1), s.ph(2), s.ph(3)),
 		agentID, limit, offset)
@@ -771,17 +772,9 @@ func (s *KBStore) ListSources(ctx context.Context, agentID string, limit, offset
 
 	var sources []KBSource
 	for rows.Next() {
-		var src KBSource
-		var wikiGeneratedAt, createdAt, updatedAt sql.NullString
-		if err := rows.Scan(&src.ID, &src.AgentID, &src.Title, &src.SourceType, &src.SourceRef, &src.EntryCount, &src.TotalChars, &wikiGeneratedAt, &createdAt, &updatedAt); err != nil {
+		src, ok := scanSource(rows)
+		if !ok {
 			continue
-		}
-		src.CreatedAt, _ = time.Parse(time.RFC3339, createdAt.String)
-		src.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
-		if wikiGeneratedAt.Valid && wikiGeneratedAt.String != "" {
-			if t, err := time.Parse(time.RFC3339, wikiGeneratedAt.String); err == nil {
-				src.WikiGeneratedAt = &t
-			}
 		}
 		sources = append(sources, src)
 	}

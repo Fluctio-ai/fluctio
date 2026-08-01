@@ -16,6 +16,16 @@ type KBSource struct {
 	WikiGeneratedAt *time.Time `json:"wiki_generated_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	// Content-type fields. Type is "article" (default, regular chunked KB
+	// source), "flash" (灵感闪记 — short inspiration note, one chunk), or
+	// "todo" (a task with status + optional start/end times). Status is the
+	// todo lifecycle (pending/in_progress/done/cancelled); the time fields are
+	// set only for todos and reminded_at is the due-push dedup stamp.
+	Type       string     `json:"type,omitempty"`
+	Status     string     `json:"status,omitempty"`
+	StartAt    *time.Time `json:"start_at,omitempty"`
+	EndAt      *time.Time `json:"end_at,omitempty"`
+	RemindedAt *time.Time `json:"reminded_at,omitempty"`
 }
 
 type KBEntry struct {
