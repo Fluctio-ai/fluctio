@@ -3,6 +3,7 @@ package kb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -23,6 +24,10 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 	registerKBIngestURL(r, store, agentID)
 	registerKBList(r, store, agentID)
 	registerKBDelete(r, store, agentID)
+	registerKBFlash(r, store, agentID)
+	registerKBSaveTodo(r, store, agentID)
+	registerKBUpdateTodo(r, store, agentID)
+	registerKBListTodos(r, store, agentID)
 }
 
 func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64, thresholdFn func() float64) {
@@ -321,6 +326,188 @@ func registerKBDelete(r *tools.Registry, store *KBStore, agentID string) {
 			return "", err
 		}
 		return fmt.Sprintf("Deleted source %s from knowledge base.", args.SourceID), nil
+	})
+}
+
+// registerKBFlash adds knowledgebase_save_flash — a 灵感闪记 (inspiration
+// flash): a short idea/insight/note worth recalling later, stored verbatim as
+// one un-chunked source of type 'flash'. The description is written to make
+// the agent capture proactively (harness visibility: the when-to-use lives in
+// the tool description per tool-guidance-placement A, no prompt_modules entry).
+func registerKBFlash(r *tools.Registry, store *KBStore, agentID string) {
+	r.Register("knowledgebase_save_flash", "Save a short inspiration flash (灵感闪记) to the knowledge base — an idea, insight, what-if, or quick note worth recalling later. Use it PROACTIVELY whenever the conversation surfaces a spark the user would want to remember, even if they did not explicitly ask. Content is stored verbatim as one short note; no title is needed.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"content": map[string]interface{}{
+				"type":        "string",
+				"description": "The idea / insight / note text to capture",
+			},
+		},
+		"required": []string{"content"},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		id, err := store.SaveFlash(ctx, agentID, args.Content)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Saved inspiration flash (source_id=%s).", id), nil
+	})
+}
+
+// registerKBSaveTodo adds knowledgebase_save_todo — a task item stored as a
+// type='todo' source with status + optional RFC3339 start/end times.
+func registerKBSaveTodo(r *tools.Registry, store *KBStore, agentID string) {
+	statusProp := func(desc string) map[string]interface{} {
+		return map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"pending", "in_progress", "done", "cancelled"},
+			"description": desc,
+		}
+	}
+	timeProp := func(desc string) map[string]interface{} {
+		return map[string]interface{}{
+			"type":        "string",
+			"format":      "date-time",
+			"description": desc,
+		}
+	}
+	r.Register("knowledgebase_save_todo", "Save a todo item to the knowledge base — something that needs doing. status defaults to pending; set it explicitly to record an item that is already in progress or done. Provide start_at and/or end_at as RFC 3339 timestamps (e.g. 2026-08-02T09:00:00Z) when timing is mentioned or implied. Use it whenever the conversation commits to an action item, follow-up, or task the user should track.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"content": map[string]interface{}{
+				"type":        "string",
+				"description": "What needs to be done",
+			},
+			"status":   statusProp("Lifecycle state (defaults to pending if omitted)"),
+			"start_at": timeProp("Optional RFC 3339 start time"),
+			"end_at":   timeProp("Optional RFC 3339 due/deadline time — the reminders sweep keys off this"),
+		},
+		"required": []string{"content"},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			Content string `json:"content"`
+			Status  string `json:"status,omitempty"`
+			StartAt string `json:"start_at,omitempty"`
+			EndAt   string `json:"end_at,omitempty"`
+		}
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		id, err := store.SaveTodo(ctx, agentID, args.Content, args.Status, args.StartAt, args.EndAt)
+		if err != nil {
+			return "", err
+		}
+		status := args.Status
+		if status == "" {
+			status = "pending"
+		}
+		return fmt.Sprintf("Saved todo (source_id=%s, status=%s).", id, status), nil
+	})
+}
+
+// registerKBUpdateTodo adds knowledgebase_update_todo — mutate status/timing of
+// an existing todo. Only non-empty fields are applied.
+func registerKBUpdateTodo(r *tools.Registry, store *KBStore, agentID string) {
+	statusProp := func(desc string) map[string]interface{} {
+		return map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"pending", "in_progress", "done", "cancelled"},
+			"description": desc,
+		}
+	}
+	timeProp := func(desc string) map[string]interface{} {
+		return map[string]interface{}{
+			"type":        "string",
+			"format":      "date-time",
+			"description": desc,
+		}
+	}
+	r.Register("knowledgebase_update_todo", "Update an existing todo's status and/or timing. Pass source_id (from knowledgebase_list_todos or knowledgebase_save_todo) plus any of status/start_at/end_at to change; omit a field to leave it unchanged. Use it as a todo moves forward (pending→in_progress→done, or cancelled) or when its timing changes.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"source_id": map[string]interface{}{
+				"type":        "string",
+				"description": "The source_id of the todo to update",
+			},
+			"status":   statusProp("New lifecycle state"),
+			"start_at": timeProp("New RFC 3339 start time (omit to leave unchanged)"),
+			"end_at":   timeProp("New RFC 3339 due/deadline time (omit to leave unchanged)"),
+		},
+		"required": []string{"source_id"},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			SourceID string `json:"source_id"`
+			Status   string `json:"status,omitempty"`
+			StartAt  string `json:"start_at,omitempty"`
+			EndAt    string `json:"end_at,omitempty"`
+		}
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		if args.SourceID == "" {
+			return "", fmt.Errorf("source_id is required")
+		}
+		if err := store.UpdateTodo(ctx, agentID, args.SourceID, args.Status, args.StartAt, args.EndAt); err != nil {
+			if errors.Is(err, ErrTodoNotFound) {
+				return "", fmt.Errorf("todo %s not found (it may belong to another agent or not be a todo; check via knowledgebase_list_todos)", args.SourceID)
+			}
+			return "", err
+		}
+		return fmt.Sprintf("Updated todo %s.", args.SourceID), nil
+	})
+}
+
+// registerKBListTodos adds knowledgebase_list_todos — the agent's view of the
+// todo board, including the due-soon/overdue filter the reminders sweep uses.
+func registerKBListTodos(r *tools.Registry, store *KBStore, agentID string) {
+	r.Register("knowledgebase_list_todos", "List the user's todos. status: omit to list every status, 'active' for pending+in_progress (the working set), or a specific status. due_within_hours: when set, only todos whose end_at is set and at or before now+that many hours (due soon or overdue). Use it at the start of a conversation or when the user may have pending work, and proactively mention any item that is due, overdue, or relevant to the current topic.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"status": map[string]interface{}{
+				"type":        "string",
+				"description": "Filter: omit for all, 'active' for pending+in_progress, or one of pending/in_progress/done/cancelled",
+			},
+			"due_within_hours": map[string]interface{}{
+				"type":        "integer",
+				"description": "Only return todos due at or before now+this many hours (due soon / overdue). Omit to ignore due time.",
+			},
+		},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			Status         string `json:"status,omitempty"`
+			DueWithinHours int    `json:"due_within_hours,omitempty"`
+		}
+		json.Unmarshal(rawArgs, &args)
+		todos, err := store.ListTodos(ctx, agentID, args.Status, args.DueWithinHours)
+		if err != nil {
+			return "", err
+		}
+		if len(todos) == 0 {
+			label := "all"
+			if args.Status != "" {
+				label = args.Status
+			}
+			return fmt.Sprintf("No %s todos.", label), nil
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "%d todo(s)", len(todos))
+		if args.Status != "" {
+			fmt.Fprintf(&sb, " [%s]", args.Status)
+		}
+		sb.WriteString(":\n")
+		for _, t := range todos {
+			end := "no due date"
+			if t.EndAt != nil {
+				end = "due " + t.EndAt.UTC().Format("2006-01-02 15:04Z")
+			}
+			fmt.Fprintf(&sb, "- [%s] %s (id: %s, %s)\n", t.Status, t.Title, t.ID, end)
+		}
+		return sb.String(), nil
 	})
 }
 
