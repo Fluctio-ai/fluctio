@@ -481,6 +481,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/agents/{id}/memory/reindex", auth(s.handleReindexAgentMemory))
 	mux.HandleFunc("GET /api/agents/{id}/vectorization", auth(s.handleGetAgentVectorization))
 	mux.HandleFunc("PUT /api/agents/{id}/vectorization", auth(s.handleUpdateAgentVectorization))
+	mux.HandleFunc("GET /api/vectorization", auth(s.handleGetSystemVectorization))
+	mux.HandleFunc("PUT /api/vectorization", auth(s.handleUpdateSystemVectorization))
 
 	// Tasks
 	mux.HandleFunc("GET /api/tasks", admin(s.handleListTasks))

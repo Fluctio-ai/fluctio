@@ -1819,6 +1819,22 @@ export async function setAgentVectorization(agentId: string, vectorization: Vect
   return res.json().catch(() => ({ ok: true }));
 }
 
+// System-level vectorization defaults (inherited by agents without an override).
+export async function getSystemVectorization(): Promise<{ vectorization?: VectorizationConfig }> {
+  const res = await apiFetch(`/api/vectorization`);
+  if (!res.ok) return {};
+  return res.json().catch(() => ({}));
+}
+
+export async function setSystemVectorization(vectorization: VectorizationConfig): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/vectorization`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vectorization }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+
 // --- Memory config types (agent memory settings page) ---
 export interface MemoryEmbeddingConfig {
   enabled: boolean;
@@ -1853,6 +1869,7 @@ export interface VectorizationConfig {
   reranker?: MemoryRerankerConfig;
   kbEmbedding?: boolean;
   wikiEmbedding?: boolean;
+  wikiThreshold?: number;
   [k: string]: any;
 }
 export async function reindexAgentMemory(agentId: string): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {

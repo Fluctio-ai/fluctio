@@ -52,6 +52,7 @@ export default function AgentMemoryPage() {
   // Apply-scope toggles: which modules share the embedder/reranker above.
   const [kbEmbedding, setKbEmbedding] = useState(false);
   const [wikiEmbedding, setWikiEmbedding] = useState(false);
+  const [wikiThreshold, setWikiThreshold] = useState(0.45);
   const [wikiReindexing, setWikiReindexing] = useState(false);
   const [wikiReindexMsg, setWikiReindexMsg] = useState<string | null>(null);
 
@@ -91,6 +92,7 @@ export default function AgentMemoryPage() {
       }
       setKbEmbedding(vec.kbEmbedding ?? false);
       setWikiEmbedding(vec.wikiEmbedding ?? false);
+      setWikiThreshold(vec.wikiThreshold ?? 0.45);
     } finally {
       setLoading(false);
     }
@@ -104,7 +106,7 @@ export default function AgentMemoryPage() {
     setSaving(true);
     try {
       // Vector fields → vectorization namespace.
-      await setAgentVectorization(agentId, { embedding, reranker, kbEmbedding, wikiEmbedding } as any);
+      await setAgentVectorization(agentId, { embedding, reranker, kbEmbedding, wikiEmbedding, wikiThreshold } as any);
       // Non-vector fields → memory namespace. Spread the existing memory
       // first so we don't clobber sibling fields this page doesn't edit
       // (wikiAutoGen, autoPersist, …).
@@ -360,16 +362,28 @@ export default function AgentMemoryPage() {
             <Switch checked={wikiEmbedding} onCheckedChange={(v: boolean) => setWikiEmbedding(v)} />
           </div>
           {wikiEmbedding && (
-            <div className="flex flex-wrap items-center gap-3 pt-1">
-              <Button variant="outline" size="sm" className="h-8" onClick={() => handleWikiReindex(false)} disabled={wikiReindexing || saving}>
-                {wikiReindexing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
-                {wikiReindexing ? (t("memory.reindexing") || "Reindexing…") : (t("memory.wikiReindex") || "补缺失向量")}
-              </Button>
-              <Button variant="ghost" size="sm" className="h-8 text-muted-foreground" onClick={() => handleWikiReindex(true)} disabled={wikiReindexing || saving}>
-                {t("memory.wikiReindexForce") || "强制全部重向量化"}
-              </Button>
-              {wikiReindexMsg && <span className="text-xs text-muted-foreground">{wikiReindexMsg}</span>}
-            </div>
+            <>
+              <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm font-medium">{t("memory.wikiThreshold") || "相似度阈值"}</span>
+                  <span className="text-xs text-muted-foreground font-mono">{wikiThreshold.toFixed(2)}</span>
+                </div>
+                <input type="range" min="0" max="1" step="0.05" value={wikiThreshold}
+                  onChange={(e) => setWikiThreshold(parseFloat(e.target.value))}
+                  className="w-full accent-primary h-1.5" />
+                <p className="text-xs text-muted-foreground/70 mt-1.5">{t("memory.wikiThresholdDesc") || "wiki 生成与搜索时的 cosine 门槛；越高越严格（结果更少更准）。默认 0.45。"}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <Button variant="outline" size="sm" className="h-8" onClick={() => handleWikiReindex(false)} disabled={wikiReindexing || saving}>
+                  {wikiReindexing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
+                  {wikiReindexing ? (t("memory.reindexing") || "Reindexing…") : (t("memory.wikiReindex") || "补缺失向量")}
+                </Button>
+                <Button variant="ghost" size="sm" className="h-8 text-muted-foreground" onClick={() => handleWikiReindex(true)} disabled={wikiReindexing || saving}>
+                  {t("memory.wikiReindexForce") || "强制全部重向量化"}
+                </Button>
+                {wikiReindexMsg && <span className="text-xs text-muted-foreground">{wikiReindexMsg}</span>}
+              </div>
+            </>
           )}
         </div>
       </div>

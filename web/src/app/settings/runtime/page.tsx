@@ -15,8 +15,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Save, Check, Clock, Container } from "lucide-react";
-import { getConfig, updateConfig, getMe, type ConfigResponse } from "@/lib/api";
+import { Save, Check, Clock, Container, Database, Boxes } from "lucide-react";
+import { getConfig, updateConfig, getMe, getSystemVectorization, setSystemVectorization, type ConfigResponse, type MemoryEmbeddingConfig, type MemoryRerankerConfig } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 export default function RuntimeSettingsPage() {
@@ -37,6 +37,10 @@ export default function RuntimeSettingsPage() {
   const [sandboxBoxliteKey, setSandboxBoxliteKey] = useState("");
   const [sandboxBoxliteURL, setSandboxBoxliteURL] = useState("");
   const [defaultTimezone, setDefaultTimezone] = useState("");
+  // System vectorization defaults — embedding/reranker inherited by agents
+  // that don't define their own (scope.Setting merges system→agent).
+  const [sysEmbedding, setSysEmbedding] = useState<MemoryEmbeddingConfig>({ enabled: false, provider: "", model: "", apiKey: "", apiBase: "", dim: 1024, dimEnabled: false });
+  const [sysReranker, setSysReranker] = useState<MemoryRerankerConfig>({ enabled: false, provider: "", model: "", apiKey: "", apiBase: "" });
 
   useEffect(() => {
     // Belt-and-suspenders gate: the layout already hides the nav item,
@@ -74,6 +78,13 @@ export default function RuntimeSettingsPage() {
         })
         .catch(() => {})
         .finally(() => setLoading(false));
+      getSystemVectorization()
+        .then((res) => {
+          const v = res.vectorization;
+          if (v?.embedding) setSysEmbedding({ enabled: v.embedding.enabled ?? false, provider: v.embedding.provider || "", model: v.embedding.model || "", apiKey: v.embedding.apiKey || "", apiBase: v.embedding.apiBase || "", dim: v.embedding.dim || 1024, dimEnabled: v.embedding.dimEnabled ?? false });
+          if (v?.reranker) setSysReranker({ enabled: v.reranker.enabled ?? false, provider: v.reranker.provider || "", model: v.reranker.model || "", apiKey: v.reranker.apiKey || "", apiBase: v.reranker.apiBase || "" });
+        })
+        .catch(() => {});
     });
   }, [router]);
 
@@ -110,6 +121,12 @@ export default function RuntimeSettingsPage() {
       });
       if (result?.ok === false) {
         setSaveError(result.error || tt("common.saveFailed"));
+        return;
+      }
+      // System vectorization defaults live in their own namespace.
+      const vecRes = await setSystemVectorization({ embedding: sysEmbedding, reranker: sysReranker } as any);
+      if (vecRes?.error) {
+        setSaveError(vecRes.error);
         return;
       }
     } catch (err) {
@@ -298,6 +315,44 @@ export default function RuntimeSettingsPage() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* System vectorization defaults — embedding & reranker inherited by agents */}
+      <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Database className="h-4 w-4 text-primary" />
+            <h3 className="font-medium">{tt("runtime.vectorizationDefaults") || "向量化服务默认值"}</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">{tt("runtime.vectorizationDefaultsDesc") || "系统级 embedding/reranker 默认配置。未自建向量配置的智能体会继承这些值（与 LLM 模型默认同理）。"}</p>
+        </div>
+        <div className="space-y-2 rounded-md border border-border/60 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">{tt("memory.embedding") || "Embedding"}</span>
+            <Switch checked={sysEmbedding.enabled} onCheckedChange={(v) => setSysEmbedding({ ...sysEmbedding, enabled: v })} />
+          </div>
+          {sysEmbedding.enabled && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input value={sysEmbedding.model || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, model: e.target.value })} placeholder="BAAI/bge-m3" className="font-mono text-sm" />
+              <Input value={sysEmbedding.apiBase || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiBase: e.target.value })} placeholder="https://api.siliconflow.cn/v1" className="font-mono text-sm" />
+              <Input type="password" value={sysEmbedding.apiKey || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiKey: e.target.value })} placeholder="sk-..." className="font-mono text-sm" />
+              <Input type="number" value={sysEmbedding.dim || 1024} onChange={(e) => setSysEmbedding({ ...sysEmbedding, dim: parseInt(e.target.value) || 1024 })} placeholder="1024" className="font-mono text-sm" />
+            </div>
+          )}
+        </div>
+        <div className="space-y-2 rounded-md border border-border/60 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">{tt("memory.reranker") || "Reranker"}</span>
+            <Switch checked={sysReranker.enabled} onCheckedChange={(v) => setSysReranker({ ...sysReranker, enabled: v })} />
+          </div>
+          {sysReranker.enabled && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Input value={sysReranker.model || ""} onChange={(e) => setSysReranker({ ...sysReranker, model: e.target.value })} placeholder="jina-reranker-v2-base-multilingual" className="font-mono text-sm" />
+              <Input value={sysReranker.apiBase || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiBase: e.target.value })} placeholder="https://api.jina.ai/v1" className="font-mono text-sm" />
+              <Input type="password" value={sysReranker.apiKey || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiKey: e.target.value })} placeholder="jina_..." className="font-mono text-sm sm:col-span-2" />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

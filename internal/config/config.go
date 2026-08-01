@@ -355,6 +355,11 @@ type VectorCfg struct {
 	Reranker      RerankerCfg  `json:"reranker,omitempty"`
 	KBEmbedding   bool         `json:"kbEmbedding,omitempty"`
 	WikiEmbedding bool         `json:"wikiEmbedding,omitempty"`
+	// WikiThreshold is the minimum cosine similarity for a wiki page to
+	// count as relevant during vector retrieval — both indexExcerpt
+	// generation (relevantPages) and KB wiki search. 0/negative = default
+	// 0.45. Higher = stricter cutoff (fewer, sharper results).
+	WikiThreshold float64 `json:"wikiThreshold,omitempty"`
 }
 
 type AutoPersistCfg struct {

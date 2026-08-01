@@ -38,3 +38,29 @@ func (s *Server) handleUpdateAgentVectorization(w http.ResponseWriter, r *http.R
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// --- /api/vectorization (GET/PUT) — system-level defaults ---
+//
+// Reads/writes the system-scope "vectorization" row (agentID=""). Agents
+// inherit these via scope.Setting merge when they don't override.
+func (s *Server) handleGetSystemVectorization(w http.ResponseWriter, r *http.Request) {
+	var vec config.VectorCfg
+	if s.dataStore != nil {
+		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", "", &vec)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"vectorization": vec})
+}
+
+func (s *Server) handleUpdateSystemVectorization(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	vec, _ := body["vectorization"].(map[string]any)
+	if err := scope.SaveSetting(r.Context(), s.dataStore, "", "", "vectorization", vec); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

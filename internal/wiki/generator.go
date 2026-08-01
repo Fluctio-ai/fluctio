@@ -22,19 +22,21 @@ type LLMInvoker func(ctx context.Context, messages []provider.Message) (string, 
 
 // Generator creates wiki pages from KB source content using two-step CoT.
 type Generator struct {
-	store    *WikiStore
-	kbStore  *kb.KBStore
-	invoke   LLMInvoker
-	embedder embedding.Embedder
+	store         *WikiStore
+	kbStore       *kb.KBStore
+	invoke        LLMInvoker
+	embedder      embedding.Embedder
+	wikiThreshold float64 // min cosine similarity for relevantPages; <=0 = 0.45 default
 }
 
 // NewGenerator creates a wiki generator. embedder is optional: pass nil or
 // an unavailable embedder to keep the flat first-200 indexExcerpt (vector
 // retrieval off / endpoint unconfigured). When available, indexExcerpt
 // retrieves the pages most semantically related to each source, and pages
-// are embedded as they're written.
-func NewGenerator(ws *WikiStore, kbs *kb.KBStore, invoker LLMInvoker, embedder embedding.Embedder) *Generator {
-	return &Generator{store: ws, kbStore: kbs, invoke: invoker, embedder: embedder}
+// are embedded as they're written. wikiThreshold sets the cosine cutoff
+// for relevantPages (<=0 = default 0.45).
+func NewGenerator(ws *WikiStore, kbs *kb.KBStore, invoker LLMInvoker, embedder embedding.Embedder, wikiThreshold float64) *Generator {
+	return &Generator{store: ws, kbStore: kbs, invoke: invoker, embedder: embedder, wikiThreshold: wikiThreshold}
 }
 
 // EmbedderFromMemoryCfg builds an embedder for wiki vector retrieval from
@@ -388,12 +390,20 @@ func (g *Generator) relevantPages(ctx context.Context, agentID, sourceText strin
 		id    string
 		score float64
 	}
+	threshold := g.wikiThreshold
+	if threshold <= 0 {
+		threshold = 0.45
+	}
 	scores := make([]sc, 0, len(embs))
 	for _, e := range embs {
 		if len(e.Vec) != len(q) {
 			continue // dim mismatch (model switched) — skip stale vector
 		}
-		scores = append(scores, sc{e.PageID, cosineSim(q, e.Vec)})
+		score := cosineSim(q, e.Vec)
+		if score < threshold {
+			continue // below relevance cutoff
+		}
+		scores = append(scores, sc{e.PageID, score})
 	}
 	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
 	if len(scores) > topN {

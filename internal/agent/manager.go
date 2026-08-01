@@ -333,7 +333,10 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					wikiRatio = *kbCfg.WikiRatio
 				}
 				threshold := 0.45
-				if kbCfg.Threshold != nil {
+				var v config.VectorCfg
+				if scope.SettingInto(context.Background(), m.opts.dataStore, "vectorization", m.uid, rc.ID, &v) == nil && v.WikiThreshold > 0 {
+					threshold = v.WikiThreshold
+				} else if kbCfg.Threshold != nil {
 					threshold = *kbCfg.Threshold
 				}
 				return kb.AutoQueryCfg{
@@ -376,6 +379,14 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					}
 					return 0.5
 				}, func() float64 {
+					// Prefer the vectorization-page WikiThreshold (unified
+					// wiki recall cutoff); fall back to the legacy KB-config
+					// Threshold, then the 0.45 default.
+					var v config.VectorCfg
+					_ = scope.SettingInto(context.Background(), m.opts.dataStore, "vectorization", m.uid, rc.ID, &v)
+					if v.WikiThreshold > 0 {
+						return v.WikiThreshold
+					}
 					if kbCfg.Threshold != nil {
 						return *kbCfg.Threshold
 					}

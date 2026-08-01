@@ -331,7 +331,7 @@ func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force boo
 			slog.Debug("wiki generate: vectorization cfg read failed", "agent", agentID, "error", err)
 		}
 	}
-	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromVectorCfg(vec))
+	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromVectorCfg(vec), vec.WikiThreshold)
 	for _, sid := range toProcess {
 		r := gen.Generate(ctx, agentID, sid)
 		if r.Error != "" {
