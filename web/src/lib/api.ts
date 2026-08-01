@@ -1569,6 +1569,14 @@ export interface KBSource {
   wiki_generated_at?: string;
   created_at: string;
   updated_at: string;
+  /** Content type: article (default) / flash / todo. */
+  type?: string;
+  /** Todo lifecycle: pending / in_progress / done / cancelled. */
+  status?: string;
+  start_at?: string;
+  end_at?: string;
+  /** Last due-reminder push timestamp (dedup for the reminders sweep). */
+  reminded_at?: string;
 }
 export interface KBStats { source_count: number; entry_count: number; total_chars: number; }
 export interface KBEntry { id: number; source_id: string; chunk_index: number; content: string; }
@@ -1609,6 +1617,47 @@ export async function deleteKBSource(agentId: string, sourceId: string): Promise
   const res = await apiFetch(`/api/agents/${agentId}/kb/sources/${sourceId}`, { method: "DELETE" });
   if (!res.ok) return { error: `HTTP ${res.status}` };
   return res.json();
+}
+export async function kbSaveFlash(agentId: string, content: string): Promise<{ source_id?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/flash`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function kbSaveTodo(
+  agentId: string,
+  content: string,
+  status?: string,
+  startAt?: string,
+  endAt?: string,
+): Promise<{ source_id?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/todo`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, status, start_at: startAt, end_at: endAt }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function kbUpdateTodo(
+  agentId: string,
+  sourceId: string,
+  patch: { status?: string; start_at?: string; end_at?: string },
+): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/todos/${sourceId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function kbListTodos(agentId: string, status?: string): Promise<KBSource[]> {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  const res = await apiFetch(`/api/agents/${agentId}/kb/todos${q}`);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
 }
 export async function generateWiki(agentId: string, sourceIds: string[], force?: boolean): Promise<{ status?: string; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/wiki/generate`, {
