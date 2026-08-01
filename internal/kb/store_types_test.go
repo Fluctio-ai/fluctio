@@ -118,7 +118,51 @@ func TestListTodosDueWithin(t *testing.T) {
 	}
 }
 
-// TestSearchRecallsFlashTodoByVector proves the stage-2 recall gap is closed:
+// TestListDueTodosAndMarkReminded verifies the reminders-sweep working set:
+// a todo due inside the window with empty reminded_at is returned; after
+// MarkTodoReminded it drops out; rescheduling via UpdateTodo resets
+// reminded_at so it becomes eligible again.
+func TestListDueTodosAndMarkReminded(t *testing.T) {
+	db := setupKBVectorTestDB(t)
+	store := NewKBStore(db, "sqlite")
+	ctx := context.Background()
+	const agent = "agt_due2"
+
+	dueID, err := store.SaveTodo(ctx, agent, "due soon", "pending", "",
+		time.Now().UTC().Add(12*time.Hour).Format(time.RFC3339))
+	if err != nil {
+		t.Fatalf("SaveTodo: %v", err)
+	}
+	if _, err := store.SaveTodo(ctx, agent, "far future", "pending", "",
+		time.Now().UTC().Add(72*time.Hour).Format(time.RFC3339)); err != nil {
+		t.Fatalf("SaveTodo far: %v", err)
+	}
+
+	due, err := store.ListDueTodos(ctx, agent, 24)
+	if err != nil {
+		t.Fatalf("ListDueTodos: %v", err)
+	}
+	if len(due) != 1 || due[0].ID != dueID {
+		t.Fatalf("ListDueTodos = %+v, want 1 [%s]", due, dueID)
+	}
+
+	if err := store.MarkTodoReminded(ctx, agent, dueID); err != nil {
+		t.Fatalf("MarkTodoReminded: %v", err)
+	}
+	if due2, _ := store.ListDueTodos(ctx, agent, 24); len(due2) != 0 {
+		t.Errorf("after mark, due = %d, want 0", len(due2))
+	}
+
+	// Rescheduling into the window resets reminded_at → re-eligible.
+	if err := store.UpdateTodo(ctx, agent, dueID, "", "",
+		time.Now().UTC().Add(8*time.Hour).Format(time.RFC3339)); err != nil {
+		t.Fatalf("UpdateTodo: %v", err)
+	}
+	due3, _ := store.ListDueTodos(ctx, agent, 24)
+	if len(due3) != 1 || due3[0].ID != dueID {
+		t.Errorf("after reschedule, due = %+v, want 1 [%s]", due3, dueID)
+	}
+}
 // flash/todo sources (which skip wiki generation) are reachable by the main
 // Search via their chunk vectors, not just article/wiki hits.
 func TestSearchRecallsFlashTodoByVector(t *testing.T) {

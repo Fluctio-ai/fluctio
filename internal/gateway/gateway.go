@@ -765,6 +765,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runImplicitFeedbackSweep(ctx)
 	}()
+	// Due-todo reminder sweep: flags todos nearing/over their end_at (log-only
+	// for now — IM push hooks in once a default channel is chosen). 30min
+	// cadence, 24h lookahead, reminded_at dedup.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runDueTodoReminderSweep(ctx)
+	}()
 	// Idle session summary sweep: summarize sessions the user ended by
 	// walking away (never /compact, never /new) so their content still
 	// enters cross-session recall. Default 10min interval, 2h idle

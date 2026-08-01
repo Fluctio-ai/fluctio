@@ -386,3 +386,46 @@ func mergeKBResults(wiki, ft []KBResult, limit int) []KBResult {
 	}
 	return merged
 }
+
+// ListDueTodos returns active todos whose end_at is set, at or before now+
+// withinHours, and whose reminded_at is empty (never pushed). This is the
+// reminders sweep's working set; MarkTodoReminded excludes a todo until
+// UpdateTodo resets reminded_at on the next status/time change.
+func (s *KBStore) ListDueTodos(ctx context.Context, agentID string, withinHours int) ([]KBSource, error) {
+	if withinHours <= 0 {
+		withinHours = 24
+	}
+	horizon := time.Now().UTC().Add(time.Duration(withinHours) * time.Hour).Format(time.RFC3339)
+	q := fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
+		type, status, start_at, end_at, reminded_at
+		FROM kb_sources
+		WHERE agent_id = %s AND type = 'todo' AND status IN ('pending', 'in_progress')
+		AND end_at != '' AND end_at <= %s AND reminded_at = ''
+		ORDER BY end_at ASC`, s.ph(1), s.ph(2))
+	rows, err := s.db.QueryContext(ctx, q, agentID, horizon)
+	if err != nil {
+		return nil, fmt.Errorf("list due todos: %w", err)
+	}
+	defer rows.Close()
+	var due []KBSource
+	for rows.Next() {
+		t, ok := scanSource(rows)
+		if !ok {
+			continue
+		}
+		due = append(due, t)
+	}
+	return due, nil
+}
+
+// MarkTodoReminded stamps reminded_at=now on a todo so the sweep won't push it
+// again until UpdateTodo clears it (reschedule/reopen). A miss (wrong id / not
+// a todo) is silent — the sweep is best-effort.
+func (s *KBStore) MarkTodoReminded(ctx context.Context, agentID, sourceID string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE kb_sources SET reminded_at = %s WHERE id = %s AND agent_id = %s AND type = 'todo'`,
+			s.ph(1), s.ph(2), s.ph(3)),
+		now, sourceID, agentID)
+	return err
+}
