@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
@@ -46,8 +48,8 @@ func (g *Gateway) sweepAllAgentsDueTodos(ctx context.Context, windowHours int) {
 		slog.Warn("due-todo sweep: list agents", "error", err)
 		return
 	}
-	const reminderChannel = "wechat" // TODO(reminders): make agent-configurable
 	for _, ag := range agents {
+		channel := reminderChannelFor(ag)
 		ks := kb.NewKBStore(dbs.DB(), dbs.Dialect())
 		due, err := ks.ListDueTodos(ctx, ag.ID, windowHours)
 		if err != nil {
@@ -57,14 +59,14 @@ func (g *Gateway) sweepAllAgentsDueTodos(ctx context.Context, windowHours int) {
 		if len(due) == 0 {
 			continue
 		}
-		accountID, chatID, ok := deliverableTargetForAgent(ctx, dbs, ag.ID, reminderChannel)
+		accountID, chatID, ok := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
 		if !ok {
-			slog.Warn("due-todo sweep: no deliverable target; skipping (bind+message the agent once)", "agent", ag.ID, "channel", reminderChannel)
+			slog.Warn("due-todo sweep: no deliverable target; skipping (bind+message the agent once)", "agent", ag.ID, "channel", channel)
 			continue
 		}
-		ch := g.chanMgr.Get(reminderChannel, accountID)
+		ch := g.chanMgr.Get(channel, accountID)
 		if ch == nil {
-			slog.Warn("due-todo sweep: channel not registered", "agent", ag.ID, "channel", reminderChannel, "account", accountID)
+			slog.Warn("due-todo sweep: channel not registered", "agent", ag.ID, "channel", channel, "account", accountID)
 			continue
 		}
 		for _, t := range due {
@@ -72,12 +74,29 @@ func (g *Gateway) sweepAllAgentsDueTodos(ctx context.Context, windowHours int) {
 				slog.Warn("due-todo push failed", "agent", ag.ID, "todo", t.ID, "error", err)
 				continue // don't stamp — retry next tick
 			}
-			slog.Info("due-todo reminder pushed", "agent", ag.ID, "todo", t.ID, "title", t.Title, "channel", reminderChannel, "chat", chatID)
+			slog.Info("due-todo reminder pushed", "agent", ag.ID, "todo", t.ID, "title", t.Title, "channel", channel, "chat", chatID)
 			if err := ks.MarkTodoReminded(ctx, ag.ID, t.ID); err != nil {
 				slog.Warn("due-todo sweep: mark reminded", "agent", ag.ID, "todo", t.ID, "error", err)
 			}
 		}
 	}
+}
+
+// reminderChannelFor reads the agent's configured reminder channel from its KB
+// config (AgentRecord.Config["kb"].ReminderChannel), defaulting to wechat when
+// unset. Config["kb"] round-trips through interface{} (JSON-loaded map), so
+// marshal+unmarshal normalizes it into config.AgentKBCfg.
+func reminderChannelFor(ag store.AgentRecord) string {
+	if cfgAny, ok := ag.Config["kb"]; ok && cfgAny != nil {
+		var kbCfg config.AgentKBCfg
+		if b, err := json.Marshal(cfgAny); err == nil {
+			_ = json.Unmarshal(b, &kbCfg)
+		}
+		if kbCfg.ReminderChannel != "" {
+			return kbCfg.ReminderChannel
+		}
+	}
+	return "wechat"
 }
 
 // deliverableTargetForAgent resolves the (accountID, chatID) the reminders sweep

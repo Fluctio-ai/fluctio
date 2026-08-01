@@ -596,6 +596,8 @@ const zhCN: Record<string, string> = {
   "knowledge.status_in_progress": "进行中",
   "knowledge.status_done": "已完成",
   "knowledge.status_cancelled": "已取消",
+  "knowledge.reminderChannel": "提醒渠道",
+  "knowledge.reminderChannelDesc": "到期待办推送到的 IM 渠道（需已绑定并启用）",
   "knowledge.chunk": "分块",
   "knowledge.failedAddText": "添加文本失败",
   "knowledge.failedFetchURL": "获取 URL 失败",

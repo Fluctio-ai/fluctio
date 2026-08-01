@@ -1555,6 +1555,8 @@ export interface AgentKBCfg {
   wikiRatio?: number;
   /** Minimum normalized relevance [0,1] for a wiki result to be kept. Default 0.45. */
   threshold?: number;
+  /** IM channel for due-todo reminders (wechat/qq/telegram/...). Default wechat. */
+  reminderChannel?: string;
 }
 
 // --- Knowledge base types + API (slice 4a REST handlers) ---

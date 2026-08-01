@@ -746,6 +746,9 @@ type AgentKBCfg struct {
 	// be kept (weighted score ÷ (9 × queryTokenCount)). nil = 0.45.
 	// Higher = stricter cutoff; 0 effectively returns all prefiltered hits.
 	Threshold *float64 `json:"threshold,omitempty"`
+	// ReminderChannel is the IM channel the due-todo sweep pushes to
+	// (wechat/qq/telegram/discord/slack/feishu/line). Empty = "wechat".
+	ReminderChannel string `json:"reminderChannel,omitempty"`
 }
 
 type SkillsConfig struct {

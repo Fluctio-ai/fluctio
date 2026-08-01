@@ -596,6 +596,8 @@ const en: Record<string, string> = {
   "knowledge.status_in_progress": "In progress",
   "knowledge.status_done": "Done",
   "knowledge.status_cancelled": "Cancelled",
+  "knowledge.reminderChannel": "Reminder channel",
+  "knowledge.reminderChannelDesc": "IM channel for due-todo reminders (must be bound and enabled)",
   "knowledge.chunk": "Chunk",
   "knowledge.failedAddText": "Failed to add text",
   "knowledge.failedFetchURL": "Failed to fetch URL",

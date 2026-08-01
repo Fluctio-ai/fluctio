@@ -32,6 +32,7 @@ export function KBSettingsCard() {
   const [emptyAction, setEmptyAction] = useState("llm");
   const [wikiRatio, setWikiRatio] = useState(0.5);
   const [threshold, setThreshold] = useState(0.45);
+  const [reminderChannel, setReminderChannel] = useState("wechat");
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -49,6 +50,7 @@ export function KBSettingsCard() {
           setEmptyAction(kb.emptyAction ?? "llm");
           setWikiRatio(kb.wikiRatio ?? 0.5);
           setThreshold(kb.threshold ?? 0.45);
+          setReminderChannel(kb.reminderChannel || "wechat");
         }
         setConfigLoaded(true);
       })
@@ -72,6 +74,7 @@ export function KBSettingsCard() {
           emptyAction,
           wikiRatio,
           threshold,
+          reminderChannel,
         },
       } as any);
     } catch {}
@@ -86,6 +89,7 @@ export function KBSettingsCard() {
     emptyAction,
     wikiRatio,
     threshold,
+    reminderChannel,
   ]);
 
   return (
@@ -173,6 +177,27 @@ export function KBSettingsCard() {
             />
             <p className="text-[11px] text-muted-foreground">
               {t("knowledge.thresholdDesc")}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">{t("knowledge.reminderChannel")}</Label>
+            <Select value={reminderChannel} onValueChange={(v) => v && setReminderChannel(v)}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="wechat">微信</SelectItem>
+                <SelectItem value="qq">QQ</SelectItem>
+                <SelectItem value="telegram">Telegram</SelectItem>
+                <SelectItem value="discord">Discord</SelectItem>
+                <SelectItem value="slack">Slack</SelectItem>
+                <SelectItem value="feishu">飞书</SelectItem>
+                <SelectItem value="line">LINE</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              {t("knowledge.reminderChannelDesc")}
             </p>
           </div>
 
