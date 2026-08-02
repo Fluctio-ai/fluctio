@@ -17,7 +17,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/httpclient"
 )
 
-func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64, thresholdFn func() float64) {
+func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64, thresholdFn func() float64, insightInvoker InsightInvoker, insightModel string, insightMaxTokens int) {
 	registerKBSearch(r, store, agentID, sourceRatioFn, thresholdFn)
 	registerKBSearchRaw(r, store, agentID)
 	registerKBAdd(r, store, agentID)
@@ -28,6 +28,12 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 	registerKBSaveTodo(r, store, agentID)
 	registerKBUpdateTodo(r, store, agentID)
 	registerKBListTodos(r, store, agentID)
+	// The deep-reading tool needs an LLM invoker; when none is wired (e.g. an
+	// agent without a provider) the tool is simply unavailable rather than
+	// registered-but-broken.
+	if insightInvoker != nil {
+		registerKBGenerateInsights(r, store, agentID, insightInvoker, insightModel, insightMaxTokens)
+	}
 }
 
 func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64, thresholdFn func() float64) {
@@ -335,27 +341,44 @@ func registerKBDelete(r *tools.Registry, store *KBStore, agentID string) {
 // the agent capture proactively (harness visibility: the when-to-use lives in
 // the tool description per tool-guidance-placement A, no prompt_modules entry).
 func registerKBFlash(r *tools.Registry, store *KBStore, agentID string) {
-	r.Register("knowledgebase_save_flash", "Save a short inspiration flash (灵感闪记) to the knowledge base — an idea, insight, what-if, or quick note worth recalling later. Use it PROACTIVELY whenever the conversation surfaces a spark the user would want to remember, even if they did not explicitly ask. Content is stored verbatim as one short note; no title is needed.", map[string]interface{}{
+	r.Register("knowledgebase_save_flash", "Save or update a short inspiration flash (灵感闪记). TWO modes: (1) NEW — omit source_id, record a brand-new idea the user EXPLICITLY asks to capture; (2) UPDATE — pass source_id to overwrite an existing flash with the FULL evolved text, used when the user iterates / refines / clarifies / adds to an idea they already recorded (so one idea stays as ONE complete iterated flash instead of fragmenting into many partial duplicates). Always write the complete current version of the idea, never just the delta. Use ONLY on explicit user intent (我有一个想法 / 帮我记一下 / 更新刚才那个想法 / 补充一下). Never proactive, and never capture content the user did not ask to record.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"content": map[string]interface{}{
 				"type":        "string",
-				"description": "The idea / insight / note text to capture",
+				"description": "The full idea / insight / note text. When updating (source_id set), write the COMPLETE evolved version, not just the new part.",
+			},
+			"source_id": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional. Pass the source_id of an existing flash to UPDATE it (when the user iterates / refines a previously recorded idea). Omit to create a new flash.",
 			},
 		},
 		"required": []string{"content"},
 	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
 		var args struct {
-			Content string `json:"content"`
+			Content  string `json:"content"`
+			SourceID string `json:"source_id,omitempty"`
 		}
 		if err := json.Unmarshal(rawArgs, &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
-		id, err := store.SaveFlash(ctx, agentID, args.Content)
-		if err != nil {
+		if args.Content == "" {
+			return "", fmt.Errorf("content is required")
+		}
+		if args.SourceID == "" {
+			id, err := store.SaveFlash(ctx, agentID, args.Content)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Saved inspiration flash (source_id=%s).", id), nil
+		}
+		if err := store.UpdateFlash(ctx, agentID, args.SourceID, args.Content); err != nil {
+			if errors.Is(err, ErrFlashNotFound) {
+				return fmt.Sprintf("更新灵感闪记失败：找不到 id=%s 的闪记（可能不属于本 agent 或不是闪记）。可改用不带 source_id 的方式新建，或先 knowledgebase_list 确认 id。", args.SourceID), nil
+			}
 			return "", err
 		}
-		return fmt.Sprintf("Saved inspiration flash (source_id=%s).", id), nil
+		return fmt.Sprintf("Updated inspiration flash (source_id=%s) — 已更新为完整迭代后的版本。", args.SourceID), nil
 	})
 }
 
@@ -376,7 +399,7 @@ func registerKBSaveTodo(r *tools.Registry, store *KBStore, agentID string) {
 			"description": desc,
 		}
 	}
-	r.Register("knowledgebase_save_todo", "Save a todo item to the knowledge base — something that needs doing. status defaults to pending; set it explicitly to record an item that is already in progress or done. Provide start_at and/or end_at as RFC 3339 timestamps (e.g. 2026-08-02T09:00:00Z) when timing is mentioned or implied. Use it whenever the conversation commits to an action item, follow-up, or task the user should track.", map[string]interface{}{
+	r.Register("knowledgebase_save_todo", "Save a todo item to the knowledge base — something that needs doing. status defaults to pending; set it explicitly to record an item that is already in progress or done. Provide start_at and/or end_at as RFC 3339 timestamps (e.g. 2026-08-02T09:00:00Z) when timing is mentioned or implied. Use it ONLY when the user explicitly commits to an action item / follow-up / task (e.g. 帮我记个待办 / 提醒我去做X / 这是个待办 / 我得去...). Do NOT proactively turn casual mentions or vague intentions into todos.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"content": map[string]interface{}{
@@ -508,6 +531,52 @@ func registerKBListTodos(r *tools.Registry, store *KBStore, agentID string) {
 			fmt.Fprintf(&sb, "- [%s] %s (id: %s, %s)\n", t.Status, t.Title, t.ID, end)
 		}
 		return sb.String(), nil
+	})
+}
+
+// registerKBGenerateInsights adds knowledgebase_generate_insights — the
+// deep-reading tool that runs an LLM pass over one article's full text and
+// stores summary / quotes / actions / sprouts on it. Expensive (one LLM call
+// over the whole article), so the description tells the agent to run it only
+// on explicit request. Harness visibility: the when-to-use lives in the tool
+// description (per tool-guidance-placement A).
+func registerKBGenerateInsights(r *tools.Registry, store *KBStore, agentID string, invoker InsightInvoker, model string, maxTokens int) {
+	r.Register("knowledgebase_generate_insights", "Generate a deep reading (深度解读) of one knowledge-base ARTICLE: a structured summary (core + thematic topic blocks + chapter outlines), curated verbatim quotes, action items, and knowledge-extension 'sprouts'. The result is stored ON the article by this tool itself and rendered in the article's detail page — you do NOT need any other tool to save it. Pass the source_id of an article (from knowledgebase_list / knowledgebase_search). EXPENSIVE (one LLM call over the full text), so run ONLY when the user explicitly asks to deeply analyze / unpack / '生根发芽' / '解读' a specific article; never proactively. If the call FAILS, report the error to the user verbatim and STOP — do NOT manually compose the reading yourself, and do NOT store anything via knowledgebase_add / knowledgebase_save_flash / other tools; this tool is the only correct path.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"source_id": map[string]interface{}{
+				"type":        "string",
+				"description": "The source_id of the article to deeply analyze (from knowledgebase_list / knowledgebase_search). Must be an article, not a flash/todo.",
+			},
+		},
+		"required": []string{"source_id"},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			SourceID string `json:"source_id"`
+		}
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		if args.SourceID == "" {
+			return "", fmt.Errorf("source_id is required")
+		}
+		ins, err := store.GenerateInsights(ctx, agentID, args.SourceID, invoker, model, maxTokens)
+		if err != nil {
+			// 业务失败（LLM 错误 / source 不存在 / 非文章）走"成功"路径：返回
+			// 明确文案 + nil err。否则工具 registry 会在 tool error 上追加
+			// "[Analyze the error above and try a different approach.]" 后缀
+			// (registry.go 的工具结果包装)，诱导 agent 改走"自己手写解读 +
+			// 用 knowledgebase_add / save_flash 存自创内容"的歧路 ——
+			// s-1785659282356 里 agent 正是这么把自创解读塞进了知识库。这里
+			// 强约束 agent 把失败转告用户并停手，不接管、不代写、不另存。
+			return fmt.Sprintf("深度解读生成失败，原因：%v。\n请把这句失败原因如实转告用户，然后停止。不要自己手动编写解读内容，也不要改用 knowledgebase_add / knowledgebase_save_flash 等任何其他工具把自创解读存入知识库——深度解读只能由 knowledgebase_generate_insights 产出。是否重试由用户决定。", err), nil
+		}
+		core := ins.Summary.Core
+		if len(core) > 200 {
+			core = clipUTF8(core, 200) + "…"
+		}
+		return fmt.Sprintf("已生成深度解读并保存到文章 (source_id=%s)。核心总结：%s；金句 %d 条；待办 %d 条；发芽 %d 个。完整内容见文章详情页。",
+			args.SourceID, core, len(ins.Quotes), len(ins.Actions), len(ins.Sprouts.Items)), nil
 	})
 }
 

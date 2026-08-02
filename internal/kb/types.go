@@ -65,6 +65,83 @@ type KBStats struct {
 	TotalChars  int `json:"total_chars"`
 }
 
+// ArticleInsights is the LLM-generated deep reading of one KB article source,
+// mirroring the sheng-gen-fa-ya skill's six-section layout. Original text and
+// todos already live in kb_entries / the todo board, so insights keeps the
+// other four: summary, chapter outline, curated quotes, and "sprouts"
+// (knowledge extensions plus an optional cross-domain echo). 1:1 with a
+// kb_sources row of type 'article'; stored as four independent JSON blobs so
+// each section can be rendered or rebuilt on its own.
+type ArticleInsights struct {
+	SourceID    string         `json:"source_id"`
+	Summary     InsightSummary `json:"summary"`
+	Quotes      []InsightQuote `json:"quotes"`
+	Actions     []string       `json:"actions"`
+	Sprouts     InsightSprouts `json:"sprouts"`
+	GeneratedAt time.Time      `json:"generated_at"`
+}
+
+// InsightSummary is the structured recap: a 2-3 sentence core, thematic topic
+// blocks (each a heading + label/text points), and a chapter-by-chapter outline.
+type InsightSummary struct {
+	Core     string           `json:"core"`
+	Topics   []InsightTopic   `json:"topics"`
+	Chapters []InsightChapter `json:"chapters"`
+}
+
+type InsightTopic struct {
+	Heading string         `json:"heading"`
+	Points  []InsightPoint `json:"points"`
+}
+
+type InsightPoint struct {
+	Label string `json:"label"`
+	Text  string `json:"text"`
+}
+
+type InsightChapter struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+// InsightQuote is one curated verbatim line from the source with a category tag.
+type InsightQuote struct {
+	Text string `json:"text"`
+	Tag  string `json:"tag"`
+}
+
+// InsightSprouts holds the knowledge-extension section: an intro, 3-5 sprouts
+// (each a seed tied to the source + body + an Aha moment), and an optional
+// "echo" that cross-validates one seed quote across philosophy / psychology /
+// literature lenses.
+type InsightSprouts struct {
+	Intro string          `json:"intro"`
+	Items []InsightSprout `json:"items"`
+	Echo  *InsightEcho    `json:"echo,omitempty"`
+}
+
+type InsightSprout struct {
+	Index int    `json:"index"`
+	Emoji string `json:"emoji"`
+	Title string `json:"title"`
+	Seed  string `json:"seed"`
+	Body  string `json:"body"`
+	Aha   string `json:"aha"`
+}
+
+type InsightEcho struct {
+	SeedQuote   string            `json:"seed_quote"`
+	SeedComment string            `json:"seed_comment"`
+	Items       []InsightEchoItem `json:"items"`
+}
+
+type InsightEchoItem struct {
+	Perspective string `json:"perspective"`
+	Label       string `json:"label"`
+	Quote       string `json:"quote"`
+	Source      string `json:"source"`
+}
+
 type KBCfg struct {
 	Enabled     bool     `json:"enabled"`
 	AutoMode    string   `json:"autoMode,omitempty"`    // "always", "keyword", "disabled"

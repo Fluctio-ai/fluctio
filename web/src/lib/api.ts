@@ -1661,6 +1661,37 @@ export async function kbListTodos(agentId: string, status?: string): Promise<KBS
   const data = await res.json().catch(() => []);
   return Array.isArray(data) ? data : [];
 }
+// --- Article deep-reading insights (深度解读): summary / quotes / actions / sprouts. ---
+export interface InsightPoint { label: string; text: string; }
+export interface InsightTopic { heading: string; points: InsightPoint[]; }
+export interface InsightChapter { title: string; body: string; }
+export interface InsightSummary { core: string; topics: InsightTopic[]; chapters: InsightChapter[]; }
+export interface InsightQuote { text: string; tag: string; }
+export interface InsightSprout { index: number; emoji: string; title: string; seed: string; body: string; aha: string; }
+export interface InsightEchoItem { perspective: string; label: string; quote: string; source: string; }
+export interface InsightEcho { seed_quote: string; seed_comment: string; items: InsightEchoItem[]; }
+export interface InsightSprouts { intro: string; items: InsightSprout[]; echo?: InsightEcho; }
+export interface ArticleInsights {
+  source_id: string;
+  summary: InsightSummary;
+  quotes: InsightQuote[];
+  actions: string[];
+  sprouts: InsightSprouts;
+  generated_at: string;
+}
+export async function kbGetInsights(agentId: string, sourceId: string): Promise<ArticleInsights | null> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/sources/${sourceId}/insights`);
+  if (!res.ok) return null;
+  return res.json().catch(() => null);
+}
+export async function kbGenerateInsights(agentId: string, sourceId: string): Promise<ArticleInsights | { error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/sources/${sourceId}/insights/generate`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+
 export async function generateWiki(agentId: string, sourceIds: string[], force?: boolean): Promise<{ status?: string; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/wiki/generate`, {
     method: "POST", headers: { "Content-Type": "application/json" },

@@ -15,10 +15,17 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  AlignLeftIcon,
+  CheckSquareIcon,
   FileTextIcon,
   GlobeIcon,
-  TrashIcon,
+  ListOrderedIcon,
   PlusIcon,
+  QuoteIcon,
+  SparklesIcon,
+  SproutIcon,
+  TrashIcon,
+  type LucideIcon,
 } from "lucide-react";
 import {
   type KBSource,
@@ -35,6 +42,9 @@ import {
   kbSaveTodo,
   kbUpdateTodo,
   kbListTodos,
+  kbGetInsights,
+  kbGenerateInsights,
+  type ArticleInsights,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
@@ -43,6 +53,19 @@ import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 
 type Tab = "article" | "flash" | "todo";
+
+// DetailTab is the article-detail sub-tab: the original text plus the five
+// deep-reading sections. Section tabs render only after insights exist, so an
+// article with no reading yet shows just "原文" + the generate button.
+type DetailTab = "text" | "summary" | "chapters" | "quotes" | "actions" | "sprouts";
+
+const INSIGHT_SECTIONS: ReadonlyArray<[Exclude<DetailTab, "text">, string, LucideIcon]> = [
+  ["summary", "knowledge.coreSummary", AlignLeftIcon],
+  ["chapters", "knowledge.chapters", ListOrderedIcon],
+  ["quotes", "knowledge.quotesTitle", QuoteIcon],
+  ["actions", "knowledge.actionsTitle", CheckSquareIcon],
+  ["sprouts", "knowledge.sproutsTitle", SproutIcon],
+];
 type TodoStatus = "pending" | "in_progress" | "done" | "cancelled";
 const TODO_STATUSES: TodoStatus[] = ["pending", "in_progress", "done", "cancelled"];
 
@@ -135,6 +158,16 @@ function ArticleView() {
   const [urlTitle, setUrlTitle] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
+  // Deep-reading insights (深度解读) for the selected article.
+  const [insights, setInsights] = useState<ArticleInsights | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [detailTab, setDetailTab] = useState<DetailTab>("text");
+
+  // Resizable left pane (mirrors the wiki page's drag divider). Width in px,
+  // clamped to 220–520 so the source list can't collapse off-screen.
+  const [leftWidth, setLeftWidth] = useState(320);
+
   const loadData = useCallback(async () => {
     if (!agentId) return;
     setLoading(true);
@@ -153,12 +186,66 @@ function ArticleView() {
     if (!agentId) return;
     setSelectedSource(src);
     setEntries([]);
+    setInsights(null);
+    setDetailTab("text");
     setEntriesLoading(true);
+    setInsightsLoading(true);
     try {
-      setEntries(await listKBEntries(agentId, src.id));
-    } catch { setEntries([]); }
+      const [es, ins] = await Promise.all([
+        listKBEntries(agentId, src.id),
+        kbGetInsights(agentId, src.id),
+      ]);
+      setEntries(es);
+      setInsights(ins);
+    } catch {
+      setEntries([]);
+      setInsights(null);
+    }
     setEntriesLoading(false);
+    setInsightsLoading(false);
   }, [agentId]);
+
+  // handleGenerate triggers the synchronous deep-reading LLM pass for the
+  // selected article, swapping to the insights tab on success.
+  const handleGenerate = useCallback(async () => {
+    if (!agentId || !selectedSource) return;
+    setGenerating(true);
+    try {
+      const res = await kbGenerateInsights(agentId, selectedSource.id);
+      if ("error" in res) {
+        alert(res.error);
+      } else {
+        setInsights(res as ArticleInsights);
+        setDetailTab("summary");
+      }
+    } catch {
+      alert(t("knowledge.generateFailed"));
+    }
+    setGenerating(false);
+  }, [agentId, selectedSource, t]);
+
+  // Drag the vertical divider to resize the source list vs. detail pane.
+  // Pointer events attach to the document so the drag keeps tracking when the
+  // cursor leaves the thin handle. Drag right = grow the left pane.
+  const startDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startLeft = leftWidth;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      setLeftWidth(Math.min(520, Math.max(220, startLeft + dx)));
+    };
+    const up = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
 
   const handleIngestText = useCallback(async () => {
     if (!agentId || !textContent.trim()) return;
@@ -201,7 +288,10 @@ function ArticleView() {
 
   return (
     <div className="flex h-full">
-      <div className="w-80 shrink-0 border-r bg-muted/30 flex flex-col">
+      <div
+        style={{ width: leftWidth }}
+        className="shrink-0 border-r bg-muted/30 flex flex-col"
+      >
         <div className="p-3 border-b space-y-2">
           <div>
             {stats && (
@@ -258,40 +348,92 @@ function ArticleView() {
         </ScrollArea>
       </div>
 
+      <div
+        onPointerDown={startDrag}
+        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+      />
+
       <div className="flex-1 flex flex-col min-w-0">
         {selectedSource ? (
           <>
             <div className="p-4 border-b">
-              <h1 className="text-xl font-bold truncate">{selectedSource.title}</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-bold truncate flex-1 min-w-0">{selectedSource.title}</h1>
+                {insights ? (
+                  <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating} className="shrink-0">
+                    <SparklesIcon className="h-3 w-3 mr-1" />
+                    {generating ? t("knowledge.generating") : t("knowledge.regenerate")}
+                  </Button>
+                ) : (
+                  <Button size="sm" onClick={handleGenerate} disabled={generating} className="shrink-0">
+                    <SparklesIcon className="h-3.5 w-3.5 mr-1.5" />
+                    {generating ? t("knowledge.generating") : t("knowledge.generateInsights")}
+                  </Button>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground mt-1">
                 {selectedSource.entry_count} {t("knowledge.entries")} · {((selectedSource.total_chars ?? 0) / 1024).toFixed(1)} KB
               </p>
+              <div className="flex gap-1 mt-3 overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setDetailTab("text")}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap inline-flex items-center gap-1",
+                    detailTab === "text" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <FileTextIcon className="h-3 w-3" />
+                  {t("knowledge.rawTextTab")}
+                </button>
+                {insights &&
+                  INSIGHT_SECTIONS.map(([key, label, Icon]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setDetailTab(key)}
+                      className={cn(
+                        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap inline-flex items-center gap-1",
+                        detailTab === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <Icon className="h-3 w-3" />
+                      {t(label)}
+                    </button>
+                  ))}
+              </div>
             </div>
             <ScrollArea className="flex-1">
-              <div className="p-4 max-w-4xl space-y-1">
-                {entriesLoading ? (
-                  <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
-                ) : entries.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">{t("knowledge.noEntries")}</p>
-                ) : (
-                  entries.map((entry, i) => (
-                    <div key={entry.id} className="relative">
-                      <span className="absolute right-0 top-0 text-[10px] text-muted-foreground/40 select-none pointer-events-none">
-                        #{entry.chunk_index}
-                      </span>
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                          {entry.content}
-                        </ReactMarkdown>
-                      </div>
-                      {i < entries.length - 1 && (
-                        <p className="text-center text-muted-foreground/40 text-xs my-2 select-none pointer-events-none">
-                          * * *
-                        </p>
-                      )}
+              <div className="p-6">
+                {detailTab === "text" ? (
+                  entriesLoading ? (
+                    <p className="text-sm text-muted-foreground">{t("common.loading")}</p>
+                  ) : entries.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">{t("knowledge.noEntries")}</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {entries.map((entry, i) => (
+                        <div key={entry.id} className="relative">
+                          <span className="absolute right-0 top-0 text-[10px] text-muted-foreground/40 select-none pointer-events-none">
+                            #{entry.chunk_index}
+                          </span>
+                          <div className="prose prose-sm dark:prose-invert max-w-none">
+                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                              {entry.content}
+                            </ReactMarkdown>
+                          </div>
+                          {i < entries.length - 1 && (
+                            <p className="text-center text-muted-foreground/40 text-xs my-2 select-none pointer-events-none">
+                              * * *
+                            </p>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                  ))
-                )}
+                  )
+                ) : insights ? (
+                  <InsightSection section={detailTab} insights={insights} />
+                ) : null}
               </div>
             </ScrollArea>
           </>
@@ -351,6 +493,147 @@ function ArticleView() {
       </Dialog>
     </div>
   );
+}
+
+// ── Insights: one section panel of the deep reading ──
+
+// InsightSection renders a single deep-reading panel, selected by the
+// article-detail tab bar above. An empty section shows a placeholder so "the
+// LLM didn't produce this" is explicit, not a silent UI gap.
+function InsightSection({
+  section,
+  insights,
+}: {
+  section: Exclude<DetailTab, "text">;
+  insights: ArticleInsights;
+}) {
+  const t = useT();
+  return (
+    <div>
+      {section === "summary" &&
+            (insights.summary.core || insights.summary.topics?.length ? (
+              <div className="space-y-4">
+                {insights.summary.core && <p className="text-sm leading-relaxed">{insights.summary.core}</p>}
+                {insights.summary.topics?.length > 0 && (
+                  <div className="space-y-3">
+                    {insights.summary.topics.map((tp, i) => (
+                      <div key={i} className="rounded-md border bg-muted/20 p-3">
+                        <p className="text-sm font-semibold mb-1.5">{tp.heading}</p>
+                        <ul className="space-y-1">
+                          {tp.points?.map((p, j) => (
+                            <li key={j} className="text-sm flex gap-2">
+                              <span className="text-primary shrink-0 font-medium">{p.label}</span>
+                              <span className="text-muted-foreground">{p.text}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <EmptyHint />
+            ))}
+
+          {section === "chapters" &&
+            (insights.summary.chapters?.length ? (
+              <div className="space-y-3">
+                {insights.summary.chapters.map((ch, i) => (
+                  <div key={i} className="border-l-2 border-primary/30 pl-4 py-1">
+                    <p className="text-sm font-medium">{ch.title}</p>
+                    {ch.body && <p className="text-sm text-muted-foreground mt-1">{ch.body}</p>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <EmptyHint />
+            ))}
+
+          {section === "quotes" &&
+            (insights.quotes?.length ? (
+              <div className="space-y-2">
+                {insights.quotes.map((q, i) => (
+                  <blockquote key={i} className="border-l-2 border-amber-400/60 pl-3 py-1">
+                    <p className="text-sm italic">{q.text}</p>
+                    {q.tag && <span className="text-[10px] text-muted-foreground">{q.tag}</span>}
+                  </blockquote>
+                ))}
+              </div>
+            ) : (
+              <EmptyHint />
+            ))}
+
+          {section === "actions" &&
+            (insights.actions?.length ? (
+              <ul className="space-y-1.5">
+                {insights.actions.map((a, i) => (
+                  <li key={i} className="text-sm flex gap-2 items-start">
+                    <span className="text-primary mt-0.5">▸</span>
+                    <span>{a}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <EmptyHint />
+            ))}
+
+          {section === "sprouts" &&
+            (insights.sprouts.items?.length || insights.sprouts.intro || insights.sprouts.echo ? (
+              <div className="space-y-4">
+                {insights.sprouts.intro && <p className="text-sm text-muted-foreground">{insights.sprouts.intro}</p>}
+                {insights.sprouts.items?.map((sp) => (
+                  <div key={sp.index} className="rounded-md border bg-muted/20 p-3">
+                    <p className="text-sm font-semibold flex items-center gap-1.5">
+                      <span>{sp.emoji || "🌱"}</span>
+                      {sp.title}
+                    </p>
+                    {sp.seed && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        <span className="font-medium">{t("knowledge.sproutSeed")}</span>：{sp.seed}
+                      </p>
+                    )}
+                    {sp.body && <p className="text-sm mt-1.5 whitespace-pre-wrap">{sp.body}</p>}
+                    {sp.aha && (
+                      <p className="text-xs mt-1.5 text-amber-600 dark:text-amber-400">
+                        ✨ {t("knowledge.sproutAha")}：{sp.aha}
+                      </p>
+                    )}
+                  </div>
+                ))}
+                {insights.sprouts.echo && insights.sprouts.echo.items?.length > 0 && (
+                  <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
+                    <p className="text-sm font-semibold mb-2">{t("knowledge.echoTitle")}</p>
+                    {insights.sprouts.echo.seed_quote && (
+                      <blockquote className="text-sm italic mb-2">{insights.sprouts.echo.seed_quote}</blockquote>
+                    )}
+                    {insights.sprouts.echo.seed_comment && (
+                      <p className="text-xs text-muted-foreground mb-2">{insights.sprouts.echo.seed_comment}</p>
+                    )}
+                    <div className="space-y-1.5">
+                      {insights.sprouts.echo.items.map((it, i) => (
+                        <div key={i} className="text-sm">
+                          <span className="text-[10px] uppercase text-muted-foreground mr-1.5">{it.perspective}</span>
+                          <span className="italic">"{it.quote}"</span>
+                          {it.source && <span className="text-xs text-muted-foreground"> — {it.source}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <EmptyHint />
+            ))}
+    </div>
+  );
+}
+
+// EmptyHint is the placeholder shown inside an insights section tab whose LLM
+// output came back empty — so an absent section is explicit, not silently gone.
+function EmptyHint() {
+  const t = useT();
+  return <p className="text-sm text-muted-foreground italic">{t("knowledge.emptySection")}</p>;
 }
 
 // ── Flashes: 灵感闪记 masonry + "记一笔" capture ──

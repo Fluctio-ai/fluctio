@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/wiki"
 )
 
 // handleListKBSources lists knowledge base sources for an agent.
@@ -409,6 +412,82 @@ func (s *Server) handleKBMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kb.ServeMCP(kbStore, agentID).ServeHTTP(w, r)
+}
+
+// handleKBGetInsights returns the stored deep-reading insights for one article
+// source (200 + JSON), or 404 when none have been generated yet. The article
+// detail page calls this to render the 深度解读 tab/section.
+func (s *Server) handleKBGetInsights(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	sourceID := r.PathValue("sourceId")
+	if agentID == "" || sourceID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	ins, err := kbStore.GetInsights(r.Context(), agentID, sourceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ins == nil {
+		http.Error(w, "no insights", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, ins)
+}
+
+// handleKBGenerateInsights runs the deep-reading LLM pass synchronously and
+// returns the four generated sections. The call can take tens of seconds over
+// a long article, so the ctx gets a 180s budget and the web client shows a
+// loading state on the button. Errors are mapped to status codes so the client
+// can tell "not an article" (400) / "not found" (404) / "LLM failed" (500).
+func (s *Server) handleKBGenerateInsights(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	sourceID := r.PathValue("sourceId")
+	if agentID == "" || sourceID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	prov, model := s.providerForAgent(agentID)
+	if prov == nil {
+		http.Error(w, "no LLM provider configured for this agent", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
+	defer cancel()
+	invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
+		return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
+			resp, err := prov.Chat(ctx, msgs, nil, model, 8192, 0.3)
+			if err != nil {
+				return "", err
+			}
+			return resp.Content, nil
+		}, messages, 4)
+	})
+	ins, err := kbStore.GenerateInsights(ctx, agentID, sourceID, invoker, model, 8192)
+	if err != nil {
+		msg := err.Error()
+		status := http.StatusInternalServerError
+		switch {
+		case strings.Contains(msg, "not an article"):
+			status = http.StatusBadRequest
+		case strings.Contains(msg, "not found"), strings.Contains(msg, "no text"):
+			status = http.StatusNotFound
+		}
+		http.Error(w, msg, status)
+		return
+	}
+	writeJSON(w, http.StatusOK, ins)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

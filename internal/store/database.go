@@ -200,6 +200,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateWikiAutoGenLastRun(ctx); err != nil {
 		return fmt.Errorf("migrate wiki autogen last-run table: %w", err)
 	}
+	if err := d.migrateArticleInsights(ctx); err != nil {
+		return fmt.Errorf("migrate kb article insights table: %w", err)
+	}
 	if err := d.migrateRecallTuning(ctx); err != nil {
 		return fmt.Errorf("migrate recall tuning tables: %w", err)
 	}
@@ -509,6 +512,30 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 			continue
 		}
 		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE kb_sources ADD COLUMN %s %s`, c.name, c.decl)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateArticleInsights creates kb_article_insights, the 1:1 deep-reading
+// table for article sources (summary / quotes / actions / sprouts stored as
+// independent JSON blobs). Idempotent — CREATE IF NOT EXISTS on every boot.
+func (d *DBStore) migrateArticleInsights(ctx context.Context) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS kb_article_insights (
+			source_id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			summary TEXT NOT NULL DEFAULT '{}',
+			quotes TEXT NOT NULL DEFAULT '[]',
+			actions TEXT NOT NULL DEFAULT '[]',
+			sprouts TEXT NOT NULL DEFAULT '{}',
+			generated_at TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_article_insights_agent ON kb_article_insights (agent_id)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := d.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}

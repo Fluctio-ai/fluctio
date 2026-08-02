@@ -141,6 +141,57 @@ func (s *KBStore) SaveFlash(ctx context.Context, agentID, content string) (strin
 	return s.saveSingleChunk(ctx, agentID, "flash", deriveTitle(content), content, "text", "manual", "", "", "")
 }
 
+// ErrFlashNotFound is returned by UpdateFlash when no row matches the given
+// id+agent+type='flash' (wrong id, foreign agent, or a non-flash source).
+var ErrFlashNotFound = errors.New("flash not found")
+
+// UpdateFlash overwrites an existing flash's content (its single chunk) with
+// the full evolved text, re-derives its title, bumps updated_at, and re-embeds.
+// Use when the user iterates / refines / adds to an idea they already recorded
+// — so one idea stays as one complete iterated flash instead of fragmenting
+// into many partial duplicates.
+func (s *KBStore) UpdateFlash(ctx context.Context, agentID, sourceID, content string) error {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return fmt.Errorf("no content to save")
+	}
+	var srcType string
+	err := s.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT type FROM kb_sources WHERE id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
+		sourceID, agentID).Scan(&srcType)
+	if err != nil {
+		return ErrFlashNotFound
+	}
+	if srcType != "flash" {
+		return fmt.Errorf("source %s is a %s, not a flash", sourceID, srcType)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE kb_entries SET content = %s WHERE source_id = %s AND agent_id = %s AND chunk_index = 0`,
+			s.ph(1), s.ph(2), s.ph(3)),
+		content, sourceID, agentID); err != nil {
+		return fmt.Errorf("update flash entry: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE kb_sources SET title = %s, total_chars = %s, updated_at = %s WHERE id = %s AND agent_id = %s`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5)),
+		deriveTitle(content), len(content), now, sourceID, agentID); err != nil {
+		return fmt.Errorf("update flash source: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	if s.embedder != nil && s.embedder.Available() {
+		go s.embedSourceEntries(context.Background(), agentID, sourceID)
+	}
+	return nil
+}
+
 // SaveTodo stores a todo item as a single KB source of type 'todo'. status
 // defaults to pending and is validated against the four allowed values;
 // startAt/endAt are RFC3339 strings or empty.

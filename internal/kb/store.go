@@ -794,6 +794,10 @@ func (s *KBStore) DeleteSource(ctx context.Context, agentID, sourceID string) er
 	if err != nil {
 		return fmt.Errorf("delete entries: %w", err)
 	}
+	// Cascade: drop any deep-reading insights attached to this source.
+	_, _ = s.db.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM kb_article_insights WHERE source_id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
+		sourceID, agentID)
 	res, err := s.db.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM kb_sources WHERE id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
 		sourceID, agentID)

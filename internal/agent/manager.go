@@ -17,6 +17,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/session"
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/wiki"
 	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
@@ -391,7 +392,19 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 						return *kbCfg.Threshold
 					}
 					return 0.45
-				})
+				}, kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
+					return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
+						// Use ag.provider (the agent's own provider from providerForAgent,
+						// e.g. its ccw/glm-5.2 instance) — NOT the buildAgent `prov` arg,
+						// which is the shared default provider and doesn't recognize a
+						// per-agent model like glm-5.2 (returns "Unsupported model").
+						resp, err := ag.provider.Chat(ctx, msgs, nil, rc.Model, 8192, 0.3)
+						if err != nil {
+							return "", err
+						}
+						return resp.Content, nil
+					}, messages, 4)
+				}), rc.Model, 8192)
 			}
 		}
 		// Date line in the chatter's timezone — needs dataStore for the
