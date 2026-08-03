@@ -54,6 +54,13 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	for _, s := range sources {
 		if s.WikiGeneratedAt == nil {
 			toProcess = append(toProcess, s)
+			continue
+		}
+		// Re-generate when content changed after the last wiki build (E:
+		// wiki_dirty_at throttle — multiple merges between sweeps collapse
+		// into one rebuild instead of one-per-edit).
+		if s.WikiDirtyAt != nil && s.WikiDirtyAt.After(*s.WikiGeneratedAt) {
+			toProcess = append(toProcess, s)
 		}
 	}
 	if len(toProcess) == 0 {

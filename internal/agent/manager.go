@@ -318,6 +318,33 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			var kbStore *kb.KBStore
 			if dbs, ok := m.opts.dataStore.(*store.DBStore); ok {
 				kbStore = kb.NewKBStore(dbs.DB(), dbs.Dialect())
+				// Cascade wiki cleanup on delete so the agent-tool delete path
+				// matches HTTP/MCP; lazy-build the wiki store per delete since
+				// the agent package otherwise has no wiki handle.
+				kbStore.SetOnDeleteSource(func(agentID, sourceID string) {
+					ws := wiki.NewWikiStore(dbs.DB(), dbs.Dialect())
+					_, _ = ws.DeletePagesBySource(context.Background(), agentID, sourceID)
+				})
+				// Wire dedup thresholds from the agent's live KB config so they're
+				// tunable without redeploy; nil fields fall back to built-in defaults.
+				kbStore.SetDedupCfgFn(func() kb.KBCfg {
+					cfg := rc.KB
+					if cfg == nil {
+						return kb.KBCfg{}
+					}
+					deref := func(p *float64) float64 {
+						if p != nil {
+							return *p
+						}
+						return 0
+					}
+					return kb.KBCfg{
+						ArticleDupHigh:    deref(cfg.ArticleDupHigh),
+						ArticleDupMid:     deref(cfg.ArticleDupMid),
+						FlashDupThreshold: deref(cfg.FlashDupThreshold),
+						TodoDupThreshold:  deref(cfg.TodoDupThreshold),
+					}
+				})
 				if ag.memoryCfg.KBEmbedding && ag.embedder != nil && ag.embedder.Available() {
 					var rr embedding.Reranker
 					if ag.memoryCfg.Reranker.Enabled {

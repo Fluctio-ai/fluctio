@@ -369,6 +369,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/agents/{id}/kb/todo", auth(s.handleKBSaveTodo))
 	mux.HandleFunc("PATCH /api/agents/{id}/kb/todos/{sourceId}", auth(s.handleKBUpdateTodo))
 	mux.HandleFunc("GET /api/agents/{id}/kb/todos", auth(s.handleKBListTodos))
+	mux.HandleFunc("GET /api/agents/{id}/kb/pending", auth(s.handleKBListPending))
+	mux.HandleFunc("POST /api/agents/{id}/kb/pending/{pendingId}/resolve", auth(s.handleKBResolvePending))
 
 	// Wiki: LLM-generated structured pages derived from KB sources.
 	mux.HandleFunc("GET /api/agents/{id}/wiki/stats", auth(s.handleWikiStats))

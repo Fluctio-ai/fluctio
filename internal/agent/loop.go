@@ -2698,6 +2698,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	var replyParts []string
 	var kbSources []kb.KnowledgeSource               // cached [K#] citation sources from this turn's KB retrieval
 	ctx = kb.WithSourcesAccumulator(ctx, &kbSources) // KB tool calls append their citation sources here
+	ctx = kb.WithSourceOrigin(ctx, kb.SourceOrigin{SessionID: sess.Key(), Seq: len(messages)}) // L1 dedup: same session+seq = rewrite of captured content
 	citedMemos := make(map[int64]bool)
 	ctx = tools.WithCitedSummaries(ctx, &citedMemos) // memory_search dedups against this across calls
 
@@ -3579,6 +3580,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	totalToolCalls := 0
 	var kbSources []kb.KnowledgeSource // cached [K#] citation sources from this turn's KB retrieval
 	ctx = kb.WithSourcesAccumulator(ctx, &kbSources)
+	ctx = kb.WithSourceOrigin(ctx, kb.SourceOrigin{SessionID: sess.Key(), Seq: len(messages)}) // L1 dedup: same session+seq = rewrite of captured content
 	citedMemos := make(map[int64]bool)
 	ctx = tools.WithCitedSummaries(ctx, &citedMemos)
 

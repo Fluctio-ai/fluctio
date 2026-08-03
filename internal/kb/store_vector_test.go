@@ -34,7 +34,10 @@ func setupKBVectorTestDB(t *testing.T) *sql.DB {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, wiki_generated_at TIMESTAMP,
 			type TEXT NOT NULL DEFAULT 'article', status TEXT NOT NULL DEFAULT '',
 			start_at TEXT NOT NULL DEFAULT '', end_at TEXT NOT NULL DEFAULT '',
-			reminded_at TEXT NOT NULL DEFAULT '')`,
+			reminded_at TEXT NOT NULL DEFAULT '',
+			source_session_id TEXT NOT NULL DEFAULT '',
+			source_seq_ranges TEXT NOT NULL DEFAULT '',
+			wiki_dirty_at TIMESTAMP)`,
 		`CREATE TABLE kb_entries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT, source_id TEXT NOT NULL,
 			chunk_index INTEGER NOT NULL DEFAULT 0, content TEXT NOT NULL, agent_id TEXT NOT NULL)`,

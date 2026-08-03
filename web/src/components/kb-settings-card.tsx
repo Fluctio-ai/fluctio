@@ -33,6 +33,10 @@ export function KBSettingsCard() {
   const [wikiRatio, setWikiRatio] = useState(0.5);
   const [threshold, setThreshold] = useState(0.45);
   const [reminderChannel, setReminderChannel] = useState("wechat");
+  const [articleDupHigh, setArticleDupHigh] = useState(0.90);
+  const [articleDupMid, setArticleDupMid] = useState(0.72);
+  const [flashDupThreshold, setFlashDupThreshold] = useState(0.85);
+  const [todoDupThreshold, setTodoDupThreshold] = useState(0.78);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -51,6 +55,10 @@ export function KBSettingsCard() {
           setWikiRatio(kb.wikiRatio ?? 0.5);
           setThreshold(kb.threshold ?? 0.45);
           setReminderChannel(kb.reminderChannel || "wechat");
+          setArticleDupHigh(kb.articleDupHigh ?? 0.90);
+          setArticleDupMid(kb.articleDupMid ?? 0.72);
+          setFlashDupThreshold(kb.flashDupThreshold ?? 0.85);
+          setTodoDupThreshold(kb.todoDupThreshold ?? 0.78);
         }
         setConfigLoaded(true);
       })
@@ -75,6 +83,10 @@ export function KBSettingsCard() {
           wikiRatio,
           threshold,
           reminderChannel,
+          articleDupHigh: articleDupHigh || undefined,
+          articleDupMid: articleDupMid || undefined,
+          flashDupThreshold: flashDupThreshold || undefined,
+          todoDupThreshold: todoDupThreshold || undefined,
         },
       } as any);
     } catch {}
@@ -90,6 +102,10 @@ export function KBSettingsCard() {
     wikiRatio,
     threshold,
     reminderChannel,
+    articleDupHigh,
+    articleDupMid,
+    flashDupThreshold,
+    todoDupThreshold,
   ]);
 
   return (
@@ -178,6 +194,28 @@ export function KBSettingsCard() {
             <p className="text-[11px] text-muted-foreground">
               {t("knowledge.thresholdDesc")}
             </p>
+          </div>
+
+          <div className="space-y-2 pt-2 border-t border-border mt-1">
+            <Label className="text-xs font-medium">{t("knowledge.dedupThresholds")}</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">{t("knowledge.dedupArticleHigh")}</Label>
+                <Input type="number" min={0} max={1} step={0.01} value={articleDupHigh} onChange={(e) => setArticleDupHigh(Number(e.target.value))} className="h-8 text-xs" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">{t("knowledge.dedupArticleMid")}</Label>
+                <Input type="number" min={0} max={1} step={0.01} value={articleDupMid} onChange={(e) => setArticleDupMid(Number(e.target.value))} className="h-8 text-xs" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">{t("knowledge.dedupFlash")}</Label>
+                <Input type="number" min={0} max={1} step={0.01} value={flashDupThreshold} onChange={(e) => setFlashDupThreshold(Number(e.target.value))} className="h-8 text-xs" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">{t("knowledge.dedupTodo")}</Label>
+                <Input type="number" min={0} max={1} step={0.01} value={todoDupThreshold} onChange={(e) => setTodoDupThreshold(Number(e.target.value))} className="h-8 text-xs" />
+              </div>
+            </div>
           </div>
 
           <div className="space-y-1.5">

@@ -61,10 +61,25 @@ type KBStore struct {
 	dialect  string
 	embedder embedding.Embedder // optional; nil → keyword/bigram search
 	reranker embedding.Reranker // optional; nil → embedding scores only
+	// onDeleteSource, when set, is fired after a successful DeleteSource so
+	// dependent artifacts (wiki pages generated from the source) cascade.
+	// Injected by the caller (setup / manager) to keep kb free of a wiki import.
+	onDeleteSource func(agentID, sourceID string)
+	// dedupCfgFn, when set, supplies per-agent dedup thresholds from the live
+	// config so callers can tune without redeploy. nil → built-in defaults.
+	dedupCfgFn func() KBCfg
 }
 
 func NewKBStore(db *sql.DB, dialect string) *KBStore {
 	return &KBStore{db: db, dialect: dialect}
+}
+
+// SetOnDeleteSource wires an optional cascade hook fired after a successful
+// DeleteSource. Callers with access to the wiki store use it to drop pages
+// generated from the deleted source, keeping the delete path uniform across
+// the HTTP / MCP / agent-tool entry points (previously only HTTP cascaded).
+func (s *KBStore) SetOnDeleteSource(fn func(agentID, sourceID string)) {
+	s.onDeleteSource = fn
 }
 
 // SetRetriever equips the store with an embedder (and optional reranker) so
@@ -99,11 +114,12 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 	}
 	defer tx.Rollback()
 
+	origin := SourceOriginFromCtx(ctx)
 	_, err = tx.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO kb_sources (id, agent_id, title, source_type, source_ref, entry_count, total_chars, created_at, updated_at)
-			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9)),
-		sourceID, agentID, title, sourceType, sourceRef, len(chunks), len(content), now, now)
+		fmt.Sprintf(`INSERT INTO kb_sources (id, agent_id, title, source_type, source_ref, entry_count, total_chars, source_session_id, source_seq_ranges, created_at, updated_at)
+			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9), s.ph(10), s.ph(11)),
+		sourceID, agentID, title, sourceType, sourceRef, len(chunks), len(content), origin.SessionID, EncodeSeqRanges(origin.Seq), now, now)
 	if err != nil {
 		return "", fmt.Errorf("insert source: %w", err)
 	}
@@ -767,7 +783,7 @@ func (s *KBStore) ListSources(ctx context.Context, agentID string, limit, offset
 	}
 	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
-			type, status, start_at, end_at, reminded_at
+			type, status, start_at, end_at, reminded_at, wiki_dirty_at
 			FROM kb_sources WHERE agent_id = %s ORDER BY created_at DESC LIMIT %s OFFSET %s`,
 			s.ph(1), s.ph(2), s.ph(3)),
 		agentID, limit, offset)
@@ -807,6 +823,11 @@ func (s *KBStore) DeleteSource(ctx context.Context, agentID, sourceID string) er
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("source not found")
+	}
+	// Cascade: let the caller drop dependent artifacts (wiki pages). Only
+	// fires when a row was actually deleted, so a not-found is a no-op.
+	if s.onDeleteSource != nil {
+		s.onDeleteSource(agentID, sourceID)
 	}
 	return nil
 }

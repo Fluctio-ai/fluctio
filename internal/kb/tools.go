@@ -190,7 +190,7 @@ func registerKBSearchRaw(r *tools.Registry, store *KBStore, agentID string) {
 }
 
 func registerKBAdd(r *tools.Registry, store *KBStore, agentID string) {
-	r.Register("knowledgebase_add", "Add text content to the agent's knowledge base. The content will be automatically chunked and indexed for future retrieval. Use when the user explicitly asks to save or remember something in the knowledge base.", map[string]interface{}{
+	r.Register("knowledgebase_add", "Add text content to the agent's knowledge base. The content will be automatically chunked and indexed for future retrieval. Use when the user explicitly asks to save or remember something in the knowledge base. For short one-line ideas prefer knowledgebase_save_flash; use this for substantive content — don't store the same content as both flash and article.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"title": map[string]interface{}{
@@ -217,6 +217,21 @@ func registerKBAdd(r *tools.Registry, store *KBStore, agentID string) {
 		title := args.Title
 		if title == "" {
 			title = "Untitled"
+		}
+		if dup := store.CheckDuplicate(ctx, agentID, "article", title, args.Content, store.DupArticleMid()); dup.Duplicate {
+			// Mid-tier (0.72 ≤ score < 0.90): pend for the user. High (≥0.90)
+			// and L1/L3 fall through to skip — near-identical content isn't
+			// worth a merge + insights + wiki refresh chain.
+			if dup.Reason == "l2-vector" && dup.Score < store.DupArticleHigh() {
+				if pid, perr := store.CreatePending(ctx, agentID, "article", title, args.Content, "text", "manual", dup); perr == nil {
+					return fmt.Sprintf("检测到相似文章（标题：%q，相似度 %.0f%%）。内容已暂存待确认（pending_id=%s）。请告知用户：可在知识库文章列表确认是否合并到该文章、另建独立文章、或跳过。", dup.Title, dup.Score*100, pid), nil
+				}
+			}
+			extra := ""
+			if dup.Score > 0 {
+				extra = fmt.Sprintf("，相似度 %.0f%%", dup.Score*100)
+			}
+			return fmt.Sprintf("已存在高度相似文章（标题：%q%s），未重复记录。", dup.Title, extra), nil
 		}
 		id, err := store.IngestText(ctx, agentID, title, args.Content, "text", "manual")
 		if err != nil {
@@ -264,6 +279,21 @@ func registerKBIngestURL(r *tools.Registry, store *KBStore, agentID string) {
 		}
 		if args.Title != "" {
 			title = args.Title
+		}
+		if eid, etitle := store.SourceIDByRef(ctx, agentID, args.URL); eid != "" {
+			return fmt.Sprintf("该 URL 已录入知识库（source_id=%s，标题：%q），未重复录入。", eid, etitle), nil
+		}
+		if dup := store.CheckDuplicate(ctx, agentID, "article", title, content, store.DupArticleMid()); dup.Duplicate {
+			if dup.Reason == "l2-vector" && dup.Score < store.DupArticleHigh() {
+				if pid, perr := store.CreatePending(ctx, agentID, "article", title, content, "url", args.URL, dup); perr == nil {
+					return fmt.Sprintf("检测到相似文章（标题：%q，相似度 %.0f%%）。内容已暂存待确认（pending_id=%s）。请告知用户：可在知识库文章列表确认是否合并、另建、或跳过。", dup.Title, dup.Score*100, pid), nil
+				}
+			}
+			extra := ""
+			if dup.Score > 0 {
+				extra = fmt.Sprintf("，相似度 %.0f%%", dup.Score*100)
+			}
+			return fmt.Sprintf("已存在高度相似文章（标题：%q%s），未重复记录。", dup.Title, extra), nil
 		}
 		id, err := store.IngestText(ctx, agentID, title, content, "url", args.URL)
 		if err != nil {
@@ -341,7 +371,7 @@ func registerKBDelete(r *tools.Registry, store *KBStore, agentID string) {
 // the agent capture proactively (harness visibility: the when-to-use lives in
 // the tool description per tool-guidance-placement A, no prompt_modules entry).
 func registerKBFlash(r *tools.Registry, store *KBStore, agentID string) {
-	r.Register("knowledgebase_save_flash", "Save or update a short inspiration flash (灵感闪记). TWO modes: (1) NEW — omit source_id, record a brand-new idea the user EXPLICITLY asks to capture; (2) UPDATE — pass source_id to overwrite an existing flash with the FULL evolved text, used when the user iterates / refines / clarifies / adds to an idea they already recorded (so one idea stays as ONE complete iterated flash instead of fragmenting into many partial duplicates). Always write the complete current version of the idea, never just the delta. Use ONLY on explicit user intent (我有一个想法 / 帮我记一下 / 更新刚才那个想法 / 补充一下). Never proactive, and never capture content the user did not ask to record.", map[string]interface{}{
+	r.Register("knowledgebase_save_flash", "Save or update a short inspiration flash (灵感闪记). TWO modes: (1) NEW — omit source_id, record a brand-new idea the user EXPLICITLY asks to capture; (2) UPDATE — pass source_id to overwrite an existing flash with the FULL evolved text, used when the user iterates / refines / clarifies / adds to an idea they already recorded (so one idea stays as ONE complete iterated flash instead of fragmenting into many partial duplicates). Always write the complete current version of the idea, never just the delta. Use ONLY on explicit user intent (我有一个想法 / 帮我记一下 / 更新刚才那个想法 / 补充一下). Never proactive, and never capture content the user did not ask to record. For longer substantive content, use knowledgebase_add (article) instead — don't store the same content as both flash and article.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"content": map[string]interface{}{
@@ -366,6 +396,14 @@ func registerKBFlash(r *tools.Registry, store *KBStore, agentID string) {
 			return "", fmt.Errorf("content is required")
 		}
 		if args.SourceID == "" {
+			title := deriveTitle(args.Content)
+			if dup := store.CheckDuplicate(ctx, agentID, "flash", title, args.Content, store.DupFlash()); dup.Duplicate {
+				extra := ""
+				if dup.Score > 0 {
+					extra = fmt.Sprintf("，相似度 %.0f%%", dup.Score*100)
+				}
+				return fmt.Sprintf("已存在相似的灵感闪记（标题：%q%s），未重复记录。如需迭代该想法，请用 source_id=%s 更新它。", dup.Title, extra, dup.SourceID), nil
+			}
 			id, err := store.SaveFlash(ctx, agentID, args.Content)
 			if err != nil {
 				return "", err
@@ -420,6 +458,14 @@ func registerKBSaveTodo(r *tools.Registry, store *KBStore, agentID string) {
 		}
 		if err := json.Unmarshal(rawArgs, &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
+		}
+		title := deriveTitle(args.Content)
+		if dup := store.CheckDuplicate(ctx, agentID, "todo", title, args.Content, store.DupTodo()); dup.Duplicate {
+			extra := ""
+			if dup.Score > 0 {
+				extra = fmt.Sprintf("，相似度 %.0f%%", dup.Score*100)
+			}
+			return fmt.Sprintf("已存在相似的待办（标题：%q%s），未重复记录。如需更新请用 knowledgebase_update_todo。", dup.Title, extra), nil
 		}
 		id, err := store.SaveTodo(ctx, agentID, args.Content, args.Status, args.StartAt, args.EndAt)
 		if err != nil {

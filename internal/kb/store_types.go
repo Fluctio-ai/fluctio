@@ -18,11 +18,11 @@ import (
 // exactly one place. Returns ok=false on scan error so callers skip the row.
 func scanSource(rows *sql.Rows) (KBSource, bool) {
 	var s KBSource
-	var wikiGeneratedAt, createdAt, updatedAt sql.NullString
+	var wikiGeneratedAt, createdAt, updatedAt, wikiDirtyAt sql.NullString
 	var typeNS, statusNS, startAtNS, endAtNS, remindedAtNS sql.NullString
 	if err := rows.Scan(&s.ID, &s.AgentID, &s.Title, &s.SourceType, &s.SourceRef,
 		&s.EntryCount, &s.TotalChars, &wikiGeneratedAt, &createdAt, &updatedAt,
-		&typeNS, &statusNS, &startAtNS, &endAtNS, &remindedAtNS); err != nil {
+		&typeNS, &statusNS, &startAtNS, &endAtNS, &remindedAtNS, &wikiDirtyAt); err != nil {
 		return KBSource{}, false
 	}
 	s.CreatedAt, _ = time.Parse(time.RFC3339, createdAt.String)
@@ -30,6 +30,11 @@ func scanSource(rows *sql.Rows) (KBSource, bool) {
 	if wikiGeneratedAt.Valid && wikiGeneratedAt.String != "" {
 		if t, err := time.Parse(time.RFC3339, wikiGeneratedAt.String); err == nil {
 			s.WikiGeneratedAt = &t
+		}
+	}
+	if wikiDirtyAt.Valid && wikiDirtyAt.String != "" {
+		if t, err := time.Parse(time.RFC3339, wikiDirtyAt.String); err == nil {
+			s.WikiDirtyAt = &t
 		}
 	}
 	s.Type = typeNS.String
@@ -106,11 +111,12 @@ func (s *KBStore) saveSingleChunk(ctx context.Context, agentID, kbType, title, c
 		return "", fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	origin := SourceOriginFromCtx(ctx)
 	_, err = tx.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO kb_sources (id, agent_id, title, source_type, source_ref, entry_count, total_chars, type, status, start_at, end_at, created_at, updated_at)
-			VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9), s.ph(10), s.ph(11), s.ph(12), s.ph(13)),
-		sourceID, agentID, title, sourceType, sourceRef, 1, len(content), kbType, status, startAt, endAt, now, now)
+		fmt.Sprintf(`INSERT INTO kb_sources (id, agent_id, title, source_type, source_ref, entry_count, total_chars, type, status, start_at, end_at, source_session_id, source_seq_ranges, created_at, updated_at)
+			VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9), s.ph(10), s.ph(11), s.ph(12), s.ph(13), s.ph(14), s.ph(15)),
+		sourceID, agentID, title, sourceType, sourceRef, 1, len(content), kbType, status, startAt, endAt, origin.SessionID, EncodeSeqRanges(origin.Seq), now, now)
 	if err != nil {
 		return "", fmt.Errorf("insert source: %w", err)
 	}
@@ -291,7 +297,7 @@ func (s *KBStore) ListTodos(ctx context.Context, agentID, status string, dueWith
 		order = "end_at ASC"
 	}
 	q := fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
-		type, status, start_at, end_at, reminded_at
+		type, status, start_at, end_at, reminded_at, wiki_dirty_at
 		FROM kb_sources WHERE %s ORDER BY %s`,
 		strings.Join(conditions, " AND "), order)
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -448,7 +454,7 @@ func (s *KBStore) ListDueTodos(ctx context.Context, agentID string, withinHours 
 	}
 	horizon := time.Now().UTC().Add(time.Duration(withinHours) * time.Hour).Format(time.RFC3339)
 	q := fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
-		type, status, start_at, end_at, reminded_at
+		type, status, start_at, end_at, reminded_at, wiki_dirty_at
 		FROM kb_sources
 		WHERE agent_id = %s AND type = 'todo' AND status IN ('pending', 'in_progress')
 		AND end_at != '' AND end_at <= %s AND reminded_at = ''

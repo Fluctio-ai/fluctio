@@ -147,11 +147,9 @@ func (s *Server) handleDeleteKBSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Cascade: remove wiki pages generated from this source so deleting a
-	// KB source doesn't leave orphan wiki entries behind.
-	if ws := s.wikiStoreFor(agentID); ws != nil {
-		_, _ = ws.DeletePagesBySource(r.Context(), agentID, sourceID)
-	}
+	// Wiki page cascade is handled inside DeleteSource via the onDeleteSource
+	// hook wired in kbStoreFor, so every delete path (HTTP / MCP / agent tool)
+	// stays in sync without each caller repeating the cleanup.
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -265,6 +263,14 @@ func (s *Server) kbStoreFor(agentID string) *kb.KBStore {
 			ks.SetRetriever(emb, rr)
 		}
 	}
+	// Cascade wiki cleanup on delete so the MCP path matches the HTTP
+	// handler — both create their KBStore here, so one hook covers both.
+	// The agent-tool path (manager) sets the same hook separately.
+	ks.SetOnDeleteSource(func(agentID, sourceID string) {
+		if ws := s.wikiStoreFor(agentID); ws != nil {
+			_, _ = ws.DeletePagesBySource(context.Background(), agentID, sourceID)
+		}
+	})
 	return ks
 }
 
@@ -290,6 +296,11 @@ func (s *Server) handleKBSaveFlash(w http.ResponseWriter, r *http.Request) {
 	kbStore := s.kbStoreFor(agentID)
 	if kbStore == nil {
 		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	title := kb.DeriveTitle(req.Content)
+	if dup := kbStore.CheckDuplicate(r.Context(), agentID, "flash", title, req.Content, kbStore.DupFlash()); dup.Duplicate {
+		writeJSON(w, http.StatusOK, map[string]any{"deduped": true, "existing_source_id": dup.SourceID, "existing_title": dup.Title, "reason": dup.Reason})
 		return
 	}
 	id, err := kbStore.SaveFlash(r.Context(), agentID, req.Content)
@@ -324,6 +335,11 @@ func (s *Server) handleKBSaveTodo(w http.ResponseWriter, r *http.Request) {
 	kbStore := s.kbStoreFor(agentID)
 	if kbStore == nil {
 		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	title := kb.DeriveTitle(req.Content)
+	if dup := kbStore.CheckDuplicate(r.Context(), agentID, "todo", title, req.Content, kbStore.DupTodo()); dup.Duplicate {
+		writeJSON(w, http.StatusOK, map[string]any{"deduped": true, "existing_source_id": dup.SourceID, "existing_title": dup.Title, "reason": dup.Reason})
 		return
 	}
 	id, err := kbStore.SaveTodo(r.Context(), agentID, req.Content, req.Status, req.StartAt, req.EndAt)
@@ -488,6 +504,98 @@ func (s *Server) handleKBGenerateInsights(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, ins)
+}
+
+// handleKBListPending returns the agent's pending dedup entries — the cards
+// shown on the article list awaiting merge / create / skip.
+func (s *Server) handleKBListPending(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	pending, err := kbStore.ListPending(r.Context(), agentID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, pending)
+}
+
+// handleKBResolvePending resolves a pending article entry: merge into the
+// candidate source, create a fresh standalone source, or skip (discard).
+func (s *Server) handleKBResolvePending(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	pendingID := r.PathValue("pendingId")
+	if agentID == "" || pendingID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	ctx := r.Context()
+	p, err := kbStore.GetPending(ctx, pendingID, agentID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if p == nil {
+		http.Error(w, "pending entry not found (expired or already resolved)", http.StatusNotFound)
+		return
+	}
+	switch req.Action {
+	case "skip":
+		_ = kbStore.DeletePending(ctx, pendingID, agentID)
+		writeJSON(w, http.StatusOK, map[string]any{"action": "skip", "pending_id": pendingID})
+	case "create":
+		sid, err := kbStore.IngestText(ctx, agentID, p.Title, p.Content, p.SourceType, p.SourceRef)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = kbStore.DeletePending(ctx, pendingID, agentID)
+		writeJSON(w, http.StatusOK, map[string]any{"action": "create", "source_id": sid})
+	case "merge":
+		prov, model := s.providerForAgent(agentID)
+		if prov == nil {
+			http.Error(w, "no LLM provider configured for merge", http.StatusServiceUnavailable)
+			return
+		}
+		timeoutCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
+		defer cancel()
+		invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
+			return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
+				resp, err := prov.Chat(ctx, msgs, nil, model, 8192, 0.3)
+				if err != nil {
+					return "", err
+				}
+				return resp.Content, nil
+			}, messages, 4)
+		})
+		if _, err := kbStore.MergeArticles(timeoutCtx, agentID, p.CandidateSourceID, p.Content, invoker, model, 8192); err != nil {
+			http.Error(w, "merge failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = kbStore.DeletePending(ctx, pendingID, agentID)
+		writeJSON(w, http.StatusOK, map[string]any{"action": "merge", "source_id": p.CandidateSourceID})
+	default:
+		http.Error(w, "unknown action (merge|create|skip)", http.StatusBadRequest)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -44,7 +44,10 @@ import {
   kbListTodos,
   kbGetInsights,
   kbGenerateInsights,
+  listKBPending,
+  resolveKBPending,
   type ArticleInsights,
+  type KBPending,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
@@ -144,6 +147,7 @@ function ArticleView() {
 
   const [sources, setSources] = useState<KBSource[]>([]);
   const [stats, setStats] = useState<KBStats | null>(null);
+  const [pending, setPending] = useState<KBPending[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [selectedSource, setSelectedSource] = useState<KBSource | null>(null);
@@ -172,13 +176,20 @@ function ArticleView() {
     if (!agentId) return;
     setLoading(true);
     try {
-      const [srcs, st] = await Promise.all([listKBSources(agentId), getKBStats(agentId)]);
+      const [srcs, st, pend] = await Promise.all([listKBSources(agentId), getKBStats(agentId), listKBPending(agentId)]);
       // Articles = everything that is NOT a flash/todo (incl. legacy untyped rows).
       setSources(srcs.filter((s) => s.type !== "flash" && s.type !== "todo"));
       setStats(st);
+      setPending(pend);
     } catch {}
     setLoading(false);
   }, [agentId]);
+
+  const handleResolvePending = useCallback(async (pendingId: string, action: "merge" | "create" | "skip") => {
+    if (!agentId) return;
+    await resolveKBPending(agentId, pendingId, action);
+    await loadData();
+  }, [agentId, loadData]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -311,6 +322,30 @@ function ArticleView() {
         </div>
         <ScrollArea className="flex-1">
           <div className="p-2">
+            {pending.length > 0 && (
+              <div className="mb-2 px-1">
+                <p className="text-xs text-amber-600 dark:text-amber-400 px-2 py-1 font-medium">{t("knowledge.pendingTitle")}</p>
+                {pending.map((p) => (
+                  <div key={p.id} className="px-2 py-1.5 mb-1 rounded-md border border-amber-300/60 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20">
+                    <p className="text-xs truncate font-medium">{p.title || p.content.slice(0, 30)}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      ≈ {p.candidate_title}（{(p.similarity * 100).toFixed(0)}%）
+                    </p>
+                    <div className="flex gap-1 mt-1">
+                      <Button size="sm" variant="outline" className="h-6 text-xs flex-1" onClick={() => handleResolvePending(p.id, "merge")}>
+                        {t("knowledge.pendingMerge")}
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-6 text-xs flex-1" onClick={() => handleResolvePending(p.id, "create")}>
+                        {t("knowledge.pendingCreate")}
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => handleResolvePending(p.id, "skip")}>
+                        {t("knowledge.pendingSkip")}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             {loading ? (
               <p className="text-xs text-muted-foreground px-2 py-1.5">{t("common.loading")}</p>
             ) : sources.length === 0 ? (

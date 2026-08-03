@@ -26,6 +26,9 @@ type KBSource struct {
 	StartAt    *time.Time `json:"start_at,omitempty"`
 	EndAt      *time.Time `json:"end_at,omitempty"`
 	RemindedAt *time.Time `json:"reminded_at,omitempty"`
+	// WikiDirtyAt, when set and later than WikiGeneratedAt, marks the source's
+	// derived wiki pages as stale — the autogen sweep rebuilds them.
+	WikiDirtyAt *time.Time `json:"wiki_dirty_at,omitempty"`
 }
 
 type KBEntry struct {
@@ -149,6 +152,14 @@ type KBCfg struct {
 	MaxResults  int      `json:"maxResults,omitempty"`  // default 5
 	SearchMode  string   `json:"searchMode,omitempty"`  // "augment" (default), "strict"
 	EmptyAction string   `json:"emptyAction,omitempty"` // "llm" (default), "stop"
+	// Dedup thresholds for inbound KB writes (0 = use built-in default).
+	// At or above these an existing same/similar source blocks the write:
+	// flash/todo are skipped silently; high-similarity articles (≥High) also
+	// skip (near-duplicate, nothing worth a merge); mid-tier pends for user.
+	ArticleDupHigh    float64 `json:"articleDupHigh,omitempty"`    // ≥ → skip (near-duplicate)
+	ArticleDupMid     float64 `json:"articleDupMid,omitempty"`     // ≥ → pend for user
+	FlashDupThreshold float64 `json:"flashDupThreshold,omitempty"` // ≥ → skip flash
+	TodoDupThreshold  float64 `json:"todoDupThreshold,omitempty"`  // ≥ → skip todo
 }
 
 // sourcesAccumulatorKey is the context key for a *[]KnowledgeSource that the
@@ -167,4 +178,26 @@ func WithSourcesAccumulator(ctx context.Context, acc *[]KnowledgeSource) context
 func SourcesFromCtx(ctx context.Context) *[]KnowledgeSource {
 	acc, _ := ctx.Value(sourcesAccumulatorKey{}).(*[]KnowledgeSource)
 	return acc
+}
+
+// SourceOrigin records where a KB write originated (session + message seq),
+// threaded through ctx so save paths can stamp kb_sources for L1 dedup:
+// same session + overlapping seq range = a rewrite of already-captured content.
+type SourceOrigin struct {
+	SessionID string
+	Seq       int
+}
+
+type sourceOriginKey struct{}
+
+// WithSourceOrigin returns ctx carrying o so KB save tools can read the
+// session+seq of the turn that triggered the write.
+func WithSourceOrigin(ctx context.Context, o SourceOrigin) context.Context {
+	return context.WithValue(ctx, sourceOriginKey{}, o)
+}
+
+// SourceOriginFromCtx returns the origin on ctx, or zero value if none.
+func SourceOriginFromCtx(ctx context.Context) SourceOrigin {
+	o, _ := ctx.Value(sourceOriginKey{}).(SourceOrigin)
+	return o
 }

@@ -426,7 +426,10 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 			total_chars INTEGER NOT NULL DEFAULT 0,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			wiki_generated_at TIMESTAMP
+			wiki_generated_at TIMESTAMP,
+			source_session_id TEXT NOT NULL DEFAULT '',
+			source_seq_ranges TEXT NOT NULL DEFAULT '',
+			wiki_dirty_at TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_sources_agent ON kb_sources (agent_id)`,
 		`CREATE TABLE IF NOT EXISTS kb_entries (
@@ -503,6 +506,9 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 		{"start_at", "TEXT NOT NULL DEFAULT ''"},
 		{"end_at", "TEXT NOT NULL DEFAULT ''"},
 		{"reminded_at", "TEXT NOT NULL DEFAULT ''"},
+		{"source_session_id", "TEXT NOT NULL DEFAULT ''"},
+		{"source_seq_ranges", "TEXT NOT NULL DEFAULT ''"},
+		{"wiki_dirty_at", "TIMESTAMP"},
 	} {
 		has, err := d.tableHasColumn(ctx, "kb_sources", c.name)
 		if err != nil {
@@ -514,6 +520,11 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE kb_sources ADD COLUMN %s %s`, c.name, c.decl)); err != nil {
 			return err
 		}
+	}
+	// source_session_id index runs AFTER the ALTER loop so old DBs that just
+	// had the column added succeed; fresh DBs already have it from CREATE.
+	if _, err := d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_kb_sources_session ON kb_sources (agent_id, source_session_id)`); err != nil {
+		return err
 	}
 	return nil
 }
@@ -533,6 +544,27 @@ func (d *DBStore) migrateArticleInsights(ctx context.Context) error {
 			generated_at TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_article_insights_agent ON kb_article_insights (agent_id)`,
+		// kb_pending_entries holds article writes blocked at the mid dedup
+		// tier pending user confirmation (merge / create-new / skip). Swept
+		// by expires_at; resolved rows are deleted on confirm.
+		`CREATE TABLE IF NOT EXISTS kb_pending_entries (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			kb_type TEXT NOT NULL DEFAULT 'article',
+			title TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL,
+			source_type TEXT NOT NULL DEFAULT '',
+			source_ref TEXT NOT NULL DEFAULT '',
+			source_session_id TEXT NOT NULL DEFAULT '',
+			source_seq_ranges TEXT NOT NULL DEFAULT '',
+			candidate_source_id TEXT NOT NULL DEFAULT '',
+			candidate_title TEXT NOT NULL DEFAULT '',
+			similarity REAL NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			expires_at TIMESTAMP NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_pending_agent ON kb_pending_entries (agent_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_pending_expires ON kb_pending_entries (expires_at)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := d.db.ExecContext(ctx, stmt); err != nil {

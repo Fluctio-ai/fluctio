@@ -1465,6 +1465,11 @@ export interface AgentUpdatePayload {
   // (tokens). 0 = use dynamic computation from compactionMode. Omit
   // to leave the saved value unchanged.
   compactionThreshold?: number;
+  // Per-agent KB config blob (whole-replace: caller must read existing kb
+  // via getAgentConfig first to avoid clobbering wikiRatio/threshold/etc).
+  // The dedup thresholds (articleDupHigh/Mid/flashDupThreshold/todoDupThreshold)
+  // gate inbound write dedup; nil = built-in default.
+  kb?: AgentKBCfg;
 }
 
 export async function updateAgent(id: string, agent: AgentUpdatePayload) {
@@ -1557,6 +1562,12 @@ export interface AgentKBCfg {
   threshold?: number;
   /** IM channel for due-todo reminders (wechat/qq/telegram/...). Default wechat. */
   reminderChannel?: string;
+  // Dedup thresholds for inbound KB writes (nil/undefined = built-in default
+  // 0.90/0.72/0.85/0.78). Edited from the Knowledge page's dedup panel.
+  articleDupHigh?: number;
+  articleDupMid?: number;
+  flashDupThreshold?: number;
+  todoDupThreshold?: number;
 }
 
 // --- Knowledge base types + API (slice 4a REST handlers) ---
@@ -1660,6 +1671,40 @@ export async function kbListTodos(agentId: string, status?: string): Promise<KBS
   if (!res.ok) return [];
   const data = await res.json().catch(() => []);
   return Array.isArray(data) ? data : [];
+}
+
+// A KB write parked at the mid dedup tier pending user merge / create / skip.
+export type KBPending = {
+  id: string;
+  title: string;
+  content: string;
+  source_type: string;
+  source_ref: string;
+  candidate_source_id: string;
+  candidate_title: string;
+  similarity: number;
+  created_at: string;
+  expires_at: string;
+};
+
+export async function listKBPending(agentId: string): Promise<KBPending[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/pending`);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+
+export async function resolveKBPending(
+  agentId: string,
+  pendingId: string,
+  action: "merge" | "create" | "skip",
+): Promise<{ action?: string; source_id?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/pending/${pendingId}/resolve`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
 }
 // --- Article deep-reading insights (深度解读): summary / quotes / actions / sprouts. ---
 export interface InsightPoint { label: string; text: string; }

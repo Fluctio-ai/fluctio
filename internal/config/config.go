@@ -746,6 +746,13 @@ type AgentKBCfg struct {
 	// be kept (weighted score ÷ (9 × queryTokenCount)). nil = 0.45.
 	// Higher = stricter cutoff; 0 effectively returns all prefiltered hits.
 	Threshold *float64 `json:"threshold,omitempty"`
+	// Dedup thresholds for inbound KB writes (nil = built-in default).
+	// At/above these, an existing same/similar source blocks the write:
+	// flash/todo skip silently; article near-duplicate skips (≥High) or pends (Mid).
+	ArticleDupHigh    *float64 `json:"articleDupHigh,omitempty"`
+	ArticleDupMid     *float64 `json:"articleDupMid,omitempty"`
+	FlashDupThreshold *float64 `json:"flashDupThreshold,omitempty"`
+	TodoDupThreshold  *float64 `json:"todoDupThreshold,omitempty"`
 	// ReminderChannel is the IM channel the due-todo sweep pushes to
 	// (wechat/qq/telegram/discord/slack/feishu/line). Empty = "wechat".
 	ReminderChannel string `json:"reminderChannel,omitempty"`
