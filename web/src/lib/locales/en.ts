@@ -22,7 +22,7 @@ const en: Record<string, string> = {
   "adminChats.col.channel": "Channel",
   "adminChats.col.updated": "Updated",
   "adminChats.col.open": "Open",
-  "adminChats.openTitle": "Open in new tab (read-only)",
+  "adminChats.openTitle": "Open in new tab",
   "adminChats.page": "Page {page} / {total}",
   "adminChats.range": "{start}–{end} of {total}",
   "nav.tokenUsage": "Token Usage",
@@ -1825,6 +1825,8 @@ Info
   "usage.col.cache": "Cache",
   "usage.col.total": "Total",
   "usage.col.requests": "Requests",
+  "usage.range": "{start}–{end} of {total}",
+  "usage.page": "Page {page} / {total}",
 };
 
 export default en;

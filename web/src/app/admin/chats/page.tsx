@@ -120,7 +120,7 @@ export default function AdminChatsPage() {
                         ) : (
                           <ChannelIcon channel={s.channel} className="size-4 shrink-0 text-muted-foreground" />
                         )}
-                        <span className="truncate" title={s.title || s.preview || s.id}>
+                        <span className="min-w-0 break-words" title={s.title || s.preview || s.id}>
                           {s.title || s.preview || s.id}
                         </span>
                       </div>
@@ -148,7 +148,7 @@ export default function AdminChatsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <a
-                        href={`/agents/${encodeURIComponent(s.agentId)}/chat/${encodeURIComponent(s.id)}/?actAs=${encodeURIComponent(s.userId)}`}
+                        href={`/agents/${encodeURIComponent(s.agentId)}/chat/${encodeURIComponent(s.id)}/`}
                         target="_blank" rel="noopener noreferrer"
                         title={t("adminChats.openTitle")}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"

@@ -209,7 +209,7 @@ export function AgentSettingsDialog({
           {tab === "scheduler" && <AgentSchedulerPage />}
           {tab === "regex-hooks" && <AgentRegexHooksPage />}
           {tab === "knowledge" && (
-            <div className="mx-auto w-full max-w-2xl space-y-4 p-4">
+            <div className="mx-auto w-full max-w-5xl space-y-4 p-4">
               <KBSettingsCard />
               <WikiAutoGenSettingsCard />
             </div>
@@ -218,22 +218,22 @@ export function AgentSettingsDialog({
           {tab === "recall-tuning" && <AgentRecallTuningPage />}
           {tab === "usage" && <AgentUsagePage />}
           {tab === "account" && (
-            <div className="p-6 max-w-3xl">
+            <div className="p-6 max-w-5xl mx-auto">
               <AccountSettingsPage />
             </div>
           )}
           {tab === "general" && (
-            <div className="p-6 max-w-3xl">
+            <div className="p-6 max-w-5xl mx-auto">
               <GeneralSettingsPage />
             </div>
           )}
           {tab === "about" && (
-            <div className="p-6 max-w-3xl">
+            <div className="p-6 max-w-5xl mx-auto">
               <AboutSettingsPage />
             </div>
           )}
           {tab === "diag" && (
-            <div className="p-6 max-w-3xl">
+            <div className="p-6 max-w-5xl mx-auto">
               <DiagReportPage />
             </div>
           )}

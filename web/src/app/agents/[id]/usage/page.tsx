@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Coins, RefreshCcw } from "lucide-react";
+import { Coins, RefreshCcw, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -29,6 +29,10 @@ const RANGES: { value: TokenUsageRange; label: string }[] = [
   { value: "30d", label: "30d" },
 ];
 
+// Client-side pagination — the usage API only takes a limit (no offset), so
+// we fetch a generous window and page over it in the browser.
+const PAGE_SIZE = 15;
+
 // fmt collapses big counts into 12.3K / 4.5M for the table. Below 1000
 // keep the raw count so a quick test session reads "47" not "0.0K".
 function fmt(n: number): string {
@@ -48,6 +52,7 @@ export default function AgentUsagePage() {
   const [sessions, setSessions] = useState<ChatSessionEntry[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
 
   // Pull session metadata once so the table can render titles
   // instead of opaque session_keys. getChatSessions returns the
@@ -83,7 +88,7 @@ export default function AgentUsagePage() {
     setLoading(true);
     setError("");
     try {
-      const d = await getAgentTokenUsage(agentId, r, 50);
+      const d = await getAgentTokenUsage(agentId, r, 200);
       setData(d);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("usage.failedLoad"));
@@ -94,6 +99,7 @@ export default function AgentUsagePage() {
 
   useEffect(() => {
     load(range);
+    setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, range]);
 
@@ -106,9 +112,13 @@ export default function AgentUsagePage() {
   }
 
   const rows = data?.sessions ?? [];
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  const pageRows = rows.slice(pageStart, pageStart + PAGE_SIZE);
 
   return (
-    <div className="p-6 space-y-6 max-w-3xl">
+    <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">{t("usage.title")}</h2>
@@ -162,7 +172,7 @@ export default function AgentUsagePage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r) => {
+                {pageRows.map((r) => {
                   // Cache = total - input - output; the API rolls
                   // cache_read + cache_creation into `tokens` but
                   // doesn't break them out on the wire (yet). Showing
@@ -188,6 +198,25 @@ export default function AgentUsagePage() {
           )}
         </CardContent>
       </Card>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">
+            {t("usage.range", { start: pageStart + 1, end: Math.min(pageStart + PAGE_SIZE, rows.length), total: rows.length })}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button variant="outline" size="icon" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage <= 1}>
+              <ChevronLeft className="size-4" />
+            </Button>
+            <span className="px-3 text-muted-foreground">
+              {t("usage.page", { page: safePage, total: totalPages })}
+            </span>
+            <Button variant="outline" size="icon" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={safePage >= totalPages}>
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

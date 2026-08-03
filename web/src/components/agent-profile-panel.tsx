@@ -128,7 +128,7 @@ export default function AgentProfilePanel() {
 
   if (loading) {
     return (
-      <div className="p-6 max-w-3xl space-y-4">
+      <div className="p-6 max-w-5xl mx-auto space-y-4">
         <Skeleton className="h-8 w-32" />
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-12 w-full" />
@@ -139,7 +139,7 @@ export default function AgentProfilePanel() {
 
   if (!agent) {
     return (
-      <div className="p-6 max-w-3xl">
+      <div className="p-6 max-w-5xl mx-auto">
         <p className="text-sm text-muted-foreground">{t("profile.notFound")}</p>
       </div>
     );
@@ -153,7 +153,7 @@ export default function AgentProfilePanel() {
     `/api/agents/${agent.id}/files/avatar.png${avatarBust ? `?v=${avatarBust}` : ""}`;
 
   return (
-    <div className="p-6 max-w-3xl space-y-6">
+    <div className="p-6 max-w-5xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">{t("profile.title")}</h2>

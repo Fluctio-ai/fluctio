@@ -22,7 +22,7 @@ const zhCN: Record<string, string> = {
   "adminChats.col.channel": "通道",
   "adminChats.col.updated": "更新时间",
   "adminChats.col.open": "打开",
-  "adminChats.openTitle": "在新标签打开（只读）",
+  "adminChats.openTitle": "在新标签打开",
   "adminChats.page": "第 {page} / {total} 页",
   "adminChats.range": "共 {total} 条，第 {start}–{end} 条",
   "nav.tokenUsage": "Token 用量",
@@ -1825,6 +1825,8 @@ const zhCN: Record<string, string> = {
   "usage.col.cache": "缓存",
   "usage.col.total": "总计",
   "usage.col.requests": "请求数",
+  "usage.range": "共 {total} 条，第 {start}–{end} 条",
+  "usage.page": "第 {page} / {total} 页",
 };
 
 export default zhCN;

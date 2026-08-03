@@ -841,7 +841,7 @@ function FlashView({ notify }: { notify: (msg: string) => void }) {
             visible.map(({ src, content }) => (
               <div
                 key={src.id}
-                className="group mb-3 break-inside-avoid rounded-lg border border-warning/30 bg-warning/10 p-3"
+                className="group mb-3 break-inside-avoid rounded-lg border bg-background p-3"
               >
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
