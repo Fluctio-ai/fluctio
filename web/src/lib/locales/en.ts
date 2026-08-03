@@ -652,6 +652,7 @@ const en: Record<string, string> = {
   "memory.embedding": "Embedding Provider",
   "memory.useSystemDefault": "Use system default (reuse runtime config)",
   "memory.inheritsSys": "Inherits system config",
+  "memory.sysNotConfigured": "System default is not enabled or has no model — configure it under Runtime → Vectorization defaults.",
   "memory.embeddingDesc": "Vectorize conversation summaries for semantic recall. Any OpenAI-compatible /v1/embeddings endpoint works.",
   "memory.reranker": "Reranker Provider",
   "memory.rerankerDesc": "Cross-encoder that re-ranks coarse retrieval candidates. Jina AI or Cohere /v1/rerank compatible endpoints.",

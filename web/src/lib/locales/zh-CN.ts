@@ -652,6 +652,7 @@ const zhCN: Record<string, string> = {
   "memory.embedding": "Embedding 服务",
   "memory.useSystemDefault": "使用系统默认（复用运行时配置）",
   "memory.inheritsSys": "继承系统配置",
+  "memory.sysNotConfigured": "系统默认未启用或未配置模型，请在「运行时 → 向量化服务默认值」设置并启用。",
   "memory.embeddingDesc": "把对话摘要向量化以便语义召回。支持任何 OpenAI 兼容的 /v1/embeddings 接口。",
   "memory.reranker": "Reranker 服务",
   "memory.rerankerDesc": "对粗筛候选进行交叉编码器重排。兼容 Jina AI 或 Cohere 的 /v1/rerank 接口。",

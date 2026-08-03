@@ -254,7 +254,7 @@ export default function AgentMemoryPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="font-medium">{t("memory.embedding") || "Embedding"}</h3>
-              {(!embCustom ? sysEmbedding?.enabled : embedding.enabled) ? (
+              {(!embCustom ? !!(sysEmbedding?.enabled && sysEmbedding?.model) : embedding.enabled) ? (
                 <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">{t("memory.configured") || "configured"}</Badge>
               ) : (
                 <Badge variant="outline" className="text-muted-foreground text-[10px]">{t("memory.notConfigured") || "not configured"}</Badge>
@@ -263,19 +263,21 @@ export default function AgentMemoryPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("memory.embeddingDesc")}</p>
           </div>
         </div>
-        {sysEmbedding?.enabled ? (
-          <div className="mt-4 pt-4 border-t border-border">
-            <label className="flex items-center gap-2 text-sm">
-              <Switch checked={!embCustom} onCheckedChange={(v) => setEmbCustom(!v)} />
-              <span className="font-medium">{t("memory.useSystemDefault") || "使用系统默认（复用运行时配置）"}</span>
-            </label>
-            {!embCustom && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                {t("memory.inheritsSys") || "继承系统配置"}：<span className="font-mono text-foreground">{sysEmbedding?.provider || "?"}/{sysEmbedding?.model || "?"}</span>
-              </p>
-            )}
-          </div>
-        ) : null}
+        <div className="mt-4 pt-4 border-t border-border">
+          <label className="flex items-center gap-2 text-sm">
+            <Switch checked={!embCustom} onCheckedChange={(v) => setEmbCustom(!v)} />
+            <span className="font-medium">{t("memory.useSystemDefault") || "使用系统默认（复用运行时配置）"}</span>
+          </label>
+          {!embCustom && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              {sysEmbedding?.enabled && sysEmbedding?.model ? (
+                <>{t("memory.inheritsSys") || "继承系统配置"}：<span className="font-mono text-foreground">{sysEmbedding?.provider || "?"}/{sysEmbedding.model}</span></>
+              ) : (
+                <>{t("memory.sysNotConfigured") || "系统默认未启用或未配置模型，请在 运行时 → 向量化服务默认值 设置并启用。"}</>
+              )}
+            </p>
+          )}
+        </div>
         {embCustom && (
           <div className="mt-5 pt-5 border-t border-border space-y-4">
             <div className="flex items-center justify-between">
@@ -340,7 +342,7 @@ export default function AgentMemoryPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h3 className="font-medium">{t("memory.reranker") || "Reranker"}</h3>
-              {(!rerCustom ? sysReranker?.enabled : reranker.enabled) ? (
+              {(!rerCustom ? !!(sysReranker?.enabled && sysReranker?.model) : reranker.enabled) ? (
                 <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">{t("memory.configured") || "configured"}</Badge>
               ) : (
                 <Badge variant="outline" className="text-muted-foreground text-[10px]">{t("memory.notConfigured") || "not configured"}</Badge>
@@ -349,19 +351,21 @@ export default function AgentMemoryPage() {
             <p className="text-sm text-muted-foreground mt-1">{t("memory.rerankerDesc")}</p>
           </div>
         </div>
-        {sysReranker?.enabled ? (
-          <div className="mt-4 pt-4 border-t border-border">
-            <label className="flex items-center gap-2 text-sm">
-              <Switch checked={!rerCustom} onCheckedChange={(v) => setRerCustom(!v)} />
-              <span className="font-medium">{t("memory.useSystemDefault") || "使用系统默认（复用运行时配置）"}</span>
-            </label>
-            {!rerCustom && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                {t("memory.inheritsSys") || "继承系统配置"}：<span className="font-mono text-foreground">{sysReranker?.provider || "?"}/{sysReranker?.model || "?"}</span>
-              </p>
-            )}
-          </div>
-        ) : null}
+        <div className="mt-4 pt-4 border-t border-border">
+          <label className="flex items-center gap-2 text-sm">
+            <Switch checked={!rerCustom} onCheckedChange={(v) => setRerCustom(!v)} />
+            <span className="font-medium">{t("memory.useSystemDefault") || "使用系统默认（复用运行时配置）"}</span>
+          </label>
+          {!rerCustom && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              {sysReranker?.enabled && sysReranker?.model ? (
+                <>{t("memory.inheritsSys") || "继承系统配置"}：<span className="font-mono text-foreground">{sysReranker?.provider || "?"}/{sysReranker.model}</span></>
+              ) : (
+                <>{t("memory.sysNotConfigured") || "系统默认未启用或未配置模型，请在 运行时 → 向量化服务默认值 设置并启用。"}</>
+              )}
+            </p>
+          )}
+        </div>
         {rerCustom && (
           <div className="mt-5 pt-5 border-t border-border space-y-4">
             <div className="flex items-center justify-between">
