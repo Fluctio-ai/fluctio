@@ -271,7 +271,7 @@ export default function AgentMemoryPage() {
           {!embCustom && (
             <p className="mt-2 text-sm text-muted-foreground">
               {sysEmbedding?.enabled && sysEmbedding?.model ? (
-                <>{t("memory.inheritsSys") || "继承系统配置"}：<span className="font-mono text-foreground">{sysEmbedding?.provider || "?"}/{sysEmbedding.model}</span></>
+                <>{t("memory.inheritsSys") || "继承系统配置"}：<span className="font-mono text-foreground">{[sysEmbedding?.provider, sysEmbedding.model].filter(Boolean).join("/")}</span></>
               ) : (
                 <>{t("memory.sysNotConfigured") || "系统默认未启用或未配置模型，请在 运行时 → 向量化服务默认值 设置并启用。"}</>
               )}
@@ -359,7 +359,7 @@ export default function AgentMemoryPage() {
           {!rerCustom && (
             <p className="mt-2 text-sm text-muted-foreground">
               {sysReranker?.enabled && sysReranker?.model ? (
-                <>{t("memory.inheritsSys") || "继承系统配置"}：<span className="font-mono text-foreground">{sysReranker?.provider || "?"}/{sysReranker.model}</span></>
+                <>{t("memory.inheritsSys") || "继承系统配置"}：<span className="font-mono text-foreground">{[sysReranker?.provider, sysReranker.model].filter(Boolean).join("/")}</span></>
               ) : (
                 <>{t("memory.sysNotConfigured") || "系统默认未启用或未配置模型，请在 运行时 → 向量化服务默认值 设置并启用。"}</>
               )}
