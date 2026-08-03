@@ -16,7 +16,9 @@ import {
 } from "@/components/ui/dialog";
 import {
   AlignLeftIcon,
+  AlertTriangleIcon,
   CheckSquareIcon,
+  ChevronDownIcon,
   FileTextIcon,
   GlobeIcon,
   ListOrderedIcon,
@@ -25,6 +27,7 @@ import {
   SparklesIcon,
   SproutIcon,
   TrashIcon,
+  XIcon,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -106,6 +109,35 @@ function datetimeLocalValue(iso: string): string {
 export default function AgentKnowledgePage() {
   const t = useT();
   const [tab, setTab] = useState<Tab>("article");
+  // Page-level error toast: replaces blocking alert() across the three views.
+  const [toast, setToast] = useState<string | null>(null);
+  const notify = useCallback((msg: string) => setToast(msg), []);
+  const agentId = useAgentIdFromURL();
+  // Smart-collection counts shown as badges on the tab buttons, so items that
+  // need attention are visible from any tab. Refreshed on mount and on every
+  // tab switch so actions taken inside a tab surface when the user leaves it.
+  const [pendingCount, setPendingCount] = useState(0);
+  const [todoUrgent, setTodoUrgent] = useState({ overdue: 0, today: 0 });
+  const loadCounts = useCallback(async () => {
+    if (!agentId) return;
+    try {
+      const [pend, todos] = await Promise.all([listKBPending(agentId), kbListTodos(agentId)]);
+      setPendingCount(pend.length);
+      const now = Date.now();
+      const eod = new Date(); eod.setHours(23, 59, 59, 999);
+      let overdue = 0;
+      let today = 0;
+      for (const s of todos) {
+        if (s.status !== "pending" && s.status !== "in_progress") continue;
+        if (!s.end_at) continue;
+        const due = new Date(s.end_at).getTime();
+        if (due < now) overdue++;
+        else if (due <= eod.getTime()) today++;
+      }
+      setTodoUrgent({ overdue, today });
+    } catch {}
+  }, [agentId]);
+  useEffect(() => { loadCounts(); }, [loadCounts, tab]);
   const tabs: ReadonlyArray<[Tab, string]> = [
     ["article", "knowledge.articles"],
     ["flash", "knowledge.flashes"],
@@ -114,40 +146,65 @@ export default function AgentKnowledgePage() {
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
       <div className="flex gap-1 border-b bg-muted/30 px-3 py-1.5">
-        {tabs.map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setTab(key)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-              tab === key
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {t(label)}
-          </button>
-        ))}
+        {tabs.map(([key, label]) => {
+          const badge = key === "article" ? pendingCount : key === "todo" ? todoUrgent.overdue + todoUrgent.today : 0;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={cn(
+                "inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                tab === key
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {t(label)}
+              {badge > 0 && (
+                <span className={cn("ml-1.5 rounded-full px-1.5 py-0.5 text-xs font-medium", key === "article" ? "bg-warning/15 text-warning" : "bg-destructive/15 text-destructive")}>
+                  {badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
       <div className="flex-1 min-h-0">
-        {tab === "article" && <ArticleView />}
-        {tab === "flash" && <FlashView />}
-        {tab === "todo" && <TodoView />}
+        {tab === "article" && <ArticleView notify={notify} />}
+        {tab === "flash" && <FlashView notify={notify} />}
+        {tab === "todo" && <TodoView notify={notify} />}
       </div>
+      {toast && (
+        <div
+          role="alert"
+          className="fixed bottom-4 right-4 z-50 flex items-start gap-2 rounded-lg border border-destructive/30 bg-background p-3 pr-2 shadow-lg max-w-sm"
+        >
+          <p className="flex-1 text-sm text-destructive">{toast}</p>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            aria-label={t("common.dismiss")}
+            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <XIcon className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Articles: chunked sources (original two-pane browser) ──
 
-function ArticleView() {
+function ArticleView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
   const agentId = useAgentIdFromURL();
 
   const [sources, setSources] = useState<KBSource[]>([]);
   const [stats, setStats] = useState<KBStats | null>(null);
   const [pending, setPending] = useState<KBPending[]>([]);
+  const [pendingOpen, setPendingOpen] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const [selectedSource, setSelectedSource] = useState<KBSource | null>(null);
@@ -224,13 +281,13 @@ function ArticleView() {
     try {
       const res = await kbGenerateInsights(agentId, selectedSource.id);
       if ("error" in res) {
-        alert(res.error);
+        notify(res.error!);
       } else {
         setInsights(res as ArticleInsights);
         setDetailTab("summary");
       }
     } catch {
-      alert(t("knowledge.generateFailed"));
+      notify(t("knowledge.generateFailed"));
     }
     setGenerating(false);
   }, [agentId, selectedSource, t]);
@@ -263,12 +320,12 @@ function ArticleView() {
     setSubmitting(true);
     try {
       const res = await kbIngestText(agentId, textTitle || t("knowledge.untitled"), textContent);
-      if ("error" in res) { alert(res.error); } else {
+      if ("error" in res) { notify(res.error!); } else {
         setTextDialogOpen(false); setTextTitle(""); setTextContent("");
         await loadData();
         if ("source_id" in res) generateWiki(agentId, [res.source_id!]).catch(() => {});
       }
-    } catch { alert(t("knowledge.failedAddText")); }
+    } catch { notify(t("knowledge.failedAddText")); }
     setSubmitting(false);
   }, [agentId, textTitle, textContent, loadData, t]);
 
@@ -277,12 +334,12 @@ function ArticleView() {
     setSubmitting(true);
     try {
       const res = await kbIngestURL(agentId, urlValue, urlTitle || undefined);
-      if ("error" in res) { alert(res.error); } else {
+      if ("error" in res) { notify(res.error!); } else {
         setUrlDialogOpen(false); setUrlValue(""); setUrlTitle("");
         await loadData();
         if ("source_id" in res) generateWiki(agentId, [res.source_id!]).catch(() => {});
       }
-    } catch { alert(t("knowledge.failedFetchURL")); }
+    } catch { notify(t("knowledge.failedFetchURL")); }
     setSubmitting(false);
   }, [agentId, urlValue, urlTitle, loadData, t]);
 
@@ -290,7 +347,7 @@ function ArticleView() {
     if (!agentId) return;
     try {
       const res = await deleteKBSource(agentId, sourceId);
-      if ("error" in res) alert(res.error); else {
+      if ("error" in res) notify(res.error!); else {
         if (selectedSource?.id === sourceId) { setSelectedSource(null); setEntries([]); }
         loadData();
       }
@@ -298,7 +355,46 @@ function ArticleView() {
   }, [agentId, loadData, selectedSource]);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      {pending.length > 0 && (
+        <div className="border-b border-warning/30 bg-warning/5">
+          <button
+            type="button"
+            onClick={() => setPendingOpen((o) => !o)}
+            aria-expanded={pendingOpen}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left"
+          >
+            <AlertTriangleIcon className="h-4 w-4 shrink-0 text-warning" />
+            <span className="text-sm font-medium">{t("knowledge.pendingTitle")}</span>
+            <Badge variant="outline" className="px-1.5 py-0 text-xs">{pending.length}</Badge>
+            <ChevronDownIcon className={cn("ml-auto h-4 w-4 text-muted-foreground transition-transform", pendingOpen && "rotate-180")} />
+          </button>
+          {pendingOpen && (
+            <div className="grid gap-2 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-3">
+              {pending.map((p) => (
+                <div key={p.id} className="rounded-lg border border-warning/40 bg-background p-2">
+                  <p className="truncate text-xs font-medium">{p.title || p.content.slice(0, 30)}</p>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                    ≈ {p.candidate_title}（{(p.similarity * 100).toFixed(0)}%）
+                  </p>
+                  <div className="mt-1.5 flex gap-1">
+                    <Button size="sm" variant="outline" className="h-6 flex-1 text-xs" onClick={() => handleResolvePending(p.id, "merge")}>
+                      {t("knowledge.pendingMerge")}
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-6 flex-1 text-xs" onClick={() => handleResolvePending(p.id, "create")}>
+                      {t("knowledge.pendingCreate")}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => handleResolvePending(p.id, "skip")}>
+                      {t("knowledge.pendingSkip")}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="flex min-h-0 flex-1">
       <div
         style={{ width: leftWidth }}
         className="shrink-0 border-r bg-muted/30 flex flex-col"
@@ -306,7 +402,7 @@ function ArticleView() {
         <div className="p-3 border-b space-y-2">
           <div>
             {stats && (
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-xs tabular-nums text-muted-foreground mt-0.5">
                 {stats.source_count} {t("knowledge.sources")} · {stats.entry_count} {t("knowledge.entries")} · {(stats.total_chars / 1024).toFixed(1)} KB
               </p>
             )}
@@ -322,30 +418,6 @@ function ArticleView() {
         </div>
         <ScrollArea className="flex-1">
           <div className="p-2">
-            {pending.length > 0 && (
-              <div className="mb-2 px-1">
-                <p className="text-xs text-amber-600 dark:text-amber-400 px-2 py-1 font-medium">{t("knowledge.pendingTitle")}</p>
-                {pending.map((p) => (
-                  <div key={p.id} className="px-2 py-1.5 mb-1 rounded-md border border-amber-300/60 dark:border-amber-700/50 bg-amber-50/60 dark:bg-amber-950/20">
-                    <p className="text-xs truncate font-medium">{p.title || p.content.slice(0, 30)}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      ≈ {p.candidate_title}（{(p.similarity * 100).toFixed(0)}%）
-                    </p>
-                    <div className="flex gap-1 mt-1">
-                      <Button size="sm" variant="outline" className="h-6 text-xs flex-1" onClick={() => handleResolvePending(p.id, "merge")}>
-                        {t("knowledge.pendingMerge")}
-                      </Button>
-                      <Button size="sm" variant="outline" className="h-6 text-xs flex-1" onClick={() => handleResolvePending(p.id, "create")}>
-                        {t("knowledge.pendingCreate")}
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => handleResolvePending(p.id, "skip")}>
-                        {t("knowledge.pendingSkip")}
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
             {loading ? (
               <p className="text-xs text-muted-foreground px-2 py-1.5">{t("common.loading")}</p>
             ) : sources.length === 0 ? (
@@ -361,16 +433,22 @@ function ArticleView() {
                     selectedSource?.id === src.id && "bg-accent",
                   )}
                   onClick={() => handleSelectSource(src)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleSelectSource(src);
+                    }
+                  }}
                 >
                   <div className="flex-1 min-w-0">
                     <p className="truncate">{src.title}</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs tabular-nums text-muted-foreground">
                       {src.entry_count} entries · {(src.total_chars / 1024).toFixed(1)} KB
                     </p>
                   </div>
                   <button
                     type="button"
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
+                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive shrink-0 relative after:absolute after:-inset-2"
                     onClick={(e) => { e.stopPropagation(); handleDeleteSource(src.id); }}
                     aria-label={t("common.delete")}
                   >
@@ -406,15 +484,15 @@ function ArticleView() {
                   </Button>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-xs tabular-nums text-muted-foreground mt-1">
                 {selectedSource.entry_count} {t("knowledge.entries")} · {((selectedSource.total_chars ?? 0) / 1024).toFixed(1)} KB
               </p>
-              <div className="flex gap-1 mt-3 overflow-x-auto">
+              <div className="mt-3 flex flex-wrap gap-1">
                 <button
                   type="button"
                   onClick={() => setDetailTab("text")}
                   className={cn(
-                    "rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap inline-flex items-center gap-1",
+                    "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
                     detailTab === "text" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
@@ -428,7 +506,7 @@ function ArticleView() {
                       type="button"
                       onClick={() => setDetailTab(key)}
                       className={cn(
-                        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors whitespace-nowrap inline-flex items-center gap-1",
+                        "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
                         detailTab === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
                       )}
                     >
@@ -449,7 +527,7 @@ function ArticleView() {
                     <div className="space-y-1">
                       {entries.map((entry, i) => (
                         <div key={entry.id} className="relative">
-                          <span className="absolute right-0 top-0 text-[10px] text-muted-foreground/40 select-none pointer-events-none">
+                          <span className="absolute right-0 top-0 text-xs text-muted-foreground/40 select-none pointer-events-none">
                             #{entry.chunk_index}
                           </span>
                           <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -477,6 +555,7 @@ function ArticleView() {
             {t("knowledge.selectSourcePrompt")}
           </div>
         )}
+      </div>
       </div>
 
       <Dialog open={textDialogOpen} onOpenChange={setTextDialogOpen}>
@@ -589,9 +668,9 @@ function InsightSection({
             (insights.quotes?.length ? (
               <div className="space-y-2">
                 {insights.quotes.map((q, i) => (
-                  <blockquote key={i} className="border-l-2 border-amber-400/60 pl-3 py-1">
+                  <blockquote key={i} className="border-l-2 border-warning/60 pl-3 py-1">
                     <p className="text-sm italic">{q.text}</p>
-                    {q.tag && <span className="text-[10px] text-muted-foreground">{q.tag}</span>}
+                    {q.tag && <span className="text-xs text-muted-foreground">{q.tag}</span>}
                   </blockquote>
                 ))}
               </div>
@@ -630,7 +709,7 @@ function InsightSection({
                     )}
                     {sp.body && <p className="text-sm mt-1.5 whitespace-pre-wrap">{sp.body}</p>}
                     {sp.aha && (
-                      <p className="text-xs mt-1.5 text-amber-600 dark:text-amber-400">
+                      <p className="text-xs mt-1.5 text-warning">
                         ✨ {t("knowledge.sproutAha")}：{sp.aha}
                       </p>
                     )}
@@ -648,7 +727,7 @@ function InsightSection({
                     <div className="space-y-1.5">
                       {insights.sprouts.echo.items.map((it, i) => (
                         <div key={i} className="text-sm">
-                          <span className="text-[10px] uppercase text-muted-foreground mr-1.5">{it.perspective}</span>
+                          <span className="text-xs uppercase text-muted-foreground mr-1.5">{it.perspective}</span>
                           <span className="italic">"{it.quote}"</span>
                           {it.source && <span className="text-xs text-muted-foreground"> — {it.source}</span>}
                         </div>
@@ -675,13 +754,15 @@ function EmptyHint() {
 
 type FlashItem = { src: KBSource; content: string };
 
-function FlashView() {
+function FlashView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
   const agentId = useAgentIdFromURL();
   const [flashes, setFlashes] = useState<FlashItem[]>([]);
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
+  const [sortNew, setSortNew] = useState(true);
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -709,8 +790,8 @@ function FlashView() {
     setSaving(true);
     try {
       const res = await kbSaveFlash(agentId, draft.trim());
-      if ("error" in res) alert(res.error); else { setDraft(""); await load(); }
-    } catch { alert(t("knowledge.failedAddText")); }
+      if ("error" in res) notify(res.error!); else { setDraft(""); await load(); }
+    } catch { notify(t("knowledge.failedAddText")); }
     setSaving(false);
   }, [agentId, draft, load, t]);
 
@@ -719,6 +800,15 @@ function FlashView() {
     await deleteKBSource(agentId, id);
     load();
   }, [agentId, load]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = q ? flashes.filter((f) => f.content.toLowerCase().includes(q)) : flashes;
+    return [...list].sort((a, b) => {
+      const cmp = a.src.created_at < b.src.created_at ? 1 : a.src.created_at > b.src.created_at ? -1 : 0;
+      return sortNew ? cmp : -cmp;
+    });
+  }, [flashes, query, sortNew]);
 
   return (
     <div className="flex h-full flex-col">
@@ -733,24 +823,36 @@ function FlashView() {
           {saving ? t("common.saving") : t("knowledge.saveFlash")}
         </Button>
       </div>
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchFlashes")} className="h-7 text-xs" />
+        <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setSortNew((v) => !v)}>
+          {sortNew ? t("knowledge.sortNewest") : t("knowledge.sortOldest")}
+        </Button>
+      </div>
       <ScrollArea className="flex-1">
         <div className="p-4 columns-1 sm:columns-2 lg:columns-3 gap-3">
           {loading ? (
             <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
           ) : flashes.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("knowledge.noFlashes")}</p>
+          ) : visible.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("knowledge.noSearchResult")}</p>
           ) : (
-            flashes.map(({ src, content }) => (
+            visible.map(({ src, content }) => (
               <div
                 key={src.id}
-                className="group mb-3 break-inside-avoid rounded-lg border border-amber-200/60 bg-amber-50/70 dark:border-amber-900/40 dark:bg-amber-950/20 p-3"
+                className="group mb-3 break-inside-avoid rounded-lg border border-warning/30 bg-warning/10 p-3"
               >
-                <p className="text-sm whitespace-pre-wrap">{content}</p>
-                <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+                <div className="prose prose-sm dark:prose-invert max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                    {content}
+                  </ReactMarkdown>
+                </div>
+                <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                   <span>{relativeTime(src.created_at)}</span>
                   <button
                     type="button"
-                    className="opacity-0 group-hover:opacity-100 hover:text-destructive"
+                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive relative after:absolute after:-inset-2"
                     onClick={() => handleDelete(src.id)}
                     aria-label={t("common.delete")}
                   >
@@ -768,7 +870,7 @@ function FlashView() {
 
 // ── Todos: kanban by status ──
 
-function TodoView() {
+function TodoView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
   const agentId = useAgentIdFromURL();
   const [todos, setTodos] = useState<FlashItem[]>([]);
@@ -777,6 +879,7 @@ function TodoView() {
   const [newContent, setNewContent] = useState("");
   const [newEnd, setNewEnd] = useState("");
   const [creating, setCreating] = useState(false);
+  const [view, setView] = useState<"board" | "list">("board");
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -802,17 +905,17 @@ function TodoView() {
     try {
       const endAt = newEnd ? new Date(newEnd).toISOString() : undefined;
       const res = await kbSaveTodo(agentId, newContent.trim(), "pending", undefined, endAt);
-      if ("error" in res) alert(res.error); else {
+      if ("error" in res) notify(res.error!); else {
         setNewOpen(false); setNewContent(""); setNewEnd(""); load();
       }
-    } catch { alert(t("knowledge.failedAddText")); }
+    } catch { notify(t("knowledge.failedAddText")); }
     setCreating(false);
   }, [agentId, newContent, newEnd, load, t]);
 
   const handleMove = useCallback(async (id: string, status: TodoStatus) => {
     if (!agentId) return;
     const res = await kbUpdateTodo(agentId, id, { status });
-    if ("error" in res) alert(res.error); else load();
+    if ("error" in res) notify(res.error!); else load();
   }, [agentId, load]);
 
   const handleDelete = useCallback(async (id: string) => {
@@ -830,15 +933,70 @@ function TodoView() {
     return m;
   }, [todos]);
 
+  // dueSoon: active todos with a due date, split into overdue vs. due-today
+  // for the urgency summary above the board.
+  const { overdue: overdueTodos, today: dueToday } = useMemo(() => {
+    const now = Date.now();
+    const eod = new Date(); eod.setHours(23, 59, 59, 999);
+    const overdue: FlashItem[] = [];
+    const today: FlashItem[] = [];
+    for (const it of todos) {
+      if (it.src.status !== "pending" && it.src.status !== "in_progress") continue;
+      if (!it.src.end_at) continue;
+      const due = new Date(it.src.end_at).getTime();
+      if (due < now) overdue.push(it);
+      else if (due <= eod.getTime()) today.push(it);
+    }
+    return { overdue, today };
+  }, [todos]);
+
+  // listSorted: flat urgency-ordered list for the list view — active first,
+  // then ascending due date (undated last).
+  const listSorted = useMemo(() => {
+    return [...todos].sort((a, b) => {
+      const aa = a.src.status === "pending" || a.src.status === "in_progress";
+      const bb = b.src.status === "pending" || b.src.status === "in_progress";
+      if (aa !== bb) return aa ? -1 : 1;
+      const ea = a.src.end_at ? new Date(a.src.end_at).getTime() : Infinity;
+      const eb = b.src.end_at ? new Date(b.src.end_at).getTime() : Infinity;
+      return ea - eb;
+    });
+  }, [todos]);
+
   return (
     <div className="flex h-full flex-col">
       <div className="border-b p-3 flex items-center justify-between">
         <h3 className="text-sm font-semibold">{t("knowledge.todoBoard")}</h3>
-        <Button size="sm" onClick={() => setNewOpen(true)}>
-          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.newTodo")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-md border p-0.5">
+            <button type="button" onClick={() => setView("board")} className={cn("rounded px-2 py-1 text-xs", view === "board" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewBoard")}</button>
+            <button type="button" onClick={() => setView("list")} className={cn("rounded px-2 py-1 text-xs", view === "list" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewList")}</button>
+          </div>
+          <Button size="sm" onClick={() => setNewOpen(true)}>
+            <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.newTodo")}
+          </Button>
+        </div>
       </div>
+      {(overdueTodos.length > 0 || dueToday.length > 0) && (
+        <div className="flex items-center gap-3 border-b px-4 py-1.5 text-xs">
+          {overdueTodos.length > 0 && <span className="font-medium text-destructive">{t("knowledge.overdue")} {overdueTodos.length}</span>}
+          {dueToday.length > 0 && <span className="font-medium text-warning">{t("knowledge.dueToday")} {dueToday.length}</span>}
+        </div>
+      )}
       <ScrollArea className="flex-1">
+        {view === "list" ? (
+          <div className="mx-auto max-w-2xl space-y-2 p-4">
+            {loading ? (
+              <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
+            ) : listSorted.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("knowledge.noTodos")}</p>
+            ) : (
+              listSorted.map(({ src, content }) => (
+                <TodoCard key={src.id} src={src} content={content} onDelete={handleDelete} onMove={handleMove} />
+              ))
+            )}
+          </div>
+        ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
           {TODO_STATUSES.map((st) => (
             <div
@@ -855,7 +1013,7 @@ function TodoView() {
                 <span className={cn("text-xs font-semibold uppercase tracking-wide", statusAccent(st))}>
                   {t("knowledge.status_" + st)}
                 </span>
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0">{byStatus[st].length}</Badge>
+                <Badge variant="outline" className="text-xs px-1.5 py-0">{byStatus[st].length}</Badge>
               </div>
               <div className="flex-1 p-2 space-y-2">
                 {loading ? (
@@ -866,12 +1024,14 @@ function TodoView() {
                     src={src}
                     content={content}
                     onDelete={handleDelete}
+                    onMove={handleMove}
                   />
                 ))}
               </div>
             </div>
           ))}
         </div>
+        )}
       </ScrollArea>
 
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
@@ -908,35 +1068,50 @@ function TodoCard({
   src,
   content,
   onDelete,
+  onMove,
 }: {
   src: KBSource;
   content: string;
   onDelete: (id: string) => void;
+  onMove: (id: string, status: TodoStatus) => void;
 }) {
   const t = useT();
   const overdue = src.end_at && new Date(src.end_at).getTime() < Date.now() && (src.status === "pending" || src.status === "in_progress");
   return (
     <div
       draggable
+      tabIndex={0}
+      aria-label={`${content.slice(0, 40)} · ${t("knowledge.status_" + (src.status || "pending"))} · ${t("knowledge.move")}`}
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+        e.preventDefault();
+        const idx = TODO_STATUSES.indexOf((src.status || "pending") as TodoStatus);
+        if (idx < 0) return;
+        const next =
+          e.key === "ArrowRight" ? Math.min(TODO_STATUSES.length - 1, idx + 1) : Math.max(0, idx - 1);
+        if (next !== idx) onMove(src.id, TODO_STATUSES[next]);
+      }}
       onDragStart={(e) => {
         e.dataTransfer.setData("text/plain", src.id);
         e.dataTransfer.effectAllowed = "move";
       }}
       title={t("knowledge.move")}
-      className="group rounded-md border bg-background p-2.5 text-sm shadow-sm cursor-grab active:cursor-grabbing hover:border-primary/40 transition-colors"
+      className="group rounded-lg border bg-background p-2.5 text-sm shadow-sm cursor-grab active:cursor-grabbing hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2 transition-colors"
     >
-      <p className={cn("whitespace-pre-wrap", src.status === "cancelled" && "line-through text-muted-foreground")}>
-        {content}
-      </p>
+      <div className={cn("prose prose-sm dark:prose-invert max-w-none", src.status === "cancelled" && "opacity-60 [&_*]:line-through")}>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+          {content}
+        </ReactMarkdown>
+      </div>
       {src.end_at && (
-        <p className={cn("mt-1.5 text-[10px]", overdue ? "text-destructive font-medium" : "text-muted-foreground")}>
+        <p className={cn("mt-1.5 text-xs", overdue ? "text-destructive font-medium" : "text-muted-foreground")}>
           {t("knowledge.dueLabel")}: {datetimeLocalValue(src.end_at).replace("T", " ")}
         </p>
       )}
       <div className="mt-2 flex justify-end">
         <button
           type="button"
-          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive relative after:absolute after:-inset-2"
           onClick={() => onDelete(src.id)}
           aria-label={t("common.delete")}
         >
@@ -954,9 +1129,9 @@ function statusAccent(s: TodoStatus): string {
     case "pending":
       return "text-muted-foreground";
     case "in_progress":
-      return "text-blue-600 dark:text-blue-400";
+      return "text-info";
     case "done":
-      return "text-green-600 dark:text-green-400";
+      return "text-success";
     case "cancelled":
       return "text-muted-foreground line-through";
   }
