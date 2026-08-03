@@ -45,7 +45,7 @@ export function NavUser({
   // inside the open dropdown.
   const avatar = avatarUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={avatarUrl} alt={name} className="aspect-square size-8 rounded-lg object-cover" />
+    <img src={avatarUrl} alt={name} className="aspect-square size-8 rounded-lg object-cover ring-1 ring-black/10 dark:ring-white/10" />
   ) : (
     <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/20 text-primary text-xs font-bold">
       {initials}

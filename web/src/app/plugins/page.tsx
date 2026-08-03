@@ -80,7 +80,7 @@ export default function PluginsPage() {
   const typeColor = (type: string) => {
     const colors: Record<string, string> = {
       channel: "bg-info/10 text-info border-info/20",
-      tool: "bg-accent/10 text-accent border-accent/20",
+      tool: "bg-accent/10 text-accent-foreground border-accent/20",
       provider: "bg-warning/10 text-warning border-warning/20",
       hook: "bg-success/10 text-success border-success/20",
     };

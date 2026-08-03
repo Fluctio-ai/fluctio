@@ -117,8 +117,8 @@ export default function OverviewPage() {
         <div className="rounded-lg border border-border bg-card p-5">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-muted-foreground">{t("overview.agents")}</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/10">
-              <Bot className="h-4 w-4 text-accent" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+              <Bot className="h-4 w-4 text-primary" />
             </div>
           </div>
           <p className="text-3xl font-semibold tracking-tight">

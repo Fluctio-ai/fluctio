@@ -65,7 +65,7 @@ function AgentAvatar({
       alt=""
       width={size}
       height={size}
-      className="shrink-0 rounded-lg object-cover"
+      className="shrink-0 rounded-lg object-cover ring-1 ring-black/10 dark:ring-white/10"
       style={{ width: size, height: size }}
       onError={() => setFailed(true)}
     />
