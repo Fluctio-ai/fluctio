@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { SaveButton } from "@/components/save-button";
+import { TestButton } from "@/components/test-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -16,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Save, Check, Clock, Container, Database, Boxes } from "lucide-react";
-import { getConfig, updateConfig, getMe, getSystemVectorization, setSystemVectorization, type ConfigResponse, type MemoryEmbeddingConfig, type MemoryRerankerConfig } from "@/lib/api";
+import { getConfig, updateConfig, getMe, getSystemVectorization, setSystemVectorization, testEmbedding, testReranker, type ConfigResponse, type MemoryEmbeddingConfig, type MemoryRerankerConfig } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 export default function RuntimeSettingsPage() {
@@ -89,54 +91,32 @@ export default function RuntimeSettingsPage() {
   }, [router]);
 
   const handleSave = async () => {
-    setSaving(true);
-    setSaved(false);
-    setSaveError("");
-    // Persist every backend's field so switching the dropdown after a
-    // save still surfaces the value the user typed for that backend.
-    // Also mirror the active backend's value into the legacy `image`
-    // slot so consumers that haven't migrated still resolve correctly.
     const activeImage =
       sandboxBackend === "e2b"
         ? sandboxE2BTemplate
         : sandboxBackend === "boxlite"
           ? sandboxBoxliteImage
           : sandboxDockerImage;
-    try {
-      const result = await updateConfig({
-        prefs: {
-          timezone: defaultTimezone.trim() || undefined,
-        },
-        sandbox: {
-          enabled: sandboxEnabled,
-          backend: sandboxBackend,
-          image: activeImage || undefined,
-          dockerImage: sandboxDockerImage || undefined,
-          e2bTemplate: sandboxE2BTemplate || undefined,
-          boxliteSnapshot: sandboxBoxliteImage || undefined,
-          e2bKey: sandboxE2BKey || undefined,
-          boxliteKey: sandboxBoxliteKey || undefined,
-          boxliteUrl: sandboxBoxliteURL || undefined,
-        },
-      });
-      if (result?.ok === false) {
-        setSaveError(result.error || tt("common.saveFailed"));
-        return;
-      }
-      // System vectorization defaults live in their own namespace.
-      const vecRes = await setSystemVectorization({ embedding: sysEmbedding, reranker: sysReranker } as any);
-      if (vecRes?.error) {
-        setSaveError(vecRes.error);
-        return;
-      }
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : tt("common.saveFailed"));
-      return;
-    } finally {
-      setSaving(false);
-    }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    const result = await updateConfig({
+      prefs: {
+        timezone: defaultTimezone.trim() || undefined,
+      },
+      sandbox: {
+        enabled: sandboxEnabled,
+        backend: sandboxBackend,
+        image: activeImage || undefined,
+        dockerImage: sandboxDockerImage || undefined,
+        e2bTemplate: sandboxE2BTemplate || undefined,
+        boxliteSnapshot: sandboxBoxliteImage || undefined,
+        e2bKey: sandboxE2BKey || undefined,
+        boxliteKey: sandboxBoxliteKey || undefined,
+        boxliteUrl: sandboxBoxliteURL || undefined,
+      },
+    });
+    if (result?.ok === false) throw new Error(result.error || tt("common.saveFailed"));
+    // System vectorization defaults live in their own namespace.
+    const vecRes = await setSystemVectorization({ embedding: sysEmbedding, reranker: sysReranker } as any);
+    if (vecRes?.error) throw new Error(vecRes.error);
   };
 
   if (loading) {
@@ -158,24 +138,7 @@ export default function RuntimeSettingsPage() {
             {tt("runtime.configDesc")}
           </p>
         </div>
-        <Button
-          onClick={handleSave}
-          disabled={saving}
-          variant={saved ? "outline" : "default"}
-          className={saved ? "border-success/30 text-success dark:text-success" : ""}
-        >
-          {saved ? (
-            <>
-              <Check className="h-4 w-4 mr-2" />
-              {tt("common.saved")}
-            </>
-          ) : (
-            <>
-              <Save className="h-4 w-4 mr-2" />
-              {saving ? tt("common.saving") : tt("common.save")}
-            </>
-          )}
-        </Button>
+        <SaveButton onSave={handleSave} />
       </div>
       {saveError && (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -332,12 +295,23 @@ export default function RuntimeSettingsPage() {
             <Switch checked={sysEmbedding.enabled} onCheckedChange={(v) => setSysEmbedding({ ...sysEmbedding, enabled: v })} />
           </div>
           {sysEmbedding.enabled && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Input value={sysEmbedding.model || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, model: e.target.value })} placeholder="BAAI/bge-m3" className="font-mono text-sm" />
-              <Input value={sysEmbedding.apiBase || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiBase: e.target.value })} placeholder="https://api.siliconflow.cn/v1" className="font-mono text-sm" />
-              <Input type="password" value={sysEmbedding.apiKey || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiKey: e.target.value })} placeholder="sk-..." className="font-mono text-sm" />
-              <Input type="number" value={sysEmbedding.dim || 1024} onChange={(e) => setSysEmbedding({ ...sysEmbedding, dim: parseInt(e.target.value) || 1024 })} placeholder="1024" className="font-mono text-sm" />
-            </div>
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input value={sysEmbedding.model || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, model: e.target.value })} placeholder="BAAI/bge-m3" className="font-mono text-sm" />
+                <Input value={sysEmbedding.apiBase || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiBase: e.target.value })} placeholder="https://api.siliconflow.cn/v1" className="font-mono text-sm" />
+                <Input type="password" value={sysEmbedding.apiKey || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiKey: e.target.value })} placeholder="sk-..." className="font-mono text-sm" />
+                <Input type="number" value={sysEmbedding.dim || 1024} onChange={(e) => setSysEmbedding({ ...sysEmbedding, dim: parseInt(e.target.value) || 1024 })} placeholder="1024" className="font-mono text-sm" />
+              </div>
+              <div className="flex justify-end">
+                <TestButton
+                  disabled={!sysEmbedding.apiBase || !sysEmbedding.model}
+                  onTest={async () => {
+                    const r = await testEmbedding({ apiBase: sysEmbedding.apiBase || "", apiKey: sysEmbedding.apiKey || "", model: sysEmbedding.model || "", dim: sysEmbedding.dim, dimEnabled: sysEmbedding.dimEnabled });
+                    if (!r.ok) throw new Error(r.error || tt("common.testFailed"));
+                  }}
+                />
+              </div>
+            </>
           )}
         </div>
         <div className="space-y-2 rounded-md border border-border/60 p-3">
@@ -346,11 +320,22 @@ export default function RuntimeSettingsPage() {
             <Switch checked={sysReranker.enabled} onCheckedChange={(v) => setSysReranker({ ...sysReranker, enabled: v })} />
           </div>
           {sysReranker.enabled && (
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Input value={sysReranker.model || ""} onChange={(e) => setSysReranker({ ...sysReranker, model: e.target.value })} placeholder="jina-reranker-v2-base-multilingual" className="font-mono text-sm" />
-              <Input value={sysReranker.apiBase || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiBase: e.target.value })} placeholder="https://api.jina.ai/v1" className="font-mono text-sm" />
-              <Input type="password" value={sysReranker.apiKey || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiKey: e.target.value })} placeholder="jina_..." className="font-mono text-sm sm:col-span-2" />
-            </div>
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input value={sysReranker.model || ""} onChange={(e) => setSysReranker({ ...sysReranker, model: e.target.value })} placeholder="jina-reranker-v2-base-multilingual" className="font-mono text-sm" />
+                <Input value={sysReranker.apiBase || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiBase: e.target.value })} placeholder="https://api.jina.ai/v1" className="font-mono text-sm" />
+                <Input type="password" value={sysReranker.apiKey || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiKey: e.target.value })} placeholder="jina_..." className="font-mono text-sm sm:col-span-2" />
+              </div>
+              <div className="flex justify-end">
+                <TestButton
+                  disabled={!sysReranker.apiBase || !sysReranker.model}
+                  onTest={async () => {
+                    const r = await testReranker({ apiBase: sysReranker.apiBase || "", apiKey: sysReranker.apiKey || "", model: sysReranker.model || "" });
+                    if (!r.ok) throw new Error(r.error || tt("common.testFailed"));
+                  }}
+                />
+              </div>
+            </>
           )}
         </div>
       </div>

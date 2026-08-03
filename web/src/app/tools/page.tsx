@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
+import { SaveButton } from "@/components/save-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -72,28 +73,15 @@ export default function ToolsPage() {
   };
 
   const handleSave = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const cleaned: Record<string, ToolProviderSettings> = {};
-      for (const [name, p] of Object.entries(providers)) {
-        const hasKey = p.apiKey && p.apiKey.trim();
-        const hasURL = p.endpoint && p.endpoint.trim();
-        const hasOpts = p.options && Object.keys(p.options).length > 0;
-        if (hasKey || hasURL || hasOpts) cleaned[name] = p;
-      }
-      const resp = await saveTools({ toolProviders: cleaned, tools });
-      if (!resp.ok) {
-        setError(resp.error || tt("tools.saveFailed"));
-      } else {
-        setSaved(true);
-        setTimeout(() => setSaved(false), 2000);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : tt("tools.saveFailed"));
-    } finally {
-      setSaving(false);
+    const cleaned: Record<string, ToolProviderSettings> = {};
+    for (const [name, p] of Object.entries(providers)) {
+      const hasKey = p.apiKey && p.apiKey.trim();
+      const hasURL = p.endpoint && p.endpoint.trim();
+      const hasOpts = p.options && Object.keys(p.options).length > 0;
+      if (hasKey || hasURL || hasOpts) cleaned[name] = p;
     }
+    const resp = await saveTools({ toolProviders: cleaned, tools });
+    if (!resp.ok) throw new Error(resp.error || tt("tools.saveFailed"));
   };
 
   if (loading) {
@@ -142,15 +130,7 @@ export default function ToolsPage() {
             tools={tools[activeCat.name] || {}}
             setTools={(patch) => updateCategory(activeCat.name, patch)}
             saveButton={
-              <Button onClick={handleSave} disabled={saving} variant={saved ? "outline" : "default"}>
-                {saved ? (
-                  <><Check className="h-4 w-4 mr-2" /> {tt("common.saved")}</>
-                ) : saving ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {tt("common.saving")}</>
-                ) : (
-                  <><Save className="h-4 w-4 mr-2" /> {tt("common.save")}</>
-                )}
-              </Button>
+              <SaveButton onSave={handleSave} />
             }
           />
         ) : null}

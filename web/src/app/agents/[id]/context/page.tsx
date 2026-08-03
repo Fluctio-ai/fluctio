@@ -416,6 +416,7 @@ export default function AgentContextPage() {
             )}
           </div>
         </div>
+        <p className="mb-3 text-sm text-muted-foreground">{t("context.guidanceDesc")}</p>
         <Select
           value={guidance}
           onValueChange={(v: string | null) => {

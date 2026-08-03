@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { SaveButton } from "@/components/save-button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -59,14 +60,9 @@ export default function PluginsPage() {
 
   const handleSaveConfig = async () => {
     if (!editPlugin) return;
-    setSaving(true);
-    try {
-      const config = JSON.parse(configJson);
-      await updatePlugin(editPlugin.id, { config });
-    } catch {
-      // invalid JSON
-    }
-    setSaving(false);
+    const config = JSON.parse(configJson);
+    const res = await updatePlugin(editPlugin.id, { config });
+    if (res?.error) throw new Error(res.error);
     setEditPlugin(null);
     fetchPlugins();
   };
@@ -210,9 +206,7 @@ export default function PluginsPage() {
             <Button variant="outline" onClick={() => setEditPlugin(null)}>
               {tt("common.cancel")}
             </Button>
-            <Button onClick={handleSaveConfig} disabled={saving}>
-              {saving ? tt("common.saving") : tt("pluginsPage.saveConfig")}
-            </Button>
+            <SaveButton onSave={handleSaveConfig} label={tt("pluginsPage.saveConfig")} />
           </DialogFooter>
         </DialogContent>
       </Dialog>

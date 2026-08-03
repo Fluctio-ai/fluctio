@@ -3,6 +3,7 @@ import { useT } from "@/lib/i18n";
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { SaveButton } from "@/components/save-button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -131,7 +132,6 @@ export default function AgentRegexHooksPage() {
 
   const handleSave = async () => {
     if (!agentId) return;
-    setSaving(true);
     const res = await saveRegexHook(agentId, {
       id: form.id || undefined,
       name: form.name,
@@ -144,11 +144,7 @@ export default function AgentRegexHooksPage() {
       feedToLLM: form.feedToLLM,
       errorMessage: form.errorMessage,
     });
-    setSaving(false);
-    if (res.error) {
-      setError(res.error);
-      return;
-    }
+    if (res.error) throw new Error(res.error);
     setEditOpen(false);
     refresh();
   };
@@ -442,12 +438,10 @@ export default function AgentRegexHooksPage() {
             <Button variant="outline" onClick={() => setEditOpen(false)}>
               {t("common.cancel")}
             </Button>
-            <Button
-              onClick={handleSave}
-              disabled={saving || !form.name || !form.pattern || !form.cliCommand}
-            >
-              {saving ? t("common.saving") : t("common.save")}
-            </Button>
+            <SaveButton
+              onSave={handleSave}
+              disabled={!form.name || !form.pattern || !form.cliCommand}
+            />
           </DialogFooter>
         </DialogContent>
       </Dialog>

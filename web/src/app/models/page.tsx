@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useT } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
+import { SaveButton } from "@/components/save-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -377,8 +378,9 @@ export default function ModelsPage() {
   };
 
   const handleSaveAll = async () => {
-    setSaving(true);
-    try { await updateConfig({ agents: { defaults: { model: model.trim() } } }); flashSaved(); await fetchConfig(isSuperAdmin, me?.id || ""); } finally { setSaving(false); }
+    const res = await updateConfig({ agents: { defaults: { model: model.trim() } } });
+    if (res?.error) throw new Error(res.error);
+    await fetchConfig(isSuperAdmin, me?.id || "");
   };
 
   const handleDefaultModelChange = async (value: string) => {
@@ -416,9 +418,7 @@ export default function ModelsPage() {
             <Plus className="h-4 w-4 mr-2" />
             {tt("models.addProvider")}
           </Button>
-          <Button onClick={handleSaveAll} disabled={saving} variant={saved ? "outline" : "default"} className={saved ? "border-success/30 text-success" : ""}>
-            {saved ? (<><Check className="h-4 w-4 mr-2" />{tt("common.saved")}</>) : saving ? tt("common.saving") : tt("common.save")}
-          </Button>
+          <SaveButton onSave={handleSaveAll} />
         </div>
       </div>
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { SaveButton } from "@/components/save-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Save, Check, Loader2, RotateCcw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
@@ -77,19 +78,14 @@ export default function AgentCustomizePage() {
   const active = files[activeTab];
 
   const handleSave = async () => {
-    setSaving(true);
-    try {
-      await apiFetch(`/api/agents/${agentId}/system-files/${activeTab}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: active?.content || "" }),
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-      // Reload so source/baseContent stay accurate after save.
-      loadAll();
-    } catch {}
-    setSaving(false);
+    const res = await apiFetch(`/api/agents/${agentId}/system-files/${activeTab}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: active?.content || "" }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // Reload so source/baseContent stay accurate after save.
+    loadAll();
   };
 
   // Revert deletes the DB override so the runtime falls back to the FS base
@@ -159,20 +155,7 @@ export default function AgentCustomizePage() {
               <RotateCcw className="h-4 w-4 mr-2" /> {t("customize.revert")}
             </Button>
           )}
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            variant={saved ? "outline" : "default"}
-            className={saved ? "border-success/30 text-success" : ""}
-          >
-            {saved ? (
-              <><Check className="h-4 w-4 mr-2" /> {t("common.saved")}</>
-            ) : saving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {t("common.saving")}</>
-            ) : (
-              <><Save className="h-4 w-4 mr-2" /> {t("common.save")}</>
-            )}
-          </Button>
+          <SaveButton onSave={handleSave} />
         </div>
       </div>
 

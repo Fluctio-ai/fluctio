@@ -15,6 +15,7 @@ import {
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
+import { SaveButton } from "@/components/save-button";
 
 // KBSettingsCard — the KB auto-query configuration card. Lives in the
 // Settings dialog's Knowledge tab. The data-source *list* is browsed
@@ -67,30 +68,27 @@ export function KBSettingsCard() {
 
   const handleSave = useCallback(async () => {
     if (!agentId) return;
-    setSaving(true);
-    try {
-      await updateAgent(agentId, {
-        kb: {
-          enabled: kbEnabled,
-          autoMode,
-          keywords: keywords
-            .split(/[,\n]/)
-            .map((s) => s.trim())
-            .filter(Boolean),
-          maxResults,
-          searchMode,
-          emptyAction,
-          wikiRatio,
-          threshold,
-          reminderChannel,
-          articleDupHigh: articleDupHigh || undefined,
-          articleDupMid: articleDupMid || undefined,
-          flashDupThreshold: flashDupThreshold || undefined,
-          todoDupThreshold: todoDupThreshold || undefined,
-        },
-      } as any);
-    } catch {}
-    setSaving(false);
+    const res = await updateAgent(agentId, {
+      kb: {
+        enabled: kbEnabled,
+        autoMode,
+        keywords: keywords
+          .split(/[,\n]/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+        maxResults,
+        searchMode,
+        emptyAction,
+        wikiRatio,
+        threshold,
+        reminderChannel,
+        articleDupHigh: articleDupHigh || undefined,
+        articleDupMid: articleDupMid || undefined,
+        flashDupThreshold: flashDupThreshold || undefined,
+        todoDupThreshold: todoDupThreshold || undefined,
+      },
+    } as any);
+    if (res?.error) throw new Error(res.error);
   }, [
     agentId,
     kbEnabled,
@@ -281,9 +279,7 @@ export function KBSettingsCard() {
       )}
 
       <div className="flex justify-end pt-1">
-        <Button size="sm" onClick={handleSave} disabled={saving || !configLoaded}>
-          {saving ? t("common.saving") : t("common.save")}
-        </Button>
+        <SaveButton size="sm" onSave={handleSave} disabled={!configLoaded} />
       </div>
     </div>
   );
