@@ -507,16 +507,17 @@ export default function WikiPage() {
           <div ref={graphRef} className="flex-1" />
         </div>
       ) : (
-        <button
+        <Button
+          variant="ghost"
+          size="icon"
+          className="m-2 self-start"
           onClick={() => setRightCollapsed(false)}
-          className="shrink-0 border-l px-1 py-3 flex flex-col items-center gap-1 text-xs text-muted-foreground hover:bg-accent"
           title={t("wiki.expandGraph")}
+          aria-expanded={false}
         >
           <PanelRightOpenIcon className="h-4 w-4" />
-          <span className="[writing-mode:vertical-rl] rotate-180">
-            {t("wiki.knowledgeGraph")}
-          </span>
-        </button>
+          <span className="sr-only">{t("wiki.knowledgeGraph")}</span>
+        </Button>
       )}
 
       <AlertDialog
