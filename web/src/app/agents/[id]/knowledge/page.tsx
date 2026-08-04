@@ -15,10 +15,13 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
+  ArrowLeftIcon,
   AlignLeftIcon,
   AlertTriangleIcon,
+  CheckIcon,
   CheckSquareIcon,
   ChevronDownIcon,
+  CopyIcon,
   FileTextIcon,
   GlobeIcon,
   ListOrderedIcon,
@@ -396,8 +399,11 @@ function ArticleView({ notify }: { notify: (msg: string) => void }) {
       )}
       <div className="flex min-h-0 flex-1">
       <div
-        style={{ width: leftWidth }}
-        className="shrink-0 border-r bg-muted/30 flex flex-col"
+        style={{ "--pane-lw": `${leftWidth}px` } as any}
+        className={cn(
+          "border-r bg-muted/30 flex-col w-full md:w-[var(--pane-lw)] md:shrink-0",
+          selectedSource ? "hidden md:flex" : "flex",
+        )}
       >
         <div className="p-3 border-b space-y-2">
           <div>
@@ -446,6 +452,13 @@ function ArticleView({ notify }: { notify: (msg: string) => void }) {
                       {src.entry_count} entries · {(src.total_chars / 1024).toFixed(1)} KB
                     </p>
                   </div>
+                  <CopyIconButton
+                    sizeClass="h-3.5 w-3.5"
+                    value={async () => {
+                      const es = await listKBEntries(agentId, src.id);
+                      return `# ${src.title}\n\n${es.map((e) => e.content).join("\n")}`;
+                    }}
+                  />
                   <button
                     type="button"
                     className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive shrink-0 relative after:absolute after:-inset-2"
@@ -463,14 +476,22 @@ function ArticleView({ notify }: { notify: (msg: string) => void }) {
 
       <div
         onPointerDown={startDrag}
-        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+        className="hidden md:block w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
       />
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={cn("flex-1 flex-col min-w-0", selectedSource ? "flex" : "hidden md:flex")}>
         {selectedSource ? (
           <>
             <div className="p-4 border-b">
               <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setSelectedSource(null); setEntries([]); setInsights(null); setDetailTab("text"); }}
+                  className="md:hidden -ml-1 shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label={t("common.back")}
+                >
+                  <ArrowLeftIcon className="h-5 w-5" />
+                </button>
                 <h1 className="text-xl font-bold truncate flex-1 min-w-0">{selectedSource.title}</h1>
                 {insights ? (
                   <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating} className="shrink-0">
@@ -487,12 +508,12 @@ function ArticleView({ notify }: { notify: (msg: string) => void }) {
               <p className="text-xs tabular-nums text-muted-foreground mt-1">
                 {selectedSource.entry_count} {t("knowledge.entries")} · {((selectedSource.total_chars ?? 0) / 1024).toFixed(1)} KB
               </p>
-              <div className="mt-3 flex flex-wrap gap-1">
+              <div className="mt-3 flex gap-1 overflow-x-auto">
                 <button
                   type="button"
                   onClick={() => setDetailTab("text")}
                   className={cn(
-                    "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                    "inline-flex items-center gap-1 whitespace-nowrap shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
                     detailTab === "text" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
                   )}
                 >
@@ -506,7 +527,7 @@ function ArticleView({ notify }: { notify: (msg: string) => void }) {
                       type="button"
                       onClick={() => setDetailTab(key)}
                       className={cn(
-                        "inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                        "inline-flex items-center gap-1 whitespace-nowrap shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
                         detailTab === key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
                       )}
                     >
@@ -759,6 +780,7 @@ function FlashView({ notify }: { notify: (msg: string) => void }) {
   const agentId = useAgentIdFromURL();
   const [flashes, setFlashes] = useState<FlashItem[]>([]);
   const [draft, setDraft] = useState("");
+  const [flashOpen, setFlashOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
@@ -790,7 +812,7 @@ function FlashView({ notify }: { notify: (msg: string) => void }) {
     setSaving(true);
     try {
       const res = await kbSaveFlash(agentId, draft.trim());
-      if ("error" in res) notify(res.error!); else { setDraft(""); await load(); }
+      if ("error" in res) notify(res.error!); else { setDraft(""); setFlashOpen(false); await load(); }
     } catch { notify(t("knowledge.failedAddText")); }
     setSaving(false);
   }, [agentId, draft, load, t]);
@@ -812,21 +834,13 @@ function FlashView({ notify }: { notify: (msg: string) => void }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b p-3 flex gap-2">
-        <textarea
-          className="flex-1 min-h-[44px] max-h-28 resize-y rounded-md border bg-transparent px-3 py-2 text-sm"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={t("knowledge.flashPlaceholder")}
-        />
-        <Button size="sm" className="self-end" onClick={handleSave} disabled={saving || !draft.trim()}>
-          {saving ? t("common.saving") : t("knowledge.saveFlash")}
-        </Button>
-      </div>
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchFlashes")} className="h-7 text-xs" />
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchFlashes")} className="h-7 text-xs flex-1 rounded-md" />
         <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setSortNew((v) => !v)}>
           {sortNew ? t("knowledge.sortNewest") : t("knowledge.sortOldest")}
+        </Button>
+        <Button size="sm" className="h-7 shrink-0" onClick={() => setFlashOpen(true)}>
+          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.saveFlash")}
         </Button>
       </div>
       <ScrollArea className="flex-1">
@@ -850,20 +864,44 @@ function FlashView({ notify }: { notify: (msg: string) => void }) {
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                   <span>{relativeTime(src.created_at)}</span>
-                  <button
-                    type="button"
-                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive relative after:absolute after:-inset-2"
-                    onClick={() => handleDelete(src.id)}
-                    aria-label={t("common.delete")}
-                  >
-                    <TrashIcon className="h-3 w-3" />
-                  </button>
+                  <div className="flex gap-2">
+                    <CopyIconButton sizeClass="h-3 w-3" value={content} />
+                    <button
+                      type="button"
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive relative after:absolute after:-inset-2"
+                      onClick={() => handleDelete(src.id)}
+                      aria-label={t("common.delete")}
+                    >
+                      <TrashIcon className="h-3 w-3" />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))
           )}
         </div>
       </ScrollArea>
+
+      <Dialog open={flashOpen} onOpenChange={setFlashOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t("knowledge.saveFlash")}</DialogTitle></DialogHeader>
+          <div className="space-y-1.5">
+            <Label>{t("knowledge.contentLabel")}</Label>
+            <textarea
+              className="flex min-h-[120px] w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={t("knowledge.flashPlaceholder")}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFlashOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={handleSave} disabled={saving || !draft.trim()}>
+              {saving ? t("common.saving") : t("knowledge.saveFlash")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1108,7 +1146,8 @@ function TodoCard({
           {t("knowledge.dueLabel")}: {datetimeLocalValue(src.end_at).replace("T", " ")}
         </p>
       )}
-      <div className="mt-2 flex justify-end">
+      <div className="mt-2 flex justify-end gap-2">
+        <CopyIconButton sizeClass="h-3 w-3" value={content} />
         <button
           type="button"
           className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive relative after:absolute after:-inset-2"
@@ -1136,4 +1175,42 @@ function statusAccent(s: TodoStatus): string {
       return "text-muted-foreground line-through";
   }
   return "";
+}
+
+// CopyIconButton copies markdown text to the clipboard and briefly flips to a
+// green check mark on success. value may be async (articles fetch entries on
+// click). Mirrors the delete button's reveal-on-hover, but tinted primary on
+// hover instead of destructive so the two stay visually distinct.
+function CopyIconButton({
+  value,
+  sizeClass,
+}: {
+  value: string | (() => Promise<string>);
+  sizeClass: string;
+}) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-primary shrink-0 relative after:absolute after:-inset-2 transition-colors"
+      onClick={async (e) => {
+        e.stopPropagation();
+        try {
+          const text = typeof value === "function" ? await value() : value;
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {}
+      }}
+      aria-label={t("common.copy")}
+      title={t("common.copy")}
+    >
+      {copied ? (
+        <CheckIcon className={cn(sizeClass, "text-success")} />
+      ) : (
+        <CopyIcon className={sizeClass} />
+      )}
+    </button>
+  );
 }

@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  ArrowLeftIcon,
   BookOpenIcon,
   ChevronRightIcon,
   DatabaseIcon,
@@ -25,6 +26,7 @@ import {
   PanelRightCloseIcon,
   PanelRightOpenIcon,
   TrashIcon,
+  XIcon,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -83,6 +85,9 @@ export default function WikiPage() {
   const [leftWidth, setLeftWidth] = useState(256);
   const [rightWidth, setRightWidth] = useState(480);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  // Mobile-only: knowledge graph renders as a full-screen overlay below lg,
+  // toggled by buttons in the list/preview headers. PC keeps the inline pane.
+  const [showGraphOverlay, setShowGraphOverlay] = useState(false);
 
   // The right-pane graph is always mounted. networkRef persists the
   // vis-network instance across renders so we can focus/select nodes
@@ -298,6 +303,18 @@ export default function WikiPage() {
     }
   }, [selectedPageId]);
 
+  // Mobile graph overlay: opening flips the pane display:none → fixed
+  // full-screen. vis-network's autoResize usually adapts, but explicitly
+  // fit + redraw shortly after open so the graph fills the overlay at once.
+  useEffect(() => {
+    if (!showGraphOverlay || !networkRef.current) return;
+    const id = setTimeout(() => {
+      networkRef.current?.fit();
+      networkRef.current?.redraw();
+    }, 60);
+    return () => clearTimeout(id);
+  }, [showGraphOverlay]);
+
   // Re-selecting the active "Wiki" sidebar item clears the center preview
   // (the URL is unchanged, so navigateOnce would otherwise no-op).
   useEffect(() => {
@@ -331,11 +348,25 @@ export default function WikiPage() {
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* Left: page list grouped by type */}
       <div
-        style={{ width: leftWidth }}
-        className="shrink-0 border-r bg-muted/30 flex flex-col"
+        style={{ "--pane-lw": `${leftWidth}px` } as any}
+        className={cn(
+          "border-r bg-muted/30 flex-col w-full md:w-[var(--pane-lw)] md:shrink-0",
+          selectedPageId ? "hidden md:flex" : "flex",
+        )}
       >
         <div className="p-3 border-b">
-          <h3 className="text-sm font-semibold">{t("wiki.title")}</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">{t("wiki.title")}</h3>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="ml-auto h-7 w-7 lg:hidden"
+              onClick={() => setShowGraphOverlay(true)}
+              title={t("wiki.knowledgeGraph")}
+            >
+              <NetworkIcon className="h-4 w-4" />
+            </Button>
+          </div>
           {stats && (
             <p className="text-xs text-muted-foreground mt-1">
               {t("wiki.pageStats", {
@@ -417,21 +448,38 @@ export default function WikiPage() {
       {/* Left/center resize handle */}
       <div
         onPointerDown={(e) => startDrag(e, "left")}
-        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+        className="hidden md:block w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
       />
 
       {/* Center: markdown preview */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={cn("flex-1 flex-col min-w-0", selectedPageId ? "flex" : "hidden md:flex")}>
         {selectedPage ? (
           <ScrollArea className="flex-1">
             <div className="p-6 max-w-5xl">
               <div className="flex items-center gap-2 mb-4">
+                <button
+                  type="button"
+                  onClick={() => { setSelectedPageId(null); setSelectedPage(null); }}
+                  className="md:hidden -ml-1 shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label={t("common.back")}
+                >
+                  <ArrowLeftIcon className="h-5 w-5" />
+                </button>
                 <Badge variant="outline">{selectedPage.page_type}</Badge>
-                <h1 className="text-xl font-bold">{selectedPage.title}</h1>
+                <h1 className="text-xl font-bold flex-1 min-w-0 truncate">{selectedPage.title}</h1>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 ml-auto"
+                  className="h-7 w-7 shrink-0 lg:hidden"
+                  onClick={() => setShowGraphOverlay(true)}
+                  title={t("wiki.knowledgeGraph")}
+                >
+                  <NetworkIcon className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0"
                   onClick={() => openDelete(selectedPage)}
                 >
                   <TrashIcon className="h-4 w-4" />
@@ -483,13 +531,17 @@ export default function WikiPage() {
       {!rightCollapsed && (
         <div
           onPointerDown={(e) => startDrag(e, "right")}
-          className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+          className="hidden lg:block w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
         />
       )}
       {!rightCollapsed ? (
         <div
-          style={{ width: rightWidth }}
-          className="shrink-0 border-l flex flex-col"
+          style={{ ["--pane-rw" as any]: `${rightWidth}px` }}
+          className={cn(
+            "flex-col",
+            showGraphOverlay ? "fixed inset-0 z-50 bg-background flex" : "hidden",
+            "lg:static lg:z-auto lg:inset-auto lg:bg-transparent lg:border-l lg:shrink-0 lg:w-[var(--pane-rw)] lg:flex",
+          )}
         >
           <div className="p-3 border-b flex items-center gap-2">
             <NetworkIcon className="h-4 w-4" />
@@ -497,7 +549,16 @@ export default function WikiPage() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 ml-auto"
+              className="h-7 w-7 ml-auto lg:hidden"
+              onClick={() => setShowGraphOverlay(false)}
+              title={t("common.close")}
+            >
+              <XIcon className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 ml-auto hidden lg:inline-flex"
               onClick={() => setRightCollapsed(true)}
               title={t("wiki.collapseGraph")}
             >
@@ -510,7 +571,7 @@ export default function WikiPage() {
         <Button
           variant="ghost"
           size="icon"
-          className="m-2 self-start"
+          className="m-2 self-start hidden lg:inline-flex"
           onClick={() => setRightCollapsed(false)}
           title={t("wiki.expandGraph")}
           aria-expanded={false}
