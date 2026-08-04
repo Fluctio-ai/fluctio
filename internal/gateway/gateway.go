@@ -757,6 +757,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.wikiAutoGenTicker(ctx)
 	}()
+	// Daily diary: half-hourly, walk every agent with diary.enabled and
+	// generate yesterday's themed diary + blindspot section once today's
+	// CronTime has passed. Decoupled from chat traffic.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.diaryTicker(ctx)
+	}()
 	// Implicit feedback sweep: periodically turns "did the user stay on the
 	// recalled topic?" into thumbs-up/down so the MMR-lambda bandit can tune
 	// without anyone clicking a button. Decoupled from chat traffic.

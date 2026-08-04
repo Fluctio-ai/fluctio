@@ -166,6 +166,9 @@ interface ChatMessage {
   // future notice variants.
   kind?: string;
   timestamp: number;
+  // session_messages.seq (0-based) from WebChatHistory — daily-diary
+  // #seq-N deep links scroll to the bubble whose id matches.
+  seq?: number;
   toolCalls?: { id: string; name: string; arguments: string; result?: string; metadata?: ToolResultMetadata }[];
   files?: ProducedFile[];
   attachments?: UserAttachment[];
@@ -274,7 +277,7 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
             channel: h.senderChannel,
           }
         : undefined;
-      msgs.push({ id: `h-${i}`, role: "user", content: h.content || "", timestamp: h.timestamp || 0, attachments, sender });
+      msgs.push({ id: `h-${i}`, role: "user", content: h.content || "", timestamp: h.timestamp || 0, seq: h.seq, attachments, sender });
       i++;
     } else if (h.role === "assistant" && h.toolCalls && h.toolCalls.length > 0) {
       // Group: assistant tool_calls + following tool results + final assistant content
@@ -313,13 +316,14 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
       // block; split, the model's actual answer stands as a first-class
       // reply.
       if (h.content && h.content.trim()) {
-        msgs.push({ id: `h-pre-${i}`, role: "agent", content: h.content, timestamp: h.timestamp || 0, metadata: h.metadata });
+        msgs.push({ id: `h-pre-${i}`, role: "agent", content: h.content, timestamp: h.timestamp || 0, seq: h.seq, metadata: h.metadata });
       }
       msgs.push({
         id: `h-tool-${i}`,
         role: "tool-group",
         content: "",
         timestamp: h.timestamp || 0,
+        seq: h.seq,
         toolCalls: calls,
       });
       // If next is assistant with ONLY content and no tool calls (final
@@ -334,7 +338,7 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
         history[i].content &&
         !(history[i].toolCalls && history[i].toolCalls!.length > 0)
       ) {
-        msgs.push({ id: `h-${i}`, role: "agent", content: history[i].content || "", timestamp: history[i].timestamp || 0, metadata: history[i].metadata });
+        msgs.push({ id: `h-${i}`, role: "agent", content: history[i].content || "", timestamp: history[i].timestamp || 0, seq: history[i].seq, metadata: history[i].metadata });
         i++;
       }
     } else if (h.role === "assistant" && h.kind === "compaction_notice") {
@@ -347,7 +351,7 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
       // phantom blank bubbles. Pure tool-call turns are mapped to
       // tool-groups above.
       if (h.content && h.content.trim()) {
-        msgs.push({ id: `h-${i}`, role: "agent", content: h.content, timestamp: h.timestamp || 0, metadata: h.metadata });
+        msgs.push({ id: `h-${i}`, role: "agent", content: h.content, timestamp: h.timestamp || 0, seq: h.seq, metadata: h.metadata });
       }
       i++;
     } else {
@@ -1366,6 +1370,29 @@ export function ChatScreen() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Deep-link from the daily-diary #seq-N anchor: history renders
+  // asynchronously after navigation, so the browser's native hash-scroll
+  // fires before the target bubble exists. Poll briefly for the element,
+  // then center it — and yield stickToBottom so the bottom-auto-scroll
+  // doesn't yank the view away.
+  useEffect(() => {
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    if (!hash.startsWith("#seq-")) return;
+    const id = hash.slice(1);
+    let tries = 0;
+    const iv = setInterval(() => {
+      const el = document.getElementById(id);
+      if (el) {
+        clearInterval(iv);
+        stickToBottomRef.current = false;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      if (++tries > 25) clearInterval(iv); // ~5s, then give up
+    }, 200);
+    return () => clearInterval(iv);
+  }, [sessionId]);
+
   // Watch the scroll container so we know whether to keep auto-scrolling
   // as new content arrives. 64px slack absorbs streaming jitter — without
   // it, a single token append can push the bottom past the viewport and
@@ -2367,6 +2394,7 @@ export function ChatScreen() {
                 return (
                 <div
                   key={msg.id}
+                  id={msg.seq != null ? `seq-${msg.seq}` : undefined}
                   className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div

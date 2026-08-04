@@ -474,6 +474,9 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// non-nil = write the per-agent KB override. Send enabled=false
 		// to disable (no separate reset signal).
 		KB *config.AgentKBCfg `json:"kb,omitempty"`
+		// Daily-diary generation config (nil = leave unchanged; non-nil =
+		// write the per-agent diary override). Same blob pattern as KB.
+		Diary *config.AgentDiaryCfg `json:"diary,omitempty"`
 		// Language is the default UI language for slash-command replies
 		// when the inbound source carries none (IM channels). ptr so
 		// nil = leave unchanged, empty string = clear (fall back to the
@@ -531,6 +534,13 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			rec.Config = map[string]interface{}{}
 		}
 		rec.Config["kb"] = req.KB
+	}
+	// Daily-diary override lives in the same config blob alongside kb.
+	if req.Diary != nil {
+		if rec.Config == nil {
+			rec.Config = map[string]interface{}{}
+		}
+		rec.Config["diary"] = req.Diary
 	}
 	// Language override lives in the agent config blob; MergedAgentConfig
 	// forwards it into ResolvedAgent.Language so HandleMessage can fall

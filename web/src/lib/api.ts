@@ -854,6 +854,8 @@ export interface ChatHistoryMessage {
   senderAvatarUrl?: string;
   senderId?: string;
   senderChannel?: string;
+  /** session_messages.seq (0-based) — daily-diary #seq-N deep links scroll to this. */
+  seq?: number;
 }
 
 export interface TodoItem {
@@ -1538,6 +1540,7 @@ export interface AgentFileConfig {
   providers?: Record<string, ProviderData>;
   mcpServers?: Record<string, MCPServerConfig>;
   kb?: AgentKBCfg;
+  diary?: AgentDiaryCfg;
   // admins mirrors config.AgentFileConfig.Admins — per-channel admin
   // platform IDs (IM identity claim flow binds via /claim <code>).
   admins?: Record<string, string[]>;
@@ -1568,6 +1571,74 @@ export interface AgentKBCfg {
   articleDupMid?: number;
   flashDupThreshold?: number;
   todoDupThreshold?: number;
+}
+
+// AgentDiaryCfg mirrors config.AgentDiaryCfg — per-agent daily-diary
+// generation config. Read/written via getAgentConfig/updateAgent under
+// the Knowledge settings tab.
+export interface AgentDiaryCfg {
+  enabled?: boolean;
+  /** Daily generation time "HH:MM" UTC+8. Default "02:30". */
+  cronTime?: string;
+  /** Blindspot-detection strength: ""/"blindspots" (default), "off", "deep". */
+  thinkingMode?: string;
+}
+
+// --- Daily diary types + API (per-agent daily-diary generator) ---
+export interface DiarySegRef {
+  session: string;
+  start: number;
+  end: number;
+}
+export interface DiaryTheme {
+  title: string;
+  summary: string;
+  points: string[];
+  topics?: string[];
+  session?: string;
+  segments?: DiarySegRef[];
+}
+export interface DiaryBlindspot {
+  point: string;
+  reason: string;
+}
+export interface DailyDiary {
+  agentId: string;
+  date: string;
+  overview: string;
+  /** Set by GET while a manual generation is running (row not written yet). */
+  generating?: boolean;
+  themes: DiaryTheme[];
+  blindspots: DiaryBlindspot[];
+  archives: string[];
+  model: string;
+  generatedAt: string;
+}
+
+export async function listDiary(agentId: string, from?: string, to?: string): Promise<DailyDiary[]> {
+  const p = new URLSearchParams();
+  if (from) p.set("from", from);
+  if (to) p.set("to", to);
+  const res = await apiFetch(`/api/agents/${agentId}/diary?${p}`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+}
+export async function getDiary(agentId: string, date: string): Promise<DailyDiary | null> {
+  const res = await apiFetch(`/api/agents/${agentId}/diary/${date}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+export async function generateDiary(
+  agentId: string,
+  date?: string,
+): Promise<{ status: string; date: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/diary/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(date ? { date } : {}),
+  });
+  return res.json();
 }
 
 // --- Knowledge base types + API (slice 4a REST handlers) ---

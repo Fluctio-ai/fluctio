@@ -727,6 +727,10 @@ type AgentFileConfig struct {
 	// CompactionThreshold is an operator-set fixed compaction threshold
 	// (tokens). 0 = use dynamic computation from CompactionMode.
 	CompactionThreshold int `json:"compactionThreshold,omitempty"`
+	// Daily-diary auto-generation config. Stored as the agent's "diary"
+	// config sub-object; mapped to AgentDiaryCfg. See AgentDiaryCfg for
+	// field semantics.
+	Diary *AgentDiaryCfg `json:"diary,omitempty"`
 }
 
 // AgentKBCfg is the per-agent knowledge-base auto-query configuration.
@@ -756,6 +760,27 @@ type AgentKBCfg struct {
 	// ReminderChannel is the IM channel the due-todo sweep pushes to
 	// (wechat/qq/telegram/discord/slack/feishu/line). Empty = "wechat".
 	ReminderChannel string `json:"reminderChannel,omitempty"`
+}
+
+// AgentDiaryCfg is the per-agent daily-diary generation configuration.
+// Stored as the agent's "diary" config sub-object. When Enabled, the
+// diary generator sweeps this agent's conversation_summaries once per
+// day at CronTime and distills them into a themed daily entry plus a
+// "you might have missed" blindspot section.
+type AgentDiaryCfg struct {
+	// Enabled turns on daily-diary auto-generation for this agent.
+	Enabled bool `json:"enabled"`
+	// CronTime is the daily generation time in "HH:MM" (UTC+8). Empty
+	// defaults to "02:30". The generator runs shortly after this time
+	// each day, producing the previous day's diary.
+	CronTime string `json:"cronTime,omitempty"`
+	// ThinkingMode controls how hard the LLM thinks during generation,
+	// i.e. the blindspot-detection strength:
+	//   "" / "blindspots" (default): theme aggregation runs without
+	//     thinking, the blindspot pass WITH thinking — the sweet spot.
+	//   "off": both passes without thinking — fastest, shallow blindspots.
+	//   "deep": both passes with thinking — slowest, deepest blindspots.
+	ThinkingMode string `json:"thinkingMode,omitempty"`
 }
 
 type SkillsConfig struct {

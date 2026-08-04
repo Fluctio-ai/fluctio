@@ -57,11 +57,12 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
+import { DiaryView } from "@/components/diary-view";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 
-type Tab = "article" | "flash" | "todo";
+type Tab = "article" | "flash" | "todo" | "diary";
 
 // DetailTab is the article-detail sub-tab: the original text plus the five
 // deep-reading sections. Section tabs render only after insights exist, so an
@@ -145,6 +146,7 @@ export default function AgentKnowledgePage() {
     ["article", "knowledge.articles"],
     ["flash", "knowledge.flashes"],
     ["todo", "knowledge.todos"],
+    ["diary", "knowledge.diary"],
   ];
   return (
     <div className="flex h-[calc(100vh-3.5rem)] flex-col">
@@ -177,6 +179,7 @@ export default function AgentKnowledgePage() {
         {tab === "article" && <ArticleView notify={notify} />}
         {tab === "flash" && <FlashView notify={notify} />}
         {tab === "todo" && <TodoView notify={notify} />}
+        {tab === "diary" && <DiaryView notify={notify} />}
       </div>
       {toast && (
         <div

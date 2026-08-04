@@ -203,6 +203,7 @@ func providerMessageFromStored(m store.SessionMessage) provider.Message {
 		Origin:       m.Origin,
 		Provider:     m.Provider,
 		Model:        m.Model,
+		Seq:          m.Seq,
 	}
 	// Restore created_at as the provider.Message timestamp (unix ms) so
 	// WebChatHistory can place produced files under the message whose

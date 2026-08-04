@@ -203,6 +203,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateArticleInsights(ctx); err != nil {
 		return fmt.Errorf("migrate kb article insights table: %w", err)
 	}
+	if err := d.migrateDailyDiary(ctx); err != nil {
+		return fmt.Errorf("migrate daily diary table: %w", err)
+	}
 	if err := d.migrateRecallTuning(ctx); err != nil {
 		return fmt.Errorf("migrate recall tuning tables: %w", err)
 	}
@@ -5743,6 +5746,26 @@ func (d *DBStore) migrateConversationSummaries(ctx context.Context) error {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {
 			return fmt.Errorf("migrate conversation_summaries (sqlite): %w (stmt=%q)", err, s)
 		}
+	}
+	return nil
+}
+
+// migrateDailyDiary creates the daily_diary table backing the per-agent
+// daily-diary generator. Pure relational (no vector/FTS), so one CREATE
+// statement covers both pg and sqlite.
+func (d *DBStore) migrateDailyDiary(ctx context.Context) error {
+	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS daily_diary (
+		agent_id TEXT NOT NULL,
+		date TEXT NOT NULL,
+		overview TEXT,
+		themes TEXT,
+		blindspots TEXT,
+		archives TEXT,
+		model TEXT,
+		generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (agent_id, date)
+	)`); err != nil {
+		return fmt.Errorf("migrate daily_diary: %w", err)
 	}
 	return nil
 }

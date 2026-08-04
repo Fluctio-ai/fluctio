@@ -267,6 +267,31 @@ func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 	return out, rows.Err()
 }
 
+// ListConversationSummariesByDateRange returns all summary rows for an
+// agent whose created_at falls in [from, to), ordered oldest first.
+// Used by the daily-diary generator to gather one day's topics. from/to
+// are UTC instants; callers convert the UTC+8 day boundaries to UTC.
+func (d *DBStore) ListConversationSummariesByDateRange(ctx context.Context, agentID string, from, to time.Time) ([]ConversationSummary, error) {
+	const cols = `id, agent_id, session_key,
+			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments`
+	var rows *sql.Rows
+	var err error
+	if d.dialect == "postgres" {
+		rows, err = d.db.QueryContext(ctx,
+			`SELECT `+cols+` FROM conversation_summaries WHERE agent_id = $1 AND created_at >= $2 AND created_at < $3 ORDER BY created_at ASC`,
+			agentID, from, to)
+	} else {
+		rows, err = d.db.QueryContext(ctx,
+			`SELECT `+cols+` FROM conversation_summaries WHERE agent_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC`,
+			agentID, from, to)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanConversationSummaries(rows)
+}
+
 // SetConversationSummaryEmbeddingModel stamps the model that produced a
 // summary's vector. Called after a successful vec write so the periodic
 // backfill skips the row on the next pass and a future model switch can

@@ -383,6 +383,12 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/wiki/progress", auth(s.handleWikiProgress))
 	mux.HandleFunc("GET /api/agents/{id}/wiki/autogen-status", auth(s.handleWikiAutogenStatus))
 
+	// Daily diary: per-agent themed daily-diary entries distilled from
+	// conversation_summaries, with a "you might have missed" section.
+	mux.HandleFunc("GET /api/agents/{id}/diary", auth(s.handleDiaryList))
+	mux.HandleFunc("GET /api/agents/{id}/diary/{date}", auth(s.handleDiaryGet))
+	mux.HandleFunc("POST /api/agents/{id}/diary/generate", auth(s.handleDiaryGenerate))
+
 	// Feishu (飞书) event webhook. UNAUTHENTICATED — Feishu posts here
 	// without a fluctio bearer token. Per-event security comes from
 	// the verification_token validated inside the adapter against the

@@ -101,6 +101,16 @@ type Message struct {
 	// and billing audit trails.
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
+
+	// Seq is the message's position in session_messages (0-based,
+	// COALESCE(MAX(seq),-1)+1). Populated by providerMessageFromStored
+	// when a session is restored from DB; zero on live in-flight messages
+	// not yet archived. json:"-" so it never reaches the LLM (keeps the
+	// prompt prefix byte-identical for cache hits) nor the sessions.messages
+	// JSON blob (re-derived from the DB row on load). Surfaced only by
+	// WebChatHistory so the daily-diary #seq-N deep links can scroll to a
+	// message via a DOM id.
+	Seq int `json:"-"`
 }
 
 // TextContent returns the message's user-visible text. Falls back to

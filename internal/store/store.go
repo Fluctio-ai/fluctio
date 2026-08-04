@@ -83,6 +83,12 @@ type Store interface {
 	SetWikiAutoGenResult(ctx context.Context, agentID string, t time.Time, status, errMsg string, pending int) error
 	// CountPendingKBSources returns KB sources whose wiki_generated_at is NULL.
 	CountPendingKBSources(ctx context.Context, agentID string) (int, error)
+	// InsertDailyDiary upserts one generated daily-diary entry (keyed agent+date).
+	InsertDailyDiary(ctx context.Context, dia DailyDiary) error
+	// GetDailyDiary reads one entry; returns nil when absent.
+	GetDailyDiary(ctx context.Context, agentID, date string) (*DailyDiary, error)
+	// ListDailyDiaries returns entries in [from,to] (YYYY-MM-DD), newest first.
+	ListDailyDiaries(ctx context.Context, agentID, from, to string) ([]DailyDiary, error)
 
 	// --- Sessions (agent-scoped — chat history keys on (agent, session)) ---
 	GetSession(ctx context.Context, agentID, sessionKey string) (*SessionRecord, error)

@@ -36,6 +36,7 @@ import AgentChannelsPage from "@/app/agents/[id]/channels/page";
 import AgentSchedulerPage from "@/app/agents/[id]/scheduler/page";
 import AgentRegexHooksPage from "@/app/agents/[id]/regex-hooks/page";
 import { KBSettingsCard } from "@/components/kb-settings-card";
+import { DiarySettingsCard } from "@/components/diary-settings-card";
 import { WikiAutoGenSettingsCard } from "@/components/wiki-autogen-settings-card";
 import AgentMemoryPage from "@/app/agents/[id]/vectorization/page";
 import AgentRecallTuningPage from "@/app/agents/[id]/recall-tuning/page";
@@ -211,6 +212,7 @@ export function AgentSettingsDialog({
           {tab === "knowledge" && (
             <div className="mx-auto w-full max-w-5xl space-y-4 p-4">
               <KBSettingsCard />
+              <DiarySettingsCard />
               <WikiAutoGenSettingsCard />
             </div>
           )}
