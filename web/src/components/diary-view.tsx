@@ -248,18 +248,22 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
                 <button
                   key={d.date}
                   type="button"
+                  disabled={d.date > todayCST()}
                   title={d.empty ? `${d.date} · 无对话内容` : d.has ? `${d.date} · ${d.weight}` : d.date}
                   onClick={() => {
+                    if (d.date > todayCST()) return;
                     setGenDate(d.date);
                     selectDate(d.date);
                   }}
                   className={cn(
-                    "aspect-square rounded text-[10px] tabular-nums flex items-center justify-center transition-all cursor-pointer hover:scale-110",
-                    d.empty
-                      ? "border border-destructive text-destructive"
-                      : d.has
-                        ? cn(heatLevel(d.weight), "text-foreground")
-                        : "opacity-40 text-muted-foreground",
+                    "aspect-square rounded text-[10px] tabular-nums flex items-center justify-center transition-all",
+                    d.date > todayCST()
+                      ? "opacity-30 text-muted-foreground cursor-default"
+                      : d.empty
+                        ? "border border-destructive text-destructive cursor-pointer hover:scale-110"
+                        : d.has
+                          ? cn(heatLevel(d.weight), "text-foreground cursor-pointer hover:scale-110")
+                          : "opacity-40 text-muted-foreground cursor-pointer hover:scale-110",
                     d.date === selectedDate && "ring-2 ring-primary ring-offset-1 ring-offset-background",
                   )}
                 >
