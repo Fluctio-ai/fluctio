@@ -28,6 +28,7 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 	registerKBSaveTodo(r, store, agentID)
 	registerKBUpdateTodo(r, store, agentID)
 	registerKBListTodos(r, store, agentID)
+	registerKBVerifyClaim(r, store, agentID)
 	// The deep-reading tool needs an LLM invoker; when none is wired (e.g. an
 	// agent without a provider) the tool is simply unavailable rather than
 	// registered-but-broken.
