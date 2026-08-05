@@ -60,7 +60,7 @@ var editSchema = map[string]interface{}{
 	"required": []string{"path", "old_string", "new_string"},
 }
 
-const editDescription = "Edit a file by replacing an exact substring. Prefer this over write_file when changing only part of a file (especially identity files like SOUL.md / MEMORY.md): it's cheaper, can't drop unrelated content, and validates the replacement was applied. old_string must match a unique substring unless replace_all is true; new_string must differ from old_string. Read the file first if you're unsure of the exact text."
+const editDescription = "Edit a file by replacing an exact substring. Prefer this over write_file when changing only part of a file (especially identity files like SOUL.md / MEMORY.md): it's cheaper, can't drop unrelated content, and validates the replacement was applied. old_string must match a unique substring unless replace_all is true; new_string must differ from old_string. Read the file first if you're unsure of the exact text. A result of '0 replacement(s)' means the edit was already applied — the file already contains new_string so nothing was changed; do not retry, just continue."
 
 // validateFileTargetPath rejects path arguments to write-like ops that
 // can't refer to a single file. Empty strings, directory-suffix paths
@@ -109,6 +109,16 @@ func applyEdit(path, content, oldStr, newStr string, replaceAll bool) (string, i
 	}
 	count := strings.Count(content, oldStr)
 	if count == 0 {
+		// Idempotent shortcut: old_string is absent but new_string is already
+		// in the file — the edit was applied before (an earlier turn's patch
+		// landed, or the agent re-emitted the same edit). Return the content
+		// unchanged with count=0 so the caller's write-back is a no-op and
+		// the agent doesn't burn a turn re-reading and "fixing" a non-failure.
+		// Single-edit only: under replace_all, new_string being present
+		// doesn't prove every occurrence was already replaced.
+		if !replaceAll && strings.Contains(content, newStr) {
+			return content, 0, nil
+		}
 		return "", 0, fmt.Errorf("edit_file: old_string not found in %s — re-read the file and copy the exact text (whitespace/indentation matters)", path)
 	}
 	if count > 1 && !replaceAll {

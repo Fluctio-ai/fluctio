@@ -91,6 +91,22 @@ func TestApplyEdit(t *testing.T) {
 			wantContent: "  beta\n",
 			wantCount:   1,
 		},
+		{
+			name:        "idempotent: old absent + new present means already applied",
+			content:     "x beta y",
+			oldStr:      oldS,
+			newStr:      newS,
+			wantContent: "x beta y",
+			wantCount:   0,
+		},
+		{
+			name:       "replace_all skips idempotent shortcut (can't prove every occurrence replaced)",
+			content:    "beta and beta",
+			oldStr:     oldS,
+			newStr:     newS,
+			replaceAll: true,
+			wantErrSub: "not found in " + path,
+		},
 	}
 
 	for _, tc := range cases {
