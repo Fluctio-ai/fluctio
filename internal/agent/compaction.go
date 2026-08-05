@@ -30,6 +30,21 @@ const (
 	// turn. Keep the head + marker so the model still sees the result
 	// shape without the bulk.
 	maxRetainedToolResultBytes = 16384
+	// minUserMessagesInTail is the minimum number of genuine user messages
+	// (Role=="user" && Origin==OriginUser) that must survive verbatim in the
+	// retained tail. PruneTurnAge sizes the tail in messages; a burst of
+	// tool/assistant turns can push the tail below this user floor, leaving
+	// the most recent user instructions to be paraphrased into the summary
+	// instead of surviving intact. userAwareCutoff extends the tail forward
+	// until it holds at least this many user messages.
+	minUserMessagesInTail = 6
+	// maxTailMessages caps the tail extension so gathering K user messages
+	// out of a tool-heavy stretch can't grow the tail unboundedly (which
+	// would defeat compaction and resurrect the empty-response failure
+	// mode the PruneTurnAge tail prevents). Tail may hold up to
+	// PruneTurnAge*2 messages; if user messages are sparser than that, we
+	// accept fewer rather than fail to compact.
+	maxTailMessages = PruneTurnAge * 2
 )
 
 // modeMarginPct 把档位映射成 margin 占 ContextWindow 的百分比。
@@ -205,6 +220,40 @@ func safeCompactionCutoff(messages []provider.Message, cutoff int) int {
 	return cutoff
 }
 
+// userAwareCutoff extends baseCutoff forward (toward 0) so the resulting
+// tail [cutoff:len] contains at least minUserMessagesInTail genuine user
+// messages — but never lets the tail exceed maxTailMessages in length.
+// Returns baseCutoff unchanged when the tail already has enough user
+// messages or when extending would hit the cap. Genuine user = Role=="user"
+// && Origin==OriginUser, so runtime-injected goal_context (Role=user,
+// Origin=GoalContext) does NOT count. Pure function.
+func userAwareCutoff(messages []provider.Message, baseCutoff int) int {
+	if baseCutoff < 0 {
+		baseCutoff = 0
+	}
+	userInTail := 0
+	for i := baseCutoff; i < len(messages); i++ {
+		if messages[i].Role == "user" && messages[i].Origin == provider.OriginUser {
+			userInTail++
+		}
+	}
+	if userInTail >= minUserMessagesInTail {
+		return baseCutoff
+	}
+	floor := len(messages) - maxTailMessages
+	if floor < 0 {
+		floor = 0
+	}
+	cutoff := baseCutoff
+	for cutoff > floor && userInTail < minUserMessagesInTail {
+		cutoff--
+		if messages[cutoff].Role == "user" && messages[cutoff].Origin == provider.OriginUser {
+			userInTail++
+		}
+	}
+	return cutoff
+}
+
 // pruneOldToolResults strips tool result content from messages older than
 // PruneTurnAge, and additionally truncates any oversized tool result that
 // survives into the preserved recent tail (or into a short history that
@@ -216,10 +265,11 @@ func pruneOldToolResults(messages []provider.Message) []provider.Message {
 	result := make([]provider.Message, len(messages))
 	copy(result, messages)
 
-	cutoff := len(result) - PruneTurnAge
-	if cutoff < 0 {
-		cutoff = 0
+	baseCutoff := len(result) - PruneTurnAge
+	if baseCutoff < 0 {
+		baseCutoff = 0
 	}
+	cutoff := userAwareCutoff(result, baseCutoff)
 	for i := range result {
 		if result[i].Role != "tool" {
 			continue
@@ -253,7 +303,7 @@ func compressOlderMessages(messages []provider.Message, prov provider.Provider, 
 		return messages, nil
 	}
 
-	cutoff := safeCompactionCutoff(messages, len(messages)-PruneTurnAge)
+	cutoff := safeCompactionCutoff(messages, userAwareCutoff(messages, len(messages)-PruneTurnAge))
 	olderMessages := messages[:cutoff]
 
 	// Build a text representation of older messages for summarization.

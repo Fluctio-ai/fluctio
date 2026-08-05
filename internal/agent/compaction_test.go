@@ -421,3 +421,92 @@ func TestBuildCompactionNotice(t *testing.T) {
 		t.Errorf("retained_turns want %d got %v", PruneTurnAge, meta["retained_turns"])
 	}
 }
+
+// TestUserAwareCutoff pins the tail-extension rule: cutoff holds at the
+// base when the tail already carries ≥ minUserMessagesInTail genuine user
+// messages, otherwise extends back (toward 0) to gather them — but never
+// past maxTailMessages of tail length, and goal_context (Role=user,
+// Origin=GoalContext) never counts as a user message.
+func TestUserAwareCutoff(t *testing.T) {
+	mkUser := func(c string) provider.Message {
+		return provider.Message{Role: "user", Content: c, Origin: provider.OriginUser}
+	}
+	mkTool := func() provider.Message {
+		return provider.Message{Role: "tool", ToolCallID: "x", Content: "r"}
+	}
+	mkGoal := func() provider.Message {
+		return provider.Message{Role: "user", Origin: provider.OriginGoalContext, Content: "g"}
+	}
+
+	cases := []struct {
+		name      string
+		msgs      []provider.Message
+		base      int
+		wantExact int
+	}{
+		{
+			name: "enough users in tail → no extension",
+			// 10 (user,assistant) pairs. base=8 → tail[8:20] holds 6 users.
+			msgs: func() []provider.Message {
+				var m []provider.Message
+				for i := 0; i < 10; i++ {
+					m = append(m, mkUser("u"), provider.Message{Role: "assistant", Origin: provider.OriginUser, Content: "a"})
+				}
+				return m
+			}(),
+			base:      8,
+			wantExact: 8,
+		},
+		{
+			name: "too few users → extend all the way back",
+			// 5 leading users, then 20 tools. base=20, tail has 0 users.
+			msgs: func() []provider.Message {
+				var m []provider.Message
+				for i := 0; i < 5; i++ {
+					m = append(m, mkUser("u"))
+				}
+				for i := 0; i < 20; i++ {
+					m = append(m, mkTool())
+				}
+				return m
+			}(),
+			base:      20,
+			wantExact: 0,
+		},
+		{
+			name: "goal_context does not count as a user message",
+			// 1 real user at index 0, then 22 goal_context messages.
+			msgs: func() []provider.Message {
+				m := []provider.Message{mkUser("real")}
+				for i := 0; i < 22; i++ {
+					m = append(m, mkGoal())
+				}
+				return m
+			}(),
+			base:      3,
+			wantExact: 0,
+		},
+		{
+			name: "maxTailMessages caps the extension",
+			// 1 user at index 0, then 59 tools = 60 msgs. base=40.
+			// floor = 60 - maxTailMessages(40) = 20, so cutoff can't reach the user at 0.
+			msgs: func() []provider.Message {
+				m := []provider.Message{mkUser("only")}
+				for i := 0; i < 59; i++ {
+					m = append(m, mkTool())
+				}
+				return m
+			}(),
+			base:      40,
+			wantExact: 20,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := userAwareCutoff(tc.msgs, tc.base)
+			if got != tc.wantExact {
+				t.Errorf("cutoff = %d, want %d (len=%d, base=%d)", got, tc.wantExact, len(tc.msgs), tc.base)
+			}
+		})
+	}
+}
