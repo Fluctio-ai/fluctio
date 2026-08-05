@@ -1782,7 +1782,7 @@ export interface InsightPoint { label: string; text: string; }
 export interface InsightTopic { heading: string; points: InsightPoint[]; }
 export interface InsightChapter { title: string; body: string; }
 export interface InsightSummary { core: string; topics: InsightTopic[]; chapters: InsightChapter[]; }
-export interface InsightQuote { text: string; tag: string; }
+export interface InsightQuote { text: string; tag: string; verified?: boolean; }
 export interface InsightSprout { index: number; emoji: string; title: string; seed: string; body: string; aha: string; }
 export interface InsightEchoItem { perspective: string; label: string; quote: string; source: string; }
 export interface InsightEcho { seed_quote: string; seed_comment: string; items: InsightEchoItem[]; }

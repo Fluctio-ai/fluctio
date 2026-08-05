@@ -694,7 +694,25 @@ function InsightSection({
                 {insights.quotes.map((q, i) => (
                   <blockquote key={i} className="border-l-2 border-warning/60 pl-3 py-1">
                     <p className="text-sm italic">{q.text}</p>
-                    {q.tag && <span className="text-xs text-muted-foreground">{q.tag}</span>}
+                    <div className="mt-1 flex items-center gap-2">
+                      {q.tag && <span className="text-xs text-muted-foreground">{q.tag}</span>}
+                      {q.verified === true && (
+                        <span
+                          className="text-xs text-emerald-600 dark:text-emerald-400"
+                          title={t("knowledge.quoteVerifiedTip")}
+                        >
+                          ✓ {t("knowledge.quoteVerified")}
+                        </span>
+                      )}
+                      {q.verified === false && (
+                        <span
+                          className="text-xs text-muted-foreground"
+                          title={t("knowledge.quoteUnverifiedTip")}
+                        >
+                          ⚠ {t("knowledge.quoteUnverified")}
+                        </span>
+                      )}
+                    </div>
                   </blockquote>
                 ))}
               </div>

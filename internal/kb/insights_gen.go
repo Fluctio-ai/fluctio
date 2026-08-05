@@ -103,6 +103,21 @@ func (s *KBStore) GenerateInsights(ctx context.Context, agentID, sourceID string
 		_ = json.Unmarshal(v, &ins.Sprouts)
 	}
 
+	// Ground each quote against the source text: a quote is "verified" only
+	// when it appears verbatim (modulo whitespace) in the article — the
+	// contract the prompt asks for but the LLM doesn't always honour. This
+	// is a deterministic check (we look for the bytes, not ask the LLM
+	// whether its own quote is real), mirroring verify_claim / Hermes's
+	// grounded-citations philosophy.
+	normContent := normalizeForMatch(content)
+	for i := range ins.Quotes {
+		q := &ins.Quotes[i]
+		if q.Text == "" {
+			continue
+		}
+		q.Verified = strings.Contains(normContent, normalizeForMatch(q.Text))
+	}
+
 	// 5. Persist.
 	if err := s.SaveInsights(ctx, agentID, sourceID, ins); err != nil {
 		return nil, err

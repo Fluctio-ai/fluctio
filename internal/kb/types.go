@@ -107,10 +107,15 @@ type InsightChapter struct {
 	Body  string `json:"body"`
 }
 
-// InsightQuote is one curated verbatim line from the source with a category tag.
+// InsightQuote is one curated verbatim line from the source with a category
+// tag. Verified is set by GenerateInsights via a deterministic substring
+// check against the source text — true means the quote appears literally
+// (modulo whitespace); false means the LLM likely paraphrased and the user
+// should double-check it against the original.
 type InsightQuote struct {
-	Text string `json:"text"`
-	Tag  string `json:"tag"`
+	Text     string `json:"text"`
+	Tag      string `json:"tag"`
+	Verified bool   `json:"verified,omitempty"`
 }
 
 // InsightSprouts holds the knowledge-extension section: an intro, 3-5 sprouts
