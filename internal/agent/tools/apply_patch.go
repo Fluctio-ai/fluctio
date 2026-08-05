@@ -221,6 +221,58 @@ loop:
 // Applier (pure functions)
 // -----------------------------------------------------------------------------
 
+// hunkAlreadyApplied reports whether a hunk's net effect is already present
+// in lines, so re-applying it would be a no-op (or a harmful duplicate
+// insert for pure-add hunks). Used at the top of applyHunks to short-circuit
+// the "did not match" error for re-emitted patches and to skip already-
+// inserted pure-add hunks.
+//
+// Deterministic, exact-match check (no fuzzy normalisation): a hunk counts
+// as already-applied only when every remove line is gone from the file, every
+// add line is present verbatim, AND every context anchor is still in place.
+// Context anchors must be present so that "add lines happen to exist elsewhere
+// in the file" doesn't get mistaken for idempotency. This mirrors the
+// "ground the edit against the actual page text" principle — we don't ask
+// the LLM whether it's done, we check the bytes.
+func hunkAlreadyApplied(h hunk, lines []string) bool {
+	var adds, removes []string
+	for _, l := range h.Lines {
+		switch l.Kind {
+		case lineAdd:
+			adds = append(adds, l.Text)
+		case lineRemove:
+			removes = append(removes, l.Text)
+		}
+	}
+	if len(adds) == 0 && len(removes) == 0 {
+		return false
+	}
+	present := func(s string) bool {
+		for _, l := range lines {
+			if l == s {
+				return true
+			}
+		}
+		return false
+	}
+	for _, l := range h.Lines {
+		if l.Kind == lineContext && !present(l.Text) {
+			return false
+		}
+	}
+	for _, a := range adds {
+		if !present(a) {
+			return false
+		}
+	}
+	for _, r := range removes {
+		if present(r) {
+			return false
+		}
+	}
+	return true
+}
+
 // applyHunks applies all hunks of an Update to oldContent and returns the
 // new content. Trailing-newline state is preserved. The first hunk that
 // fails to anchor produces an error mentioning its expected lines.
@@ -235,6 +287,15 @@ func applyHunks(path, oldContent string, hunks []hunk) (string, error) {
 	// re-match into already-rewritten regions.
 	searchFrom := 0
 	for hi, h := range hunks {
+		if hunkAlreadyApplied(h, lines) {
+			// Hunk's net effect is already in the file (an earlier turn's
+			// patch landed, or the agent re-emitted the same patch). Skip
+			// instead of failing on the missed anchor or double-inserting
+			// pure-add content. searchFrom stays put: pure-add hunks never
+			// advance it, and a skipped update hunk left no insertion to
+			// offset later line numbers.
+			continue
+		}
 		pattern := patternLines(h)
 		// A pure-add hunk (only '+' lines, no context, no remove) has an
 		// empty pattern. Per the Codex spec these are anchored to the end

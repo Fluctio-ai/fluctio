@@ -277,6 +277,67 @@ func TestApplyHunks_NoMatch(t *testing.T) {
 	}
 }
 
+// Pure-add hunk whose '+' lines are already in the file (a previous turn
+// inserted them). Re-applying must skip the hunk, NOT double-insert.
+func TestApplyHunks_IdempotentPureAdd(t *testing.T) {
+	old := "a\nb\nc\n"
+	hunks := []hunk{{Lines: []hunkLine{
+		{Kind: lineAdd, Text: "a"},
+		{Kind: lineAdd, Text: "b"},
+	}}}
+	got, err := applyHunks("test", old, hunks)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if want := "a\nb\nc\n"; got != want {
+		t.Errorf("got %q want %q (pure-add idempotent must not double-insert)", got, want)
+	}
+}
+
+// Update hunk whose remove line is already gone and add line already present
+// (the swap already happened). Must skip instead of erroring "did not match".
+func TestApplyHunks_IdempotentUpdate(t *testing.T) {
+	old := "alpha\nBETA\ngamma\n" // beta already → BETA
+	hunks := []hunk{{Lines: []hunkLine{
+		{Kind: lineContext, Text: "alpha"},
+		{Kind: lineRemove, Text: "beta"},
+		{Kind: lineAdd, Text: "BETA"},
+		{Kind: lineContext, Text: "gamma"},
+	}}}
+	got, err := applyHunks("test", old, hunks)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if want := "alpha\nBETA\ngamma\n"; got != want {
+		t.Errorf("got %q want %q (idempotent update must be a no-op)", got, want)
+	}
+}
+
+// Mixed patch: hunk1 already applied (skip), hunk2 still needs applying.
+// Guards that skipping hunk1 doesn't corrupt searchFrom for hunk2.
+func TestApplyHunks_IdempotentMixedSkip(t *testing.T) {
+	old := "alpha\nBETA\ngamma\ndelta\n" // hunk1's swap already done
+	hunks := []hunk{
+		{Lines: []hunkLine{ // already applied: beta→BETA
+			{Kind: lineContext, Text: "alpha"},
+			{Kind: lineRemove, Text: "beta"},
+			{Kind: lineAdd, Text: "BETA"},
+		}},
+		{Lines: []hunkLine{ // not yet applied: gamma→GAMMA, anchored on BETA
+			{Kind: lineContext, Text: "BETA"},
+			{Kind: lineRemove, Text: "gamma"},
+			{Kind: lineAdd, Text: "GAMMA"},
+		}},
+	}
+	got, err := applyHunks("test", old, hunks)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if want := "alpha\nBETA\nGAMMA\ndelta\n"; got != want {
+		t.Errorf("got %q want %q (skipped hunk must not break the next hunk's anchor)", got, want)
+	}
+}
+
 func TestApplyHunks_PreservesNoTrailingNewline(t *testing.T) {
 	old := "a\nb" // no trailing \n
 	hunks := []hunk{{
