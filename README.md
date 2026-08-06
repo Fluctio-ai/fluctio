@@ -55,7 +55,7 @@ Open `http://localhost:18953` and login with your admin token.
 - **Skills** — Install shared skills from ClawHub or GitHub
 - **Models** — Configure LLM providers (OpenAI, Anthropic, Ollama, OpenRouter, etc.)
 - **API Keys** — Issue programmatic owner-level credentials
-- **Settings** — General (theme), Account (profile + password), Runtime (sandbox config; admin only)
+- **Settings** — General (theme), Account (profile + password), Runtime (sandbox config; admin only), Diag (LLM failure reports)
 
 > Single-user mode: the dashboard serves one owner. There is no
 > self-registration and no multi-user management — the owner account is
@@ -65,12 +65,17 @@ Open `http://localhost:18953` and login with your admin token.
 
 Click an agent to enter its management panel:
 
-- **Chat** — Talk to the agent (debug/test)
+- **Chat** — Talk to the agent (debug/test); conversation auto-titled from the first exchange
 - **Files** — Edit SOUL.md, IDENTITY.md, MEMORY.md, etc.
 - **Skills** — Agent-private skills
 - **Models** — Agent-specific provider + model overrides (shadow system entries by name; agent-scope `agents.defaults.model` overrides the system default)
-- **Channels** — Connect IM bots (Telegram, Discord, Slack, Feishu) so end-users can chat with the agent on their platform of choice
+- **Channels** — Connect IM bots (Telegram, Discord, Slack, Feishu, QQ, WeChat) so end-users can chat with the agent on their platform of choice
 - **Scheduler** — Inspect and manage cron jobs the agent created via `create_cron_job` ("每天 9 点提醒我", "5 分钟后叫我"); pause / delete from the UI
+- **Knowledge** — The agent's knowledge base: articles / flash notes / todos, LLM-generated wiki pages + graph, daily diary (KB tab → Diary), and dedup pending review
+- **Vectorization** — Per-agent embedding + reranker overrides for memory / KB / wiki (inherits system defaults when unset)
+- **Recall Tuning** — Observe and steer cross-session recall (MMR λ bandit state, exploration stats, 👍/👎)
+- **Context** — Per-agent compaction threshold mode (Conservative / Balanced / Aggressive) + manual override
+- **Regex Hooks** — Pattern-triggered CLI shortcuts (e.g. `打卡` → local hook binary)
 - **Sessions** — Conversation history
 
 ## Architecture
@@ -116,6 +121,7 @@ table and is edited through the dashboard or `fluctio agents config`.
 - Sessions are isolated per channel + chatID, so a user's Telegram thread and Discord thread stay separate
 - Feishu supports inbound document/file attachments (delivered to the agent as workspace files)
 - QQ Official Bot (WebSocket) — markdown reply mode (msg_type 2 vs 0) is toggleable per account after connect; inbound images materialize into the session workspace
+- WeChat (iLink) — scan-once QR enrollment (no paste-in token): scan the QR served at `/api/agents/{id}/channels/wechat/login` with the WeChat phone app, then poll `login/status` until confirmed. Inbound images materialize into the session workspace; `image_gen` outputs are uploaded through the iLink CDN and delivered back as images
 
 ### Tools & Sandbox
 - Built-in: exec, read_file, write_file, list_dir, web_fetch, web_search, memory_search
@@ -148,11 +154,28 @@ table and is edited through the dashboard or `fluctio agents config`.
 
 <img src="previews/recall-tuning.png" alt="Fluctio Recall Tuning panel" width="900">
 
+### Knowledge Base & Wiki
+- **Three content types** — long-form articles (ingest from text or URL), flash notes (one-line captures), and todos (status + start/due timing). Each agent's KB is isolated to that agent.
+- **Agent-facing tools** — `knowledgebase_search` (hybrid semantic + FTS over chunks), `knowledgebase_add` / `knowledgebase_ingest_url`, `knowledgebase_save_flash`, `knowledgebase_save_todo` / `knowledgebase_update_todo` / `knowledgebase_list_todos`, `knowledgebase_list` / `knowledgebase_delete`, plus `knowledgebase_search_raw` for verbatim source passages when the wiki summary isn't detailed enough.
+- **Article deep-read (insights)** — one click (or an agent tool call) asks the LLM to produce a structured summary, themes, chapter breakdown, memorable quotes, action items, and "sprouts" (follow-up questions). Stored 1:1 with the article and surfaced in the UI.
+- **Three-tier dedup** — L1 source fingerprint → L2 vector similarity (three thresholds) → L3 normalized-title match. Near-duplicates are routed to an LLM `MergeArticles` step; pending merges surface as review cards, and wiki re-indexing is debounced via a dirty flag.
+- **Auto-generated Wiki** — the LLM distills KB sources into structured wiki pages (themes, concepts) with `[[type:slug]]` double-links and a live knowledge graph. Regenerated whenever the KB changes; pages are also embedded for vector recall, so KB search falls back to wiki chunks.
+- **Shared vectorization** — memory, KB, and wiki ride the same embedding + reranker chain. System defaults live under Settings; per-agent overrides live under the agent's **Vectorization** tab. Reindex buttons cover "missing only" and "force all".
+
+### Daily Diary
+- Each agent produces a per-day diary by aggregating that day's conversation summaries (topics + blind spots), pinned to the original `#seq` turns so you can jump straight to the source conversation.
+- Agent setting (KB tab → Diary): on/off, daily generation time, thinking mode.
+- Frontend: month calendar heat-map (three states — generated / empty-marker / not-yet), a filterable entry list, and `#seq` deep-links into the originating chat. Future dates are disabled.
+
 ### Context Compaction
 - **Model-aware threshold** — the auto-compaction trigger scales with each model's context window instead of a fixed 80K: `contextWindow − systemPrompt − maxTokens − margin`. Three modes per agent (Conservative 30% / Balanced 15% / Aggressive 10% margin) under agent settings → Context; a manual threshold override is also available. Models with an unknown window fall back to 80K.
 - **Builtin metadata table** — 675 models' `contextWindow` + `maxOutputTokens` **+ input/output modalities** (projected from `docs/models.json`) are compiled in. `LookupModelMeta` matches **case-insensitively by substring (longest-first)**, so `openai/LongCat-2.0` resolves through the `longcat` key; `SupportsVision()` decides whether inbound images are inlined as `image_url` blocks (multimodal primary model) or routed through the `vision` tool (text-only primary model).
 - **Local override** — `~/.fluctio/model-meta.json` (seeded with a commented example on first run) overrides or supplements the builtin table; same-key local wins. Edit it to add models missing from the builtin table.
 - **Compaction notice** — when auto-compaction fires, a persistent `📝 上下文已自动压缩（before → after tokens）` bubble appears mid-conversation (web + IM channels), and is excluded from the LLM-bound message stream so it never pollutes context.
+
+### Diagnostics
+- **`fluctio debug why-failed <agent-id> <session-key>`** — attributes the root-cause step of a failed agent turn from the local SQLite DB. It merges the LLM-call and session-event timelines and applies heuristic rules (LLM HTTP failure → tool cascade → empty response → loop) to explain *why* a turn died, not just *what* errored.
+- **Web UI error report** (Settings → Diag): generate a deeper, no-PII LLM-layer report for an agent + session + window (default 3 days) — runs the owner's default agent over the same trajectory and renders a downloadable breakdown. Diagnostic data is retained on a separate sweep (`FLUCTIO_LLM_CALL_DIAG_RETENTION_HOURS`, default 72h; `0` disables).
 
 ### API
 - OpenAI-compatible `/v1/chat/completions` (streaming)
@@ -167,6 +190,11 @@ table and is edited through the dashboard or `fluctio agents config`.
 - API key management `/api/apikeys` (owner-level; single tier)
 - Per-owner API key + agent creation via `/api/users/{id}/apikeys` and `/api/users/{id}/agents` (self-service)
 - Recall tuning: `/api/agents/{id}/recall-tuning` (GET bandit state / PUT manual λ), `/api/agents/{id}/recall-test` (query preview), `/api/agents/{id}/recall-events` (recent recalls), `/api/chat/recall-feedback` (👍/👎)
+- Knowledge base: `/api/agents/{id}/kb/...` — sources, ingest (text / URL), entries, search, stats, insights + generate, flash, todo + list-todos, pending review + resolve
+- Wiki: `/api/agents/{id}/wiki/...` — stats, pages, graph, generate, reindex-embed, progress, autogen-status
+- Daily diary: `/api/agents/{id}/diary` (list / get / generate)
+- Vectorization: system `/api/vectorization` (GET / PUT); per-agent `/api/agents/{id}/vectorization` (GET / PUT)
+- Diagnostics: `/api/diag/reports` (generate / list / download)
 
 ## Configuration
 
