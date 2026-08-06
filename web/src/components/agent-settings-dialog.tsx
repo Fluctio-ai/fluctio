@@ -165,14 +165,33 @@ export function AgentSettingsDialog({
       <DialogContent
         className={cn(
           "p-0 gap-0 overflow-hidden",
-          "h-[85vh] w-[95vw] max-w-[1100px] sm:max-w-[1100px]",
-          "grid grid-cols-[220px_1fr] grid-rows-1",
+          // Mobile: full-screen panel anchored to the top. A centered
+          // floating box is cramped on a phone, and the fixed 220px rail
+          // steals half the viewport. Drop rounding, span 100dvh, and pad
+          // with safe-area insets so the notch / home indicator never
+          // clips a tab or a save button.
+          "flex flex-col h-[100dvh] w-full max-w-none rounded-none",
+          "pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]",
+          // ≥sm: the original centered two-column dialog.
+          "sm:h-[85vh] sm:w-[95vw] sm:max-w-[1100px] sm:rounded-xl sm:pt-0 sm:pb-0",
+          "sm:grid sm:grid-cols-[220px_1fr] sm:grid-rows-1",
         )}
       >
-        <aside className="flex flex-col gap-1 border-r bg-muted/40 p-3 overflow-y-auto">
+        <aside
+          className={cn(
+            // Mobile: a single-row, horizontally scrollable tab strip
+            // under the notch. pr-10 keeps the last tab clear of the
+            // absolutely-positioned close button in the top-right.
+            "flex shrink-0 gap-1 overflow-x-auto overflow-y-hidden border-b bg-muted/40 p-2 pr-10",
+            // ≥sm: the vertical left rail (the historical layout).
+            "sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:border-r sm:border-b-0 sm:p-3 sm:pr-3",
+          )}
+        >
           {agentTabs.length > 0 && (
             <>
-              <SectionLabel>{tt("dialog.agentSection")}</SectionLabel>
+              <SectionLabel className="hidden sm:block">
+                {tt("dialog.agentSection")}
+              </SectionLabel>
               {agentTabs.map((t) => (
                 <TabButton
                   key={t.id}
@@ -183,8 +202,16 @@ export function AgentSettingsDialog({
               ))}
             </>
           )}
+          {userTabs.length > 0 && agentTabs.length > 0 && (
+            <div
+              aria-hidden
+              className="mx-1 w-px self-stretch shrink-0 bg-border sm:hidden"
+            />
+          )}
           {userTabs.length > 0 && (
-            <SectionLabel className={agentTabs.length > 0 ? "mt-3" : undefined}>
+            <SectionLabel
+              className={cn("hidden sm:block", agentTabs.length > 0 && "sm:mt-3")}
+            >
               {tt("dialog.userSection")}
             </SectionLabel>
           )}
@@ -197,7 +224,7 @@ export function AgentSettingsDialog({
             />
           ))}
         </aside>
-        <div className="overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {tab === "profile" && <AgentProfilePanel />}
           {tab === "customize" && <AgentCustomizePage />}
           {tab === "models" &&
@@ -280,7 +307,7 @@ function TabButton({
       type="button"
       onClick={() => onSelect(tab.id)}
       className={cn(
-        "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm text-left transition-colors",
+        "flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md px-2.5 py-2 text-left text-sm transition-colors",
         active
           ? "bg-accent text-accent-foreground font-medium"
           : "text-foreground/80 hover:bg-accent/50",
