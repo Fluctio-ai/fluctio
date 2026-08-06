@@ -24,9 +24,11 @@ func TestSystemPromptStableWithFixedNow(t *testing.T) {
 		t.Fatalf("BuildSystemPromptAs not deterministic: same now yielded different system prompts — prefix cache would break")
 	}
 
-	// A different now must produce a different dateLine (time is really rendered).
+	// dateLine no longer embeds a wall-clock value (the get_time tool
+	// serves live time on demand), so a different now in the SAME timezone
+	// must yield the IDENTICAL prompt — this is the prefix-cache guarantee.
 	p3 := cb.BuildSystemPromptAs(chatterUID, chatterMem, fixedNow.Add(2*time.Hour))
-	if p1 == p3 {
-		t.Fatalf("different now should yield a different dateLine (time must surface in the prompt)")
+	if p1 != p3 {
+		t.Fatalf("different now (same tz) should yield identical system prompt — dateLine must not embed wall-clock time")
 	}
 }

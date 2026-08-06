@@ -20,8 +20,8 @@ func RegisterGetTimeTool(r *Registry) {
 		"Get the precise current date and time in the chatter's timezone. "+
 			"Call this whenever the user asks the current time/date, before a "+
 			"time-of-day remark (e.g. 'good morning'), or when scheduling a "+
-			"task. The time shown in the system prompt is only the "+
-			"conversation's start time, NOT the live current time.",
+			"task. Do NOT call shell `date` or guess the time — this tool is "+
+			"the only live source of 'now'.",
 		map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},

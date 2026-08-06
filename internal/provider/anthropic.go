@@ -43,19 +43,40 @@ type anthropicTool struct {
 	InputSchema interface{} `json:"input_schema"`
 }
 
+// anthropicCacheControl marks a content block as a prompt-cache breakpoint.
+// Anthropic's prompt caching is EXPLICIT opt-in: without this marker on a
+// system or message content block the API does NOT cache any prefix, no
+// matter how byte-stable the body is. {type:"ephemeral"} is the only value
+// supported today (5-minute TTL, refreshed on each cache hit).
+type anthropicCacheControl struct {
+	Type string `json:"type"` // "ephemeral"
+}
+
+// anthropicSystemBlock is the array-of-blocks form of the Anthropic
+// `system` field. The plain-string form can't carry a cache_control
+// marker, so when caching we always emit the array form with a breakpoint
+// on the (single) block so the assembled system prompt is reused across
+// turns.
+type anthropicSystemBlock struct {
+	Type         string                 `json:"type"` // "text"
+	Text         string                 `json:"text"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
 type anthropicRequest struct {
-	Model     string             `json:"model"`
-	Messages  []anthropicMessage `json:"messages"`
-	System    string             `json:"system,omitempty"`
-	MaxTokens int                `json:"max_tokens"`
-	Stream    bool               `json:"stream"`
-	Tools     []anthropicTool    `json:"tools,omitempty"`
+	Model     string                 `json:"model"`
+	Messages  []anthropicMessage     `json:"messages"`
+	System    []anthropicSystemBlock `json:"system,omitempty"`
+	MaxTokens int                    `json:"max_tokens"`
+	Stream    bool                   `json:"stream"`
+	Tools     []anthropicTool        `json:"tools,omitempty"`
 }
 
 // toAnthropicMessages converts provider Messages to Anthropic wire format.
-// Extracts the system message and returns the rest.
-func toAnthropicMessages(msgs []Message) (string, []anthropicMessage) {
-	var system string
+// Concatenates every system message into one cached system block (see the
+// collection site for why the old overwrite was a bug) and returns the rest.
+func toAnthropicMessages(msgs []Message) ([]anthropicSystemBlock, []anthropicMessage) {
+	var systemParts []string
 	var out []anthropicMessage
 
 	// Anthropic rejects any tool_use whose tool_result doesn't appear
@@ -87,7 +108,15 @@ func toAnthropicMessages(msgs []Message) (string, []anthropicMessage) {
 
 	for i, m := range msgs {
 		if m.Role == "system" {
-			system = m.Content
+			// Concatenate, don't overwrite. The agent loop sends 6-7 system
+			// messages (main prompt + channel hints + sender + client params
+			// + chatbot reminder + cron guidance + conversation-gap note).
+			// The old `system = m.Content` kept only the LAST one, silently
+			// dropping the whole SOUL/IDENTITY/skills/runtime prompt as soon
+			// as any later system message came in.
+			if strings.TrimSpace(m.Content) != "" {
+				systemParts = append(systemParts, m.Content)
+			}
 			continue
 		}
 		if orphanTool[i] {
@@ -252,7 +281,83 @@ func toAnthropicMessages(msgs []Message) (string, []anthropicMessage) {
 		out = append(out, am)
 	}
 
+	// Prompt-cache breakpoints (Anthropic prompt caching is EXPLICIT opt-in
+	// via cache_control markers — no marker, no cache, regardless of how
+	// stable the body is). One breakpoint caps the system prompt; another
+	// caps the message just before the latest user turn, so system + tools
+	// + all prior history cache and only the newest user message (plus any
+	// tool result it produces this turn) ships uncached.
+	if n := len(out); n >= 2 {
+		lastUser := -1
+		for i := n - 1; i >= 0; i-- {
+			if out[i].Role == "user" {
+				lastUser = i
+				break
+			}
+		}
+		// Breakpoint on the message immediately BEFORE the latest user
+		// turn. If that message has no content to cache (e.g. a degenerate
+		// empty assistant hull), walk back to the nearest non-empty one so
+		// the breakpoint still lands on something worth caching.
+		if lastUser >= 1 {
+			for j := lastUser - 1; j >= 0; j-- {
+				if addEphemeralCache(out, j) {
+					break
+				}
+			}
+		}
+	}
+
+	var system []anthropicSystemBlock
+	if len(systemParts) > 0 {
+		system = []anthropicSystemBlock{{
+			Type:         "text",
+			Text:         strings.Join(systemParts, "\n\n"),
+			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+		}}
+	}
 	return system, out
+}
+
+// addEphemeralCache marks the last content block of out[idx] with an
+// ephemeral cache_control breakpoint and reports whether it did. Returns
+// false (no-op) when idx is out of range or the message has no content to
+// cache — a degenerate empty assistant hull (content `""`) is left in its
+// wire form so callers that rely on it (and Anthropic, which rejects null
+// but accepts "") keep working; the breakpoint just moves to an earlier
+// message with real content. Handles the array-of-blocks wire form
+// (tool_result / tool_use / multimodal — the common case) and the
+// plain-string form (coerced into a text block so the marker has a home).
+func addEphemeralCache(out []anthropicMessage, idx int) bool {
+	if idx < 0 || idx >= len(out) {
+		return false
+	}
+	cc := map[string]string{"type": "ephemeral"}
+	raw := out[idx].Content
+
+	var blocks []map[string]interface{}
+	if json.Unmarshal(raw, &blocks) == nil {
+		if len(blocks) == 0 {
+			return false
+		}
+		last := blocks[len(blocks)-1]
+		if _, ok := last["cache_control"]; !ok {
+			last["cache_control"] = cc
+		}
+		out[idx].Content, _ = json.Marshal(blocks)
+		return true
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		if strings.TrimSpace(s) == "" {
+			return false
+		}
+		out[idx].Content, _ = json.Marshal([]map[string]interface{}{
+			{"type": "text", "text": s, "cache_control": cc},
+		})
+		return true
+	}
+	return false
 }
 
 // parseToolInput decodes a stored tool_use Arguments string into the

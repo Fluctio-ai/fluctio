@@ -164,19 +164,21 @@ func modulesForMode(mode string) []moduleEntry {
 // tzExplicit indicates the timezone was explicitly set by the chatter
 // (via set_timezone), as opposed to falling back to server-local time.
 func buildDateLine(now time.Time, tzExplicit bool) string {
-	wd := now.Weekday().String()
+	// Static by design — NO wall-clock value is injected, so the system
+	// prompt renders byte-identical across turns and prefix-caches cleanly.
+	// The model pulls the precise current date/time on demand via the
+	// get_time tool; the only time-related fact baked into the prompt is
+	// the chatter's timezone (fixed per chatter, not per turn). `now` is
+	// used only to carry the resolved *time.Location → tzName.
 	tzName := now.Location().String()
 
-	base := fmt.Sprintf("Current date/time: %s (%s, %s — the chatter's local timezone). "+
-		"This is the time the conversation STARTED — it stays fixed across turns so the prompt prefix stays cacheable. "+
-		"For the precise CURRENT time, call the get_time tool; do NOT call shell `date`. "+
-		"Message timestamps are internal metadata and are not part of message text. When a conversation resumes after a long gap, "+
-		"you may receive a silent conversation-timing context note. Use it to distinguish the current turn from stale circumstances, "+
-		"and before ANY time-of-day remark check NOW — e.g. don't say \"good night\" in the middle of the day. "+
+	base := fmt.Sprintf("Timezone: %s (the chatter's local timezone). "+
+		"Message timestamps are internal metadata and are not part of message text. "+
+		"When a conversation resumes after a long gap, you may receive a silent conversation-timing context note — use it to distinguish the current turn from stale circumstances. "+
 		"This is silent background context for your own reasoning, not something to report: do NOT open or pepper your reply with the "+
 		"current date/time or day of week (e.g. don't start a reply with \"周六晚上九点二十七分\" or \"It's Saturday night\") unless the "+
 		"chatter directly asked what time/day it is or the precise time is materially relevant to the answer.",
-		now.Format("2006-01-02 15:04:05 -0700"), wd, tzName)
+		tzName)
 
 	if tzExplicit {
 		// Timezone was explicitly configured — tell the model NOT to ask again.

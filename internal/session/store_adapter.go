@@ -29,40 +29,17 @@ func (a *StoreAdapter) GetSession(ctx context.Context, agentID, sessionKey strin
 	if err != nil || rec == nil {
 		return nil, err
 	}
+	// providerMessageFromStored is the inverse of sessionMessageFromProvider
+	// and already restores Timestamp (unix ms) + re-tunnels ToolCalls /
+	// ContentParts back into typed slices. Reusing it here fixes a silent
+	// prefix-cache regression: the previous hand-rolled literal OMITTED
+	// Timestamp, so a DB-reloaded session came back with Timestamp=0,
+	// sessionStartTime() fell back to time.Now() every turn, the
+	// system-prompt date line re-rendered with a fresh wall-clock value,
+	// and DeepSeek/LongCat only kept the ~512 tokens before it cached.
 	msgs := make([]provider.Message, len(rec.Messages))
 	for i, m := range rec.Messages {
-		msgs[i] = provider.Message{
-			Role:         m.Role,
-			Content:      m.Content,
-			ToolCallID:   m.ToolCallID,
-			Name:         m.Name,
-			Metadata:     m.Metadata,
-			Thinking:     m.Thinking,
-			RawAssistant: m.RawAssistant,
-			Origin:       m.Origin,
-		}
-		// ToolCalls / ContentParts are stored as interface{} so a
-		// JSON round-trip leaves them as []interface{} / map nests.
-		// Re-marshal + unmarshal to recover the typed slice — without
-		// this, a refreshed history loses tool-group bubbles AND the
-		// next provider call sends a multimodal user turn with no
-		// content (ContentParts dropped → Content "" → API rejects).
-		if m.ToolCalls != nil {
-			if raw, err := json.Marshal(m.ToolCalls); err == nil {
-				var tcs []provider.ToolCall
-				if json.Unmarshal(raw, &tcs) == nil {
-					msgs[i].ToolCalls = tcs
-				}
-			}
-		}
-		if m.ContentParts != nil {
-			if raw, err := json.Marshal(m.ContentParts); err == nil {
-				var parts []provider.ContentPart
-				if json.Unmarshal(raw, &parts) == nil {
-					msgs[i].ContentParts = parts
-				}
-			}
-		}
+		msgs[i] = providerMessageFromStored(m)
 	}
 	return msgs, nil
 }
