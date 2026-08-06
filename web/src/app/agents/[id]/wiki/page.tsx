@@ -44,6 +44,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { cn } from "@/lib/utils";
+import { readCache, writeCache } from "@/lib/page-data-cache";
 
 // WikiPage is the three-pane wiki browser at /agents/<id>/wiki/.
 //   Left   — page list grouped by type (overview/entity/concept/source)
@@ -65,13 +66,19 @@ export default function WikiPage() {
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
 
-  const [stats, setStats] = useState<WikiStats | null>(null);
-  const [pages, setPages] = useState<WikiPage[]>([]);
+  // Stale-while-revalidate: seed stats/pages from the module cache so a
+  // return visit (e.g. flipping to /knowledge/ and back) paints at once
+  // instead of flashing the loading spinner. loadData() revalidates.
+  const [initialWiki] = useState(() =>
+    agentId ? readCache<{ stats: WikiStats | null; pages: WikiPage[] }>(`wiki:${agentId}`) : undefined,
+  );
+  const [stats, setStats] = useState<WikiStats | null>(initialWiki?.stats ?? null);
+  const [pages, setPages] = useState<WikiPage[]>(initialWiki?.pages ?? []);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [selectedPage, setSelectedPage] = useState<WikiPage | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WikiPage | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialWiki);
 
   // Dynamic loading: the left pane renders the first `visibleCount`
   // pages and loads more as the user scrolls to the bottom. A continuous
@@ -100,7 +107,10 @@ export default function WikiPage() {
 
   const loadData = useCallback(async () => {
     if (!agentId) return;
-    setLoading(true);
+    // Revalidate silently when a cached snapshot is already on screen —
+    // avoids the loading flash on every route-switch return.
+    const silent = !!readCache(`wiki:${agentId}`);
+    if (!silent) setLoading(true);
     try {
       const [s, p] = await Promise.all([
         getWikiStats(agentId),
@@ -108,8 +118,9 @@ export default function WikiPage() {
       ]);
       setStats(s);
       setPages(p.pages ?? []);
+      writeCache(`wiki:${agentId}`, { stats: s, pages: p.pages ?? [] });
     } catch {}
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, [agentId]);
 
   useEffect(() => {
