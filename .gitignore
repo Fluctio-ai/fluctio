@@ -81,6 +81,8 @@ run.log
 run.log.*
 run.err
 run.err.*
+gw.err
+gw.err.*
 
 # runtime logs (restart*.log)
 *.log
