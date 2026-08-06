@@ -93,6 +93,8 @@ const en: Record<string, string> = {
   "diag.history": "History",
   "diag.empty": "No reports yet.",
   "diag.download": "Download",
+  "diag.delete": "Delete",
+  "diag.confirmDelete": "Delete this report? This cannot be undone.",
   "settings.recallTuning": "Recall Tuning",
   "recallTuning.title": "Recall Tuning",
   "recallTuning.description": "The recall scorer auto-tunes its MMR lambda (diversity vs relevance) from feedback. This panel makes that visible instead of a black box.",

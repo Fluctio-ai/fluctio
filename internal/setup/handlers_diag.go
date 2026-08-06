@@ -129,3 +129,28 @@ func (s *Server) handleDiagReportDownload(w http.ResponseWriter, r *http.Request
 	}
 	http.ServeFile(w, r, filepath.Join(dir, name))
 }
+
+// handleDiagReportDelete removes one report file. Same name sanitization as
+// download — base + .md only — so a crafted path can't escape diagReportsDir.
+// 404 if the file is already gone (idempotent delete for the UI button).
+func (s *Server) handleDiagReportDelete(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || filepath.Base(name) != name || filepath.Ext(name) != ".md" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid report name"})
+		return
+	}
+	dir, err := diagReportsDir()
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := os.Remove(filepath.Join(dir, name)); err != nil {
+		if os.IsNotExist(err) {
+			jsonResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
+			return
+		}
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}

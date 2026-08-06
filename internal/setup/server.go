@@ -440,6 +440,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/diag/reports", auth(s.handleDiagReportGenerate))
 	mux.HandleFunc("GET /api/diag/reports", auth(s.handleDiagReportList))
 	mux.HandleFunc("GET /api/diag/reports/{name}", auth(s.handleDiagReportDownload))
+	mux.HandleFunc("DELETE /api/diag/reports/{name}", auth(s.handleDiagReportDelete))
 	mux.HandleFunc("GET /api/scoped-channels", auth(s.handleListScopedChannels))
 	mux.HandleFunc("POST /api/scoped-channels", auth(s.handleCreateScopedChannel))
 	mux.HandleFunc("PUT /api/scoped-channels/{id}", auth(s.handleUpdateScopedChannel))

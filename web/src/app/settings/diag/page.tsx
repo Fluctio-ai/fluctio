@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, FileText, Loader2 } from "lucide-react";
+import { Download, FileText, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  deleteDiagReport,
   diagReportDownloadUrl,
   generateDiagReport,
   listDiagReports,
@@ -24,6 +25,7 @@ export default function DiagReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [reports, setReports] = useState<DiagReportEntry[]>([]);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const refresh = () => {
     listDiagReports()
@@ -46,6 +48,20 @@ export default function DiagReportPage() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const remove = async (name: string) => {
+    if (!window.confirm(t("diag.confirmDelete"))) return;
+    setDeleting(name);
+    setError(null);
+    try {
+      await deleteDiagReport(name);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(null);
     }
   };
 
@@ -115,20 +131,36 @@ export default function DiagReportPage() {
                     {Math.max(1, Math.round(r.size / 1024))} KB
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    window.open(
-                      diagReportDownloadUrl(r.name),
-                      "_blank",
-                      "noopener,noreferrer",
-                    )
-                  }
-                >
-                  <Download className="h-4 w-4 mr-1.5" />
-                  {t("diag.download")}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      window.open(
+                        diagReportDownloadUrl(r.name),
+                        "_blank",
+                        "noopener,noreferrer",
+                      )
+                    }
+                  >
+                    <Download className="h-4 w-4 mr-1.5" />
+                    {t("diag.download")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => remove(r.name)}
+                    disabled={deleting === r.name}
+                    className="text-muted-foreground hover:text-destructive"
+                  >
+                    {deleting === r.name ? (
+                      <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4 mr-1.5" />
+                    )}
+                    {t("diag.delete")}
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>

@@ -93,6 +93,8 @@ const zhCN: Record<string, string> = {
   "diag.history": "历史报告",
   "diag.empty": "尚无报告。",
   "diag.download": "下载",
+  "diag.delete": "删除",
+  "diag.confirmDelete": "确定删除这份报告？删除后无法恢复。",
   "settings.recallTuning": "召回调优",
   "recallTuning.title": "召回调优",
   "recallTuning.description": "召回评分器会根据反馈自动调优 MMR lambda（多样性 vs 相关性）。此面板让该过程可见，不再是黑箱。",

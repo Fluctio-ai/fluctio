@@ -478,6 +478,16 @@ export function diagReportDownloadUrl(name: string): string {
   return `/api/diag/reports/${encodeURIComponent(name)}`;
 }
 
+export async function deleteDiagReport(name: string): Promise<void> {
+  const res = await apiFetch(`/api/diag/reports/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || res.statusText);
+  }
+}
+
 // Scoped providers + channels
 
 export type ScopeName = "system" | "user" | "agent";
