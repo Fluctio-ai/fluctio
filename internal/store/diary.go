@@ -18,7 +18,7 @@ type DiarySegRef struct {
 }
 
 // DiaryTheme is one topic group in a daily diary, distilled by the LLM
-// from one or more conversation_summaries rows of the day.
+// from the day's conversation messages (session_messages), grouped by theme.
 type DiaryTheme struct {
 	Title    string        `json:"title"`
 	Summary  string        `json:"summary"`
@@ -29,7 +29,7 @@ type DiaryTheme struct {
 }
 
 // DiaryBlindspot is one "you might have missed" point the LLM flags
-// from the day's summaries — important but not followed up.
+// from the day's conversation — important but not followed up.
 type DiaryBlindspot struct {
 	Point  string `json:"point"`
 	Reason string `json:"reason"`

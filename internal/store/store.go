@@ -469,6 +469,12 @@ type SessionMessage struct {
 	// (regex-hook matches with FeedToLLM=false) that live in the archive
 	// for the web UI but are filtered out of context/summary/recall.
 	LLMVisible bool `json:"llmVisible,omitempty"`
+	// SessionKey is the session this message belongs to. Populated only by
+	// cross-session readers (ListSessionMessagesByAgentAndTimeRange); the
+	// per-session queries leave it empty since the caller already knows the
+	// key. Used by the diary generator to map LLM source indices back to
+	// (session, seq) clickable segments.
+	SessionKey string `json:"sessionKey,omitempty"`
 }
 
 // SessionEventRecord is one row of session_events — a single delta the

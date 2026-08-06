@@ -4238,6 +4238,58 @@ func (d *DBStore) ListSessionMessages(ctx context.Context, agentID, sessionKey s
 	return out, rows.Err()
 }
 
+// ListSessionMessagesByAgentAndTimeRange returns every message across ALL
+// of an agent's sessions whose created_at falls in [from, to), ordered by
+// time then seq so callers see a chronological timeline. Each row's
+// SessionKey is populated (the per-session readers leave it empty).
+//
+// Used by the daily-diary generator, which must read the day's actual
+// conversation. It cannot use conversation_summaries: incremental
+// compaction rewrites a whole session's summary rows under one fresh
+// created_at, so a long IM session's summary mixes several days under a
+// single timestamp and cannot be sliced by day.
+func (d *DBStore) ListSessionMessagesByAgentAndTimeRange(ctx context.Context, agentID string, from, to time.Time) ([]SessionMessage, error) {
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT session_key, seq, role, content, content_parts, tool_calls, tool_call_id, name, metadata, thinking, raw_assistant, origin, created_at, provider, model, llm_visible
+			FROM session_messages
+			WHERE agent_id = %s AND created_at >= %s AND created_at < %s
+			ORDER BY created_at ASC, seq ASC`,
+			d.ph(1), d.ph(2), d.ph(3)),
+		agentID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionMessage
+	for rows.Next() {
+		var m SessionMessage
+		var contentParts, toolCalls, metadata, rawAssistant string
+		if err := rows.Scan(&m.SessionKey, &m.Seq, &m.Role, &m.Content, &contentParts, &toolCalls, &m.ToolCallID, &m.Name, &metadata, &m.Thinking, &rawAssistant, &m.Origin, &m.Timestamp, &m.Provider, &m.Model, &m.LLMVisible); err != nil {
+			return nil, err
+		}
+		if contentParts != "" && contentParts != "null" {
+			var v interface{}
+			if json.Unmarshal([]byte(contentParts), &v) == nil {
+				m.ContentParts = v
+			}
+		}
+		if toolCalls != "" && toolCalls != "null" {
+			var v interface{}
+			if json.Unmarshal([]byte(toolCalls), &v) == nil {
+				m.ToolCalls = v
+			}
+		}
+		if metadata != "" && metadata != "null" {
+			_ = json.Unmarshal([]byte(metadata), &m.Metadata)
+		}
+		if rawAssistant != "" && rawAssistant != "null" {
+			m.RawAssistant = json.RawMessage(rawAssistant)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 
 func (d *DBStore) RenameSession(ctx context.Context, agentID, sessionKey, title string) error {
 	_, err := d.db.ExecContext(ctx,
