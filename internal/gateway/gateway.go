@@ -757,6 +757,24 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.wikiAutoGenTicker(ctx)
 	}()
+	// Wiki embedding backfill: safety-net that vectorizes wiki pages the
+	// save-time path missed (embedder down/unconfigured when the page was
+	// generated). Mirrors memoryindex's role for summaries. Hourly tick +
+	// boot pass; only acts on agents with vectorization.wikiEmbedding on.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.wikiEmbedBackfillTicker(ctx)
+	}()
+	// KB entry embedding backfill: safety-net that vectorizes kb_entries
+	// chunks the save-time path missed (embedder down/unconfigured at
+	// ingest). Mirrors wikiEmbedBackfillTicker; only acts on agents with
+	// vectorization.kbEmbedding on.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.kbEmbedBackfillTicker(ctx)
+	}()
 	// Daily diary: half-hourly, walk every agent with diary.enabled and
 	// generate yesterday's themed diary + blindspot section once today's
 	// CronTime has passed. Decoupled from chat traffic.

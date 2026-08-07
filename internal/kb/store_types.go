@@ -316,6 +316,36 @@ func (s *KBStore) ListTodos(ctx context.Context, agentID, status string, dueWith
 	return todos, nil
 }
 
+// ListFlashes returns the agent's inspiration flashes (灵感闪记) — single-
+// chunk sources of type 'flash', newest first. Flashes have no status or
+// timing (unlike todos), so the only filter is a cap on count. Backs the
+// knowledgebase_list_flashes tool so the LLM can discover recorded ideas
+// proactively instead of waiting for a knowledgebase_search to hit them.
+func (s *KBStore) ListFlashes(ctx context.Context, agentID string, limit int) ([]KBSource, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
+			type, status, start_at, end_at, reminded_at, wiki_dirty_at
+			FROM kb_sources WHERE agent_id = %s AND type = 'flash'
+			ORDER BY updated_at DESC LIMIT %s`, s.ph(1), s.ph(2)),
+		agentID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list flashes: %w", err)
+	}
+	defer rows.Close()
+	var flashes []KBSource
+	for rows.Next() {
+		f, ok := scanSource(rows)
+		if !ok {
+			continue
+		}
+		flashes = append(flashes, f)
+	}
+	return flashes, nil
+}
+
 // searchFlashTodoByVector recalls flash/todo sources by semantic similarity.
 // Flashes and todos skip wiki generation (they're short, single-chunk sources),
 // so searchWikiByVector can't reach them — this queries their chunk vectors
@@ -395,6 +425,91 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 		if c.score < threshold {
 			continue
 		}
+		snippet := c.content
+		if len(snippet) > 300 {
+			snippet = softClipUTF8(snippet, 300)
+		}
+		title := c.title
+		if c.kbType == "todo" && c.status != "" {
+			title = fmt.Sprintf("%s [%s]", c.title, c.status)
+		}
+		results = append(results, KBResult{
+			SourceID:    c.sourceID,
+			SourceTitle: title,
+			SourceKind:  "kb",
+			ContentType: c.kbType,
+			Content:     c.content,
+			Snippet:     snippet,
+			Rank:        c.score,
+		})
+		if len(results) >= limit {
+			break
+		}
+	}
+	return results
+}
+
+// searchFlashTodoByKeyword is the embedder-free counterpart to
+// searchFlashTodoByVector: it recalls flash/todo sources by query-token
+// overlap instead of vector cosine. Flashes and todos skip wiki generation,
+// so when no embedder is configured the Search fallback (searchWikiByType,
+// wiki-only) would miss them entirely — this fills that gap so a relevant
+// flash or todo still surfaces without vectorization. Score is the fraction
+// of query tokens found in the entry (0..1), matching the scale
+// mergeKBResults expects; entries with zero overlap are dropped.
+func (s *KBStore) searchFlashTodoByKeyword(ctx context.Context, agentID, query string, limit int) []KBResult {
+	if limit <= 0 {
+		limit = 5
+	}
+	qTokens := tokenizeSet(query)
+	if len(qTokens) == 0 {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ke.content, ke.source_id, COALESCE(s.title,''), s.type, s.status
+		 FROM kb_entries ke
+		 JOIN kb_sources s ON s.id = ke.source_id
+		 WHERE ke.agent_id = `+s.ph(1)+` AND s.type IN ('flash','todo')
+		 ORDER BY s.updated_at DESC`, agentID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	type cand struct {
+		content, sourceID, title, kbType, status string
+		score                                    float64
+	}
+	var cands []cand
+	for rows.Next() {
+		var c cand
+		if err := rows.Scan(&c.content, &c.sourceID, &c.title, &c.kbType, &c.status); err != nil {
+			return nil
+		}
+		eTokens := tokenizeSet(c.title + " " + c.content)
+		if len(eTokens) == 0 {
+			continue
+		}
+		hit := 0
+		for t := range qTokens {
+			if eTokens[t] {
+				hit++
+			}
+		}
+		if hit == 0 {
+			continue
+		}
+		c.score = float64(hit) / float64(len(qTokens))
+		cands = append(cands, c)
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
+	if len(cands) > limit*3 {
+		cands = cands[:limit*3]
+	}
+	results := make([]KBResult, 0, limit)
+	for _, c := range cands {
 		snippet := c.content
 		if len(snippet) > 300 {
 			snippet = softClipUTF8(snippet, 300)

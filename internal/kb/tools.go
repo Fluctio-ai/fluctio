@@ -28,6 +28,7 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 	registerKBSaveTodo(r, store, agentID)
 	registerKBUpdateTodo(r, store, agentID)
 	registerKBListTodos(r, store, agentID)
+	registerKBListFlashes(r, store, agentID)
 	registerKBVerifyClaim(r, store, agentID)
 	// The deep-reading tool needs an LLM invoker; when none is wired (e.g. an
 	// agent without a provider) the tool is simply unavailable rather than
@@ -38,7 +39,7 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 }
 
 func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64, thresholdFn func() float64) {
-	r.Register("knowledgebase_search", "Search the agent's knowledge base for relevant information. Returns matching text chunks with source references. Use this when the user's question might be answered from previously stored knowledge.", map[string]interface{}{
+	r.Register("knowledgebase_search", "Search the agent's knowledge base for relevant information — covers wiki articles (auto-generated from stored content), inspiration flashes (灵感闪记), and todos. Returns matching text chunks with source references and a source_id for each hit. Use this when the user's question might be answered from previously stored knowledge, or to surface a recorded idea/todo relevant to the current topic.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{
@@ -576,6 +577,54 @@ func registerKBListTodos(r *tools.Registry, store *KBStore, agentID string) {
 				end = "due " + t.EndAt.UTC().Format("2006-01-02 15:04Z")
 			}
 			fmt.Fprintf(&sb, "- [%s] %s (id: %s, %s)\n", t.Status, t.Title, t.ID, end)
+		}
+		return sb.String(), nil
+	})
+}
+
+// registerKBListFlashes adds knowledgebase_list_flashes — the agent's view of
+// recorded inspiration flashes (灵感闪记). Mirrors list_todos so the agent can
+// discover flashes proactively: unlike articles (which flow into wiki) and
+// todos (which have list_todos + due-reminder sweep), flashes otherwise only
+// surface when knowledgebase_search happens to hit them. Harness visibility:
+// the when-to-use lives in the tool description (per tool-guidance-placement A).
+func registerKBListFlashes(r *tools.Registry, store *KBStore, agentID string) {
+	r.Register("knowledgebase_list_flashes", "List the user's inspiration flashes (灵感闪记) — short ideas/insights/notes recorded earlier. Each is returned with its source_id and a short title (derived from the first line of the idea). Flashes have no status or due date (unlike todos). Use it when the user may have a recorded idea relevant to the current topic, or when they ask things like 'did I mention / note / have an idea about X' or 'what ideas have I saved'. To read a flash's full text, call knowledgebase_search with a relevant phrase, or knowledgebase_search_raw with its source_id.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"limit": map[string]interface{}{
+				"type":        "integer",
+				"description": "Maximum number of flashes to return (default 20, newest first)",
+			},
+		},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			Limit int `json:"limit,omitempty"`
+		}
+		json.Unmarshal(rawArgs, &args)
+		limit := args.Limit
+		if limit <= 0 {
+			limit = 20
+		}
+		flashes, err := store.ListFlashes(ctx, agentID, limit)
+		if err != nil {
+			return "", err
+		}
+		if len(flashes) == 0 {
+			return "No inspiration flashes recorded yet.", nil
+		}
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "%d inspiration flash(es):\n", len(flashes))
+		for _, f := range flashes {
+			title := f.Title
+			if title == "" {
+				title = "(untitled)"
+			}
+			id := f.ID
+			if len(id) > 12 {
+				id = id[:12]
+			}
+			fmt.Fprintf(&sb, "- %s (id: %s)\n", title, id)
 		}
 		return sb.String(), nil
 	})

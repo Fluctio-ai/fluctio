@@ -289,3 +289,86 @@ func (g *Gateway) runIdleSummaryCycle(ctx context.Context, idleAfter time.Durati
 		sp.Agents.SummarizeIdleSessions(ctx, idleAfter, minMessages)
 	}
 }
+
+// wikiEmbedBackfillTicker is the safety-net vectorizer for wiki pages,
+// mirroring memoryindex's role for conversation summaries. A wiki page is
+// normally embedded at generation time (Generator.embedPage); if the
+// embedder was down or not yet configured then, that page never gets a
+// vector and autogen won't revisit it (the source is already stamped
+// WikiGeneratedAt and not dirty). This ticker mops up that backlog: every
+// hour (plus a boot pass) it walks every agent and, for those with
+// vectorization.wikiEmbedding enabled, runs ReindexEmbeddings(force=false)
+// which embeds only the pages still missing a vector. Failure-driven like
+// memoryindex.runOnce — no page scanning or API probing when nothing's
+// pending.
+func (g *Gateway) wikiEmbedBackfillTicker(ctx context.Context) {
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	g.runWikiEmbedBackfillCycle(ctx) // boot pass: a newly-enabled agent doesn't wait an hour
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			g.runWikiEmbedBackfillCycle(ctx)
+		}
+	}
+}
+
+// runWikiEmbedBackfillCycle walks every agent and kicks off an incremental
+// wiki-embedding backfill for those with vectorization.wikiEmbedding on and
+// a resolvable embedder. Each agent runs in its own goroutine (same pattern
+// as runWikiAutoGenCycle) so one slow agent can't stall the others. One
+// agent's panic is recovered so the rest still run.
+func (g *Gateway) runWikiEmbedBackfillCycle(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("wiki embed backfill cycle panic", "error", r)
+		}
+	}()
+	dbs, ok := g.store.(*store.DBStore)
+	if !ok {
+		return
+	}
+	agents, err := g.store.ListAllAgents(ctx)
+	if err != nil {
+		slog.Warn("wiki embed backfill: list agents failed", "error", err)
+		return
+	}
+	for _, ar := range agents {
+		if ctx.Err() != nil {
+			return
+		}
+		// Same vectorization-scope read as runWikiAutoGenForAgent — owner
+		// left empty so the agent-level + system-level merge resolves.
+		var vec config.VectorCfg
+		if err := scope.SettingInto(ctx, g.store, "vectorization", "", ar.ID, &vec); err != nil {
+			continue
+		}
+		if !vec.WikiEmbedding {
+			continue
+		}
+		emb := wiki.EmbedderFromVectorCfg(vec)
+		if emb == nil || !emb.Available() {
+			continue
+		}
+		ws := wiki.NewWikiStore(dbs.DB(), dbs.Dialect())
+		agentID := ar.ID
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Warn("wiki embed backfill panic", "agent", agentID, "error", r)
+				}
+			}()
+			res, err := wiki.ReindexEmbeddings(ctx, ws, emb, agentID, false, 200*time.Millisecond)
+			if err != nil {
+				slog.Warn("wiki embed backfill failed", "agent", agentID, "error", err)
+				return
+			}
+			if res.Processed > 0 || res.Failed > 0 {
+				slog.Info("wiki embed backfill done",
+					"agent", agentID, "processed", res.Processed, "failed", res.Failed)
+			}
+		}()
+	}
+}

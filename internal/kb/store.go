@@ -187,11 +187,18 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 		}
 	}
 
-	// Wiki-only: source pages (raw-content-derived) + concept/entity/query
-	// pages, each bigram-scored within its bucket. kb_entries is NOT searched
-	// here — it's exposed as a separate on-demand tool (SearchRawKB) the LLM
-	// calls when wiki's summary isn't detailed enough.
-	return s.searchWikiByType(ctx, agentID, query, sourceLimit, otherLimit, preFilterLimit, threshold), nil
+	// Wiki-only fallback (no embedder): source pages + concept/entity/query
+	// pages, each bigram-scored within its bucket. kb_entries (article chunks)
+	// is NOT searched here — it's exposed as a separate on-demand tool
+	// (SearchRawKB) for when wiki's summary isn't detailed enough. Flashes and
+	// todos don't live in wiki, so searchWikiByType alone would miss them —
+	// recall them by keyword and merge so they stay discoverable even without
+	// vectorization (the vector path above covers them when an embedder is on).
+	results := s.searchWikiByType(ctx, agentID, query, sourceLimit, otherLimit, preFilterLimit, threshold)
+	if ftRR := s.searchFlashTodoByKeyword(ctx, agentID, query, limit); len(ftRR) > 0 {
+		results = mergeKBResults(results, ftRR, limit)
+	}
+	return results, nil
 }
 
 // SearchRawKB returns the raw kb_entries chunks for the given sourceIDs,
@@ -745,6 +752,83 @@ func (s *KBStore) embedSourceEntries(ctx context.Context, agentID, sourceID stri
 	for i, e := range entries {
 		_ = s.SaveEntryEmbedding(ctx, agentID, e.ID, vecs[i], s.embedder.Model())
 	}
+}
+
+// BackfillEntryEmbeddings vectorizes kb_entries chunks that don't yet have an
+// embedding — the safety-net for the save-time path (embedSourceEntries),
+// which is best-effort and silent on failure. Mirrors wiki.ReindexEmbeddings
+// (force=false): already-vectorized entries are skipped, so day-to-day runs
+// only pay for what's missing. Chunks are embedded in batches; a failed
+// batch is counted and skipped, never aborts the pass. Used by the gateway's
+// kb embed backfill ticker so flashes/todos/articles whose save-time embed
+// missed stay reachable by vector search.
+func (s *KBStore) BackfillEntryEmbeddings(ctx context.Context, agentID string, perCallDelay time.Duration) (processed, failed int, err error) {
+	if s.embedder == nil || !s.embedder.Available() || agentID == "" {
+		return 0, 0, fmt.Errorf("kb.BackfillEntryEmbeddings: embedder and agentID required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ke.id, ke.content
+		 FROM kb_entries ke
+		 LEFT JOIN kb_entry_embeddings e ON e.entry_id = ke.id
+		 WHERE ke.agent_id = `+s.ph(1)+` AND e.entry_id IS NULL
+		 ORDER BY ke.id`, agentID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("kb backfill: list pending: %w", err)
+	}
+	type pending struct {
+		id      int
+		content string
+	}
+	var batch []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.id, &p.content); err != nil {
+			rows.Close()
+			return processed, failed, err
+		}
+		batch = append(batch, p)
+	}
+	rows.Close()
+	if len(batch) == 0 {
+		return 0, 0, nil
+	}
+
+	const batchSize = 64
+	for start := 0; start < len(batch); start += batchSize {
+		if ctx.Err() != nil {
+			return processed, failed, ctx.Err()
+		}
+		end := start + batchSize
+		if end > len(batch) {
+			end = len(batch)
+		}
+		chunk := batch[start:end]
+		texts := make([]string, len(chunk))
+		for i, p := range chunk {
+			texts[i] = p.content
+		}
+		vecs, embErr := s.embedder.Embed(ctx, texts)
+		if embErr != nil || len(vecs) != len(chunk) {
+			slog.Warn("kb backfill: embed batch failed", "agent", agentID, "batch", len(chunk), "error", embErr)
+			failed += len(chunk)
+		} else {
+			for i, p := range chunk {
+				if saveErr := s.SaveEntryEmbedding(ctx, agentID, p.id, vecs[i], s.embedder.Model()); saveErr != nil {
+					failed++
+				} else {
+					processed++
+				}
+			}
+		}
+		if perCallDelay > 0 {
+			select {
+			case <-time.After(perCallDelay):
+			case <-ctx.Done():
+				return processed, failed, ctx.Err()
+			}
+		}
+	}
+	return processed, failed, nil
 }
 
 // buildFTSQuery converts a user query into an FTS5 MATCH expression.
