@@ -131,12 +131,18 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
       {!sectionCollapsed && (
         <SidebarMenu>
           {items.map((item) => {
-            // Prefix match with a trailing "/" so /knowledge/ (articles)
-            // does NOT light up while on /knowledge/flashes/ etc.
             const norm = (s: string) => s.replace(/\/$/, "");
+            // articles (/knowledge) is the parent route of flashes/todos/
+            // diary, so a prefix match lights it on every KB sub-view —
+            // the bug where selecting 灵感/待办/日记 also highlighted 文章.
+            // Only exact-match a url that is another item's parent; other
+            // items still allow prefix matching (e.g. wiki /wiki/<slug>).
+            const isParentOfSibling = items.some(
+              (o) => o.url !== item.url && norm(o.url).startsWith(norm(item.url) + "/"),
+            );
             const active =
               norm(pathname) === norm(item.url) ||
-              norm(pathname).startsWith(norm(item.url) + "/");
+              (!isParentOfSibling && norm(pathname).startsWith(norm(item.url) + "/"));
             return (
               <SidebarMenuItem key={item.url}>
                 <SidebarMenuButton
