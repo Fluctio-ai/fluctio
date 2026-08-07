@@ -19,6 +19,7 @@ import {
   SparklesIcon,
   UserCog,
   Wand2Icon,
+  ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
 
@@ -39,6 +40,7 @@ import { KBSettingsCard } from "@/components/kb-settings-card";
 import { DiarySettingsCard } from "@/components/diary-settings-card";
 import { WikiAutoGenSettingsCard } from "@/components/wiki-autogen-settings-card";
 import AgentMemoryPage from "@/app/agents/[id]/vectorization/page";
+import AgentPrivacyPage from "@/app/agents/[id]/privacy/page";
 import AgentRecallTuningPage from "@/app/agents/[id]/recall-tuning/page";
 import AgentMCPPage from "@/app/agents/[id]/mcp/page";
 import AgentUsagePage from "@/app/agents/[id]/usage/page";
@@ -61,6 +63,7 @@ export type AgentSettingsTab =
   | "regex-hooks"
   | "knowledge"
   | "vectorization"
+  | "privacy"
   | "usage"
   | "account"
   | "general"
@@ -83,6 +86,7 @@ const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> 
   { id: "regex-hooks", label: "settings.regexHooks", icon: Regex },
   { id: "knowledge", label: "settings.knowledge", icon: BookOpenIcon },
   { id: "vectorization", label: "settings.memory", icon: DatabaseIcon },
+  { id: "privacy", label: "settings.privacy", icon: ShieldCheck },
   { id: "recall-tuning", label: "settings.recallTuning", icon: SlidersHorizontal },
   { id: "usage", label: "settings.usage", icon: CoinsIcon },
 ];
@@ -244,6 +248,7 @@ export function AgentSettingsDialog({
             </div>
           )}
           {tab === "vectorization" && <AgentMemoryPage />}
+          {tab === "privacy" && <AgentPrivacyPage />}
           {tab === "recall-tuning" && <AgentRecallTuningPage />}
           {tab === "usage" && <AgentUsagePage />}
           {tab === "account" && (

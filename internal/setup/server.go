@@ -498,6 +498,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("PUT /api/agents/{id}/vectorization", auth(s.handleUpdateAgentVectorization))
 	mux.HandleFunc("GET /api/vectorization", auth(s.handleGetSystemVectorization))
 	mux.HandleFunc("PUT /api/vectorization", auth(s.handleUpdateSystemVectorization))
+	mux.HandleFunc("GET /api/agents/{id}/privacy", auth(s.handleGetAgentPrivacy))
+	mux.HandleFunc("PUT /api/agents/{id}/privacy", auth(s.handleUpdateAgentPrivacy))
+	mux.HandleFunc("GET /api/privacy", auth(s.handleGetSystemPrivacy))
+	mux.HandleFunc("PUT /api/privacy", auth(s.handleUpdateSystemPrivacy))
 
 	// Tasks
 	mux.HandleFunc("GET /api/tasks", admin(s.handleListTasks))

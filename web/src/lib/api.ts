@@ -2043,6 +2043,25 @@ export async function setSystemVectorization(vectorization: VectorizationConfig)
   return res.json().catch(() => ({ ok: true }));
 }
 
+// --- Privacy config (agent PII scrubbing settings) ---
+export interface PrivacyConfig {
+  piiScrubbing?: { enabled?: boolean; entropy?: boolean };
+  [k: string]: any;
+}
+export async function getAgentPrivacy(agentId: string): Promise<{ privacy?: PrivacyConfig }> {
+  const res = await apiFetch(`/api/agents/${agentId}/privacy`);
+  if (!res.ok) return {};
+  return res.json().catch(() => ({}));
+}
+export async function setAgentPrivacy(agentId: string, privacy: PrivacyConfig): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/privacy`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ privacy }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+
 // --- Memory config types (agent memory settings page) ---
 export interface MemoryEmbeddingConfig {
   enabled: boolean;

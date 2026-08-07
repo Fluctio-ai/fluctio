@@ -93,7 +93,8 @@ type Agent struct {
 	messageBus      *bus.MessageBus
 	subAgentSpawner tools.SubAgentSpawner
 	ftsStore        *store.FTSStore
-	piiScrubEnabled bool
+	piiScrubEnabled   bool
+	piiEntropyEnabled bool
 	memoryCfg       config.MemoryCfg
 	// splitReplies is the per-agent multi-bubble toggle. Gates the
 	// per-turn system-prompt hint that advertises SplitMessageMarker
@@ -414,6 +415,7 @@ func NewAgentWithFullCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bu
 	ag := NewAgentWithSkillsCfg(rc, prov, mb, homeDir, fullCfg.Skills)
 	ag.memoryCfg = fullCfg.Memory
 	ag.piiScrubEnabled = fullCfg.Privacy.PIIScrubbing.Enabled
+	ag.piiEntropyEnabled = fullCfg.Privacy.PIIScrubbing.Entropy
 	// splitReplies is plumbed inside NewAgentWithSkillsCfg so foreign-
 	// attached agents also pick up the toggle; don't re-stamp here.
 
@@ -2249,7 +2251,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	}
 	messages = append(messages, withConversationGapContext(sess.GetMessages())...)
 	if a.piiScrubEnabled {
-		messages = privacy.ScrubMessages(messages)
+		messages = privacy.ScrubMessages(messages, privacy.Options{Entropy: a.piiEntropyEnabled})
 	}
 
 	resp, err := a.streamChatToResponse(ctx, messages, nil)
@@ -2748,7 +2750,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// PII scrubbing: redact sensitive data before sending to LLM
 		llmMessages := messages
 		if a.piiScrubEnabled {
-			llmMessages = privacy.ScrubMessages(messages)
+			llmMessages = privacy.ScrubMessages(messages, privacy.Options{Entropy: a.piiEntropyEnabled})
 		}
 
 		if a.provider == nil {
@@ -3133,7 +3135,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// with zero deliverable after a full iteration budget got burned.
 	finalMessages := append(messages, capReachedNudge(a.maxToolIterations))
 	if a.piiScrubEnabled {
-		finalMessages = privacy.ScrubMessages(finalMessages)
+		finalMessages = privacy.ScrubMessages(finalMessages, privacy.Options{Entropy: a.piiEntropyEnabled})
 	}
 	finalContent := ""
 	finalResp, finalErr := a.streamChatToResponseQuiet(ctx, finalMessages, nil)

@@ -379,6 +379,9 @@ type PrivacyCfg struct {
 
 type PIIScrubCfg struct {
 	Enabled bool `json:"enabled"`
+	// Entropy 启用高熵兜底（默认关）。仅在候选串周围出现密钥语义词时才查熵，
+	// 用于抓未知格式的随机串；可能误伤 base64 数据，故默认关闭。
+	Entropy bool `json:"entropy,omitempty"`
 }
 
 type SkillsLearnerCfg struct {
