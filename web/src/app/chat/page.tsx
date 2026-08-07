@@ -309,6 +309,12 @@ export default function ChatPage() {
   const formatTime = (ts: number) =>
     new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+  const formatDateTime = (ts: number) => {
+    const d = new Date(ts);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   const currentAgent = agents.find((a) => a.id === selectedAgent);
   const agentName = useAgentName(selectedAgent);
 
@@ -458,7 +464,10 @@ export default function ChatPage() {
                       }`}
                     >
                       {msg.timestamp > 0 && (
-                        <span className="text-[10px] text-muted-foreground/60">
+                        <span
+                          className="text-[10px] text-muted-foreground/60"
+                          title={formatDateTime(msg.timestamp)}
+                        >
                           {formatTime(msg.timestamp)}
                         </span>
                       )}
