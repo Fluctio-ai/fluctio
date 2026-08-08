@@ -43,6 +43,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
+import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 
@@ -65,6 +66,9 @@ export default function WikiPage() {
   const t = useT();
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
+  // vis-network colors can't follow CSS variables, so the graph reads the
+  // resolved theme and rebuilds on change.
+  const { resolvedTheme } = useTheme();
 
   // Stale-while-revalidate: seed stats/pages from the module cache so a
   // return visit (e.g. flipping to /knowledge/ and back) paints at once
@@ -242,6 +246,13 @@ export default function WikiPage() {
       const g = await getWikiGraph(agentId);
       if (cancelled) return;
 
+      // vis-network colors can't follow CSS variables, so pick from the
+      // resolved theme. Dot labels render on the pane background (not on
+      // the node), so the old fixed #e5e7eb was near-invisible on the
+      // light pane background. Edges get the matching contrast tone too.
+      const isDark = resolvedTheme !== "light";
+      const labelColor = isDark ? "#e5e7eb" : "#1f2937";
+      const edgeColor = isDark ? "#555" : "#9ca3af";
       const typeColors: Record<string, string> = {
         overview: "#8b5cf6",
         entity: "#3b82f6",
@@ -255,7 +266,7 @@ export default function WikiPage() {
           label: n.title.length > 12 ? n.title.slice(0, 12) + "…" : n.title,
           title: n.title,
           color: { background: typeColors[n.page_type] || "#666", border: "#333" },
-          font: { size: 11, color: "#e5e7eb" },
+          font: { size: 11, color: labelColor },
           shape: "dot",
           size: 20,
         })),
@@ -267,7 +278,7 @@ export default function WikiPage() {
           to: e.dst_page_id,
           title: e.relation,
           arrows: "to",
-          color: { color: "#555", opacity: 0.4 },
+          color: { color: edgeColor, opacity: 0.5 },
           width: 1,
         })),
       );
@@ -294,8 +305,9 @@ export default function WikiPage() {
     };
     // Re-run when the right pane re-mounts after a collapse/expand:
     // collapsing unmounts the graphRef div, so on expand the network
-    // has to be rebuilt against the freshly mounted DOM node.
-  }, [agentId, rightCollapsed]);
+    // has to be rebuilt against the freshly mounted DOM node. Also
+    // re-run on theme switch so node labels/edges pick up the new tone.
+  }, [agentId, rightCollapsed, resolvedTheme]);
 
   // Selection sync: focus + highlight the matching node whenever the
   // selected page changes (left-list click OR graph-node click).
