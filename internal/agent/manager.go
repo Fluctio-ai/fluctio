@@ -179,6 +179,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 	// zero-value SkillsCfg, which is why FAL_KEY / REPLICATE_API_TOKEN
 	// were never reaching the sandbox.
 	ag := NewAgentWithSkillsCfg(rc, providerForAgent(rc, prov), mb, homeDir, m.opts.globalSkillsCfg)
+	ag.id = rc.ID
 	// Inject Phase 2 compaction fields onto the agent so
 	// compactionThresholdNow can compute a model-aware threshold.
 	ag.contextWindow = rc.ContextWindow

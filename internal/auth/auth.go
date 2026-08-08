@@ -41,6 +41,10 @@ type Identity struct {
 	// APIKeyID is set when AuthMethod=="apikey".
 	APIKeyID string
 
+	// AllowedAgents, when non-empty (apikey only), restricts the key to the
+	// listed agent ids. Empty = all agents. Session callers always have
+	// this empty (unrestricted — the owner).
+	AllowedAgents []string
 }
 
 // EffectiveUserID is the caller. Single-user mode has no impersonation,
@@ -50,11 +54,19 @@ func (i Identity) EffectiveUserID() string {
 }
 
 // CanAccessAgent answers "is this caller authorized for agentID?"
-// Single-user mode: the owner owns every agent, so any authenticated
-// caller is authorized. (Per-agent ownership is still enforced by the
-// caller via UserSpace lookup.)
+// Session callers and unrestricted apikeys (AllowedAgents empty) are
+// authorized for every agent — the owner owns them all. An apikey with a
+// non-empty AllowedAgents ACL is scoped to exactly those agent ids.
 func (i Identity) CanAccessAgent(agentID string) bool {
-	return true
+	if len(i.AllowedAgents) == 0 {
+		return true
+	}
+	for _, a := range i.AllowedAgents {
+		if a == agentID {
+			return true
+		}
+	}
+	return false
 }
 
 // CanAdminPlatform answers "may this caller hit /api/admin/* and other
@@ -192,10 +204,11 @@ func (r *Resolver) ResolveBearer(ctx context.Context, token string) (Identity, e
 		return Identity{}, err
 	}
 	return Identity{
-		UserID:     res.Account.ID,
-		Role:       res.Account.Role,
-		AuthMethod: "apikey",
-		APIKeyID:   res.APIKey.ID,
+		UserID:        res.Account.ID,
+		Role:          res.Account.Role,
+		AuthMethod:    "apikey",
+		APIKeyID:      res.APIKey.ID,
+		AllowedAgents: res.Agents,
 	}, nil
 }
 

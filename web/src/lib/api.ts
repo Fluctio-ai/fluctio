@@ -422,7 +422,7 @@ export async function listApikeys() {
   return res.json();
 }
 
-export async function createApikey(req: { name: string }) {
+export async function createApikey(req: { name: string; agentIds?: string[] }) {
   const res = await apiFetch("/api/apikeys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

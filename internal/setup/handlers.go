@@ -334,7 +334,7 @@ func (s *Server) resolveAllAgents(r *http.Request) []AgentHandle {
 	all := space.Agents.All()
 	out := make([]AgentHandle, 0, len(all))
 	for _, ag := range all {
-		if !ident.CanAccessAgent(ag.Name()) {
+		if !ident.CanAccessAgent(ag.ID()) {
 			continue
 		}
 		out = append(out, ag)
@@ -352,14 +352,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp := map[string]any{
-		"configured":       configured,
-		"running":          s.userResolver != nil,
-		"port":             s.port,
-		"version":          buildinfo.Version,
-		"agents":           []any{},
-		"channels":         []any{},
-		"provider":         nil,
-		"uptime":           formatDuration(time.Since(s.startedAt)),
+		"configured": configured,
+		"running":    s.userResolver != nil,
+		"port":       s.port,
+		"version":    buildinfo.Version,
+		"agents":     []any{},
+		"channels":   []any{},
+		"provider":   nil,
+		"uptime":     formatDuration(time.Since(s.startedAt)),
 	}
 	ident, authed := auth.FromContext(r.Context())
 	if !authed {

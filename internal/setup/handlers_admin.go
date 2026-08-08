@@ -88,10 +88,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	// /api/me small on every page load.
 	acct.AvatarURL = publicAvatarURL(acct)
 	jsonResponse(w, http.StatusOK, map[string]any{
-		"ok":          true,
-		"user":        acct,
-		"authMethod":  ident.AuthMethod,
-		"deployMode":  deployMode,
+		"ok":         true,
+		"user":       acct,
+		"authMethod": ident.AuthMethod,
+		"deployMode": deployMode,
 	})
 }
 
@@ -799,8 +799,11 @@ func (s *Server) handleCreateUserAPIKey(w http.ResponseWriter, r *http.Request) 
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid request"})
 		return
 	}
-	// Single-user mode: every key is owner-level (admin).
-	ak, token, err := s.apikeys.Create(r.Context(), targetUserID, req.Name, users.APIKeyTypeAdmin, nil)
+	if err := s.validateAgentScope(r, req.AgentIDs); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	ak, token, err := s.apikeys.Create(r.Context(), targetUserID, req.Name, users.APIKeyTypeAdmin, req.AgentIDs)
 	if err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -812,7 +815,32 @@ func (s *Server) handleCreateUserAPIKey(w http.ResponseWriter, r *http.Request) 
 // --- Apikey CRUD (per-user) ---
 
 type createAPIKeyReq struct {
-	Name string `json:"name"`
+	Name     string   `json:"name"`
+	AgentIDs []string `json:"agentIds,omitempty"`
+}
+
+// validateAgentScope verifies every id in agentIDs resolves to a real
+// agent owned by the caller. Single-user mode: the owner owns every
+// agent, so this is an existence check (rejects typos / stale ids before
+// the key is minted). Empty slice is always valid ("all agents").
+func (s *Server) validateAgentScope(r *http.Request, agentIDs []string) error {
+	if len(agentIDs) == 0 {
+		return nil
+	}
+	ident, ok := auth.FromContext(r.Context())
+	if !ok {
+		return errors.New("auth required")
+	}
+	space, err := s.userResolver.UserSpaceFor(ident.EffectiveUserID())
+	if err != nil || space == nil || space.Agents == nil {
+		return errors.New("unable to verify agent scope")
+	}
+	for _, aid := range agentIDs {
+		if space.Agents.AgentByID(aid) == nil {
+			return errors.New("unknown agent: " + aid)
+		}
+	}
+	return nil
 }
 
 func (s *Server) handleListAPIKeys(w http.ResponseWriter, r *http.Request) {
@@ -834,6 +862,7 @@ func (s *Server) handleListAPIKeys(w http.ResponseWriter, r *http.Request) {
 			"name":      ak.Name,
 			"key":       ak.Key,
 			"type":      ak.Type,
+			"agentIds":  ak.AgentIDs,
 			"createdAt": ak.CreatedAt,
 		})
 	}
@@ -860,8 +889,11 @@ func (s *Server) handleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
 		return
 	}
-	// Single-user mode: every key is owner-level (admin).
-	ak, token, err := s.apikeys.Create(r.Context(), ident.UserID, req.Name, users.APIKeyTypeAdmin, nil)
+	if err := s.validateAgentScope(r, req.AgentIDs); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	ak, token, err := s.apikeys.Create(r.Context(), ident.UserID, req.Name, users.APIKeyTypeAdmin, req.AgentIDs)
 	if err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return

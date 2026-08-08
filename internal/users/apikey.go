@@ -25,6 +25,7 @@ type APIKey struct {
 	Name      string    `json:"name,omitempty"`
 	Key       string    `json:"key"`
 	Type      string    `json:"type"`
+	AgentIDs  []string  `json:"agentIds,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -58,10 +59,11 @@ func NewAPIKeys(st store.Store) (*APIKeys, error) {
 // Create issues a new apikey for userID. The plaintext token is returned
 // once and never recoverable.
 //
-// In single-user mode keyType is always APIKeyTypeAdmin (owner-level) and
-// agentIDs is ignored. Caller is responsible for the
-// role-vs-type policy check (handlers_admin.go enforces "only super_admin
-// may issue type=admin", etc.).
+// In single-user mode keyType is always APIKeyTypeAdmin (owner-level).
+// agentIDs, when non-empty, scopes the key to those agents (enforced at
+// request time by auth.Identity.CanAccessAgent). Caller is responsible
+// for validating that every agentID resolves to an agent the caller may
+// bind (handlers_admin.go does this via validateAgentScope).
 func (k *APIKeys) Create(ctx context.Context, userID, name, keyType string, agentIDs []string) (*APIKey, string, error) {
 	if userID == "" {
 		return nil, "", errors.New("users.APIKeys.Create: userID is required")
@@ -81,6 +83,7 @@ func (k *APIKeys) Create(ctx context.Context, userID, name, keyType string, agen
 		KeyHash:   hashToken(token),
 		KeyPrefix: keyPrefix(token),
 		Type:      keyType,
+		AgentIDs:  agentIDs,
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := k.store.CreateAPIKey(ctx, rec); err != nil {
@@ -156,6 +159,7 @@ func (k *APIKeys) LookupByToken(ctx context.Context, token string) (*Resolved, e
 	return &Resolved{
 		APIKey:  *toAPIKey(rec),
 		Account: *toAccount(user),
+		Agents:  rec.AgentIDs,
 	}, nil
 }
 
@@ -175,6 +179,7 @@ func toAPIKey(rec *store.APIKeyRecord) *APIKey {
 		Name:      rec.Name,
 		Key:       masked,
 		Type:      rec.Type,
+		AgentIDs:  rec.AgentIDs,
 		CreatedAt: rec.CreatedAt,
 	}
 }

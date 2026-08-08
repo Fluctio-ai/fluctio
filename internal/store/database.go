@@ -114,6 +114,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateAPIKeysAddType(ctx); err != nil {
 		return fmt.Errorf("migrate apikeys.type: %w", err)
 	}
+	if err := d.migrateAPIKeysAddAgentScope(ctx); err != nil {
+		return fmt.Errorf("migrate apikeys.agent_scope: %w", err)
+	}
 	if err := d.migrateUsersAvatarURL(ctx); err != nil {
 		return fmt.Errorf("migrate users.avatar_url: %w", err)
 	}
@@ -2043,7 +2046,6 @@ func (d *DBStore) migrateSessionsAddChannelTriple(ctx context.Context) error {
 	return nil
 }
 
-
 // migrateDropAgentGrants removes the legacy per-user share table.
 // Sharing now lives on agents.is_public; existing per-user grants are
 // not migrated forward (the prior model wasn't shipped to general
@@ -2127,6 +2129,25 @@ func (d *DBStore) migrateAPIKeysAddType(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx,
 		`ALTER TABLE apikeys ADD COLUMN type TEXT NOT NULL DEFAULT 'agent'`); err != nil {
 		return fmt.Errorf("add type: %w", err)
+	}
+	return nil
+}
+
+// migrateAPIKeysAddAgentScope retrofits the agent_scope column (csv of
+// permitted agent ids; empty = all agents) onto apikeys for pre-ACL
+// installs. Idempotent. Backfill is empty so legacy keys keep owner-level
+// (all-agent) access — exactly what they had before.
+func (d *DBStore) migrateAPIKeysAddAgentScope(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "apikeys", "agent_scope")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx,
+		`ALTER TABLE apikeys ADD COLUMN agent_scope TEXT NOT NULL DEFAULT ''`); err != nil {
+		return fmt.Errorf("add agent_scope: %w", err)
 	}
 	return nil
 }
@@ -2642,6 +2663,7 @@ func (d *DBStore) migrationSQL() []string {
 			key_hash TEXT NOT NULL,
 			key_prefix TEXT NOT NULL DEFAULT '',
 			type TEXT NOT NULL DEFAULT 'agent',
+			agent_scope TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_apikeys_user ON apikeys (user_id)`,
@@ -2653,7 +2675,7 @@ func (d *DBStore) migrationSQL() []string {
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-				// channel / account_id / chat_id together identify the
+		// channel / account_id / chat_id together identify the
 		// (channel-type, channel-instance, conversation) the session
 		// belongs to. Multiple session_keys can share that triple — the
 		// active one for IM routing is the row with the latest
@@ -3409,11 +3431,35 @@ func (d *DBStore) ListPushDevices(ctx context.Context, userID string) ([]PushDev
 	return out, rows.Err()
 }
 
+// parseAgentScope decodes the agent_scope column (comma-separated agent
+// ids). Empty string → nil, meaning "all agents" (the default).
+func parseAgentScope(v string) []string {
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// formatAgentScope encodes a scope slice back into the column form.
+func formatAgentScope(ids []string) string {
+	return strings.Join(ids, ",")
+}
+
 // --- API keys ---
 
 func (d *DBStore) ListAPIKeys(ctx context.Context, userID string) ([]APIKeyRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT id, user_id, name, key_hash, key_prefix, type, created_at FROM apikeys WHERE user_id = %s ORDER BY created_at`, d.ph(1)),
+		fmt.Sprintf(`SELECT id, user_id, name, key_hash, key_prefix, type, agent_scope, created_at FROM apikeys WHERE user_id = %s ORDER BY created_at`, d.ph(1)),
 		userID)
 	if err != nil {
 		return nil, err
@@ -3422,9 +3468,11 @@ func (d *DBStore) ListAPIKeys(ctx context.Context, userID string) ([]APIKeyRecor
 	var out []APIKeyRecord
 	for rows.Next() {
 		var ak APIKeyRecord
-		if err := rows.Scan(&ak.ID, &ak.UserID, &ak.Name, &ak.KeyHash, &ak.KeyPrefix, &ak.Type, &ak.CreatedAt); err != nil {
+		var scope string
+		if err := rows.Scan(&ak.ID, &ak.UserID, &ak.Name, &ak.KeyHash, &ak.KeyPrefix, &ak.Type, &scope, &ak.CreatedAt); err != nil {
 			return nil, err
 		}
+		ak.AgentIDs = parseAgentScope(scope)
 		out = append(out, ak)
 	}
 	return out, rows.Err()
@@ -3432,11 +3480,13 @@ func (d *DBStore) ListAPIKeys(ctx context.Context, userID string) ([]APIKeyRecor
 
 func (d *DBStore) GetAPIKey(ctx context.Context, id string) (*APIKeyRecord, error) {
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT id, user_id, name, key_hash, key_prefix, type, created_at FROM apikeys WHERE id = %s`, d.ph(1)), id)
+		fmt.Sprintf(`SELECT id, user_id, name, key_hash, key_prefix, type, agent_scope, created_at FROM apikeys WHERE id = %s`, d.ph(1)), id)
 	var ak APIKeyRecord
-	if err := row.Scan(&ak.ID, &ak.UserID, &ak.Name, &ak.KeyHash, &ak.KeyPrefix, &ak.Type, &ak.CreatedAt); err != nil {
+	var scope string
+	if err := row.Scan(&ak.ID, &ak.UserID, &ak.Name, &ak.KeyHash, &ak.KeyPrefix, &ak.Type, &scope, &ak.CreatedAt); err != nil {
 		return nil, scanErr(err)
 	}
+	ak.AgentIDs = parseAgentScope(scope)
 	return &ak, nil
 }
 
@@ -3448,9 +3498,9 @@ func (d *DBStore) CreateAPIKey(ctx context.Context, ak *APIKeyRecord) error {
 		ak.Type = "agent"
 	}
 	_, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO apikeys (id, user_id, name, key_hash, key_prefix, type, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s)`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7)),
-		ak.ID, ak.UserID, ak.Name, ak.KeyHash, ak.KeyPrefix, ak.Type, ak.CreatedAt)
+		fmt.Sprintf(`INSERT INTO apikeys (id, user_id, name, key_hash, key_prefix, type, agent_scope, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)`,
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8)),
+		ak.ID, ak.UserID, ak.Name, ak.KeyHash, ak.KeyPrefix, ak.Type, formatAgentScope(ak.AgentIDs), ak.CreatedAt)
 	return err
 }
 
@@ -3477,12 +3527,14 @@ func (d *DBStore) RotateAPIKey(ctx context.Context, id, keyHash, keyPrefix strin
 
 func (d *DBStore) LookupAPIKeyByHash(ctx context.Context, keyHash string) (*APIKeyRecord, error) {
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT id, user_id, name, key_hash, key_prefix, type, created_at FROM apikeys WHERE key_hash = %s`, d.ph(1)),
+		fmt.Sprintf(`SELECT id, user_id, name, key_hash, key_prefix, type, agent_scope, created_at FROM apikeys WHERE key_hash = %s`, d.ph(1)),
 		keyHash)
 	var ak APIKeyRecord
-	if err := row.Scan(&ak.ID, &ak.UserID, &ak.Name, &ak.KeyHash, &ak.KeyPrefix, &ak.Type, &ak.CreatedAt); err != nil {
+	var scope string
+	if err := row.Scan(&ak.ID, &ak.UserID, &ak.Name, &ak.KeyHash, &ak.KeyPrefix, &ak.Type, &scope, &ak.CreatedAt); err != nil {
 		return nil, scanErr(err)
 	}
+	ak.AgentIDs = parseAgentScope(scope)
 	return &ak, nil
 }
 
@@ -3492,7 +3544,7 @@ const agentSelectCols = `id, name, config, created_at, updated_at`
 
 func (d *DBStore) ListAgents(ctx context.Context, ownerUserID string) ([]AgentRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
-		`SELECT ` + agentSelectCols + ` FROM agents ORDER BY created_at`)
+		`SELECT `+agentSelectCols+` FROM agents ORDER BY created_at`)
 	if err != nil {
 		return nil, err
 	}
@@ -3698,8 +3750,6 @@ func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMe
 	}
 	return metas, rows.Err()
 }
-
-
 
 func (d *DBStore) ListSessionsPaginated(ctx context.Context, agentIDs []string, offset, limit int) ([]SessionMeta, int, error) {
 	var where string
@@ -4296,7 +4346,6 @@ func (d *DBStore) ListSessionMessagesByAgentAndTimeRange(ctx context.Context, ag
 	}
 	return out, rows.Err()
 }
-
 
 func (d *DBStore) RenameSession(ctx context.Context, agentID, sessionKey, title string) error {
 	_, err := d.db.ExecContext(ctx,

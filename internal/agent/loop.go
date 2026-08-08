@@ -39,6 +39,7 @@ import (
 
 // Agent is the ReAct agent loop.
 type Agent struct {
+	id         string
 	name       string
 	provider   provider.Provider
 	registry   *tools.Registry
@@ -51,8 +52,8 @@ type Agent struct {
 	// stdio subprocess's working dir can't change after start.
 	mcpServers    map[string]config.MCPServerConfig
 	mcpSessionDir string
-	hooks      *HookRegistry
-	model      string
+	hooks         *HookRegistry
+	model         string
 	// summaryModel overrides model for conversation-summary extraction;
 	// empty falls back to model. Set by the manager from memory config.
 	summaryModel string
@@ -87,15 +88,15 @@ type Agent struct {
 	// mode slash commands (/new /undo /retry /compact /model /personality).
 	// Keyed by channel name (e.g. "discord" → ["123...", "456..."]). Empty
 	// or absent → no gate, anyone can run the command (legacy default).
-	admins          map[string][]string
-	skillsCfg       config.SkillsConfig
-	globalSkillsCfg config.SkillsCfg
-	messageBus      *bus.MessageBus
-	subAgentSpawner tools.SubAgentSpawner
-	ftsStore        *store.FTSStore
+	admins            map[string][]string
+	skillsCfg         config.SkillsConfig
+	globalSkillsCfg   config.SkillsCfg
+	messageBus        *bus.MessageBus
+	subAgentSpawner   tools.SubAgentSpawner
+	ftsStore          *store.FTSStore
 	piiScrubEnabled   bool
 	piiEntropyEnabled bool
-	memoryCfg       config.MemoryCfg
+	memoryCfg         config.MemoryCfg
 	// splitReplies is the per-agent multi-bubble toggle. Gates the
 	// per-turn system-prompt hint that advertises SplitMessageMarker
 	// to the LLM (see renderChannelHints) AND stamps
@@ -667,6 +668,13 @@ func newContextBuilderWithSandbox(home, workspace string, memory *Memory, skills
 // Name returns the agent's name.
 func (a *Agent) Name() string {
 	return a.name
+}
+
+// ID returns the agent's stable identifier (e.g. "agt_…"). Set by the
+// Manager when the agent is registered; empty for standalone agents never
+// registered through the manager.
+func (a *Agent) ID() string {
+	return a.id
 }
 
 // HandleWebChat handles a chat message from the web UI with a session ID.
@@ -2734,8 +2742,8 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// channels.SplitMessageMarker at return time; manager.dispatchOutbound
 	// splits on it (AllowSplit=true) or collapses to newlines otherwise.
 	var replyParts []string
-	var kbSources []kb.KnowledgeSource               // cached [K#] citation sources from this turn's KB retrieval
-	ctx = kb.WithSourcesAccumulator(ctx, &kbSources) // KB tool calls append their citation sources here
+	var kbSources []kb.KnowledgeSource                                                         // cached [K#] citation sources from this turn's KB retrieval
+	ctx = kb.WithSourcesAccumulator(ctx, &kbSources)                                           // KB tool calls append their citation sources here
 	ctx = kb.WithSourceOrigin(ctx, kb.SourceOrigin{SessionID: sess.Key(), Seq: len(messages)}) // L1 dedup: same session+seq = rewrite of captured content
 	citedMemos := make(map[int64]bool)
 	ctx = tools.WithCitedSummaries(ctx, &citedMemos) // memory_search dedups against this across calls

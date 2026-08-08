@@ -210,7 +210,7 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// uniformly. Use 404 (not 403) so the response is identical to
 	// the genuine "no such agent" case and the ACL doesn't leak the
 	// existence of out-of-scope agents.
-	if ident, ok := auth.FromContext(r.Context()); ok && !ident.CanAccessAgent(ag.Name()) {
+	if ident, ok := auth.FromContext(r.Context()); ok && !ident.CanAccessAgent(ag.ID()) {
 		writeJSON(w, http.StatusNotFound, map[string]any{
 			"error": map[string]string{"message": "agent not found", "type": "not_found_error"},
 		})
@@ -405,4 +405,3 @@ func resolveAgent(space *UserSpaceView, agentID string) *agent.Agent {
 	}
 	return nil
 }
-

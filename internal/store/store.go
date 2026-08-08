@@ -343,9 +343,9 @@ type UserRecord struct {
 	// stored inline to avoid a separate blob path. Cap is enforced by the
 	// handler at write time (256KB by default). Empty means "no avatar"
 	// — UI falls back to initials.
-	AvatarURL string `json:"avatarUrl,omitempty"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	AvatarURL string    `json:"avatarUrl,omitempty"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // WebSessionRecord backs cookie-based login state.
@@ -373,12 +373,17 @@ type PushDeviceRecord struct {
 // Type is the key's authority tier:
 // In single-user mode every key is "admin" (owner-level).
 type APIKeyRecord struct {
-	ID        string    `json:"id"`
-	UserID    string    `json:"userId"`
-	Name      string    `json:"name,omitempty"`
-	KeyHash   string    `json:"-"`
-	KeyPrefix string    `json:"keyPrefix,omitempty"`
-	Type      string    `json:"type"`
+	ID        string `json:"id"`
+	UserID    string `json:"userId"`
+	Name      string `json:"name,omitempty"`
+	KeyHash   string `json:"-"`
+	KeyPrefix string `json:"keyPrefix,omitempty"`
+	Type      string `json:"type"`
+	// AgentIDs is the per-agent ACL: when non-empty, this key may only
+	// operate on the listed agents. Empty (the default) = all agents
+	// (owner-level), preserving legacy behavior. Stored as agent_scope
+	// (comma-separated) in the apikeys table.
+	AgentIDs  []string  `json:"agentIds,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -430,9 +435,9 @@ type SessionRecord struct {
 // with enough messages to be worth summarizing. Used by the idle-
 // summary background sweep.
 type IdleSession struct {
-	SessionKey    string
-	MessageCount  int
-	UpdatedAt     time.Time
+	SessionKey   string
+	MessageCount int
+	UpdatedAt    time.Time
 }
 
 // SessionMessage is a single message in a session.
@@ -502,16 +507,16 @@ type SessionOwnerPair struct {
 
 // SessionMeta is summary info for a session (for listing).
 type SessionMeta struct {
-	Key           string    `json:"key"`
-	UserID        string    `json:"userId,omitempty"`  // session owner (may differ from the listing caller when child app_users are included)
-	AgentID       string    `json:"agentId,omitempty"` // populated by ListSessionsPaginated
-	Channel       string    `json:"channel,omitempty"`
-	AccountID     string    `json:"accountId,omitempty"`
-	ChatID        string    `json:"chatId,omitempty"`
-	ProjectID     string    `json:"projectId,omitempty"`
-	Title         string    `json:"title,omitempty"`
-	MessageCount  int       `json:"messageCount"`
-	UpdatedAt     time.Time `json:"updatedAt"`
+	Key          string    `json:"key"`
+	UserID       string    `json:"userId,omitempty"`  // session owner (may differ from the listing caller when child app_users are included)
+	AgentID      string    `json:"agentId,omitempty"` // populated by ListSessionsPaginated
+	Channel      string    `json:"channel,omitempty"`
+	AccountID    string    `json:"accountId,omitempty"`
+	ChatID       string    `json:"chatId,omitempty"`
+	ProjectID    string    `json:"projectId,omitempty"`
+	Title        string    `json:"title,omitempty"`
+	MessageCount int       `json:"messageCount"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // ProjectRecord is a per-(user, agent) named workspace folder. Sessions
@@ -741,16 +746,16 @@ type GoalRecord struct {
 }
 
 type RegexHookRecord struct {
-	ID              string    `json:"id"`
-	AgentID         string    `json:"agentId"`
-	Name            string    `json:"name"`
-	Pattern         string    `json:"pattern"`
-	CLICommand      string    `json:"cliCommand"`
-	SortOrder       int       `json:"sortOrder"`
-	ContinueOnMatch bool      `json:"continueOnMatch"`
-	Enabled         bool      `json:"enabled"`
-	ShowError       bool      `json:"showError"`
-	ErrorMessage    string    `json:"errorMessage,omitempty"`
+	ID              string `json:"id"`
+	AgentID         string `json:"agentId"`
+	Name            string `json:"name"`
+	Pattern         string `json:"pattern"`
+	CLICommand      string `json:"cliCommand"`
+	SortOrder       int    `json:"sortOrder"`
+	ContinueOnMatch bool   `json:"continueOnMatch"`
+	Enabled         bool   `json:"enabled"`
+	ShowError       bool   `json:"showError"`
+	ErrorMessage    string `json:"errorMessage,omitempty"`
 	// FeedToLLM controls whether a matched hook's exchange (user command,
 	// synthetic tool_call, tool result, CLI reply) enters the LLM-facing
 	// working set and conversation summary. Default false: regex-hook
@@ -758,9 +763,9 @@ type RegexHookRecord struct {
 	// with llm_visible=0 (hidden from context/summary/recall) but still
 	// shown in web history. Set true for hooks whose output the model
 	// should remember on later turns.
-	FeedToLLM       bool      `json:"feedToLLM"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	FeedToLLM bool      `json:"feedToLLM"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // CronJobRecord holds a scheduled job. agent_id is mandatory; user_id is

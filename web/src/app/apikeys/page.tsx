@@ -7,6 +7,7 @@ import {
   createApikey,
   deleteApikey,
   rotateApikey,
+  getAgents,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +45,7 @@ interface ApiKey {
   userId: string;
   name?: string;
   key: string;
+  agentIds?: string[];
   createdAt: string;
 }
 
@@ -57,6 +59,8 @@ export default function ApikeysPage() {
   const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
   const [rotateTarget, setRotateTarget] = useState<ApiKey | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [agents, setAgents] = useState<{ id: string; name?: string }[]>([]);
+  const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
 
   async function refresh() {
     setError("");
@@ -66,6 +70,7 @@ export default function ApikeysPage() {
   }
   useEffect(() => {
     refresh();
+    getAgents().then(setAgents).catch(() => {});
   }, []);
 
   async function handleCreate(e: React.FormEvent) {
@@ -74,6 +79,7 @@ export default function ApikeysPage() {
     if (!createName.trim()) return;
     const res = await createApikey({
       name: createName.trim(),
+      agentIds: Array.from(selectedAgents),
     });
     if (res.error) {
       setError(res.error);
@@ -81,6 +87,7 @@ export default function ApikeysPage() {
     }
     if (res.token) setShowToken({ id: res.apikey.id, token: res.token });
     setCreateName("");
+    setSelectedAgents(new Set());
     setCreateOpen(false);
     refresh();
   }
@@ -113,6 +120,7 @@ export default function ApikeysPage() {
 
   function openCreateDialog() {
     setCreateName("");
+    setSelectedAgents(new Set());
     setError("");
     setCreateOpen(true);
   }
@@ -191,7 +199,11 @@ export default function ApikeysPage() {
                     <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{k.key}</code>
                   </TableCell>
                   <TableCell>
-                    <span className="text-xs text-muted-foreground">{t("apikeys.page.accessOwner")}</span>
+                    {k.agentIds && k.agentIds.length > 0 ? (
+                      <span className="text-xs">{t("apikeys.page.accessLimited", { n: k.agentIds.length })}</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">{t("apikeys.page.accessOwner")}</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {new Date(k.createdAt).toLocaleString()}
@@ -237,6 +249,39 @@ export default function ApikeysPage() {
                 placeholder={t("apikeys.page.namePlaceholder")}
                 autoFocus
               />
+            </div>
+            <div className="space-y-2">
+              <Label>{t("apikeys.page.agentScope")}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t("apikeys.page.agentScopeHint")}
+              </p>
+              <div className="max-h-48 overflow-y-auto rounded-md border p-2 space-y-1">
+                {agents.length === 0 ? (
+                  <p className="text-xs text-muted-foreground px-1 py-2">
+                    {t("apikeys.page.noAgents")}
+                  </p>
+                ) : (
+                  agents.map((a) => (
+                    <label
+                      key={a.id}
+                      className="flex items-center gap-2 text-sm cursor-pointer rounded px-1 py-0.5 hover:bg-muted/50"
+                    >
+                      <input
+                        type="checkbox"
+                        className="accent-primary"
+                        checked={selectedAgents.has(a.id)}
+                        onChange={(e) => {
+                          const next = new Set(selectedAgents);
+                          if (e.target.checked) next.add(a.id);
+                          else next.delete(a.id);
+                          setSelectedAgents(next);
+                        }}
+                      />
+                      <span>{a.name || a.id}</span>
+                    </label>
+                  ))
+                )}
+              </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>

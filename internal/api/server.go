@@ -134,7 +134,7 @@ func buildAgentList(space *UserSpaceView, ident auth.Identity) []map[string]stri
 	}
 	agents := make([]map[string]string, 0, len(all))
 	for _, ag := range all {
-		if !ident.CanAccessAgent(ag.Name()) {
+		if !ident.CanAccessAgent(ag.ID()) {
 			continue
 		}
 		model := ag.Model()
