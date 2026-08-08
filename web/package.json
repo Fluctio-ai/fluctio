@@ -42,5 +42,10 @@
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "pnpm": {
+    "overrides": {
+      "mermaid": "^11.16.1"
+    }
   }
 }
