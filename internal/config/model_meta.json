@@ -352,7 +352,7 @@
   },
   "claude-opus-4-8-fast": {
     "contextWindow": 1000000,
-    "maxTokens": 0,
+    "maxTokens": 128000,
     "inputModalities": [
       "text",
       "image"
@@ -626,7 +626,7 @@
     ]
   },
   "deepseek-r1-distill-llama-70b": {
-    "contextWindow": 128000,
+    "contextWindow": 32768,
     "maxTokens": 16384,
     "inputModalities": [
       "text"
@@ -706,7 +706,7 @@
     ]
   },
   "deepseek-v3-1": {
-    "contextWindow": 131072,
+    "contextWindow": 163840,
     "maxTokens": 128000,
     "inputModalities": [
       "text"
@@ -776,8 +776,8 @@
     ]
   },
   "deepseek-v4-pro": {
-    "contextWindow": 1048576,
-    "maxTokens": 393216,
+    "contextWindow": 1048600,
+    "maxTokens": 1048600,
     "inputModalities": [
       "text"
     ],
@@ -1007,7 +1007,7 @@
     ]
   },
   "doubao-seed-evolving": {
-    "contextWindow": 262144,
+    "contextWindow": 1024000,
     "maxTokens": 262144,
     "inputModalities": [
       "text",
@@ -1126,7 +1126,7 @@
     ]
   },
   "ernie-4-5-vl-424b-a47b": {
-    "contextWindow": 131072,
+    "contextWindow": 123000,
     "maxTokens": 0,
     "inputModalities": [
       "image",
@@ -1459,7 +1459,7 @@
   },
   "gemini-3-1-flash-image": {
     "contextWindow": 131072,
-    "maxTokens": 32768,
+    "maxTokens": 65536,
     "inputModalities": [
       "text",
       "image",
@@ -1497,7 +1497,7 @@
   },
   "gemini-3-1-flash-lite-image": {
     "contextWindow": 65536,
-    "maxTokens": 4096,
+    "maxTokens": 65536,
     "inputModalities": [
       "text",
       "image"
@@ -1534,7 +1534,7 @@
     ]
   },
   "gemini-3-1-pro-preview-customtools": {
-    "contextWindow": 1048756,
+    "contextWindow": 1048576,
     "maxTokens": 65536,
     "inputModalities": [
       "text",
@@ -1584,7 +1584,7 @@
     ]
   },
   "gemini-3-pro-image": {
-    "contextWindow": 65536,
+    "contextWindow": 131072,
     "maxTokens": 32768,
     "inputModalities": [
       "image",
@@ -1704,7 +1704,7 @@
   },
   "gemma-3-12b-it": {
     "contextWindow": 131072,
-    "maxTokens": 8192,
+    "maxTokens": 16384,
     "inputModalities": [
       "text",
       "image"
@@ -1714,7 +1714,7 @@
     ]
   },
   "gemma-3-27b-it": {
-    "contextWindow": 202752,
+    "contextWindow": 262144,
     "maxTokens": 8192,
     "inputModalities": [
       "text",
@@ -1726,7 +1726,7 @@
   },
   "gemma-3-4b-it": {
     "contextWindow": 131072,
-    "maxTokens": 4096,
+    "maxTokens": 16384,
     "inputModalities": [
       "text",
       "image"
@@ -1981,7 +1981,7 @@
     ]
   },
   "glm-5-1": {
-    "contextWindow": 202752,
+    "contextWindow": 204800,
     "maxTokens": 202000,
     "inputModalities": [
       "text"
@@ -2021,7 +2021,7 @@
     ]
   },
   "glm-5-turbo": {
-    "contextWindow": 262144,
+    "contextWindow": 202800,
     "maxTokens": 131100,
     "inputModalities": [
       "text"
@@ -2079,7 +2079,7 @@
     ]
   },
   "gpt-3-5-turbo-instruct": {
-    "contextWindow": 8192,
+    "contextWindow": 4095,
     "maxTokens": 4096,
     "inputModalities": [
       "text"
@@ -3056,7 +3056,7 @@
   },
   "hy3": {
     "contextWindow": 262144,
-    "maxTokens": 0,
+    "maxTokens": 131072,
     "inputModalities": [
       "text"
     ],
@@ -3374,7 +3374,7 @@
     ]
   },
   "kat-coder-pro-v2": {
-    "contextWindow": 256000,
+    "contextWindow": 262144,
     "maxTokens": 256000,
     "inputModalities": [
       "text"
@@ -3512,7 +3512,7 @@
     ]
   },
   "kimi-latest": {
-    "contextWindow": 262144,
+    "contextWindow": 1048576,
     "maxTokens": 0,
     "inputModalities": [
       "text",
@@ -3634,7 +3634,7 @@
     ]
   },
   "llama-3-2-11b-vision-instruct": {
-    "contextWindow": 131072,
+    "contextWindow": 128000,
     "maxTokens": 4096,
     "inputModalities": [
       "text",
@@ -3655,7 +3655,7 @@
     ]
   },
   "llama-3-2-1b-instruct": {
-    "contextWindow": 131072,
+    "contextWindow": 128000,
     "maxTokens": 4096,
     "inputModalities": [
       "text"
@@ -3748,7 +3748,7 @@
   },
   "llama-3-3-nemotron-super-49b-v1-5": {
     "contextWindow": 131072,
-    "maxTokens": 0,
+    "maxTokens": 65536,
     "inputModalities": [
       "text"
     ],
@@ -3790,7 +3790,7 @@
     ]
   },
   "llama-4-scout": {
-    "contextWindow": 10000000,
+    "contextWindow": 1310720,
     "maxTokens": 4096,
     "inputModalities": [
       "text",
@@ -3801,7 +3801,7 @@
     ]
   },
   "llama-guard-4-12b": {
-    "contextWindow": 163840,
+    "contextWindow": 1048576,
     "maxTokens": 16384,
     "inputModalities": [
       "text",
@@ -4422,7 +4422,7 @@
     ]
   },
   "mistral-small-3-2-24b-instruct": {
-    "contextWindow": 128000,
+    "contextWindow": 256000,
     "maxTokens": 0,
     "inputModalities": [
       "image",
@@ -4995,7 +4995,7 @@
   },
   "pixtral-large": {
     "contextWindow": 128000,
-    "maxTokens": 128000,
+    "maxTokens": 8192,
     "inputModalities": [
       "text",
       "image"
@@ -5027,7 +5027,7 @@
     ]
   },
   "qwen-2-5-72b-instruct": {
-    "contextWindow": 131072,
+    "contextWindow": 32768,
     "maxTokens": 0,
     "inputModalities": [
       "text"
@@ -5037,7 +5037,7 @@
     ]
   },
   "qwen-2-5-7b-instruct": {
-    "contextWindow": 131072,
+    "contextWindow": 32768,
     "maxTokens": 0,
     "inputModalities": [
       "text"
@@ -5047,7 +5047,7 @@
     ]
   },
   "qwen-2-5-coder-32b-instruct": {
-    "contextWindow": 128000,
+    "contextWindow": 32768,
     "maxTokens": 0,
     "inputModalities": [
       "text"
@@ -5413,7 +5413,7 @@
     ]
   },
   "qwen3-14b": {
-    "contextWindow": 131702,
+    "contextWindow": 131072,
     "maxTokens": 8192,
     "inputModalities": [
       "text"
@@ -5454,7 +5454,7 @@
     ]
   },
   "qwen3-30b-a3b-instruct": {
-    "contextWindow": 131072,
+    "contextWindow": 262144,
     "maxTokens": 0,
     "inputModalities": [
       "text"
@@ -5688,7 +5688,7 @@
     ]
   },
   "qwen3-coder": {
-    "contextWindow": 1048576,
+    "contextWindow": 262144,
     "maxTokens": 65536,
     "inputModalities": [
       "text"
@@ -5934,7 +5934,7 @@
     ]
   },
   "qwen3-vl-30b-a3b": {
-    "contextWindow": 131072,
+    "contextWindow": 262144,
     "maxTokens": 32768,
     "inputModalities": [
       "text",
@@ -5956,7 +5956,7 @@
     ]
   },
   "qwen3-vl-32b-instruct": {
-    "contextWindow": 262144,
+    "contextWindow": 131072,
     "maxTokens": 0,
     "inputModalities": [
       "text",
@@ -5967,7 +5967,7 @@
     ]
   },
   "qwen3-vl-8b": {
-    "contextWindow": 256000,
+    "contextWindow": 131072,
     "maxTokens": 0,
     "inputModalities": [
       "image",
@@ -5978,7 +5978,7 @@
     ]
   },
   "qwen3-vl-8b-instruct": {
-    "contextWindow": 256000,
+    "contextWindow": 262144,
     "maxTokens": 0,
     "inputModalities": [
       "image",
@@ -6268,7 +6268,7 @@
     ]
   },
   "solar-pro-3": {
-    "contextWindow": 128000,
+    "contextWindow": 131072,
     "maxTokens": 0,
     "inputModalities": [
       "text"
@@ -6381,7 +6381,7 @@
     ]
   },
   "step-3-7-flash": {
-    "contextWindow": 256000,
+    "contextWindow": 262144,
     "maxTokens": 256000,
     "inputModalities": [
       "text",
