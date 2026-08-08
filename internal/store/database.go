@@ -22,6 +22,7 @@ import (
 type DBStore struct {
 	db      *sql.DB
 	dialect string // "postgres" or "sqlite"
+	dsn     string // connection string; backup re-connects via pg_dump
 }
 
 // NewDBStore creates a database-backed store.
@@ -47,7 +48,7 @@ func NewDBStore(dialect, dsn string) (*DBStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping %s: %w", dialect, err)
 	}
-	return &DBStore{db: db, dialect: dialect}, nil
+	return &DBStore{db: db, dialect: dialect, dsn: dsn}, nil
 }
 
 // DB returns the underlying *sql.DB so satellite packages (e.g.
@@ -58,6 +59,12 @@ func (d *DBStore) DB() *sql.DB { return d.db }
 // Dialect returns "postgres" or "sqlite" so satellite packages can pick
 // the right placeholder syntax / upsert form for their queries.
 func (d *DBStore) Dialect() string { return d.dialect }
+
+// Source returns the DSN passed to NewDBStore. Satellite packages that
+// need their own connection outside the pool — backup shells out to
+// pg_dump, which wants a fresh connection — read it here instead of
+// threading config through their own call paths.
+func (d *DBStore) Source() string { return d.dsn }
 
 func driverName(dialect string) string {
 	switch dialect {

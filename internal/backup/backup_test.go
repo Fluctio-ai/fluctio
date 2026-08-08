@@ -134,17 +134,42 @@ func TestValidName(t *testing.T) {
 		name string
 		want bool
 	}{
-		{"fluctio-20260102-030000.db", true},
+		{"fluctio-20260102-030000.db", true},       // sqlite
+		{"fluctio-20260102-030000.dump", true},     // postgres
 		{"", false},
 		{"../etc/passwd", false},
 		{"/abs/fluctio-20260102-030000.db", false},
-		{"fluctio-.db", false},            // empty middle (len == prefix+suffix)
-		{"evil.db", false},                // wrong prefix
-		{"fluctio-20260102-030000.txt", false}, // wrong suffix
+		{"fluctio-.db", false},                      // empty middle (len == prefix+suffix)
+		{"fluctio-.dump", false},                    // empty middle, postgres suffix
+		{"evil.db", false},                          // wrong prefix
+		{"fluctio-20260102-030000.txt", false},      // wrong suffix
 	}
 	for _, c := range cases {
 		if got := ValidName(c.name); got != c.want {
 			t.Errorf("ValidName(%q)=%v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestSuffixForDialect(t *testing.T) {
+	cases := []struct {
+		dialect string
+		want    string
+		wantErr bool
+	}{
+		{"sqlite", ".db", false},
+		{"postgres", ".dump", false},
+		{"mysql", "", true}, // unsupported dialect
+		{"", "", true},
+	}
+	for _, c := range cases {
+		got, err := suffixForDialect(c.dialect)
+		if (err != nil) != c.wantErr {
+			t.Errorf("suffixForDialect(%q) err=%v, wantErr=%v", c.dialect, err, c.wantErr)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("suffixForDialect(%q)=%q, want %q", c.dialect, got, c.want)
 		}
 	}
 }

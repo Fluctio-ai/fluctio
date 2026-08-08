@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,8 +19,26 @@ import (
 
 const (
 	filePrefix = "fluctio-"
-	fileSuffix = ".db"
 )
+
+// validSuffixes — one backup extension per dialect: .db for SQLite
+// (VACUUM INTO writes a self-contained file), .dump for Postgres
+// (pg_dump -Fc compressed custom format). ValidName admits both so
+// List/Rotate/Remove keep working across a dialect migration or in a
+// dir that happens to hold a mix.
+var validSuffixes = []string{".db", ".dump"}
+
+// suffixForDialect maps a store dialect to its backup file extension.
+func suffixForDialect(dialect string) (string, error) {
+	switch dialect {
+	case "sqlite":
+		return ".db", nil
+	case "postgres":
+		return ".dump", nil
+	default:
+		return "", fmt.Errorf("backup: unsupported dialect %q", dialect)
+	}
+}
 
 // ValidName reports whether name is a safe backup filename: no path
 // separators and matching the fluctio-*.db pattern. Guards the HTTP
@@ -28,10 +47,15 @@ func ValidName(name string) bool {
 	if name == "" || filepath.Base(name) != name {
 		return false
 	}
-	if !strings.HasPrefix(name, filePrefix) || !strings.HasSuffix(name, fileSuffix) {
+	if !strings.HasPrefix(name, filePrefix) {
 		return false
 	}
-	return len(name) > len(filePrefix)+len(fileSuffix)
+	for _, suf := range validSuffixes {
+		if strings.HasSuffix(name, suf) {
+			return len(name) > len(filePrefix)+len(suf)
+		}
+	}
+	return false
 }
 
 // Dir returns <home>/backups, creating it on first call.
@@ -54,46 +78,75 @@ type Info struct {
 	Modified int64  `json:"modified"` // unix seconds
 }
 
-// Create snapshots the SQLite database at <dir>/fluctio-<ts>.db using
-// VACUUM INTO. The snapshot is self-contained — committed WAL changes
-// are folded in — so it is consistent even while the gateway holds
-// fluctio.db open. Returns the filename (not full path) and size bytes.
+// Create snapshots the database at <dir>/fluctio-<ts>.<ext>. SQLite uses
+// VACUUM INTO (.db) — the snapshot is self-contained, committed WAL
+// changes folded in, so it is consistent even while the gateway holds
+// fluctio.db open. Postgres uses pg_dump -Fc (.dump) — a compressed
+// custom-format dump restorable via pg_restore. Returns the filename
+// (not full path) and size bytes.
 func Create(ctx context.Context, st store.Store, ts time.Time) (string, int64, error) {
 	dbs, ok := st.(*store.DBStore)
 	if !ok || dbs == nil {
 		return "", 0, fmt.Errorf("backup: store is not DBStore")
 	}
-	if dbs.Dialect() != "sqlite" {
-		return "", 0, fmt.Errorf("backup: only sqlite is supported, got %q", dbs.Dialect())
+	suffix, err := suffixForDialect(dbs.Dialect())
+	if err != nil {
+		return "", 0, err
 	}
 	dir, err := Dir()
 	if err != nil {
 		return "", 0, err
 	}
 	base := ts.Format("20060102-150405")
-	name := filePrefix + base + fileSuffix
+	name := filePrefix + base + suffix
 	path := filepath.Join(dir, name)
-	// VACUUM INTO won't overwrite an existing file; bump the name with a
-	// counter if a same-second backup already exists (rapid double-click
-	// on "back up now").
+	// Neither VACUUM INTO nor pg_dump should clobber an existing file; bump
+	// the name with a counter if a same-second backup already exists
+	// (rapid double-click on "back up now").
 	for i := 1; ; i++ {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			break
 		} else if err != nil {
 			return "", 0, err
 		}
-		name = fmt.Sprintf("%s%s-%d%s", filePrefix, base, i, fileSuffix)
+		name = fmt.Sprintf("%s%s-%d%s", filePrefix, base, i, suffix)
 		path = filepath.Join(dir, name)
 	}
-	quoted := "'" + strings.ReplaceAll(path, "'", "''") + "'"
-	if _, err := dbs.DB().ExecContext(ctx, "VACUUM INTO "+quoted); err != nil {
-		return "", 0, fmt.Errorf("VACUUM INTO: %w", err)
+	switch dbs.Dialect() {
+	case "sqlite":
+		quoted := "'" + strings.ReplaceAll(path, "'", "''") + "'"
+		if _, err := dbs.DB().ExecContext(ctx, "VACUUM INTO "+quoted); err != nil {
+			return "", 0, fmt.Errorf("VACUUM INTO: %w", err)
+		}
+	case "postgres":
+		if err := dumpPostgres(ctx, dbs.Source(), path); err != nil {
+			return "", 0, err
+		}
 	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", 0, err
 	}
 	return name, info.Size(), nil
+}
+
+// dumpPostgres runs `pg_dump -Fc` to produce a compressed custom-format
+// dump at path. dsn is the store's connection string — pg_dump accepts
+// both libpq conninfo ("host=… dbname=…") and URL ("postgres://…")
+// forms, so whatever shape the gateway opened, the backup mirrors. The
+// DSN may carry a password; as a positional arg it is briefly visible in
+// the process list (same as any CLI pg_dump) — acceptable in a single-
+// tenant container; harden with ~/.pgpass + a passwordless DSN if the
+// deploy model differs. Requires the pg_dump binary on PATH
+// (postgresql-client in the deploy image); a missing binary fails fast
+// with a clear error rather than silently skipping a scheduled backup.
+func dumpPostgres(ctx context.Context, dsn, path string) error {
+	cmd := exec.CommandContext(ctx, "pg_dump", "--format=custom", "--file="+path, dsn)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pg_dump: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // List returns all backup files, newest first. Filenames carry the
