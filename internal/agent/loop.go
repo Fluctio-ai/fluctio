@@ -1512,15 +1512,50 @@ func (a *Agent) Sessions() *session.Manager {
 // sessionId may be either a canonical session_key (what
 // ListWebSessions returns) or a legacy web chat_id from older URLs;
 // ResolveSessionKey untangles them.
-func (a *Agent) WebChatHistory(sessionId string) []map[string]any {
+// WebChatHistory returns one paginated slice of the session's archived
+// messages for the web chat panel. beforeSeq > 0 returns messages with
+// seq strictly less than it (older); beforeSeq <= 0 returns the most
+// recent page. The page is sliced from the raw archived messages BEFORE
+// the role/origin filter runs, so the seq cursor stays continuous even
+// though filtered-out rows (goal_context, empty assistant) don't appear
+// in the returned history. earliestSeq is the oldest seq in this page
+// (0 if empty) — the client feeds it back as the next `before`. hasMore
+// is true when older messages remain beyond this page.
+func (a *Agent) WebChatHistory(sessionId string, beforeSeq, limit int) ([]map[string]any, int, bool) {
 	if sessionId == "" {
 		sessionId = "web-ui"
 	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
 	resolved := a.sessions.ResolveSessionKey(sessionId)
 	sess := a.sessions.GetByKey(resolved)
-	msgs := sess.ArchivedMessages()
+	all := sess.ArchivedMessages() // ascending by seq
+	// Window to messages strictly older than beforeSeq (most-recent page
+	// when beforeSeq <= 0).
+	end := len(all)
+	if beforeSeq > 0 {
+		for i, m := range all {
+			if m.Seq >= beforeSeq {
+				end = i
+				break
+			}
+		}
+	}
+	window := all[:end]
+	hasMore := false
+	start := 0
+	if len(window) > limit {
+		start = len(window) - limit
+		hasMore = true
+	}
+	page := window[start:]
+	earliestSeq := 0
+	if len(page) > 0 {
+		earliestSeq = page[0].Seq
+	}
 	var history []map[string]any
-	for _, m := range msgs {
+	for _, m := range page {
 		// Hide runtime-injected messages (currently only goal_context
 		// continuations). They live in the session for the LLM's
 		// benefit; surfacing them to the user would expose audit
@@ -1635,7 +1670,7 @@ func (a *Agent) WebChatHistory(sessionId string) []map[string]any {
 			history = append(history, entry)
 		}
 	}
-	return history
+	return history, earliestSeq, hasMore
 }
 
 // WebChatSessions returns a list of web chat sessions with metadata.

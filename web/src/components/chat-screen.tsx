@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, revealAgentWorkspace, sendChatStream, steerChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
-import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
 
@@ -651,6 +651,21 @@ export function ChatScreen() {
   // catches up.
   const [loadedSessionId, setLoadedSessionId] = useState<string | null>(null);
 
+  // Reverse-infinite scroll for long sessions. The history endpoint
+  // paginates by seq: earliestSeqRef holds the oldest seq rendered so
+  // far and is the `before` cursor for the next older page; hasMoreRef
+  // flips false once we've reached the session's first message so we
+  // stop hitting the endpoint; loadingMoreRef serializes overlapping
+  // fetches when the scroll handler fires in bursts. loadingOlder drives
+  // the top-of-list "loading…" indicator. Refs (not state) for the
+  // cursor/guard so the scroll handler — bound once — reads fresh values
+  // without re-binding on every sessionId change.
+  const HISTORY_PAGE = 50;
+  const earliestSeqRef = useRef<number>(0);
+  const hasMoreRef = useRef(false);
+  const loadingMoreRef = useRef(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
   // Slash-command menu state. The menu opens when the textarea holds a
   // token beginning with `/` at the caret; selecting a skill swaps that
   // token for `/<skill-name> `, leaving the cursor after the space so the
@@ -1047,11 +1062,13 @@ export function ChatScreen() {
             // message to session_messages.
             if (transientBubbleIdRef.current) {
               transientBubbleIdRef.current = null;
-              getChatHistoryWithCursor(selectedAgent, sessionId)
-                .then(({ history, latestEventSeq }) => {
+              getChatHistoryWithCursor(selectedAgent, sessionId, { limit: HISTORY_PAGE })
+                .then(({ history, latestEventSeq, earliestSeq, hasMore }) => {
                   if (latestEventSeq > maxSeqRef.current) maxSeqRef.current = latestEventSeq;
                   subscribeSinceRef.current = latestEventSeq;
                   setMessages(buildChatMessages(history));
+                  earliestSeqRef.current = earliestSeq;
+                  hasMoreRef.current = hasMore;
                 })
                 .catch(() => {});
             }
@@ -1287,9 +1304,14 @@ export function ChatScreen() {
     getChatTodo(selectedAgent, sessionId)
       .then((todo) => setTodoItems(todo.items))
       .catch(() => setTodoItems([]));
+    // Reset reverse-infinite scroll cursors for the new session.
+    earliestSeqRef.current = 0;
+    hasMoreRef.current = false;
+    loadingMoreRef.current = false;
+    setLoadingOlder(false);
     let aborted = false;
-    getChatHistoryWithCursor(selectedAgent, sessionId)
-      .then(async ({ history, latestEventSeq }) => {
+    getChatHistoryWithCursor(selectedAgent, sessionId, { limit: HISTORY_PAGE })
+      .then(async ({ history, latestEventSeq, earliestSeq, hasMore }) => {
         if (aborted) return;
         if (!sessionHasActivePost && latestEventSeq > maxSeqRef.current) {
           maxSeqRef.current = latestEventSeq;
@@ -1347,6 +1369,8 @@ export function ChatScreen() {
         } catch { /* listing failed — fall back to no panel */ }
         if (aborted) return;
         setMessages(built);
+        earliestSeqRef.current = earliestSeq;
+        hasMoreRef.current = hasMore;
         setLoadedSessionId(sessionId);
       })
       .catch(() => {
@@ -1363,6 +1387,51 @@ export function ChatScreen() {
     return () => {
       aborted = true;
     };
+  }, [selectedAgent, sessionId]);
+
+  // loadMoreOlder pulls one older page of history when the user scrolls
+  // to the top of the message list — reverse-infinite scroll. Prepends
+  // the rebuilt messages, then restores the scroll position by the
+  // height the new page added; without that compensation the viewport
+  // snaps to the new top and the user loses their reading place.
+  const loadMoreOlder = useCallback(() => {
+    if (loadingMoreRef.current) return;
+    if (!hasMoreRef.current) return;
+    if (!selectedAgent || !sessionId) return;
+    const el = messagesScrollRef.current;
+    const prevScrollHeight = el ? el.scrollHeight : 0;
+    const prevScrollTop = el ? el.scrollTop : 0;
+    // Suspend bottom-stickiness while prepending — the [messages]
+    // auto-scroll effect would otherwise fight the position restore.
+    const wasStick = stickToBottomRef.current;
+    stickToBottomRef.current = false;
+    loadingMoreRef.current = true;
+    setLoadingOlder(true);
+    getChatHistoryWithCursor(selectedAgent, sessionId, { before: earliestSeqRef.current, limit: HISTORY_PAGE })
+      .then(({ history, earliestSeq, hasMore }) => {
+        if (!history || history.length === 0) {
+          hasMoreRef.current = false;
+          return;
+        }
+        const built = buildChatMessages(history);
+        setMessages((prev) => [...built, ...prev]);
+        earliestSeqRef.current = earliestSeq;
+        hasMoreRef.current = hasMore;
+        // The list grew upward by (newHeight − prevHeight); push
+        // scrollTop down by that delta so the same content stays under
+        // the cursor. rAF so the DOM has the new height by then.
+        requestAnimationFrame(() => {
+          const el2 = messagesScrollRef.current;
+          if (!el2) return;
+          el2.scrollTop = prevScrollTop + (el2.scrollHeight - prevScrollHeight);
+        });
+      })
+      .catch(() => { /* leave the page as-is; the user can retry */ })
+      .finally(() => {
+        loadingMoreRef.current = false;
+        setLoadingOlder(false);
+        stickToBottomRef.current = wasStick;
+      });
   }, [selectedAgent, sessionId]);
 
   useEffect(() => {
@@ -1403,10 +1472,12 @@ export function ChatScreen() {
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       stickToBottomRef.current = distance <= 64;
+      // Reverse-infinite scroll: near the top, pull an older page.
+      if (el.scrollTop < 60) loadMoreOlder();
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+  }, [loadMoreOlder]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -2278,6 +2349,13 @@ export function ChatScreen() {
                 <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
                   {heroTitle}
                 </h1>
+              </div>
+            )}
+
+            {/* Reverse-infinite scroll: spinner while an older page loads. */}
+            {loadingOlder && (
+              <div className="flex justify-center py-2">
+                <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
               </div>
             )}
 
@@ -4219,6 +4297,82 @@ function WorkspacePanel({
           </div>
         )}
       </aside>
+
+      {/* Mobile full-screen workspace sheet (md:hidden). The desktop
+          aside above is `hidden md:flex`, so without this branch the
+          header workspace toggle is a no-op on phones — the panel
+          mounts (filesSheetOpen flips) but nothing paints. Master-detail
+          shape: the file tree owns the screen; tapping a file swaps in
+          the viewer behind a back bar. Shares previewing/files state
+          with the desktop aside so the selection survives a breakpoint
+          switch mid-session. */}
+      <div
+        className="fixed inset-0 z-50 flex flex-col bg-background md:hidden"
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "env(safe-area-inset-bottom)",
+        }}
+      >
+        <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
+          <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+            <FolderOpen className="h-4 w-4 shrink-0" />
+            <span className="truncate">Workspace</span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            aria-label={t("preview.close")}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {previewing ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <button
+              type="button"
+              onClick={() => setPreviewing(null)}
+              className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ChevronLeft className="h-4 w-4 shrink-0" />
+              <span className="truncate">{previewing.path.split("/").pop() || previewing.path}</span>
+            </button>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <FileViewer
+                key={previewing.path}
+                agentId={agentId}
+                file={previewing}
+                onClose={() => setPreviewing(null)}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-2">
+            {(() => {
+              const showChanged = changed.available && !showAll;
+              const list = showChanged ? changed.files : files;
+              if (!loading && list.length === 0) {
+                return (
+                  <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    {showChanged
+                      ? "No changes yet — the agent hasn't edited any files."
+                      : projectId
+                        ? "No files in this project yet."
+                        : "No files in this session yet."}
+                  </p>
+                );
+              }
+              return (
+                <FileTreeView
+                  files={list}
+                  rootPrefix={projectId ? `projects/${projectId}/` : `sessions/${sessionId}/`}
+                  onSelect={(f) => setPreviewing(f)}
+                />
+              );
+            })()}
+          </div>
+        )}
+      </div>
     </>
   );
 }

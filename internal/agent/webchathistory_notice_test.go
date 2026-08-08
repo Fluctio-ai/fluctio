@@ -41,7 +41,7 @@ func TestWebChatHistoryCompactionNotice(t *testing.T) {
 		Timestamp: 2000,
 	})
 
-	hist := a.WebChatHistory(sessionKey)
+	hist, _, _ := a.WebChatHistory(sessionKey, 0, 50)
 
 	// Expect 3 entries: user, assistant, compaction_notice.
 	if len(hist) != 3 {

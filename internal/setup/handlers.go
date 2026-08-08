@@ -1637,12 +1637,19 @@ func parseTodoMarkdown(s string) []map[string]any {
 func (s *Server) handleChatHistory(w http.ResponseWriter, r *http.Request) {
 	agentID := r.URL.Query().Get("agentId")
 	sessionID := r.URL.Query().Get("sessionId")
+	before, _ := strconv.Atoi(r.URL.Query().Get("before"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	ag := s.resolveAgent(r, agentID)
 	if ag == nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "agent not found"})
 		return
 	}
-	resp := map[string]any{"history": ag.WebChatHistory(sessionID)}
+	history, earliestSeq, hasMore := ag.WebChatHistory(sessionID, before, limit)
+	resp := map[string]any{
+		"history":     history,
+		"earliestSeq": earliestSeq,
+		"hasMore":     hasMore,
+	}
 	// latestEventSeq is the resume cursor for /api/chat/subscribe — the
 	// client opens that endpoint with `since=<latestEventSeq>` so a
 	// fresh page load picks up only deltas it hasn't already rendered.

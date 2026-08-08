@@ -36,7 +36,7 @@ type AgentHandle interface {
 	// returns false when no turn is running (caller falls back to a
 	// normal send).
 	SteerWeb(sessionId, projectIDHint, text string) bool
-	WebChatHistory(sessionId string) []map[string]any
+	WebChatHistory(sessionId string, beforeSeq, limit int) ([]map[string]any, int, bool)
 	WebChatSessions() []session.WebSession
 	DeleteWebChatSession(sessionId string) error
 	RenameWebChatSession(sessionId, title string) error
