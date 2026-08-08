@@ -124,6 +124,19 @@ func callExtractTopics(
 	}
 
 	content := stripJSONFence(resp.Content)
+	if strings.TrimSpace(content) == "" {
+		// Some models (e.g. deepseek-v4-flash) accept JSON-mode
+		// response_format without error but emit an empty body — the
+		// upstream call succeeds (no error) yet there is nothing to
+		// parse. Treat it as "nothing extractable this batch" rather
+		// than a parse error: returning nil advances last_summarized_seq
+		// so the idle sweep won't keep re-trying the same window, and
+		// avoids a warning storm. The summary is simply stored without
+		// fresh topics for this run.
+		slog.Debug("conversation summary: empty LLM body, skipping topics",
+			"model", model)
+		return nil, nil
+	}
 	var parsed struct {
 		Topics []ExtractedTopic `json:"topics"`
 	}
