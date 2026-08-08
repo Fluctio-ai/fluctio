@@ -1589,6 +1589,7 @@ func (s *Server) readWorkspaceFileBytes(ctx context.Context, agentID, relPath st
 //   - [ ] text   → pending
 //   - [x] text   → completed
 //   - [X] text   → completed (case-insensitive)
+//   - [-] text   → cancelled / skipped (also [~])
 //
 // Anything else (heading lines, blank lines, non-checkbox bullets) is
 // ignored — todo.md doubles as a human-readable plan document, so we
@@ -1619,17 +1620,25 @@ func parseTodoMarkdown(s string) []map[string]any {
 			continue
 		}
 		done := box == 'x' || box == 'X'
+		cancelled := box == '-' || box == '~' // [-] / [~] → cancelled or skipped
 		if i, ok := idx[rest]; ok {
 			if done {
 				out[i]["done"] = true
 			}
+			if cancelled {
+				out[i]["cancelled"] = true
+			}
 			continue
 		}
 		idx[rest] = len(out)
-		out = append(out, map[string]any{
+		item := map[string]any{
 			"text": rest,
 			"done": done,
-		})
+		}
+		if cancelled {
+			item["cancelled"] = true
+		}
+		out = append(out, item)
 	}
 	return out
 }

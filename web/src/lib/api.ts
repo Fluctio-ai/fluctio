@@ -871,6 +871,7 @@ export interface ChatHistoryMessage {
 export interface TodoItem {
   text: string;
   done: boolean;
+  cancelled?: boolean;
 }
 
 export interface TodoState {

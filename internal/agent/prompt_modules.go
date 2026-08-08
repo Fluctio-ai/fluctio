@@ -827,6 +827,9 @@ plan and the final deliverable.
 
 - ` + "`- [ ] step text`" + ` → pending
 - ` + "`- [x] step text`" + ` → completed
+- ` + "`- [-] step text`" + ` → cancelled / skipped — use this when the user
+  aborts the plan or a step is genuinely dropped, so the UI can dismiss the
+  progress panel instead of leaving the step pinned as pending forever
 - One item per plan step. Same wording as your plan if possible so the
   user can map them visually.
 - No nested checkboxes (no indented ` + "`- [ ]`" + `). One flat list.

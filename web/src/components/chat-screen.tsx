@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, revealAgentWorkspace, sendChatStream, steerChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
-import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
 
@@ -233,6 +233,76 @@ function parseWrittenSize(result: string): number | undefined {
   return m ? parseInt(m[1], 10) : undefined;
 }
 
+// extractProducedFiles pulls workspace paths out of a run of tool calls —
+// the files a turn *deliberately* produced via write_file / deliver_file /
+// image_gen. The source is the persisted tool record (name + arguments +
+// result), NOT the filesystem mtime, so file attribution survives anything
+// that rewrites mtime: docker redeploy copying the workspaces dir, volume
+// migration, backup restore, etc. Previously history reload attributed
+// files by mtime and every file piled onto the latest bubble after a
+// redeploy (all mtimes reset to the copy moment).
+//
+// scopePrefix mirrors the prefix listAgentFiles returns ("sessions/<sid>/"
+// or "projects/<pid>/") so callers can match against the live file set.
+// Real-time streaming and history reload both call this so a refresh shows
+// the same files under the same bubbles.
+//
+// Files NOT produced through a tool call (exec scripts writing PDFs, etc.)
+// are intentionally excluded — they have no reliable per-turn anchor and
+// are surfaced only via the workspace browser (FilesSheet), which lists
+// the full listAgentFiles set independently of bubble attribution.
+function extractProducedFiles(
+  calls: { name: string; arguments: string; result?: string }[],
+  scopePrefix: string,
+): ProducedFile[] {
+  const out: ProducedFile[] = [];
+  const seen = new Set<string>();
+  const add = (rawRel: string, size?: number) => {
+    // Skip absolute paths (write_file to /etc/... isn't a workspace artifact)
+    // and system identity files. isSystemFile matches on the bare name, so
+    // check before prefixing — a prefixed "sessions/x/todo.md" contains "/"
+    // and would slip past it.
+    if (!rawRel || rawRel.startsWith("/") || isSystemFile(rawRel)) return;
+    const full = scopePrefix + rawRel;
+    if (seen.has(full)) return;
+    seen.add(full);
+    out.push(size !== undefined ? { path: full, size } : { path: full });
+  };
+  for (const c of calls) {
+    const res = c.result || "";
+    let args: Record<string, unknown> = {};
+    try { args = JSON.parse(c.arguments || "{}") as Record<string, unknown>; } catch { /* ignore bad args */ }
+    switch (c.name) {
+      case "write_file":
+        if (/^Written \d+ bytes/.test(res)) {
+          add(typeof args.path === "string" ? args.path : "", parseWrittenSize(res));
+        }
+        break;
+      case "deliver_file": {
+        // Result: "Delivered <n> bytes to <abs>" or "Already in visible
+        // workspace: <abs>". The visible name comes from arguments.dest
+        // (relative); fall back to basename(src) when dest was omitted.
+        if (!/^(Delivered \d+ bytes|Already in visible workspace)/.test(res)) break;
+        const dest = typeof args.dest === "string" ? args.dest : "";
+        const src = typeof args.src === "string" ? args.src : "";
+        const dm = res.match(/^Delivered (\d+) bytes/);
+        add(dest || (src ? src.split("/").pop() ?? "" : ""), dm ? parseInt(dm[1], 10) : undefined);
+        break;
+      }
+      case "image_gen": {
+        // persistImageGenOutput rewrites the result markdown to
+        // ![](/workspace/<name>) with name = imagegen_<ms>_<idx><ext>.
+        // No size is carried in the result.
+        const re = /\/workspace\/([^\s)]+)/g;
+        let m: RegExpExecArray | null;
+        while ((m = re.exec(res))) add(m[1]);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 interface ChatSession {
   id: string;
   title?: string;
@@ -403,11 +473,16 @@ function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
   const [open, setOpen] = useState(true);
   const total = items.length;
   const doneCount = items.filter((i) => i.done).length;
+  const cancelledCount = items.filter((i) => i.cancelled).length;
   const allDone = doneCount === total;
-  // First unchecked item is the live "in progress" step. When the
-  // checklist is fully checked, fall through to the last item so the
+  // A step counts as "finished" for dismiss purposes once it's done OR
+  // cancelled — a cancelled plan has nothing left to track either, so the
+  // panel should hide the same way an all-done one does.
+  const allTerminated = doneCount + cancelledCount === total;
+  // First open item is the live "in progress" step. When every step is
+  // finished (done or cancelled), fall through to the last item so the
   // collapsed header still says something concrete.
-  const currentIdx = allDone ? total - 1 : items.findIndex((i) => !i.done);
+  const currentIdx = allTerminated ? total - 1 : items.findIndex((i) => !i.done && !i.cancelled);
   const current = currentIdx >= 0 ? items[currentIdx] : null;
   return (
     // Wrapper keeps the panel aligned with the composer's max-w-2xl
@@ -448,7 +523,7 @@ function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
           {open && (
             <ol className="mt-2 space-y-1 border-t border-border/60 pt-2 text-sm">
               {items.map((it, i) => {
-                const isCurrent = i === currentIdx && !it.done;
+                const isCurrent = i === currentIdx && !it.done && !it.cancelled;
                 return (
                   <li
                     key={i}
@@ -459,6 +534,8 @@ function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
                   >
                     {it.done ? (
                       <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
+                    ) : it.cancelled ? (
+                      <Minus className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                     ) : isCurrent ? (
                       active ? (
                         <div className="mt-0.5 size-3.5 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
@@ -470,7 +547,7 @@ function TodoPanel({ items, active }: { items: TodoItem[]; active: boolean }) {
                     )}
                     <span
                       className={
-                        (it.done ? "line-through text-muted-foreground/70 " : "") +
+                        ((it.done || it.cancelled) ? "line-through text-muted-foreground/70 " : "") +
                         (isCurrent ? "font-medium" : "")
                       }
                     >
@@ -1326,45 +1403,25 @@ export function ChatScreen() {
         }
         const built = buildChatMessages(history);
         try {
-          // listAgentFiles(agentId, sessionId) lets the backend pick
-          // the right prefix — projects/<pid>/ for project chats,
-          // sessions/<chat>/ for loose ones — so we don't have to
-          // hard-code `sessions/<sid>/` here. The hard-coded prefix
-          // missed every file in a project chat.
-          const sessionFiles: ProducedFile[] = (
-            await listAgentFiles(selectedAgent, sessionId)
-          )
-            .filter((f) => !isSystemFile(f.path))
-            .map((f) => ({ path: f.path, size: f.size, modTime: f.modTime }));
-          if (sessionFiles.length > 0 && new Set(sessionFiles.map((f) => f.modTime)).size > 1) {
-            // Place each file under the agent/tool-group message whose
-            // turn produced it: last candidate with timestamp <= file's
-            // modTime. Falls back to the last agent message when modTime
-            // is missing or predates every agent message.
-            const candidateIdxs: number[] = [];
-            built.forEach((m, idx) => {
-              if (m.role === "agent" || m.role === "tool-group") candidateIdxs.push(idx);
-            });
-            const lastAgentIdx = candidateIdxs.length > 0 ? candidateIdxs[candidateIdxs.length - 1] : -1;
-            const filesByMsg = new Map<number, ProducedFile[]>();
-            for (const f of sessionFiles) {
-              let target = lastAgentIdx;
-              if (f.modTime && f.modTime > 0) {
-                let found = -1;
-                for (const idx of candidateIdxs) {
-                  if (built[idx].timestamp > 0 && built[idx].timestamp <= f.modTime) found = idx;
-                }
-                if (found >= 0) target = found;
-              }
-              if (target >= 0) {
-                const arr = filesByMsg.get(target) || [];
-                arr.push(f);
-                filesByMsg.set(target, arr);
-              }
-            }
-            for (const [idx, files] of filesByMsg) {
-              built[idx] = { ...built[idx], files };
-            }
+          // Attribute files by the tool call that produced them, not by
+          // filesystem mtime. mtime is wiped to "now" whenever the
+          // workspaces dir is copied (docker redeploy, volume migration,
+          // backup restore), which used to pile every historical file onto
+          // the latest bubble. The tool-call record lives in
+          // session_messages and is immune to all of that. Files that no
+          // tool claims (exec-script output, etc.) get no bubble — they
+          // stay visible in the workspace browser (FilesSheet), which
+          // lists listAgentFiles independently of bubble attribution.
+          const listed = await listAgentFiles(selectedAgent, sessionId);
+          const sizeByPath = new Map(listed.map((f) => [f.path, f.size]));
+          const scopePrefix = urlProjectId ? `projects/${urlProjectId}/` : `sessions/${sessionId}/`;
+          for (let idx = 0; idx < built.length; idx++) {
+            const m = built[idx];
+            if (m.role !== "tool-group" || !m.toolCalls || m.toolCalls.length === 0) continue;
+            const produced = extractProducedFiles(m.toolCalls, scopePrefix)
+              .filter((f) => sizeByPath.has(f.path))
+              .map((f) => ({ path: f.path, size: sizeByPath.get(f.path) ?? f.size }));
+            if (produced.length > 0) built[idx] = { ...m, files: produced };
           }
         } catch { /* listing failed — fall back to no panel */ }
         if (aborted) return;
@@ -1387,7 +1444,7 @@ export function ChatScreen() {
     return () => {
       aborted = true;
     };
-  }, [selectedAgent, sessionId]);
+  }, [selectedAgent, sessionId, urlProjectId]);
 
   // loadMoreOlder pulls one older page of history when the user scrolls
   // to the top of the message list — reverse-infinite scroll. Prepends
@@ -1851,28 +1908,21 @@ export function ChatScreen() {
               tc.result = resultText;
               if (evt.data?.metadata) tc.metadata = evt.data.metadata;
             }
-            // Track successful write_file calls that landed in the workspace
-            // (i.e. a relative path that isn't a system identity file).
-            if (tc && tc.name === "write_file" && /^Written \d+ bytes/.test(resultText)) {
-              try {
-                const args = JSON.parse(tc.arguments);
-                const p: string = typeof args?.path === "string" ? args.path : "";
-                if (p && !p.startsWith("/") && !isSystemFile(p)) {
-                  // Normalize to the workspace path the file actually lands
-                  // at (write_file's relative path resolves under
-                  // sessions/<sid>/ or projects/<pid>/). Without this prefix
-                  // the row's download/preview URL 404s AND the file shows
-                  // twice — once here (args path) and once in the post-turn
-                  // listAgentFiles diff (real path), because the two paths
-                  // don't string-match for dedup.
-                  const prefix = projectIdHint ? `projects/${projectIdHint}/` : `sessions/${sessionId}/`;
-                  const fullp = prefix + p;
-                  if (!seenPaths.has(fullp)) {
-                    seenPaths.add(fullp);
-                    turnFiles.push({ path: fullp, size: parseWrittenSize(resultText) });
-                  }
+            // Capture files this turn deliberately produced (write_file /
+            // deliver_file / image_gen). Shares extractProducedFiles with
+            // the history-reload path so a refresh renders the same files
+            // under the same bubbles, independent of filesystem mtime.
+            // exec-script output isn't a tool product — it stays out of
+            // bubbles (diffFiles below) and surfaces only in the workspace
+            // browser.
+            if (tc) {
+              const prefix = projectIdHint ? `projects/${projectIdHint}/` : `sessions/${sessionId}/`;
+              for (const f of extractProducedFiles([tc], prefix)) {
+                if (!seenPaths.has(f.path)) {
+                  seenPaths.add(f.path);
+                  turnFiles.push(f);
                 }
-              } catch { /* ignore bad args */ }
+              }
             }
             // Refresh the todo panel whenever a file-mutation tool just
             // touched todo.md. We inspect arguments rather than poll on
@@ -1992,11 +2042,14 @@ export function ChatScreen() {
           }
         }
       }, abortRef.current.signal, imageDataUrls, projectIdHint);
-      // Diff the workspace against the pre-turn snapshot so files
-      // produced by *exec* (e.g. a Python script that saves PDFs) get
-      // surfaced too — `turnFiles` only catches write_file tool calls
-      // with relative, non-identity paths, which misses most real-
-      // world flows. Union both sources by path.
+      // Diff the workspace against the pre-turn snapshot to detect files
+      // produced by *exec* (a Python script that saves PDFs, etc.) — these
+      // have no tool-call record to anchor them to a bubble, so by design
+      // they don't enter the message panel; they're surfaced only via the
+      // workspace browser (FilesSheet), which lists listAgentFiles
+      // independently. We still compute the diff for the diagnostic log
+      // below (it tells us whether a missing bubble is because the file
+      // wasn't produced vs. the tool record didn't capture it).
       const postTurnFiles = await listAgentFiles(selectedAgent).catch(() => []);
       const preSnap = await preTurnFilesPromise;
       const diffFiles: ProducedFile[] = [];
@@ -2007,7 +2060,9 @@ export function ChatScreen() {
         if (seenPaths.has(f.path)) continue;
         diffFiles.push({ path: f.path, size: f.size });
       }
-      const allFiles = [...turnFiles, ...diffFiles];
+      // Bubbles carry only tool-produced files (turnFiles). exec output
+      // (diffFiles) intentionally stays out — see comment above.
+      const allFiles = [...turnFiles];
       // Diagnostic: when sandbox-exec produces a file but the Files
       // panel doesn't show, we need to know whether the API returned
       // the file at all and where the diff dropped it. Cheap to keep.
@@ -2732,8 +2787,13 @@ export function ChatScreen() {
             checklist and we render it here right above the composer so
             the user's eye is on the next step they're about to authorize,
             not buried at the top behind a long scroll history. Auto-
-            hides when the file doesn't exist or has no checkbox items. */}
-        {!isEmpty && todoItems.length > 0 && (
+            hides when the file doesn't exist, has no checkbox items, OR
+            every item is done and the agent isn't mid-turn — a finished
+            plan has nothing left to track and leaving it pinned clutters
+            later, unrelated conversation. Kept visible while sending so
+            the completion state is seen before dismiss and a follow-up
+            step (if any) still has room to appear. */}
+        {!isEmpty && todoItems.length > 0 && (!todoItems.every((i) => i.done || i.cancelled) || sending) && (
           <TodoPanel items={todoItems} active={sending} />
         )}
 
