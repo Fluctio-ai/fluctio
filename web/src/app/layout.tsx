@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthGuard } from "@/components/auth-guard";
@@ -30,6 +30,19 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "Fluctio",
   description: "AI Agent Framework",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    title: "Fluctio",
+    statusBarStyle: "default",
+  },
+};
+
+// themeColor drives the <meta name="theme-color"> tag — the install
+// prompt and installed-app window chrome tint off this. Lives in viewport
+// (not metadata) per Next 14+ Metadata API.
+export const viewport: Viewport = {
+  themeColor: "#1890ff",
 };
 
 export default function RootLayout({
@@ -48,6 +61,11 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         <ThemeProvider><I18nProvider><AuthGuard><AppShell>{children}</AppShell></AuthGuard></I18nProvider></ThemeProvider>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(e){console.warn('SW register failed:',e)})})}`,
+          }}
+        />
       </body>
     </html>
   );
