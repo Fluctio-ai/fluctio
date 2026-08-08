@@ -362,6 +362,20 @@ type VectorCfg struct {
 	WikiThreshold float64 `json:"wikiThreshold,omitempty"`
 }
 
+// BackupCfg holds the system-level scheduled-backup settings. Persisted
+// under the "backup" namespace (system row, agentID=""). When Enabled,
+// the gateway backs the SQLite database up once per day at CronTime
+// (UTC+8) via VACUUM INTO, keeping the most recent MaxKeep snapshots.
+type BackupCfg struct {
+	Enabled bool `json:"enabled"`
+	// CronTime is the daily backup time in "HH:MM" (UTC+8). Empty
+	// defaults to "03:00".
+	CronTime string `json:"cronTime,omitempty"`
+	// MaxKeep is how many recent snapshots to retain; older ones are
+	// rotated out after each new backup. <=0 defaults to 7.
+	MaxKeep int `json:"maxKeep,omitempty"`
+}
+
 type AutoPersistCfg struct {
 	Enabled     bool   `json:"enabled"`
 	EveryNTurns int    `json:"everyNTurns,omitempty"`

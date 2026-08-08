@@ -831,10 +831,18 @@ func (q *QQChannel) handleC2CMessage(d json.RawMessage) error {
 	return nil
 }
 
-// collectAttachments downloads each image attachment (content_type
-// starting with "image/") via qqSafeDownload. Non-image attachments are
-// logged at debug and skipped (Phase 3 only handles images; voice/video
-// will land in a later phase if needed).
+// collectAttachments downloads each attachment (image OR file) via
+// qqSafeDownload. Images populate both PhotoURLs (so the vision /
+// multimodal path renders them) and MediaItems; non-image files
+// (zip, tar.gz, pdf, docs, …) populate MediaItems only — the gateway
+// materializes those into /workspace with a `[Attached: …]` breadcrumb
+// so the agent can read_file them. QQ previously dropped every
+// non-image attachment silently, leaving archives and documents sent to
+// the bot unreachable.
+//
+// Download failure: images still surface the original URL in PhotoURLs
+// (a downstream tool can retry); files are logged and dropped, since
+// without bytes there is nothing to attach.
 //
 // Returns parallel slices: photoURLs for back-compat with the single-
 // image PhotoURL/PhotoURLs fields, and mediaItems carrying the bytes
@@ -853,41 +861,42 @@ func (q *QQChannel) collectAttachments(atts []qqAttachment) ([]string, []bus.Med
 			continue
 		}
 		ct := strings.ToLower(strings.TrimSpace(a.ContentType))
-		if !strings.HasPrefix(ct, "image/") {
-			slog.Debug("qq skipping non-image attachment",
-				"account", q.accountID,
-				"content_type", a.ContentType,
-				"filename", a.Filename)
-			continue
-		}
+		isImage := strings.HasPrefix(ct, "image/")
 		bytes, sniffedCT, err := qqAttachmentFetcher(ctx, q.httpClient, a.URL)
 		if err != nil {
-			slog.Warn("qq attachment download failed",
-				"account", q.accountID, "url", a.URL, "error", err)
-			// Download failed (SSRF guard rejected loopback, network error,
-			// dead signed link, …). Surface the ORIGINAL url in PhotoURLs
-			// anyway — losing the URL entirely is worse than a transient
-			// fetch miss: a downstream tool / user can still see "there was
-			// an image here" and retry or fall back. No MediaItem, since we
-			// have no bytes.
-			photoURLs = append(photoURLs, a.URL)
+			if isImage {
+				// Download failed (SSRF guard rejected loopback, network
+				// error, dead signed link, …). Surface the ORIGINAL url in
+				// PhotoURLs anyway — losing the URL entirely is worse than a
+				// transient fetch miss: a downstream tool / user can still
+				// see "there was an image here" and retry or fall back.
+				photoURLs = append(photoURLs, a.URL)
+			} else {
+				slog.Warn("qq attachment download failed",
+					"account", q.accountID, "url", a.URL,
+					"content_type", a.ContentType, "filename", a.Filename, "error", err)
+			}
 			continue
 		}
 		finalCT := ct
 		if sniffedCT != "" {
 			finalCT = sniffedCT
 		}
-		// Both: data URL in PhotoURLs (loop.go user-message image path →
-		// right bubble + model vision ContentParts) AND bytes in MediaItems
-		// (gateway writes workspace [Attached:] so the agent can read_file
-		// the image for tools / non-vision models).
-		dataURL := "data:" + finalCT + ";base64," + base64.StdEncoding.EncodeToString(bytes)
-		photoURLs = append(photoURLs, dataURL)
+		// Every attachment lands in MediaItems — the gateway writes
+		// workspace `[Attached: …]` so the agent can read_file it.
 		mediaItems = append(mediaItems, bus.MediaItem{
 			Filename:    a.Filename,
 			ContentType: finalCT,
 			Bytes:       bytes,
 		})
+		if isImage {
+			// Images additionally go to PhotoURLs (loop.go user-message
+			// image path → right bubble + model vision ContentParts).
+			// Files must NOT take this path: persistInboundImages would
+			// mis-handle a zip as an image and drop it in uploads/.
+			dataURL := "data:" + finalCT + ";base64," + base64.StdEncoding.EncodeToString(bytes)
+			photoURLs = append(photoURLs, dataURL)
+		}
 	}
 	return photoURLs, mediaItems
 }

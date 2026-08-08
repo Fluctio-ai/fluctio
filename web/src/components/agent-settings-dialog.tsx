@@ -8,6 +8,7 @@ import {
   ClockIcon,
   CoinsIcon,
   DatabaseIcon,
+  HardDrive,
   IdCardIcon,
   InfoIcon,
   LayersIcon,
@@ -48,6 +49,7 @@ import AccountSettingsPage from "@/app/settings/account/page";
 import GeneralSettingsPage from "@/app/settings/general/page";
 import UserModelsPage from "@/app/models/page";
 import AboutSettingsPage from "@/app/settings/about/page";
+import BackupSettingsPage from "@/app/settings/backup/page";
 import DiagReportPage from "@/app/settings/diag/page";
 
 export type AgentSettingsTab =
@@ -68,6 +70,7 @@ export type AgentSettingsTab =
   | "account"
   | "general"
   | "about"
+  | "backup"
   | "recall-tuning"
   | "diag";
 
@@ -97,6 +100,7 @@ const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> 
 const USER_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> = [
   { id: "account", label: "settings.account", icon: UserCog },
   { id: "general", label: "settings.general", icon: Palette },
+  { id: "backup", label: "settings.backup", icon: HardDrive },
   { id: "diag", label: "settings.diag", icon: Bug },
   // About surfaces the gateway version + upgrade hint — only useful
   // to operators (super_admin), filtered out below for regular users.
@@ -259,6 +263,11 @@ export function AgentSettingsDialog({
           {tab === "general" && (
             <div className="p-6 max-w-5xl mx-auto">
               <GeneralSettingsPage />
+            </div>
+          )}
+          {tab === "backup" && (
+            <div className="p-6 max-w-5xl mx-auto">
+              <BackupSettingsPage />
             </div>
           )}
           {tab === "about" && (

@@ -906,23 +906,47 @@ func TestQQInboundImageDownloadPopulatesMediaItems(t *testing.T) {
 	}
 }
 
-// TestQQInboundNonImageSkipped: video/audio attachments are logged
-// and skipped (Phase 3 only handles images).
-func TestQQInboundNonImageSkipped(t *testing.T) {
+// TestQQInboundFileAccepted: non-image file attachments (zip, pdf, …)
+// are downloaded into MediaItems so the gateway can materialize them
+// into /workspace with a `[Attached: …]` breadcrumb. PhotoURLs stays
+// empty — files must not take the image path (persistInboundImages
+// would mis-handle a zip as an image). Regression for the old behavior
+// that silently dropped every non-image attachment, making archives
+// and documents sent to the bot unreachable.
+func TestQQInboundFileAccepted(t *testing.T) {
+	// PK\x03\x04 — zip local-file-header magic, enough for
+	// http.DetectContentType to report application/zip.
+	zipBytes := []byte{0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("not-called"))
+		w.Header().Set("Content-Type", "application/zip")
+		_, _ = w.Write(zipBytes)
 	}))
 	defer srv.Close()
+
+	// Swap the fetcher to bypass SSRF (httptest binds 127.0.0.1) —
+	// mirrors TestQQInboundImageDownloadPopulatesMediaItems. The SSRF
+	// guard itself is exercised by the URL-still-surfaces test.
+	prev := qqAttachmentFetcher
+	qqAttachmentFetcher = func(_ context.Context, _ *http.Client, u string) ([]byte, string, error) {
+		resp, err := http.Get(u)
+		if err != nil {
+			return nil, "", err
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return b, resp.Header.Get("Content-Type"), nil
+	}
+	defer func() { qqAttachmentFetcher = prev }()
 
 	q, mb := newTestQQ(t)
 	send, _ := captureSend()
 	payload := `{
-		"id": "M_VID",
-		"group_openid": "G_VID",
-		"content": "see video",
+		"id": "M_ZIP",
+		"group_openid": "G_ZIP",
+		"content": "here is the archive",
 		"author": {"member_openid": "M_X"},
 		"attachments": [
-			{"content_type": "video/mp4", "url": "` + srv.URL + `/v.mp4"}
+			{"content_type": "application/zip", "url": "` + srv.URL + `/pkg.zip", "filename": "pkg.zip"}
 		]
 	}`
 	raw, _ := json.Marshal(qqFrame{
@@ -934,10 +958,16 @@ func TestQQInboundNonImageSkipped(t *testing.T) {
 	}
 	msg := drainInbound(t, mb, time.Second)
 	if len(msg.PhotoURLs) != 0 {
-		t.Errorf("PhotoURLs len = %d, want 0 (non-image skipped)", len(msg.PhotoURLs))
+		t.Errorf("PhotoURLs len = %d, want 0 (files must not take the image path)", len(msg.PhotoURLs))
 	}
-	if len(msg.MediaItems) != 0 {
-		t.Errorf("MediaItems len = %d, want 0 (non-image skipped)", len(msg.MediaItems))
+	if len(msg.MediaItems) != 1 {
+		t.Fatalf("MediaItems len = %d, want 1 (file should be downloaded)", len(msg.MediaItems))
+	}
+	if msg.MediaItems[0].Filename != "pkg.zip" {
+		t.Errorf("MediaItem Filename = %q, want pkg.zip", msg.MediaItems[0].Filename)
+	}
+	if string(msg.MediaItems[0].Bytes) != string(zipBytes) {
+		t.Errorf("MediaItem bytes mismatch")
 	}
 }
 

@@ -833,6 +833,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runLLMCallDiagRetention(ctx)
 	}()
+	// Scheduled SQLite backup: half-hourly, gated on backup.enabled +
+	// CronTime (UTC+8) + once-per-day idempotency. VACUUM INTO snapshot
+	// under <home>/backups, rotated to MaxKeep.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.backupTicker(ctx)
+	}()
 	wg.Wait()
 	if g.taskQueue != nil {
 		g.taskQueue.Stop()
@@ -956,6 +964,7 @@ const (
 	NSMemory         = "memory"
 	NSVectorization  = "vectorization"
 	NSPrivacy        = "privacy"
+	NSBackup         = "backup"
 	NSSkillsLearner  = "skillsLearner"
 	NSHeartbeat      = "heartbeat"
 	NSTeams          = "teams"

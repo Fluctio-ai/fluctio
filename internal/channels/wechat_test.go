@@ -51,3 +51,37 @@ func TestWechatWrapCopyFriendlyLines(t *testing.T) {
 		t.Errorf("bare long token should be preserved, got %q", got)
 	}
 }
+
+// TestWechatAESECBRoundTrip guards the AES-128-ECB encrypt/decrypt pair
+// that the iLink CDN envelope relies on. downloadAndDecryptBytes (the
+// shared image + file download path) decrypts with wechatAESECBDecrypt;
+// this asserts the pair is an exact inverse so inbound file attachments
+// decrypt back to the bytes the sender uploaded.
+func TestWechatAESECBRoundTrip(t *testing.T) {
+	key := []byte("0123456789abcdef") // AES-128 = 16-byte key
+	cases := [][]byte{
+		[]byte("hello"),                       // short — needs PKCS7 padding
+		[]byte(strings.Repeat("a", 16)),       // exactly one block
+		[]byte(strings.Repeat("b", 100)),      // multi-block
+		{0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0},  // zip magic — binary payload
+		[]byte("中文文件名测试.tar.gz"),          // multibyte (UTF-8)
+	}
+	for i, pt := range cases {
+		ct, err := wechatAESECBEncrypt(pt, key)
+		if err != nil {
+			t.Fatalf("case %d encrypt: %v", i, err)
+		}
+		if len(ct)%16 != 0 || len(ct) <= len(pt) {
+			t.Errorf("case %d: ciphertext len %d not block-aligned padded > %d",
+				i, len(ct), len(pt))
+		}
+		got, err := wechatAESECBDecrypt(ct, key)
+		if err != nil {
+			t.Fatalf("case %d decrypt: %v", i, err)
+		}
+		if string(got) != string(pt) {
+			t.Errorf("case %d: round-trip mismatch (got %d bytes, want %d)",
+				i, len(got), len(pt))
+		}
+	}
+}

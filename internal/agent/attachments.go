@@ -275,6 +275,17 @@ func extFromMIME(ct string) string {
 		return ".xml"
 	case "application/zip":
 		return ".zip"
+	// Archives — gzip covers both standalone .gz and .tar.gz (a tarball
+	// compressed with gzip sniffs as application/gzip; path.Ext keeps the
+	// .gz). Listed without the application/x- prefix variants some CDNs use.
+	case "application/gzip", "application/x-gzip":
+		return ".gz"
+	case "application/x-tar":
+		return ".tar"
+	case "application/x-7z-compressed":
+		return ".7z"
+	case "application/vnd.rar", "application/x-rar-compressed":
+		return ".rar"
 	}
 	return ""
 }
@@ -394,6 +405,14 @@ func contentTypeFromExt(ext string) string {
 		return "application/xml"
 	case ".zip":
 		return "application/zip"
+	case ".gz":
+		return "application/gzip"
+	case ".tar":
+		return "application/x-tar"
+	case ".7z":
+		return "application/x-7z-compressed"
+	case ".rar":
+		return "application/vnd.rar"
 	}
 	return ""
 }

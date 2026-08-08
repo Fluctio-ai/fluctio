@@ -502,6 +502,13 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("PUT /api/agents/{id}/privacy", auth(s.handleUpdateAgentPrivacy))
 	mux.HandleFunc("GET /api/privacy", auth(s.handleGetSystemPrivacy))
 	mux.HandleFunc("PUT /api/privacy", auth(s.handleUpdateSystemPrivacy))
+	// Scheduled SQLite backup: config + manual list/now/download/delete.
+	mux.HandleFunc("GET /api/backup", auth(s.handleGetSystemBackup))
+	mux.HandleFunc("PUT /api/backup", auth(s.handleUpdateSystemBackup))
+	mux.HandleFunc("DELETE /api/backup", auth(s.handleDeleteBackup))
+	mux.HandleFunc("GET /api/backup/list", auth(s.handleListBackups))
+	mux.HandleFunc("POST /api/backup/now", auth(s.handleBackupNow))
+	mux.HandleFunc("GET /api/backup/download", auth(s.handleDownloadBackup))
 
 	// Tasks
 	mux.HandleFunc("GET /api/tasks", admin(s.handleListTasks))

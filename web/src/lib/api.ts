@@ -2043,6 +2043,46 @@ export async function setSystemVectorization(vectorization: VectorizationConfig)
   return res.json().catch(() => ({ ok: true }));
 }
 
+// --- Scheduled backup config (system-level SQLite snapshots) ---
+export interface BackupConfig {
+  enabled?: boolean;
+  cronTime?: string; // "HH:MM" UTC+8
+  maxKeep?: number;
+}
+export interface BackupInfo {
+  name: string;
+  size: number;    // bytes
+  modified: number; // unix seconds
+}
+export async function getSystemBackup(): Promise<{ backup?: BackupConfig }> {
+  const res = await apiFetch(`/api/backup`);
+  if (!res.ok) return {};
+  return res.json().catch(() => ({}));
+}
+export async function setSystemBackup(backup: BackupConfig): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/backup`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ backup }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+export async function listBackups(): Promise<{ backups?: BackupInfo[] }> {
+  const res = await apiFetch(`/api/backup/list`);
+  if (!res.ok) return {};
+  return res.json().catch(() => ({}));
+}
+export async function backupNow(): Promise<{ ok?: boolean; name?: string; size?: number; error?: string }> {
+  const res = await apiFetch(`/api/backup/now`, { method: "POST" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+export async function deleteBackup(name: string): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/backup?file=${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({ ok: true }));
+}
+
 // --- Privacy config (agent PII scrubbing settings) ---
 export interface PrivacyConfig {
   piiScrubbing?: { enabled?: boolean; entropy?: boolean };
