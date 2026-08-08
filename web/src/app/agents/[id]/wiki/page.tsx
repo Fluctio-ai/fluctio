@@ -1,5 +1,6 @@
 "use client";
 import { useT } from "@/lib/i18n";
+import { usePageHeader } from "@/components/sidebar";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -64,6 +65,7 @@ const PAGE_TYPE_SECTIONS = (t: ReturnType<typeof useT>) => [
 
 export default function WikiPage() {
   const t = useT();
+  usePageHeader(<h1 className="text-sm font-semibold">{t("wiki.title")}</h1>, []);
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
   // vis-network colors can't follow CSS variables, so the graph reads the
