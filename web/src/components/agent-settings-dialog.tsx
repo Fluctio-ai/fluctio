@@ -245,7 +245,11 @@ export function AgentSettingsDialog({
           {tab === "scheduler" && <AgentSchedulerPage />}
           {tab === "regex-hooks" && <AgentRegexHooksPage />}
           {tab === "knowledge" && (
-            <div className="mx-auto w-full max-w-5xl space-y-4 p-4">
+            <div className="mx-auto w-full max-w-5xl space-y-6 p-6">
+              <div>
+                <h2 className="text-2xl font-semibold tracking-tight">{tt("knowledge.pageTitle")}</h2>
+                <p className="text-sm text-muted-foreground mt-1">{tt("knowledge.pageSubtitle")}</p>
+              </div>
               <KBSettingsCard />
               <DiarySettingsCard />
               <WikiAutoGenSettingsCard />

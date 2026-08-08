@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Loader2, Check, ShieldCheck } from "lucide-react";
+import { Loader2, Check } from "lucide-react";
 import { getAgentPrivacy, setAgentPrivacy } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 
@@ -55,13 +55,10 @@ export default function AgentPrivacyPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-6 p-4">
-      <div className="space-y-1">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5 text-muted-foreground" />
-          <h3 className="font-medium">{t("settings.privacy") || "隐私脱敏"}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground">
+    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+      <div>
+        <h2 className="text-2xl font-semibold tracking-tight">{t("settings.privacy") || "隐私脱敏"}</h2>
+        <p className="text-sm text-muted-foreground mt-1">
           {t("privacy.scrubDesc") ||
             "在消息发送给 LLM 前脱敏邮箱、手机号、身份证、银行卡、API 密钥等敏感信息。"}
         </p>

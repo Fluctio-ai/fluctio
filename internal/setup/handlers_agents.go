@@ -493,6 +493,15 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// 0 = use the dynamic computation from CompactionMode. ptr so
 		// nil = leave unchanged. Stored in the config blob.
 		CompactionThreshold *int `json:"compactionThreshold,omitempty"`
+		// MaxTokens / Temperature / MaxToolIterations are per-agent
+		// overrides for LLM generation + the ReAct iteration budget. ptr
+		// so nil = leave unchanged; <=0 = clear (fall back to the
+		// agents.defaults entry → system default of 8192 / 0.7 / 20).
+		// Stored in the agents.defaults config row next to model /
+		// promptMode; MergedAgentConfig forwards them to ResolvedAgent.
+		MaxTokens         *int     `json:"maxTokens,omitempty"`
+		Temperature       *float64 `json:"temperature,omitempty"`
+		MaxToolIterations *int     `json:"maxToolIterations,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -644,6 +653,29 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		defaultsPatch["autoPersist"] = nil
 	} else if req.AutoPersist != nil {
 		defaultsPatch["autoPersist"] = *req.AutoPersist
+	}
+	// Generation + loop budgets. nil = leave unchanged; <=0 = clear
+	// (fall back to agents.defaults → system default).
+	if req.MaxTokens != nil {
+		if *req.MaxTokens <= 0 {
+			defaultsPatch["maxTokens"] = nil
+		} else {
+			defaultsPatch["maxTokens"] = *req.MaxTokens
+		}
+	}
+	if req.Temperature != nil {
+		if *req.Temperature <= 0 {
+			defaultsPatch["temperature"] = nil
+		} else {
+			defaultsPatch["temperature"] = *req.Temperature
+		}
+	}
+	if req.MaxToolIterations != nil {
+		if *req.MaxToolIterations <= 0 {
+			defaultsPatch["maxToolIterations"] = nil
+		} else {
+			defaultsPatch["maxToolIterations"] = *req.MaxToolIterations
+		}
 	}
 	if err := s.applyAgentScopeDefaultsPatch(r, rec.ID, defaultsPatch); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

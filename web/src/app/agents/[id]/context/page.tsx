@@ -12,8 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle, Archive } from "lucide-react";
-import { getAgent, getAgentMemory, setAgentMemory, updateAgent, getCompactionPreview, type CompactionPreview } from "@/lib/api";
+import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle, Archive, SlidersHorizontal } from "lucide-react";
+import { getAgent, getAgentMemory, setAgentMemory, updateAgent, getCompactionPreview, type CompactionPreview, type AgentUpdatePayload } from "@/lib/api";
+import { SaveButton } from "@/components/save-button";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
@@ -85,6 +86,11 @@ export default function AgentContextPage() {
   const [compactionRadio, setCompactionRadio] = useState<string>("");
   const [compactionManual, setCompactionManual] = useState<string>("");
   const [compactionSaving, setCompactionSaving] = useState(false);
+  // Generation + loop budgets. String state for the number inputs;
+  // converted on save. "" = inherit agents.defaults → system default.
+  const [maxTokens, setMaxTokens] = useState("");
+  const [temperature, setTemperature] = useState("");
+  const [maxToolIterations, setMaxIter] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -110,6 +116,9 @@ export default function AgentContextPage() {
       setAutoTitleModel(at?.model || "");
       const lang = (agentRec?.config?.language as string) || "";
       setLanguage(lang === "en" || lang === "zh-CN" ? lang : "");
+      setMaxTokens(agentRec?.maxTokens ? String(agentRec.maxTokens) : "");
+      setTemperature(agentRec?.temperature ? String(agentRec.temperature) : "");
+      setMaxIter(agentRec?.maxToolIterations ? String(agentRec.maxToolIterations) : "");
       // Load compaction preview + derive the radio selection from the
       // saved state. If manualThreshold > 0, the "manual" radio is
       // selected and the input is pre-filled. Otherwise the saved mode
@@ -136,6 +145,22 @@ export default function AgentContextPage() {
   const flashSaved = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  // Save the three generation/loop budgets together. Empty or non-positive
+  // inputs clear the override (fall back to agents.defaults → system
+  // default of 8192 / 0.7 / 20). Throws on failure so SaveButton surfaces
+  // its error state.
+  const saveGeneration = async () => {
+    const patch: AgentUpdatePayload = {};
+    const mt = parseInt(maxTokens, 10);
+    patch.maxTokens = Number.isFinite(mt) && mt > 0 ? mt : 0;
+    const tp = parseFloat(temperature);
+    patch.temperature = Number.isFinite(tp) && tp > 0 ? tp : 0;
+    const it = parseInt(maxToolIterations, 10);
+    patch.maxToolIterations = Number.isFinite(it) && it > 0 ? it : 0;
+    const res = await updateAgent(agentId, patch);
+    if (!res?.ok) throw new Error(res?.error || "save failed");
   };
 
   // Save memory.autoTitle (enabled + model). afterRounds / maxTries /
@@ -436,16 +461,66 @@ export default function AgentContextPage() {
         </Select>
       </div>
 
+      {/* Generation + loop budgets — per-agent overrides for maxTokens,
+          temperature, and the ReAct tool-iteration cap. Empty = inherit
+          the system default (8192 / 0.7 / 20); the agent falls back to
+          agents.defaults → system when an override is cleared. */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-center gap-2 mb-1">
+          <SlidersHorizontal className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("context.generation")}</h3>
+        </div>
+        <p className="text-sm text-muted-foreground mb-4">{t("context.generationDesc")}</p>
+        <div className="grid sm:grid-cols-3 gap-4">
+          <div>
+            <label className="text-xs text-muted-foreground">{t("context.maxTokens")}</label>
+            <Input
+              type="number"
+              value={maxTokens}
+              onChange={(e) => setMaxTokens(e.target.value)}
+              placeholder="8192"
+              className="mt-1 h-8"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">{t("context.maxTokensHint")}</p>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">{t("context.temperature")}</label>
+            <Input
+              type="number"
+              step="0.1"
+              value={temperature}
+              onChange={(e) => setTemperature(e.target.value)}
+              placeholder="0.7"
+              className="mt-1 h-8"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">{t("context.temperatureHint")}</p>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">{t("context.maxIter")}</label>
+            <Input
+              type="number"
+              value={maxToolIterations}
+              onChange={(e) => setMaxIter(e.target.value)}
+              placeholder="20"
+              className="mt-1 h-8"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1">{t("context.maxIterHint")}</p>
+          </div>
+        </div>
+        <div className="mt-4">
+          <SaveButton onSave={saveGeneration} size="sm" />
+        </div>
+      </div>
+
       {/* Reply language — IM channels can't forward the web client's
           i18n locale, so this per-agent default picks the language for
           slash-command replies (/usage /status /help …) there. */}
       <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <Languages className="h-4 w-4 text-primary" />
-            <h3 className="font-medium">{t("context.replyLanguage")}</h3>
-          </div>
+        <div className="flex items-center gap-2 mb-1">
+          <Languages className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("context.replyLanguage")}</h3>
         </div>
+        <p className="text-sm text-muted-foreground mb-3">{t("context.replyLanguageDesc")}</p>
         <Select
           value={language || "zh-CN"}
           onValueChange={(v: string | null) => {
@@ -465,112 +540,89 @@ export default function AgentContextPage() {
             <SelectItem value="en">{t("context.langEn")}</SelectItem>
           </SelectContent>
         </Select>
-        <p className="mt-3 text-xs text-muted-foreground">
-          {t("context.replyLanguageDesc")}
-        </p>
       </div>
 
       {/* Multi-bubble replies — applies to every IM channel. Lives here
           rather than in the Channels tab because it's a property of how
           the LLM communicates, not of the channel binding. */}
       <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3 min-w-0">
-            <MessagesSquare className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-            <div className="min-w-0">
-              <h3 className="font-medium">{t("context.multiBubble")}</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                {t("context.splitRepliesDesc")}
-              </p>
-            </div>
-          </div>
-          <Switch
-            checked={splitReplies}
-            onCheckedChange={handleSplitRepliesChange}
-            disabled={splitRepliesSaving}
-            aria-label={t("context.multiBubble")}
-          />
+        <div className="flex items-center gap-2 mb-1">
+          <MessagesSquare className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("context.multiBubble")}</h3>
         </div>
+        <p className="text-sm text-muted-foreground mb-3">{t("context.splitRepliesDesc")}</p>
+        <Switch
+          checked={splitReplies}
+          onCheckedChange={handleSplitRepliesChange}
+          disabled={splitRepliesSaving}
+          aria-label={t("context.multiBubble")}
+        />
       </div>
 
       {/* Auto-remember chatter — lives here because it's about how the
           agent retains context across turns / sessions, parallel to how
           Multi-bubble is about how it emits replies. */}
       <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3 min-w-0">
-            <Brain className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-            <div className="min-w-0">
-              <h3 className="font-medium">{t("context.autoPersist")}</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                {t("context.autoPersistDescP1")}{" "}
-                <code className="text-[10px]">write_file</code> /{" "}
-                <code className="text-[10px]">edit_file</code>{" "}
-                {t("context.autoPersistDescP2")}
-              </p>
-            </div>
-          </div>
-          <Switch
-            checked={autoPersist}
-            onCheckedChange={handleAutoPersistChange}
-            disabled={autoPersistSaving}
-            aria-label={t("context.autoPersist")}
-          />
+        <div className="flex items-center gap-2 mb-1">
+          <Brain className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("context.autoPersist")}</h3>
         </div>
+        <p className="text-sm text-muted-foreground mb-3">
+          {t("context.autoPersistDescP1")}{" "}
+          <code className="text-[10px]">write_file</code> /{" "}
+          <code className="text-[10px]">edit_file</code>{" "}
+          {t("context.autoPersistDescP2")}
+        </p>
+        <Switch
+          checked={autoPersist}
+          onCheckedChange={handleAutoPersistChange}
+          disabled={autoPersistSaving}
+          aria-label={t("context.autoPersist")}
+        />
       </div>
 
       {/* Auto-title: LLM summarises opening turns into sessions.title */}
       <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3 min-w-0 flex-1">
-            <MessageSquare className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <h3 className="font-medium">{t("context.autoTitle")}</h3>
-              <p className="text-sm text-muted-foreground mt-1">{t("context.autoTitleDesc")}</p>
-              {autoTitleEnabled && (
-                <div className="mt-3 space-y-1">
-                  <label className="text-xs text-muted-foreground">{t("context.autoTitleModel")}</label>
-                  <Input
-                    placeholder={t("context.autoTitleModelPlaceholder")}
-                    value={autoTitleModel}
-                    onChange={(e) => setAutoTitleModel(e.target.value)}
-                    onBlur={() => saveAutoTitle({ model: autoTitleModel })}
-                    disabled={autoTitleSaving}
-                    className="h-8"
-                  />
-                  <p className="text-[11px] text-muted-foreground">{t("context.autoTitleModelHint")}</p>
-                </div>
-              )}
-            </div>
-          </div>
-          <Switch
-            checked={autoTitleEnabled}
-            onCheckedChange={(v) => saveAutoTitle({ enabled: v })}
-            disabled={autoTitleSaving}
-            aria-label={t("context.autoTitle")}
-          />
+        <div className="flex items-center gap-2 mb-1">
+          <MessageSquare className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("context.autoTitle")}</h3>
         </div>
+        <p className="text-sm text-muted-foreground mb-3">{t("context.autoTitleDesc")}</p>
+        <Switch
+          checked={autoTitleEnabled}
+          onCheckedChange={(v) => saveAutoTitle({ enabled: v })}
+          disabled={autoTitleSaving}
+          aria-label={t("context.autoTitle")}
+        />
+        {autoTitleEnabled && (
+          <div className="mt-3 space-y-1">
+            <label className="text-xs text-muted-foreground">{t("context.autoTitleModel")}</label>
+            <Input
+              placeholder={t("context.autoTitleModelPlaceholder")}
+              value={autoTitleModel}
+              onChange={(e) => setAutoTitleModel(e.target.value)}
+              onBlur={() => saveAutoTitle({ model: autoTitleModel })}
+              disabled={autoTitleSaving}
+              className="h-8"
+            />
+            <p className="text-[11px] text-muted-foreground">{t("context.autoTitleModelHint")}</p>
+          </div>
+        )}
       </div>
 
       {/* Shared identity across channels */}
       <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3 min-w-0">
-            <Link2 className="h-4 w-4 text-primary mt-0.5 shrink-0" />
-            <div className="min-w-0">
-              <h3 className="font-medium">{t("context.sharedIdentity")}</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                {t("context.sharedIdentityDesc")}
-              </p>
-            </div>
-          </div>
-          <Switch
-            checked={sharedIdentity}
-            onCheckedChange={handleSharedIdentityChange}
-            disabled={sharedIdentitySaving}
-            aria-label={t("context.sharedIdentity")}
-          />
+        <div className="flex items-center gap-2 mb-1">
+          <Link2 className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("context.sharedIdentity")}</h3>
         </div>
+        <p className="text-sm text-muted-foreground mb-3">{t("context.sharedIdentityDesc")}</p>
+        <Switch
+          checked={sharedIdentity}
+          onCheckedChange={handleSharedIdentityChange}
+          disabled={sharedIdentitySaving}
+          aria-label={t("context.sharedIdentity")}
+        />
       </div>
 
       {/* Compaction threshold mode selector — three presets + custom.

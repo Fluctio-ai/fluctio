@@ -164,10 +164,7 @@ export default function AgentChannelsPage() {
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <Radio className="size-5 text-muted-foreground" />
-            <h2 className="text-2xl font-semibold tracking-tight">{t("channels.channelsTitle")}</h2>
-          </div>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("channels.channelsTitle")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
             {t("channels.channelsSubtitle")} <strong>{agentName || t("channels.thisAgent")}</strong>{" "}
             {t("channels.channelsSubtitleSuffix")}

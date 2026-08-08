@@ -124,7 +124,7 @@ export default function AgentMCPPage() {
       )}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold">{t("mcp.title")}</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("mcp.title")}</h2>
           <p className="text-sm text-muted-foreground mt-1">
             {t("mcp.subtitle", { name: agentName || t("mcp.thisAgent") })}
           </p>

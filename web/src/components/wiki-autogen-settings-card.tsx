@@ -3,10 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { RefreshCwIcon, SparklesIcon } from "lucide-react";
+import { Globe, RefreshCwIcon, SparklesIcon } from "lucide-react";
 import {
   type KBSource,
   type WikiAutoGenCfg,
@@ -153,13 +152,12 @@ export function WikiAutoGenSettingsCard() {
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <Label className="text-sm font-medium">{t("wiki.autoGen")}</Label>
-          <p className="text-xs text-muted-foreground">
-            {t("wiki.autoGenHint")}
-          </p>
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <Globe className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("wiki.autoGen")}</h3>
         </div>
+        <p className="text-sm text-muted-foreground mb-3">{t("wiki.autoGenHint")}</p>
         <Switch
           checked={wikiCfg.enabled}
           onCheckedChange={(v) => saveWikiCfg({ ...wikiCfg, enabled: v })}

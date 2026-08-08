@@ -16,6 +16,7 @@ import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
+import { BookOpen } from "lucide-react";
 
 // KBSettingsCard — the KB auto-query configuration card. Lives in the
 // Settings dialog's Knowledge tab. The data-source *list* is browsed
@@ -108,13 +109,12 @@ export function KBSettingsCard() {
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <Label className="text-sm font-medium">{t("knowledge.autoQuery")}</Label>
-          <p className="text-xs text-muted-foreground">
-            {t("knowledge.autoQueryDesc")}
-          </p>
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <BookOpen className="h-4 w-4 text-primary" />
+          <h3 className="font-medium">{t("knowledge.autoQuery")}</h3>
         </div>
+        <p className="text-sm text-muted-foreground mb-3">{t("knowledge.autoQueryDesc")}</p>
         <Switch
           checked={kbEnabled}
           onCheckedChange={setKbEnabled}

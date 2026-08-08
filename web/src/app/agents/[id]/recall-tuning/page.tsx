@@ -5,7 +5,7 @@ import { useT } from "@/lib/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Database, Sparkles, FlaskConical, Search, Loader2 } from "lucide-react";
+import { Database, Sparkles, Search, Loader2 } from "lucide-react";
 import {
   getAgentRecallTuning,
   setAgentRecallTuning,
@@ -123,12 +123,11 @@ export default function AgentRecallTuningPage() {
     : 0;
 
   return (
-    <div className="space-y-6 p-4">
-      <div className="flex items-center gap-2">
-        <FlaskConical className="h-5 w-5 text-muted-foreground" />
-        <h2 className="text-lg font-semibold">{t("recallTuning.title")}</h2>
+    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+      <div>
+        <h2 className="text-2xl font-semibold tracking-tight">{t("recallTuning.title")}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{t("recallTuning.description")}</p>
       </div>
-      <p className="text-sm text-muted-foreground">{t("recallTuning.description")}</p>
 
       <div className="grid grid-cols-3 gap-3">
         <Stat

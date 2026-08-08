@@ -1494,6 +1494,12 @@ export interface AgentUpdatePayload {
   // The dedup thresholds (articleDupHigh/Mid/flashDupThreshold/todoDupThreshold)
   // gate inbound write dedup; nil = built-in default.
   kb?: AgentKBCfg;
+  // Per-agent overrides for LLM generation + the ReAct iteration budget.
+  // Omit to leave unchanged; pass <=0 to clear (fall back to the
+  // agents.defaults entry → system default 8192 / 0.7 / 20).
+  maxTokens?: number;
+  temperature?: number;
+  maxToolIterations?: number;
 }
 
 export async function updateAgent(id: string, agent: AgentUpdatePayload) {
