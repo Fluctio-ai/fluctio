@@ -1,10 +1,12 @@
 package kb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
 	"github.com/fluctio-ai/fluctio/internal/httpclient"
+	"github.com/go-shiori/go-readability"
 )
 
 func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRatioFn func() float64, thresholdFn func() float64, insightInvoker InsightInvoker, insightModel string, insightMaxTokens int) {
@@ -678,6 +681,19 @@ func registerKBGenerateInsights(r *tools.Registry, store *KBStore, agentID strin
 
 var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
 
+// Regexps used by stripHTMLToText (the legacy fallback when readability
+// extraction yields nothing) and the <title> fallback. Package-level so each
+// call doesn't recompile.
+var (
+	pageTitleRe     = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	scriptTagRe     = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	styleTagRe      = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	blockLevelTagRe = regexp.MustCompile(`(?is)</?(p|div|section|article|aside|header|footer|nav|main|figure|figcaption|blockquote|pre|li|ul|ol|dl|dd|dt|tr|table|thead|tbody|tfoot|td|th|caption|h[1-6]|br|hr)\b[^>]*>`)
+	spaceRunRe      = regexp.MustCompile(`[ \t\r\f]+`)
+	lineEdgeSpaceRe = regexp.MustCompile(` ?\n ?`)
+	newlineRunRe    = regexp.MustCompile(`\n{3,}`)
+)
+
 var kbFetchClient = &http.Client{
 	Timeout: 30 * time.Second,
 	Transport: httpclient.Wrap(&http.Transport{
@@ -712,41 +728,54 @@ func FetchURLContent(ctx context.Context, rawURL string) (title, body string, er
 		return "", "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	// readability scores candidate containers across the whole document, so
+	// it needs the full HTML — the old 512 KB cap truncated large articles
+	// and broke extraction. 2 MB is plenty for any text article.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if err != nil {
 		return "", "", err
 	}
 
-	html := string(data)
+	pageURL, err := url.Parse(rawURL)
+	if err != nil {
+		return "", "", err
+	}
 
-	// Extract title
-	titleRe := regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
-	if m := titleRe.FindStringSubmatch(html); len(m) > 1 {
-		title = strings.TrimSpace(htmlTagRe.ReplaceAllString(m[1], ""))
+	article, perr := readability.FromReader(bytes.NewReader(data), pageURL)
+	if perr == nil {
+		title = strings.TrimSpace(article.Title)
+		body = strings.TrimSpace(article.TextContent)
+	}
+	// readability occasionally returns a title but empty TextContent for
+	// JS-rendered or non-article pages; fall back to the <title> tag and a
+	// structured tag strip so we still ingest something usable.
+	if title == "" {
+		if m := pageTitleRe.FindSubmatch(data); len(m) > 1 {
+			title = strings.TrimSpace(htmlTagRe.ReplaceAllString(string(m[1]), ""))
+		}
 	}
 	if title == "" {
 		title = rawURL
 	}
-
-	// Strip script/style, then tags
-	scriptRe := regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
-	html = scriptRe.ReplaceAllString(html, "")
-	styleRe := regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
-	html = styleRe.ReplaceAllString(html, "")
-	text := htmlTagRe.ReplaceAllString(html, " ")
-
-	// Decode common entities
-	text = strings.ReplaceAll(text, "&amp;", "&")
-	text = strings.ReplaceAll(text, "&lt;", "<")
-	text = strings.ReplaceAll(text, "&gt;", ">")
-	text = strings.ReplaceAll(text, "&nbsp;", " ")
-
-	// Collapse whitespace
-	spaceRe := regexp.MustCompile(`[ \t]+`)
-	text = spaceRe.ReplaceAllString(text, " ")
-	nlRe := regexp.MustCompile(`\n{3,}`)
-	text = nlRe.ReplaceAllString(text, "\n\n")
-	body = strings.TrimSpace(text)
+	if body == "" {
+		body = stripHTMLToText(string(data))
+	}
 
 	return title, body, nil
+}
+
+// stripHTMLToText is the legacy HTML→text path, kept as a fallback for when
+// readability extraction yields nothing (non-article pages, JS-rendered
+// content). Block-level tags become newlines so paragraph/heading/list
+// structure survives; inline tags are dropped; entities are fully decoded.
+func stripHTMLToText(h string) string {
+	h = scriptTagRe.ReplaceAllString(h, "")
+	h = styleTagRe.ReplaceAllString(h, "")
+	h = blockLevelTagRe.ReplaceAllString(h, "\n")
+	text := htmlTagRe.ReplaceAllString(h, "")
+	text = html.UnescapeString(text)
+	text = spaceRunRe.ReplaceAllString(text, " ")
+	text = lineEdgeSpaceRe.ReplaceAllString(text, "\n")
+	text = newlineRunRe.ReplaceAllString(text, "\n\n")
+	return strings.TrimSpace(text)
 }
