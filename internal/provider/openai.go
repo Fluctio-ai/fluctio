@@ -263,6 +263,7 @@ type sseResponse struct {
 type openAIRequestMode struct {
 	maxCompletionTokens bool
 	omitTemperature     bool
+	omitResponseFormat  bool // flipped when a 4xx says the model rejects response_format
 }
 
 func initialOpenAIRequestMode(model string) openAIRequestMode {
@@ -304,7 +305,7 @@ func (p *OpenAIProvider) buildRequest(ctx context.Context, messages []Message, t
 	if NoThinkingRequested(ctx) {
 		req.Thinking = &thinkingControl{Type: "disabled"}
 	}
-	if JSONModeRequested(ctx) {
+	if JSONModeRequested(ctx) && !mode.omitResponseFormat {
 		req.ResponseFormat = &responseFormat{Type: "json_object"}
 	}
 
@@ -351,8 +352,11 @@ func NoThinkingRequested(ctx context.Context) bool {
 type jsonModeCtxKey struct{}
 
 // WithJSONMode returns a derived context asking the provider to force
-// valid JSON output (OpenAI response_format json_object). Providers that
-// don't recognize the flag ignore it.
+// valid JSON output (OpenAI response_format json_object). A few
+// OpenAI-compat endpoints 400 on the parameter instead of ignoring it;
+// doChatRequest auto-detects that (shouldRetryWithoutResponseFormat) and
+// retries with response_format dropped — the prompt still requests JSON,
+// so well-behaved models keep emitting it.
 func WithJSONMode(ctx context.Context) context.Context {
 	return context.WithValue(ctx, jsonModeCtxKey{}, true)
 }
@@ -515,7 +519,7 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []Message, too
 func (p *OpenAIProvider) doChatRequest(ctx context.Context, messages []Message, tools []Tool, model string, maxTokens int, temperature float64, stream bool) (*http.Response, error) {
 	mode := initialOpenAIRequestMode(model)
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 4; attempt++ {
 		httpReq, err := p.buildRequest(ctx, messages, tools, model, maxTokens, temperature, stream, mode)
 		if err != nil {
 			return nil, err
@@ -542,6 +546,10 @@ func (p *OpenAIProvider) doChatRequest(ctx context.Context, messages []Message, 
 			mode.omitTemperature = true
 			continue
 		}
+		if !mode.omitResponseFormat && shouldRetryWithoutResponseFormat(resp.StatusCode, body) {
+			mode.omitResponseFormat = true
+			continue
+		}
 
 		return nil, lastErr
 	}
@@ -562,6 +570,20 @@ func shouldRetryWithoutTemperature(status int, body string) bool {
 	}
 	lower := strings.ToLower(body)
 	return strings.Contains(lower, "temperature") && strings.Contains(lower, "only the default")
+}
+
+// shouldRetryWithoutResponseFormat reports whether the 4xx body suggests the
+// model rejects OpenAI's response_format parameter. agnes-2.5-flash and
+// several domestic OpenAI-compat endpoints 400 on it instead of ignoring it
+// (the WithJSONMode comment's assumption). When true, doChatRequest retries
+// the same call with response_format dropped — the prompt still asks for
+// JSON, so well-behaved models keep emitting valid JSON without the hint.
+func shouldRetryWithoutResponseFormat(status int, body string) bool {
+	if status < 400 || status >= 500 {
+		return false
+	}
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "response_format") || strings.Contains(lower, "json_object")
 }
 
 func (p *OpenAIProvider) parseSSE(reader io.Reader) (*Response, error) {

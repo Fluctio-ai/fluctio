@@ -158,3 +158,46 @@ func TestOpenAIKeepsLegacyChatParametersForUnknownModels(t *testing.T) {
 		t.Fatalf("calls = %d, want 1", calls)
 	}
 }
+
+// TestOpenAIRetriesWithoutResponseFormat verifies that a model which 400s on
+// OpenAI's response_format parameter (e.g. agnes-2.5-flash and other domestic
+// OpenAI-compat endpoints) is retried with response_format dropped. The
+// prompt-level JSON request still goes through; the model just loses the
+// response_format hint. See shouldRetryWithoutResponseFormat.
+func TestOpenAIRetriesWithoutResponseFormat(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := atomic.AddInt32(&calls, 1)
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if call == 1 {
+			if _, ok := body["response_format"]; !ok {
+				t.Fatalf("first request missing response_format: %#v", body)
+			}
+			http.Error(w, `{"error":{"message":"Unsupported parameter: 'response_format'. This model does not support json_object output."}}`, http.StatusBadRequest)
+			return
+		}
+		if _, ok := body["response_format"]; ok {
+			t.Fatalf("retry still sent response_format: %#v", body)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	p := NewOpenAI("test-key", srv.URL)
+	ctx := WithJSONMode(context.Background())
+	resp, err := p.Chat(ctx, []Message{{Role: "user", Content: "hi"}}, nil, "test-model", 123, 0)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Fatalf("content = %q, want ok", resp.Content)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
