@@ -414,6 +414,124 @@ func (s *Server) handleKBListTodos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, todos)
 }
 
+// handleKBListBookmarks lists the agent's saved web bookmarks (newest first).
+func (s *Server) handleKBListBookmarks(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	bookmarks, err := kbStore.ListBookmarks(r.Context(), agentID, 200, 0)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if bookmarks == nil {
+		bookmarks = []kb.KBBookmark{}
+	}
+	writeJSON(w, http.StatusOK, bookmarks)
+}
+
+// handleKBSaveBookmark saves a URL as a bookmark. The page body is fetched at
+// save time (go-readability) so the bookmark survives link rot; a fetch
+// failure still saves the URL-only bookmark. title defaults to the page
+// <title> when the caller omits it.
+func (s *Server) handleKBSaveBookmark(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		URL     string `json:"url"`
+		Title   string `json:"title,omitempty"`
+		Summary string `json:"summary,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.URL == "" {
+		http.Error(w, "url is required", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	content := ""
+	fetchedTitle := ""
+	if t, body, ferr := kb.FetchURLContent(r.Context(), req.URL); ferr == nil {
+		content = body
+		fetchedTitle = t
+	}
+	title := req.Title
+	if title == "" {
+		title = fetchedTitle
+	}
+	id, err := kbStore.SaveBookmark(r.Context(), agentID, req.URL, title, req.Summary, content, "web")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "title": title, "content_chars": len(content)})
+}
+
+// handleKBDeleteBookmark deletes one bookmark (and its embedding) by id.
+func (s *Server) handleKBDeleteBookmark(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	bookmarkID := r.PathValue("bookmarkId")
+	if agentID == "" || bookmarkID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := kbStore.DeleteBookmark(r.Context(), agentID, bookmarkID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// handleKBUpdateBookmark overwrites a bookmark's title and/or summary (the
+// editable metadata) and re-embeds it. URL and fetched body are immutable here.
+func (s *Server) handleKBUpdateBookmark(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	bookmarkID := r.PathValue("bookmarkId")
+	if agentID == "" || bookmarkID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Title   string `json:"title,omitempty"`
+		Summary string `json:"summary,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := kbStore.UpdateBookmark(r.Context(), agentID, bookmarkID, req.Title, req.Summary); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
 // handleKBMCP handles MCP JSON-RPC 2.0 requests for an agent's knowledge base.
 func (s *Server) handleKBMCP(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")

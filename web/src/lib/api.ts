@@ -1699,6 +1699,21 @@ export interface KBSource {
 }
 export interface KBStats { source_count: number; entry_count: number; total_chars: number; }
 export interface KBEntry { id: number; source_id: string; chunk_index: number; content: string; }
+// KBBookmark mirrors the backend kb.KBBookmark row: a saved web link with
+// optional title/summary and the fetched page body (so it survives link rot).
+export interface KBBookmark {
+  id: string;
+  agent_id: string;
+  url: string;
+  title: string;
+  summary: string;
+  content?: string;
+  fetched_at?: string;
+  source?: string;
+  created_at: string;
+  updated_at: string;
+  promoted_to_article_id?: string;
+}
 
 export async function listKBSources(agentId: string): Promise<KBSource[]> {
   const res = await apiFetch(`/api/agents/${agentId}/kb/sources`);
@@ -1777,6 +1792,42 @@ export async function kbListTodos(agentId: string, status?: string): Promise<KBS
   if (!res.ok) return [];
   const data = await res.json().catch(() => []);
   return Array.isArray(data) ? data : [];
+}
+export async function listBookmarks(agentId: string): Promise<KBBookmark[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/bookmarks`);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+export async function saveBookmark(
+  agentId: string,
+  url: string,
+  title?: string,
+  summary?: string,
+): Promise<{ id?: string; title?: string; content_chars?: number; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/bookmarks`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, title, summary }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function deleteBookmark(agentId: string, bookmarkId: string): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/bookmarks/${bookmarkId}`, { method: "DELETE" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function updateBookmark(
+  agentId: string,
+  bookmarkId: string,
+  patch: { title?: string; summary?: string },
+): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/bookmarks/${bookmarkId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
 }
 
 // A KB write parked at the mid dedup tier pending user merge / create / skip.

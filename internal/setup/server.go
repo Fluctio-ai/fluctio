@@ -369,6 +369,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/agents/{id}/kb/todo", auth(s.handleKBSaveTodo))
 	mux.HandleFunc("PATCH /api/agents/{id}/kb/todos/{sourceId}", auth(s.handleKBUpdateTodo))
 	mux.HandleFunc("GET /api/agents/{id}/kb/todos", auth(s.handleKBListTodos))
+	mux.HandleFunc("GET /api/agents/{id}/kb/bookmarks", auth(s.handleKBListBookmarks))
+	mux.HandleFunc("POST /api/agents/{id}/kb/bookmarks", auth(s.handleKBSaveBookmark))
+	mux.HandleFunc("DELETE /api/agents/{id}/kb/bookmarks/{bookmarkId}", auth(s.handleKBDeleteBookmark))
+	mux.HandleFunc("PATCH /api/agents/{id}/kb/bookmarks/{bookmarkId}", auth(s.handleKBUpdateBookmark))
 	mux.HandleFunc("GET /api/agents/{id}/kb/pending", auth(s.handleKBListPending))
 	mux.HandleFunc("POST /api/agents/{id}/kb/pending/{pendingId}/resolve", auth(s.handleKBResolvePending))
 

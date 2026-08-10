@@ -37,6 +37,7 @@ import {
   type KBSource,
   type KBStats,
   type KBEntry,
+  type KBBookmark,
   listKBSources,
   listKBEntries,
   kbIngestText,
@@ -48,6 +49,9 @@ import {
   kbSaveTodo,
   kbUpdateTodo,
   kbListTodos,
+  listBookmarks,
+  saveBookmark,
+  deleteBookmark,
   kbGetInsights,
   kbGenerateInsights,
   listKBPending,
@@ -876,6 +880,161 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
             <Button variant="outline" onClick={() => setFlashOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={handleSave} disabled={saving || !draft.trim()}>
               {saving ? t("common.saving") : t("knowledge.saveFlash")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── Bookmarks: saved web links (URL + title/summary + fetched body) ──
+
+export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
+  const t = useT();
+  const agentId = useAgentIdFromURL();
+  const [initialBm] = useState(() =>
+    agentId ? readCache<KBBookmark[]>(`kb-bookmark:${agentId}`) : undefined,
+  );
+  const [bookmarks, setBookmarks] = useState<KBBookmark[]>(initialBm ?? []);
+  const [addOpen, setAddOpen] = useState(false);
+  const [loading, setLoading] = useState(!initialBm);
+  const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [summary, setSummary] = useState("");
+
+  const load = useCallback(async () => {
+    if (!agentId) return;
+    const silent = !!readCache(`kb-bookmark:${agentId}`);
+    if (!silent) setLoading(true);
+    try {
+      const list = await listBookmarks(agentId);
+      list.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+      setBookmarks(list);
+      writeCache(`kb-bookmark:${agentId}`, list);
+    } catch {}
+    if (!silent) setLoading(false);
+  }, [agentId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSave = useCallback(async () => {
+    if (!agentId || !url.trim()) return;
+    setSaving(true);
+    try {
+      const res = await saveBookmark(agentId, url.trim(), title.trim() || undefined, summary.trim() || undefined);
+      if (res.error) notify(res.error);
+      else { setUrl(""); setTitle(""); setSummary(""); setAddOpen(false); await load(); }
+    } catch { notify(t("knowledge.failedAddText")); }
+    setSaving(false);
+  }, [agentId, url, title, summary, load, t]);
+
+  const handleDelete = useCallback(async (id: string) => {
+    if (!agentId) return;
+    await deleteBookmark(agentId, id);
+    load();
+  }, [agentId, load]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return bookmarks;
+    return bookmarks.filter((b) =>
+      `${b.title} ${b.summary} ${b.url}`.toLowerCase().includes(q),
+    );
+  }, [bookmarks, query]);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchBookmarks")} className="h-7 text-xs flex-1 rounded-md" />
+        <Button size="sm" className="h-7 shrink-0" onClick={() => setAddOpen(true)}>
+          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.addBookmark")}
+        </Button>
+      </div>
+      <ScrollArea className="flex-1">
+        <div className="mx-auto max-w-3xl space-y-2 p-4">
+          {loading ? (
+            <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
+          ) : bookmarks.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("knowledge.noBookmarks")}</p>
+          ) : visible.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("knowledge.noSearchResult")}</p>
+          ) : (
+            visible.map((b) => (
+              <div key={b.id} className="group rounded-lg border bg-background p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <a href={b.url} target="_blank" rel="noopener noreferrer" className="block truncate text-sm font-medium hover:underline">
+                      {b.title || b.url}
+                    </a>
+                    <a href={b.url} target="_blank" rel="noopener noreferrer" className="block truncate text-xs text-muted-foreground hover:underline">
+                      {b.url}
+                    </a>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+                    onClick={() => handleDelete(b.id)}
+                    aria-label={t("common.delete")}
+                  >
+                    <TrashIcon className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                {b.summary && (
+                  <p className="mt-1.5 whitespace-pre-wrap text-xs text-muted-foreground">{b.summary}</p>
+                )}
+                <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
+                  <span>{relativeTime(b.created_at)}</span>
+                  {b.content && (
+                    <>
+                      <span>{t("knowledge.bookmarkBody", { n: b.content.length })}</span>
+                      <button
+                        type="button"
+                        className="hover:text-foreground underline-offset-2 hover:underline"
+                        onClick={() => setExpanded((m) => ({ ...m, [b.id]: !m[b.id] }))}
+                      >
+                        {expanded[b.id] ? t("knowledge.bookmarkHideBody") : t("knowledge.bookmarkShowBody")}
+                      </button>
+                    </>
+                  )}
+                </div>
+                {b.content && expanded[b.id] && (
+                  <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-xs">{b.content}</pre>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t("knowledge.addBookmark")}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>{t("knowledge.bookmarkUrlLabel")}</Label>
+              <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder={t("knowledge.bookmarkUrlPlaceholder")} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("knowledge.bookmarkTitleLabel")}</Label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("knowledge.bookmarkSummaryLabel")}</Label>
+              <textarea
+                className="flex min-h-[80px] w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={handleSave} disabled={saving || !url.trim()}>
+              {saving ? t("common.saving") : t("knowledge.addBookmark")}
             </Button>
           </DialogFooter>
         </DialogContent>

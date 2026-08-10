@@ -16,6 +16,7 @@ import {
   ChevronRightIcon,
   FileTextIcon,
   LightbulbIcon,
+  LinkIcon,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
@@ -111,6 +112,7 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
     { title: t("knowledge.flashes"), url: `/agents/${agentId}/knowledge/flashes/`, icon: LightbulbIcon },
     { title: t("knowledge.todos"), url: `/agents/${agentId}/knowledge/todos/`, icon: CheckSquareIcon },
     { title: t("knowledge.diary"), url: `/agents/${agentId}/knowledge/diary/`, icon: CalendarIcon },
+    { title: t("knowledge.bookmarks"), url: `/agents/${agentId}/knowledge/bookmarks/`, icon: LinkIcon },
     { title: t("nav.knowledge.wiki"), url: `/agents/${agentId}/wiki/`, icon: BookMarkedIcon },
   ];
 
