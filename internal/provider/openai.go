@@ -128,9 +128,19 @@ func toAPIMessages(msgs []Message) []json.RawMessage {
 		// to guarantee prompt cache hits (byte-identical prefix) —
 		// unless the cached message has orphan tool_calls, in which
 		// case rebuild it without them.
-		if m.Role == "assistant" && len(m.RawAssistant) > 0 && !orphanAssistant[i] {
+		if m.Role == "assistant" && len(m.RawAssistant) > 0 && !orphanAssistant[i] && rawAssistantHasRole(m.RawAssistant) {
 			out = append(out, m.RawAssistant)
 			continue
+		}
+
+		// An assistant turn whose only payload was a stripped Anthropic
+		// thinking block (raw_assistant without a role, caught above) — or
+		// any other empty assistant — reaches here with empty
+		// Content/ContentParts/ToolCalls. Strict OpenAI-compatible APIs
+		// (Zhipu GLM) reject empty assistant content, so pad a placeholder
+		// to keep the turn in the transcript.
+		if m.Role == "assistant" && m.Content == "" && len(m.ContentParts) == 0 && len(m.ToolCalls) == 0 {
+			m.Content = "[internal reasoning]"
 		}
 
 		am := apiMessage{
@@ -150,6 +160,25 @@ func toAPIMessages(msgs []Message) []json.RawMessage {
 		out = append(out, raw)
 	}
 	return out
+}
+
+// rawAssistantHasRole reports whether the cached RawAssistant JSON is a
+// complete OpenAI-shaped message — i.e. it carries a non-empty "role".
+// Anthropic thinking blocks cached as RawAssistant look like
+// {"signature","thinking","type":"thinking"} with NO role; replaying those
+// verbatim sends a role-less message that strict OpenAI-compatible APIs
+// reject (Zhipu GLM returns code 1214 "Role information cannot be empty").
+// Such messages fall through to normal construction so the assistant turn
+// replays via Role+Content (the thinking itself is dropped — OpenAI
+// doesn't model it).
+func rawAssistantHasRole(raw json.RawMessage) bool {
+	var probe struct {
+		Role string `json:"role"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return false
+	}
+	return probe.Role != ""
 }
 
 // findOrphanToolCalls walks msgs and flags assistant messages whose
