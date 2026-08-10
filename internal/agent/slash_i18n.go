@@ -132,6 +132,40 @@ var slashTexts = map[string]slashEntry{
 		"渠道：`%s`\n你的用户 ID：`%s`\n发送者名称：`%s`\n\n（把这个 ID 加到 agent 配置的 `admins.%s` 里，即可获得写权限 slash 命令的使用权。）",
 	},
 
+	// ── bookmark (/bookmark) ──
+	"bookmark.no_store": {
+		"⚠️ Bookmark storage isn't configured for this agent.",
+		"⚠️ 本 agent 未启用书签存储。",
+	},
+	"bookmark.usage": {
+		"🔖 Usage:\n  /bookmark <url> [note…] — save a URL (fetches the page body)\n  /bookmark list — list recent bookmarks",
+		"🔖 用法：\n  /bookmark <链接> [备注…] — 保存链接（自动抓取正文，防失效）\n  /bookmark list — 列出最近的书签",
+	},
+	"bookmark.saved": {
+		"🔖 Saved: %s\nTitle: %s%s\nid: %s",
+		"🔖 已收藏：%s\n标题：%s%s\nid：%s",
+	},
+	"bookmark.body_ok": {
+		"\nBody: %d chars fetched",
+		"\n正文：已抓取 %d 字符",
+	},
+	"bookmark.body_skip": {
+		"\nBody: not fetched (link saved as-is)",
+		"\n正文：未抓取（仅保存链接）",
+	},
+	"bookmark.error": {
+		"⚠️ Bookmark error: %v",
+		"⚠️ 书签出错：%v",
+	},
+	"bookmark.list_empty": {
+		"No bookmarks yet.",
+		"还没有书签。",
+	},
+	"bookmark.list_header": {
+		"🔖 %d bookmark(s):\n",
+		"🔖 %d 条书签：\n",
+	},
+
 	// ── status ──
 	"status": {
 		"⚡ Fluctio Status\n" +
@@ -293,6 +327,8 @@ Context
   /status         — Agent status & memory info
   /usage          — Session token/turn stats
   /insights [N]   — Activity insights (last N days, default 7)
+  /bookmark <url> — Save a URL as a bookmark (fetches the page body)
+  /bookmark list  — List recent bookmarks
 
 Personality & Model
   /personality        — List available personalities
@@ -330,6 +366,8 @@ Info
   /status         — Agent 状态与记忆信息
   /usage          — 会话 token / 轮次统计
   /insights [N]   — 活动洞察（过去 N 天，默认 7）
+  /bookmark <链接> — 收藏链接（自动抓取正文，防失效）
+  /bookmark list  — 列出最近的书签
 
 人格与模型
   /personality        — 列出可用人格

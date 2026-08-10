@@ -91,6 +91,18 @@ func (g *Gateway) runKbEmbedBackfillCycle(ctx context.Context) {
 				slog.Info("kb embed backfill done",
 					"agent", agentID, "processed", processed, "failed", failed)
 			}
+			// Bookmarks have their own table + embeddings; backfill any saved
+			// via CLI/slash (no embedder wired) or whose save-time embed missed.
+			// Same kbEmbedding gate — both are KB-family recall.
+			bmProcessed, bmFailed, bmErr := kbs.BackfillBookmarkEmbeddings(ctx, agentID, 200*time.Millisecond)
+			if bmErr != nil {
+				slog.Warn("kb bookmark embed backfill failed", "agent", agentID, "error", bmErr)
+				return
+			}
+			if bmProcessed > 0 || bmFailed > 0 {
+				slog.Info("kb bookmark embed backfill done",
+					"agent", agentID, "processed", bmProcessed, "failed", bmFailed)
+			}
 		}()
 	}
 }

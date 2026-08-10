@@ -166,6 +166,13 @@ type Agent struct {
 	// degrades to "feature off" rather than crashing.
 	goalStore goal.Store
 
+	// kbStore is the agent's knowledge-base store. Wired by the manager
+	// alongside RegisterKBTools; nil on agents without a relational store,
+	// in which case /bookmark degrades to a "feature off" message. Used by
+	// the /bookmark slash command so it can save straight to the bookmark
+	// table without going through the LLM.
+	kbStore *kb.KBStore
+
 	// projectRuntime, when non-nil, turns this agent into a coding agent:
 	// it can scaffold a project from a template, boot a dev server, and
 	// hand back a preview URL via the start_app_preview / app_preview_logs

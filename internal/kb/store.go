@@ -180,9 +180,16 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 		// reach them — recall them straight from their chunk vectors and merge
 		// (capped) so a relevant inspiration/todo can surface with the articles.
 		ftRR := s.searchFlashTodoByVector(ctx, agentID, query, limit, threshold)
-		if len(wikiRR) > 0 || len(ftRR) > 0 {
+		// Bookmarks live in their own table; recall by title+summary vector so
+		// a saved link can surface with the rest. Vector-only (no keyword
+		// fallback) — matches flash/todo's split-search treatment.
+		bmRR := s.searchBookmarksByVector(ctx, agentID, query, limit, threshold)
+		if len(wikiRR) > 0 || len(ftRR) > 0 || len(bmRR) > 0 {
 			merged := mergeKBResults(wikiRR, ftRR, limit)
-			slog.Info("kb search: vector path (wiki+flash/todo)", "agent", agentID, "wiki", len(wikiRR), "flashtodo", len(ftRR), "results", len(merged))
+			if len(bmRR) > 0 {
+				merged = mergeKBResults(merged, bmRR, limit)
+			}
+			slog.Info("kb search: vector path (wiki+flash/todo+bookmark)", "agent", agentID, "wiki", len(wikiRR), "flashtodo", len(ftRR), "bookmark", len(bmRR), "results", len(merged))
 			return merged, nil
 		}
 	}

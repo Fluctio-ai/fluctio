@@ -139,6 +139,9 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 		}
 		return a.slashModel(msg, args[0])
 
+	case "/bookmark":
+		return a.slashBookmark(msg, args)
+
 	case "/goal":
 		return a.slashGoal(msg, args)
 

@@ -406,6 +406,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			// Register KB tools so the agent can search/add/list/delete
 			// knowledge-base entries during chat turns.
 			if kbStore != nil {
+				ag.kbStore = kbStore
 				kb.RegisterKBTools(ag.registry, kbStore, rc.ID, func() float64 {
 					if kbCfg.WikiRatio != nil {
 						return *kbCfg.WikiRatio

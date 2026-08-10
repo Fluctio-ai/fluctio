@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strings"
@@ -316,4 +317,70 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 		}
 	}
 	return results
+}
+
+// BackfillBookmarkEmbeddings vectorizes kb_bookmarks whose title+summary has
+// no embedding yet — the safety-net for the save-time path (embedBookmark),
+// which is best-effort and silent on failure. CLI/slash-saved bookmarks never
+// had an embedder wired, so this is how they catch up once vectorization is
+// on. Mirrors BackfillEntryEmbeddings (force=false). Returns processed/failed
+// counts; a failed embed is counted and skipped, never aborts the pass.
+func (s *KBStore) BackfillBookmarkEmbeddings(ctx context.Context, agentID string, perCallDelay time.Duration) (processed, failed int, err error) {
+	if s.embedder == nil || !s.embedder.Available() || agentID == "" {
+		return 0, 0, fmt.Errorf("kb.BackfillBookmarkEmbeddings: embedder and agentID required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT b.id, b.title, b.summary
+		 FROM kb_bookmarks b
+		 LEFT JOIN kb_bookmark_embeddings e ON e.bookmark_id = b.id
+		 WHERE b.agent_id = `+s.ph(1)+` AND e.bookmark_id IS NULL
+		 ORDER BY b.created_at`, agentID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("kb bookmark backfill: list pending: %w", err)
+	}
+	type pending struct {
+		id              string
+		title, summary  string
+	}
+	var batch []pending
+	for rows.Next() {
+		var p pending
+		if err := rows.Scan(&p.id, &p.title, &p.summary); err != nil {
+			rows.Close()
+			return processed, failed, err
+		}
+		batch = append(batch, p)
+	}
+	rows.Close()
+	if len(batch) == 0 {
+		return 0, 0, nil
+	}
+	// Embed one at a time — bookmarks are few and each text is short, so
+	// batching buys little and complicates the title+summary concat.
+	for _, p := range batch {
+		if ctx.Err() != nil {
+			return processed, failed, ctx.Err()
+		}
+		text := strings.TrimSpace(p.title + "\n" + p.summary)
+		if text == "" {
+			continue // nothing to embed; leave pending rather than store an empty vector
+		}
+		vecs, embErr := s.embedder.Embed(ctx, []string{text})
+		if embErr != nil || len(vecs) != 1 {
+			slog.Warn("kb bookmark backfill: embed failed", "agent", agentID, "bookmark", p.id, "error", embErr)
+			failed++
+		} else if saveErr := s.SaveBookmarkEmbedding(ctx, agentID, p.id, vecs[0], s.embedder.Model()); saveErr != nil {
+			failed++
+		} else {
+			processed++
+		}
+		if perCallDelay > 0 {
+			select {
+			case <-time.After(perCallDelay):
+			case <-ctx.Done():
+				return processed, failed, ctx.Err()
+			}
+		}
+	}
+	return processed, failed, nil
 }

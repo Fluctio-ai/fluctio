@@ -32,6 +32,7 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 	registerKBUpdateTodo(r, store, agentID)
 	registerKBListTodos(r, store, agentID)
 	registerKBListFlashes(r, store, agentID)
+	registerKBBookmark(r, store, agentID)
 	registerKBVerifyClaim(r, store, agentID)
 	// The deep-reading tool needs an LLM invoker; when none is wired (e.g. an
 	// agent without a provider) the tool is simply unavailable rather than
@@ -630,6 +631,77 @@ func registerKBListFlashes(r *tools.Registry, store *KBStore, agentID string) {
 			fmt.Fprintf(&sb, "- %s (id: %s)\n", title, id)
 		}
 		return sb.String(), nil
+	})
+}
+
+// registerKBBookmark adds knowledgebase_save_bookmark — save a web URL as a
+// read-later candidate. The page body is fetched at save time so the bookmark
+// survives link rot. Mirrors the /bookmark slash command and `fluctio bookmark
+// add` CLI; use the tool when the user describes the intent in natural
+// language, and the slash/CLI when they type the command directly.
+func registerKBBookmark(r *tools.Registry, store *KBStore, agentID string) {
+	r.Register("knowledgebase_save_bookmark", "Save a web URL as a bookmark (收藏链接) — a read-later candidate the user EXPLICITLY wants to revisit later. Fetches the page body at save time so the bookmark survives link rot. title defaults to the page <title>; summary is an optional note. Use ONLY on explicit user intent (收藏这个链接 / 存一下这个网址 / bookmark this / 以后再看 / 这个先存着). Never proactively turn casual link mentions into bookmarks. For direct capture without the model, the user can type /bookmark <url>.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"url": map[string]interface{}{
+				"type":        "string",
+				"description": "The web URL to bookmark (http or https)",
+			},
+			"title": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional title override (defaults to the page <title>)",
+			},
+			"summary": map[string]interface{}{
+				"type":        "string",
+				"description": "Optional short note / summary of why this link is worth keeping",
+			},
+		},
+		"required": []string{"url"},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			URL     string `json:"url"`
+			Title   string `json:"title,omitempty"`
+			Summary string `json:"summary,omitempty"`
+		}
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		if args.URL == "" {
+			return "", fmt.Errorf("url is required")
+		}
+		u, err := url.Parse(args.URL)
+		if err != nil {
+			return "", fmt.Errorf("invalid url: %w", err)
+		}
+		if scheme := strings.ToLower(u.Scheme); scheme != "http" && scheme != "https" {
+			return "", fmt.Errorf("scheme %q not allowed; use http or https", u.Scheme)
+		}
+		fetchedTitle, content, ferr := FetchURLContent(ctx, args.URL)
+		title := args.Title
+		if title == "" {
+			title = fetchedTitle
+		}
+		if ferr != nil {
+			// Fetch failed (paywall, 404, timeout) — still bookmark the URL.
+			id, err := store.SaveBookmark(ctx, agentID, args.URL, title, args.Summary, "", "llm")
+			if err != nil {
+				return "", err
+			}
+			short := id
+			if len(short) > 12 {
+				short = short[:12]
+			}
+			return fmt.Sprintf("Saved bookmark (source_id=%s) — URL only, body fetch failed: %v. Tell the user the link is saved but the page body could not be retrieved.", short, ferr), nil
+		}
+		id, err := store.SaveBookmark(ctx, agentID, args.URL, title, args.Summary, content, "llm")
+		if err != nil {
+			return "", err
+		}
+		short := id
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		return fmt.Sprintf("Saved bookmark (source_id=%s, %d chars fetched, title=%q).", short, len(content), title), nil
 	})
 }
 
