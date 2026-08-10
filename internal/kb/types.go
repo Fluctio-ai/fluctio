@@ -38,6 +38,27 @@ type KBEntry struct {
 	Content    string `json:"content"`
 }
 
+// KBBookmark is one row of kb_bookmarks — a saved web link the user wants to
+// revisit later. Unlike a KBSource (chunked article content), a bookmark's
+// payload is the URL itself: an external pointer that may later be promoted
+// into a full article (PromotedTo tracks that link). Title and Summary are
+// optional metadata; Content holds the page body fetched at save time so the
+// bookmark survives link rot. Source records the entry point ("cli" / "slash"
+// / "llm").
+type KBBookmark struct {
+	ID         string    `json:"id"`
+	AgentID    string    `json:"agent_id"`
+	URL        string    `json:"url"`
+	Title      string    `json:"title"`
+	Summary    string    `json:"summary"`
+	Content    string    `json:"content,omitempty"`
+	FetchedAt  time.Time `json:"fetched_at,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	PromotedTo string    `json:"promoted_to_article_id,omitempty"`
+}
+
 type KBResult struct {
 	SourceID    string  `json:"source_id"`
 	SourceTitle string  `json:"source_title"`

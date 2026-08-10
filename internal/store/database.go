@@ -503,6 +503,36 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_entry_emb_agent ON kb_entry_embeddings (agent_id)`,
+		// kb_bookmarks stores saved web links (URL + optional title/summary +
+		// fetched body text so the bookmark survives link rot). Independent of
+		// kb_sources because a bookmark's payload is the URL itself — an
+		// external pointer that can later be promoted into a full article.
+		`CREATE TABLE IF NOT EXISTS kb_bookmarks (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			url TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL DEFAULT '',
+			content_fetched_at TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			promoted_to_article_id TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_bookmarks_agent ON kb_bookmarks (agent_id)`,
+		// kb_bookmark_embeddings stores one embedding per bookmark, computed
+		// from title+summary (short metadata, NOT the fetched body) so the
+		// bookmark is discoverable by vector recall.
+		`CREATE TABLE IF NOT EXISTS kb_bookmark_embeddings (
+			bookmark_id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			embedding BLOB,
+			dim INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_bookmark_emb_agent ON kb_bookmark_embeddings (agent_id)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {

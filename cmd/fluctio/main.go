@@ -120,6 +120,7 @@ func main() {
 	rootCmd.AddCommand(usageCmd())
 	rootCmd.AddCommand(projectsCmd())
 	rootCmd.AddCommand(debugCmd())
+	rootCmd.AddCommand(bookmarkCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
