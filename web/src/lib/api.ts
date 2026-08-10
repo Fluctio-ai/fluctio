@@ -1829,6 +1829,13 @@ export async function updateBookmark(
   if (!res.ok) return { error: `HTTP ${res.status}` };
   return res.json();
 }
+// promoteBookmark turns a saved bookmark into a full KB article (entering wiki
+// generation) and stamps promoted_to_article_id on the bookmark. Idempotent.
+export async function promoteBookmark(agentId: string, bookmarkId: string): Promise<{ article_source_id?: string; bookmark_id?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/bookmarks/${bookmarkId}/promote`, { method: "POST" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
 
 // A KB write parked at the mid dedup tier pending user merge / create / skip.
 export type KBPending = {

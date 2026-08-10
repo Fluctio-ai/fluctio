@@ -660,6 +660,8 @@ const zhCN: Record<string, string> = {
   "knowledge.bookmarkBody": "已存 {n} 字",
   "knowledge.bookmarkShowBody": "展开正文",
   "knowledge.bookmarkHideBody": "收起正文",
+  "knowledge.bookmarkPromote": "升级为文章",
+  "knowledge.bookmarkPromoted": "已升级为文章",
   "knowledge.viewBoard": "看板",
   "knowledge.viewList": "列表",
   "knowledge.overdue": "已逾期",

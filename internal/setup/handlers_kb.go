@@ -532,6 +532,29 @@ func (s *Server) handleKBUpdateBookmark(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// handleKBPromoteBookmark promotes a bookmark into a full KB article so it
+// enters wiki generation. Reuses an existing same-URL source and stamps
+// promoted_to_article_id on the bookmark; idempotent on repeat calls.
+func (s *Server) handleKBPromoteBookmark(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	bookmarkID := r.PathValue("bookmarkId")
+	if agentID == "" || bookmarkID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	articleID, err := kbStore.PromoteBookmarkToArticle(r.Context(), agentID, bookmarkID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"article_source_id": articleID, "bookmark_id": bookmarkID})
+}
+
 // handleKBMCP handles MCP JSON-RPC 2.0 requests for an agent's knowledge base.
 func (s *Server) handleKBMCP(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")

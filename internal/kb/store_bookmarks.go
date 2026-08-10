@@ -384,3 +384,56 @@ func (s *KBStore) BackfillBookmarkEmbeddings(ctx context.Context, agentID string
 	}
 	return processed, failed, nil
 }
+
+// PromoteBookmarkToArticle turns a saved bookmark into a full KB article so it
+// enters the wiki-generation pipeline. The bookmark's already-fetched body is
+// ingested verbatim; if empty, the URL is re-fetched (the save-time fetch may
+// have failed). When the URL is already a KB source (source_ref match) that
+// source is reused instead of duplicating. Idempotent: a bookmark already
+// marked promoted returns its article id without re-ingesting.
+func (s *KBStore) PromoteBookmarkToArticle(ctx context.Context, agentID, bookmarkID string) (string, error) {
+	bm, err := s.GetBookmark(ctx, agentID, bookmarkID)
+	if err != nil {
+		return "", err
+	}
+	if bm.PromotedTo != "" {
+		return bm.PromotedTo, nil
+	}
+	// Reuse an existing same-URL source instead of creating a duplicate.
+	if existingID, _ := s.SourceIDByRef(ctx, agentID, bm.URL); existingID != "" {
+		if err := s.setBookmarkPromoted(ctx, agentID, bookmarkID, existingID); err != nil {
+			return "", err
+		}
+		return existingID, nil
+	}
+	content := bm.Content
+	if content == "" {
+		// Re-fetch — the whole point of promoting is to land the body in the KB.
+		_, body, ferr := FetchURLContent(ctx, bm.URL)
+		if ferr != nil {
+			return "", fmt.Errorf("cannot promote: page body unavailable (%w)", ferr)
+		}
+		content = body
+	}
+	title := bm.Title
+	if title == "" {
+		title = bm.URL
+	}
+	articleID, err := s.IngestText(ctx, agentID, title, content, "url", bm.URL)
+	if err != nil {
+		return "", fmt.Errorf("ingest article: %w", err)
+	}
+	if err := s.setBookmarkPromoted(ctx, agentID, bookmarkID, articleID); err != nil {
+		return "", err
+	}
+	return articleID, nil
+}
+
+// setBookmarkPromoted stamps promoted_to_article_id + updated_at on a bookmark.
+func (s *KBStore) setBookmarkPromoted(ctx context.Context, agentID, bookmarkID, articleID string) error {
+	_, err := s.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE kb_bookmarks SET promoted_to_article_id = %s, updated_at = %s WHERE id = %s AND agent_id = %s`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4)),
+		articleID, time.Now().UTC().Format(time.RFC3339), bookmarkID, agentID)
+	return err
+}

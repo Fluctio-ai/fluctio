@@ -52,6 +52,7 @@ import {
   listBookmarks,
   saveBookmark,
   deleteBookmark,
+  promoteBookmark,
   kbGetInsights,
   kbGenerateInsights,
   listKBPending,
@@ -905,6 +906,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
+  const [promoting, setPromoting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -937,6 +939,17 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
     await deleteBookmark(agentId, id);
     load();
   }, [agentId, load]);
+
+  const handlePromote = useCallback(async (id: string) => {
+    if (!agentId) return;
+    setPromoting(id);
+    try {
+      const res = await promoteBookmark(agentId, id);
+      if (res.error) notify(res.error);
+      else await load();
+    } catch { notify(t("knowledge.failedAddText")); }
+    setPromoting(null);
+  }, [agentId, load, notify, t]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -999,6 +1012,18 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                         {expanded[b.id] ? t("knowledge.bookmarkHideBody") : t("knowledge.bookmarkShowBody")}
                       </button>
                     </>
+                  )}
+                  {b.promoted_to_article_id ? (
+                    <span className="text-emerald-600 dark:text-emerald-400">{t("knowledge.bookmarkPromoted")}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="hover:text-foreground underline-offset-2 hover:underline disabled:opacity-50"
+                      disabled={promoting === b.id}
+                      onClick={() => handlePromote(b.id)}
+                    >
+                      {promoting === b.id ? t("common.saving") : t("knowledge.bookmarkPromote")}
+                    </button>
                   )}
                 </div>
                 {b.content && expanded[b.id] && (
