@@ -39,6 +39,11 @@ export function KBSettingsCard() {
   const [articleDupMid, setArticleDupMid] = useState(0.72);
   const [flashDupThreshold, setFlashDupThreshold] = useState(0.85);
   const [todoDupThreshold, setTodoDupThreshold] = useState(0.78);
+  const [ftEnabled, setFtEnabled] = useState(false);
+  const [ftAutoMode, setFtAutoMode] = useState("disabled");
+  const [ftKeywords, setFtKeywords] = useState("");
+  const [ftMaxResults, setFtMaxResults] = useState(3);
+  const [ftThreshold, setFtThreshold] = useState(0.6);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -61,6 +66,11 @@ export function KBSettingsCard() {
           setArticleDupMid(kb.articleDupMid ?? 0.72);
           setFlashDupThreshold(kb.flashDupThreshold ?? 0.85);
           setTodoDupThreshold(kb.todoDupThreshold ?? 0.78);
+          setFtEnabled(kb.flashTodoEnabled ?? false);
+          setFtAutoMode(kb.flashTodoAutoMode ?? "disabled");
+          setFtKeywords((kb.flashTodoKeywords ?? []).join(", "));
+          setFtMaxResults(kb.flashTodoMaxResults || 3);
+          setFtThreshold(kb.flashTodoThreshold ?? 0.6);
         }
         setConfigLoaded(true);
       })
@@ -87,6 +97,14 @@ export function KBSettingsCard() {
         articleDupMid: articleDupMid || undefined,
         flashDupThreshold: flashDupThreshold || undefined,
         todoDupThreshold: todoDupThreshold || undefined,
+        flashTodoEnabled: ftEnabled,
+        flashTodoAutoMode: ftAutoMode,
+        flashTodoKeywords: ftKeywords
+          .split(/[,\n]/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+        flashTodoMaxResults: ftMaxResults,
+        flashTodoThreshold: ftThreshold,
       },
     } as any);
     if (res?.error) throw new Error(res.error);
@@ -105,6 +123,11 @@ export function KBSettingsCard() {
     articleDupMid,
     flashDupThreshold,
     todoDupThreshold,
+    ftEnabled,
+    ftAutoMode,
+    ftKeywords,
+    ftMaxResults,
+    ftThreshold,
   ]);
 
   return (
@@ -124,6 +147,7 @@ export function KBSettingsCard() {
 
       {kbEnabled && (
         <div className="space-y-3 pt-1">
+          <Label className="text-xs font-medium">{t("knowledge.wikiRecall")}</Label>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">{t("knowledge.triggerMode")}</Label>
@@ -192,6 +216,78 @@ export function KBSettingsCard() {
             <p className="text-[11px] text-muted-foreground">
               {t("knowledge.thresholdDesc")}
             </p>
+          </div>
+
+          <div className="space-y-3 pt-2 border-t border-border mt-1">
+            <div>
+              <Label className="text-xs font-medium">{t("knowledge.flashRecall")}</Label>
+              <p className="text-[11px] text-muted-foreground mt-0.5">{t("knowledge.flashRecallDesc")}</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">{t("knowledge.enableRecall")}</Label>
+              <Switch checked={ftEnabled} onCheckedChange={setFtEnabled} />
+            </div>
+            {ftEnabled && (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("knowledge.triggerMode")}</Label>
+                    <Select value={ftAutoMode} onValueChange={(v) => v && setFtAutoMode(v)}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="always">{t("knowledge.modeAlways")}</SelectItem>
+                        <SelectItem value="keyword">{t("knowledge.modeKeyword")}</SelectItem>
+                        <SelectItem value="disabled">{t("knowledge.modeDisabled")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("knowledge.maxResults")}</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={ftMaxResults}
+                      onChange={(e) => setFtMaxResults(Number(e.target.value))}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">{t("knowledge.threshold")}</Label>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {ftThreshold.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={ftThreshold}
+                    onChange={(e) => setFtThreshold(Number(e.target.value))}
+                    className="w-full accent-primary"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("knowledge.ftThresholdDesc")}
+                  </p>
+                </div>
+                {ftAutoMode === "keyword" && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">{t("knowledge.keywords")}</Label>
+                    <Input
+                      value={ftKeywords}
+                      onChange={(e) => setFtKeywords(e.target.value)}
+                      placeholder={t("knowledge.keywordsPlaceholder")}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           <div className="space-y-2 pt-2 border-t border-border mt-1">

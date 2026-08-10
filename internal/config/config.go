@@ -754,19 +754,33 @@ type AgentFileConfig struct {
 // Stored as the agent's "kb" config sub-object and mapped to kb.AutoQueryCfg
 // at BeforeModelCall hook wiring time.
 type AgentKBCfg struct {
+	// Wiki auto-recall group. Enabled gates ONLY wiki auto-injection;
+	// flash/todo have their own group below. SearchMode/EmptyAction are
+	// shared across both groups.
 	Enabled     bool     `json:"enabled"`
 	AutoMode    string   `json:"autoMode,omitempty"`
 	Keywords    []string `json:"keywords,omitempty"`
 	MaxResults  int      `json:"maxResults,omitempty"`
 	SearchMode  string   `json:"searchMode,omitempty"`
 	EmptyAction string   `json:"emptyAction,omitempty"`
-	// WikiRatio is the fraction [0,1] of result slots given to wiki pages
-	// vs raw kb_entries. nil = 0.5 (default 50/50). 0 = kb only, 1 = wiki only.
+	// WikiRatio is the fraction [0,1] of result slots given to wiki source
+	// pages vs concept/entity pages. nil = 0.5. Only used by the
+	// knowledgebase_search tool now; auto-query uses each group's MaxResults.
 	WikiRatio *float64 `json:"wikiRatio,omitempty"`
-	// Threshold ∈ [0,1]: minimum normalized relevance for a wiki result to
-	// be kept (weighted score ÷ (9 × queryTokenCount)). nil = 0.45.
+	// Threshold ∈ [0,1]: minimum relevance for a WIKI result to be kept
+	// (weighted score ÷ (9 × queryTokenCount)). nil = 0.45.
 	// Higher = stricter cutoff; 0 effectively returns all prefiltered hits.
 	Threshold *float64 `json:"threshold,omitempty"`
+	// Flash/todo auto-recall group — independent trigger/limit/threshold so
+	// a loosely-related inspiration can't pollute every turn. Recall is
+	// vector-ONLY: no keyword fallback (the token path has no real relevance
+	// gate and surfaces noise on short text). All fields default off; legacy
+	// agents without these fields never auto-recall flashes/todos.
+	FlashTodoEnabled    bool     `json:"flashTodoEnabled,omitempty"`
+	FlashTodoAutoMode   string   `json:"flashTodoAutoMode,omitempty"`
+	FlashTodoKeywords   []string `json:"flashTodoKeywords,omitempty"`
+	FlashTodoMaxResults int      `json:"flashTodoMaxResults,omitempty"`
+	FlashTodoThreshold  *float64 `json:"flashTodoThreshold,omitempty"`
 	// Dedup thresholds for inbound KB writes (nil = built-in default).
 	// At/above these, an existing same/similar source blocks the write:
 	// flash/todo skip silently; article near-duplicate skips (≥High) or pends (Mid).

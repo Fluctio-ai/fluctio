@@ -457,7 +457,7 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 // flash or todo still surfaces without vectorization. Score is the fraction
 // of query tokens found in the entry (0..1), matching the scale
 // mergeKBResults expects; entries with zero overlap are dropped.
-func (s *KBStore) searchFlashTodoByKeyword(ctx context.Context, agentID, query string, limit int) []KBResult {
+func (s *KBStore) searchFlashTodoByKeyword(ctx context.Context, agentID, query string, limit int, threshold float64) []KBResult {
 	if limit <= 0 {
 		limit = 5
 	}
@@ -510,6 +510,9 @@ func (s *KBStore) searchFlashTodoByKeyword(ctx context.Context, agentID, query s
 	}
 	results := make([]KBResult, 0, limit)
 	for _, c := range cands {
+		if c.score < threshold {
+			continue
+		}
 		snippet := c.content
 		if len(snippet) > 300 {
 			snippet = softClipUTF8(snippet, 300)

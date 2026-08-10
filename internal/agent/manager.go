@@ -357,10 +357,6 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			}
 			kbCfg := rc.KB
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
-				wikiRatio := 0.5
-				if kbCfg.WikiRatio != nil {
-					wikiRatio = *kbCfg.WikiRatio
-				}
 				threshold := 0.45
 				var v config.VectorCfg
 				if scope.SettingInto(context.Background(), m.opts.dataStore, "vectorization", m.uid, rc.ID, &v) == nil && v.WikiThreshold > 0 {
@@ -368,15 +364,23 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				} else if kbCfg.Threshold != nil {
 					threshold = *kbCfg.Threshold
 				}
+				ftThreshold := 0.6
+				if kbCfg.FlashTodoThreshold != nil {
+					ftThreshold = *kbCfg.FlashTodoThreshold
+				}
 				return kb.AutoQueryCfg{
-					Enabled:     kbCfg.Enabled,
-					AutoMode:    kbCfg.AutoMode,
-					Keywords:    kbCfg.Keywords,
-					MaxResults:  kbCfg.MaxResults,
-					SearchMode:  kbCfg.SearchMode,
-					EmptyAction: kbCfg.EmptyAction,
-					WikiRatio:   wikiRatio,
-					Threshold:   threshold,
+					Enabled:             kbCfg.Enabled,
+					AutoMode:            kbCfg.AutoMode,
+					Keywords:            kbCfg.Keywords,
+					MaxResults:          kbCfg.MaxResults,
+					Threshold:           threshold,
+					FlashTodoEnabled:    kbCfg.FlashTodoEnabled,
+					FlashTodoAutoMode:   kbCfg.FlashTodoAutoMode,
+					FlashTodoKeywords:   kbCfg.FlashTodoKeywords,
+					FlashTodoMaxResults: kbCfg.FlashTodoMaxResults,
+					FlashTodoThreshold:  ftThreshold,
+					SearchMode:          kbCfg.SearchMode,
+					EmptyAction:         kbCfg.EmptyAction,
 				}
 			})
 			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {

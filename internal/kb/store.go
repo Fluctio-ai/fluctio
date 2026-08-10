@@ -195,8 +195,55 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 	// recall them by keyword and merge so they stay discoverable even without
 	// vectorization (the vector path above covers them when an embedder is on).
 	results := s.searchWikiByType(ctx, agentID, query, sourceLimit, otherLimit, preFilterLimit, threshold)
-	if ftRR := s.searchFlashTodoByKeyword(ctx, agentID, query, limit); len(ftRR) > 0 {
+	if ftRR := s.searchFlashTodoByKeyword(ctx, agentID, query, limit, threshold); len(ftRR) > 0 {
 		results = mergeKBResults(results, ftRR, limit)
+	}
+	return results, nil
+}
+
+// SearchSplit is the auto-query entry point. It searches wiki and flash/todo
+// independently, each with its own limit and threshold. Unlike Search:
+//   - flash/todo is vector-ONLY: no keyword fallback. The keyword path's
+//     token-overlap score has no meaningful relevance gate on short text,
+//     so falling back would surface loosely-related ideas — wrong for
+//     automatic injection. When the embedder is off or returns nothing,
+//     flash/todo simply yields no results.
+//   - wiki still prefers the vector path and falls back to the keyword path
+//     (bigram-scored + threshold) when the embedder is off or returns nothing.
+//
+// wikiLimit/ftLimit of 0 skip the respective group.
+func (s *KBStore) SearchSplit(ctx context.Context, agentID, query string, wikiLimit int, wikiThreshold float64, ftLimit int, ftThreshold float64) ([]KBResult, error) {
+	if wikiLimit < 0 {
+		wikiLimit = 0
+	}
+	if ftLimit < 0 {
+		ftLimit = 0
+	}
+	if wikiLimit == 0 && ftLimit == 0 {
+		return nil, nil
+	}
+	if wikiThreshold <= 0 || wikiThreshold > 1 {
+		wikiThreshold = 0.45
+	}
+	if ftThreshold <= 0 || ftThreshold > 1 {
+		ftThreshold = 0.6
+	}
+	var results []KBResult
+	if wikiLimit > 0 {
+		if s.embedder != nil && s.embedder.Available() {
+			if vv := s.searchWikiByVector(ctx, agentID, query, wikiLimit, 0, wikiThreshold); len(vv) > 0 {
+				results = append(results, vv...)
+			} else {
+				sourceLimit := int(math.Round(float64(wikiLimit) * 0.5))
+				results = append(results, s.searchWikiByType(ctx, agentID, query, sourceLimit, wikiLimit-sourceLimit, 0, wikiThreshold)...)
+			}
+		} else {
+			sourceLimit := int(math.Round(float64(wikiLimit) * 0.5))
+			results = append(results, s.searchWikiByType(ctx, agentID, query, sourceLimit, wikiLimit-sourceLimit, 0, wikiThreshold)...)
+		}
+	}
+	if ftLimit > 0 && s.embedder != nil && s.embedder.Available() {
+		results = append(results, s.searchFlashTodoByVector(ctx, agentID, query, ftLimit, ftThreshold)...)
 	}
 	return results, nil
 }

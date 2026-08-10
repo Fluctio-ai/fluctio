@@ -32,18 +32,21 @@ type SyntheticToolCall struct {
 // AutoQueryCfg is the config the auto-query hook reads. Mirrors the
 // fields from config.KBCfg to avoid importing the config package.
 type AutoQueryCfg struct {
-	Enabled     bool
-	AutoMode    string
-	Keywords    []string
-	MaxResults  int
+	// Wiki auto-recall group.
+	Enabled    bool
+	AutoMode   string
+	Keywords   []string
+	MaxResults int
+	Threshold  float64
+	// Flash/todo auto-recall group (independent trigger/limit/threshold).
+	FlashTodoEnabled    bool
+	FlashTodoAutoMode   string
+	FlashTodoKeywords   []string
+	FlashTodoMaxResults int
+	FlashTodoThreshold  float64
+	// Shared.
 	SearchMode  string // "augment" (default), "strict"
 	EmptyAction string // "llm" (default), "stop"
-	// WikiRatio is the resolved fraction [0,1] of result slots for wiki
-	// pages vs kb_entries (nil config → 0.5).
-	WikiRatio float64
-	// Threshold ∈ [0,1]: minimum normalized relevance for a wiki result to
-	// be kept. Zero/out-of-range → 0.45 default. Higher = stricter cutoff.
-	Threshold float64
 }
 
 // AutoQueryHook returns a function suitable for use as a BeforeModelCall
@@ -70,7 +73,7 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 	return func(ctx context.Context, hc *HookContext) {
 		cfg := cfgFn()
 		slog.Debug("kb auto-query hook", "agent", agentID, "enabled", cfg.Enabled, "mode", cfg.AutoMode, "store_nil", store == nil, "source", hc.Source)
-		if !cfg.Enabled || cfg.AutoMode == "disabled" || store == nil {
+		if store == nil {
 			return
 		}
 		if hc.Source != "" {
@@ -82,13 +85,12 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			return
 		}
 
-		switch cfg.AutoMode {
-		case "keyword":
-			if !containsAnyKeyword(query, cfg.Keywords) {
-				return
-			}
-		case "always":
-		default:
+		// Each group triggers independently. A group fires when it is
+		// enabled, its AutoMode isn't "disabled", and (always mode, or
+		// keyword mode matches one of its keywords).
+		wikiOn := cfg.Enabled && cfg.AutoMode != "disabled" && groupTriggered(cfg.AutoMode, query, cfg.Keywords)
+		ftOn := cfg.FlashTodoEnabled && cfg.FlashTodoAutoMode != "disabled" && groupTriggered(cfg.FlashTodoAutoMode, query, cfg.FlashTodoKeywords)
+		if !wikiOn && !ftOn {
 			return
 		}
 
@@ -110,10 +112,6 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			return
 		}
 
-		maxResults := cfg.MaxResults
-		if maxResults <= 0 {
-			maxResults = 5
-		}
 		if cfg.SearchMode == "" {
 			cfg.SearchMode = "augment"
 		}
@@ -121,12 +119,30 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			cfg.EmptyAction = "llm"
 		}
 
-		threshold := cfg.Threshold
-		if threshold <= 0 || threshold > 1 {
-			threshold = 0.45
+		wikiLimit := 0
+		if wikiOn {
+			wikiLimit = cfg.MaxResults
+			if wikiLimit <= 0 {
+				wikiLimit = 5
+			}
+		}
+		ftLimit := 0
+		if ftOn {
+			ftLimit = cfg.FlashTodoMaxResults
+			if ftLimit <= 0 {
+				ftLimit = 3
+			}
+		}
+		wikiThreshold := cfg.Threshold
+		if wikiThreshold <= 0 || wikiThreshold > 1 {
+			wikiThreshold = 0.45
+		}
+		ftThreshold := cfg.FlashTodoThreshold
+		if ftThreshold <= 0 || ftThreshold > 1 {
+			ftThreshold = 0.6
 		}
 
-		results, err := store.Search(ctx, agentID, query, maxResults, 0, cfg.WikiRatio, threshold)
+		results, err := store.SearchSplit(ctx, agentID, query, wikiLimit, wikiThreshold, ftLimit, ftThreshold)
 		slog.Info("kb auto-query search", "agent", agentID, "query", query, "results", len(results), "err", err)
 
 		if err != nil {
@@ -148,7 +164,7 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			hc.KnowledgeSources = sources
 			hc.SyntheticToolCalls = []SyntheticToolCall{{
 				Name:   "knowledgebase_search",
-				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, query, maxResults),
+				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, query, wikiLimit+ftLimit),
 				Result: buildToolResultSummary(results, citations),
 			}}
 			switch cfg.SearchMode {
@@ -226,6 +242,19 @@ func messagesContainKBContext(msgs []provider.Message) bool {
 		}
 	}
 	return false
+}
+
+// groupTriggered reports whether an auto-recall group should fire for this
+// query, given its AutoMode ("always" / "keyword" / "disabled") and keywords.
+func groupTriggered(autoMode, query string, keywords []string) bool {
+	switch autoMode {
+	case "always":
+		return true
+	case "keyword":
+		return containsAnyKeyword(query, keywords)
+	default:
+		return false
+	}
 }
 
 func containsAnyKeyword(text string, keywords []string) bool {

@@ -1591,6 +1591,13 @@ export interface AgentKBCfg {
   wikiRatio?: number;
   /** Minimum normalized relevance [0,1] for a wiki result to be kept. Default 0.45. */
   threshold?: number;
+  // Flash/todo auto-recall group (independent trigger/limit/threshold).
+  // Vector-only; no keyword fallback. All default off.
+  flashTodoEnabled?: boolean;
+  flashTodoAutoMode?: string;
+  flashTodoKeywords?: string[];
+  flashTodoMaxResults?: number;
+  flashTodoThreshold?: number;
   /** IM channel for due-todo reminders (wechat/qq/telegram/...). Default wechat. */
   reminderChannel?: string;
   // Dedup thresholds for inbound KB writes (nil/undefined = built-in default
