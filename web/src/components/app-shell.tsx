@@ -3,6 +3,7 @@
 import * as React from "react";
 import { usePathname } from "next/navigation";
 import { SidebarLayout } from "@/components/sidebar";
+import { rememberAgent } from "@/lib/last-agent";
 
 // Paths that render on their own (no sidebar chrome).
 const BARE_PATHS = ["/", "/onboard"];
@@ -21,6 +22,12 @@ function wantsSidebar(pathname: string) {
 // the root means the sidebar (and its effects) persists across navigations.
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  // Remember the most recently visited agent so the login landing can drop
+  // the user straight back into it instead of forcing an agent switch.
+  React.useEffect(() => {
+    const m = pathname?.match(/\/agents\/([^/]+)\//);
+    if (m && m[1]) rememberAgent(m[1]);
+  }, [pathname]);
   if (!wantsSidebar(pathname)) {
     return <>{children}</>;
   }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getStatus, getMe, login as loginApi } from "@/lib/api";
+import { lastAgentPath } from "@/lib/last-agent";
 import { logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +33,7 @@ export default function RootPage() {
         }
         const me = await getMe().catch(() => null);
         if (me?.ok && me.user) {
-          router.replace("/overview/");
+          router.replace(lastAgentPath() ?? "/overview/");
         } else {
           setShowLogin(true);
           setLoading(false);
@@ -54,7 +55,7 @@ export default function RootPage() {
         setError(res.error || tt("login.invalidCredentials"));
         return;
       }
-      router.replace("/overview/");
+      router.replace(lastAgentPath() ?? "/overview/");
     } catch {
       setError(tt("login.cannotReach"));
     } finally {
