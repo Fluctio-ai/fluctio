@@ -511,7 +511,7 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
                           <span className="absolute right-0 top-0 text-xs text-muted-foreground/40 select-none pointer-events-none">
                             #{entry.chunk_index}
                           </span>
-                          <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <div className="prose prose-sm dark:prose-invert max-w-none break-words">
                             <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                               {entry.content}
                             </ReactMarkdown>
@@ -997,7 +997,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                   </button>
                 </div>
                 {b.summary && (
-                  <p className="mt-1.5 whitespace-pre-wrap text-xs text-muted-foreground">{b.summary}</p>
+                  <p className="mt-1.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{b.summary}</p>
                 )}
                 <div className="mt-2 flex items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">
@@ -1020,7 +1020,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                   </div>
                 </div>
                 {b.content && expanded[b.id] && (
-                  <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-xs">{b.content}</pre>
+                  <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/40 p-2 text-xs">{b.content}</pre>
                 )}
               </div>
             ))
