@@ -416,7 +416,7 @@ function DetailPane({
         </Button>
       </div>
       <ScrollArea className="flex-1">
-        <div className="mx-auto max-w-3xl space-y-5 p-4">
+        <div className="space-y-5 p-4">
           {detail?.generating ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
               <SparklesIcon className="h-4 w-4 animate-pulse" /> {t("diary.generating")}
