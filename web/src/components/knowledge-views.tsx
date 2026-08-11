@@ -968,7 +968,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
         </Button>
       </div>
       <ScrollArea className="flex-1">
-        <div className="mx-auto max-w-3xl space-y-2 p-4">
+        <div className="columns-1 gap-3 p-4 sm:columns-2 lg:columns-3">
           {loading ? (
             <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
           ) : bookmarks.length === 0 ? (
@@ -977,7 +977,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
             <p className="text-sm text-muted-foreground">{t("knowledge.noSearchResult")}</p>
           ) : (
             visible.map((b) => (
-              <div key={b.id} className="group rounded-lg border bg-background p-3">
+              <div key={b.id} className="group mb-3 break-inside-avoid rounded-lg border bg-background p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <a href={b.url} target="_blank" rel="noopener noreferrer" className="block truncate text-sm font-medium hover:underline">
@@ -999,32 +999,25 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                 {b.summary && (
                   <p className="mt-1.5 whitespace-pre-wrap text-xs text-muted-foreground">{b.summary}</p>
                 )}
-                <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
-                  <span>{relativeTime(b.created_at)}</span>
-                  {b.content && (
-                    <>
-                      <span>{t("knowledge.bookmarkBody", { n: b.content.length })}</span>
-                      <button
-                        type="button"
-                        className="hover:text-foreground underline-offset-2 hover:underline"
-                        onClick={() => setExpanded((m) => ({ ...m, [b.id]: !m[b.id] }))}
-                      >
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {relativeTime(b.created_at)}{b.content ? ` · ${t("knowledge.bookmarkBody", { n: b.content.length })}` : ""}
+                    {b.promoted_to_article_id && (
+                      <span className="ml-2 text-emerald-600 dark:text-emerald-400">{t("knowledge.bookmarkPromoted")}</span>
+                    )}
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {b.content && (
+                      <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => setExpanded((m) => ({ ...m, [b.id]: !m[b.id] }))}>
                         {expanded[b.id] ? t("knowledge.bookmarkHideBody") : t("knowledge.bookmarkShowBody")}
-                      </button>
-                    </>
-                  )}
-                  {b.promoted_to_article_id ? (
-                    <span className="text-emerald-600 dark:text-emerald-400">{t("knowledge.bookmarkPromoted")}</span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="hover:text-foreground underline-offset-2 hover:underline disabled:opacity-50"
-                      disabled={promoting === b.id}
-                      onClick={() => handlePromote(b.id)}
-                    >
-                      {promoting === b.id ? t("common.saving") : t("knowledge.bookmarkPromote")}
-                    </button>
-                  )}
+                      </Button>
+                    )}
+                    {!b.promoted_to_article_id && (
+                      <Button variant="outline" size="sm" className="h-6 px-2 text-xs" disabled={promoting === b.id} onClick={() => handlePromote(b.id)}>
+                        {promoting === b.id ? t("common.saving") : t("knowledge.bookmarkPromote")}
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 {b.content && expanded[b.id] && (
                   <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 text-xs">{b.content}</pre>

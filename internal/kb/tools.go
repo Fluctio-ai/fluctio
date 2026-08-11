@@ -832,6 +832,11 @@ func FetchURLContent(ctx context.Context, rawURL string) (title, body string, er
 	if body == "" {
 		body = stripHTMLToText(string(data))
 	}
+	// readability and stripHTMLToText can both leave long runs of blank lines
+	// (ad slots, nav breaks between sections); collapse 3+ newlines to a
+	// single blank line so the stored body renders cleanly in the bookmark
+	// detail / article view. Idempotent on already-clean text.
+	body = newlineRunRe.ReplaceAllString(body, "\n\n")
 
 	return title, body, nil
 }
