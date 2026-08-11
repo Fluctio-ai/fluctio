@@ -1601,8 +1601,25 @@ func (a *Agent) WebChatHistory(sessionId string, beforeSeq, limit int) ([]map[st
 	if len(page) > 0 {
 		earliestSeq = page[0].Seq
 	}
+	// A forked session prefixes its parent's archived [0..forkSeq] as a
+	// read-only snapshot. The prefix lives outside B's own seq namespace,
+	// so shift it to negative seqs (-(forkSeq+1)..-1) — keeps the merged
+	// list totally ordered and lets the UI tell inherited turns (seq<0,
+	// no fork affordance) from B's own (seq>=0). The prefix is never
+	// paginated: it's a fixed snapshot shown in full, while B's own
+	// archive pages normally.
+	renderedPage := page
+	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
+		offset := -(sess.ParentForkSeq() + 1)
+		shifted := make([]provider.Message, len(prefix))
+		for i, m := range prefix {
+			m.Seq = offset + i
+			shifted[i] = m
+		}
+		renderedPage = append(shifted, page...)
+	}
 	var history []map[string]any
-	for _, m := range page {
+	for _, m := range renderedPage {
 		// Hide runtime-injected messages (currently only goal_context
 		// continuations). They live in the session for the LLM's
 		// benefit; surfacing them to the user would expose audit
@@ -1780,6 +1797,24 @@ func (a *Agent) MoveWebChatSession(ctx context.Context, sessionId, projectID str
 		}
 	}
 	return a.sessions.MoveSessionByID(sessionId, projectID)
+}
+
+// ForkSession creates a new chat session B forked from sourceSessionKey
+// at forkSeq — B inherits the parent's session_messages archive
+// [0..forkSeq] as a read-only prefix (merged into LLM context + history
+// at read time, never copied) and copies the parent's project_id so the
+// fork clusters beside its parent in the sidebar. B is a fresh web chat
+// (chatID == its own session_key) so it resolves independently of A.
+//
+// Returns B's session_key; the frontend switches to it.
+func (a *Agent) ForkSession(sourceSessionKey string, forkSeq int) (string, error) {
+	key := a.sessions.ResolveSessionKey(sourceSessionKey)
+	if key == "" {
+		return "", fmt.Errorf("session not found: %s", sourceSessionKey)
+	}
+	projectID := a.sessions.LookupSessionProject(key)
+	newKey := a.sessions.OpenForkSession("web", "", "", projectID, key, forkSeq)
+	return newKey, nil
 }
 
 // Model returns the agent's model name.
@@ -2331,7 +2366,14 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	if catalog != "" {
 		messages = append(messages, provider.Message{Role: "system", Content: catalog})
 	}
-	messages = append(messages, withConversationGapContext(sess.GetMessages())...)
+	sessionMsgs := sess.GetMessages()
+	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
+		sessionMsgs = append(prefix, sessionMsgs...)
+	}
+	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
+		sessionMsgs = append(prefix, sessionMsgs...)
+	}
+	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 	if a.piiScrubEnabled {
 		messages = privacy.ScrubMessages(messages, privacy.Options{Entropy: a.piiEntropyEnabled})
 	}
@@ -2679,6 +2721,16 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// Context compaction: check if session messages are too large
 	sessionMsgs := sess.GetMessages()
 	threshold := a.compactionThresholdNow(systemPrompt)
+	// A forked session's LLM context is parent prefix + working set, so
+	// the prefix eats part of the window — lower the trigger threshold
+	// by the prefix's estimated tokens so B compacts its own working set
+	// earlier instead of letting prefix+workset blow past the window.
+	// The prefix itself is a read-only snapshot and is never pruned.
+	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
+		if pt := EstimateTokens(prefix); pt > 0 && threshold > pt {
+			threshold -= pt
+		}
+	}
 	compactResult, err := CompactMessages(sessionMsgs, a.homePath, a.provider, a.model, threshold)
 	if err != nil {
 		slog.Warn("compaction error", "agent", a.name, "error", err)
@@ -2750,6 +2802,9 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	}
 	if msg.Source == bus.SourceCron {
 		messages = append(messages, provider.Message{Role: "system", Content: cronTriggerGuidance})
+	}
+	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
+		sessionMsgs = append(prefix, sessionMsgs...)
 	}
 	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 
@@ -3589,6 +3644,16 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 
 	sessionMsgs := sess.GetMessages()
 	threshold := a.compactionThresholdNow(systemPrompt)
+	// A forked session's LLM context is parent prefix + working set, so
+	// the prefix eats part of the window — lower the trigger threshold
+	// by the prefix's estimated tokens so B compacts its own working set
+	// earlier instead of letting prefix+workset blow past the window.
+	// The prefix itself is a read-only snapshot and is never pruned.
+	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
+		if pt := EstimateTokens(prefix); pt > 0 && threshold > pt {
+			threshold -= pt
+		}
+	}
 	compactResult, err := CompactMessages(sessionMsgs, a.homePath, a.provider, a.model, threshold)
 	if err != nil {
 		slog.Warn("compaction error", "agent", a.name, "error", err)
@@ -3651,6 +3716,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	}
 	if msg.Source == bus.SourceCron {
 		messages = append(messages, provider.Message{Role: "system", Content: cronTriggerGuidance})
+	}
+	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
+		sessionMsgs = append(prefix, sessionMsgs...)
 	}
 	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 

@@ -168,6 +168,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionsAddLastSummarizedSeq(ctx); err != nil {
 		return fmt.Errorf("migrate sessions.last_summarized_seq: %w", err)
 	}
+	if err := d.migrateSessionsAddForkColumns(ctx); err != nil {
+		return fmt.Errorf("migrate sessions fork columns: %w", err)
+	}
 	if err := d.migrateSessionMessagesAddProviderModel(ctx); err != nil {
 		return fmt.Errorf("migrate session_messages provider/model: %w", err)
 	}
@@ -1567,10 +1570,12 @@ func (d *DBStore) migrateSessionsDropUserAndChatter(ctx context.Context) error {
 				message_count INTEGER NOT NULL DEFAULT 0,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				last_summarized_seq INTEGER NOT NULL DEFAULT 0,
+				parent_session_key TEXT NOT NULL DEFAULT '',
+				parent_fork_seq INTEGER NOT NULL DEFAULT 0,
 				PRIMARY KEY (agent_id, session_key)
 			)`,
-			`INSERT INTO sessions_new (agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq)
-				SELECT agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq FROM sessions`,
+			`INSERT INTO sessions_new (agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq, parent_session_key, parent_fork_seq)
+				SELECT agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq, parent_session_key, parent_fork_seq FROM sessions`,
 			`DROP TABLE sessions`,
 			`ALTER TABLE sessions_new RENAME TO sessions`,
 		} {
@@ -2726,6 +2731,13 @@ func (d *DBStore) migrationSQL() []string {
 			message_count INTEGER NOT NULL DEFAULT 0,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			last_summarized_seq INTEGER NOT NULL DEFAULT 0,
+			-- Fork: a session forked from another inherits the parent's
+			-- session_messages archive [0..parent_fork_seq] as a prefix
+			-- (merged into LLM context + history at read time, never
+			-- copied). Empty parent_session_key = a normal non-fork
+			-- session; parent_fork_seq is ignored in that case.
+			parent_session_key TEXT NOT NULL DEFAULT '',
+			parent_fork_seq INTEGER NOT NULL DEFAULT 0,
 			-- chatter_user_id is the actual conversation participant. For
 			-- web / dashboard chats it equals user_id (= the logged-in
 			-- user). For IM channels with per-sender app_users it's the
@@ -3687,12 +3699,12 @@ func scanAgents(rows *sql.Rows) ([]AgentRecord, error) {
 
 func (d *DBStore) GetSession(ctx context.Context, agentID, sessionKey string) (*SessionRecord, error) {
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT messages, channel, account_id, chat_id, project_id, updated_at, last_summarized_seq FROM sessions WHERE agent_id = %s AND session_key = %s`,
+		fmt.Sprintf(`SELECT messages, channel, account_id, chat_id, project_id, updated_at, last_summarized_seq, parent_session_key, parent_fork_seq FROM sessions WHERE agent_id = %s AND session_key = %s`,
 			d.ph(1), d.ph(2)),
 		agentID, sessionKey)
 	var msgsStr string
 	var rec SessionRecord
-	if err := row.Scan(&msgsStr, &rec.Channel, &rec.AccountID, &rec.ChatID, &rec.ProjectID, &rec.UpdatedAt, &rec.LastSummarizedSeq); err != nil {
+	if err := row.Scan(&msgsStr, &rec.Channel, &rec.AccountID, &rec.ChatID, &rec.ProjectID, &rec.UpdatedAt, &rec.LastSummarizedSeq, &rec.ParentSessionKey, &rec.ParentForkSeq); err != nil {
 		return nil, scanErr(err)
 	}
 	json.Unmarshal([]byte(msgsStr), &rec.Messages)
@@ -3720,12 +3732,12 @@ func (d *DBStore) LookupSessionOwner(ctx context.Context, agentID, sessionKey st
 // user_id scoping. Safe because session_key is globally unique.
 func (d *DBStore) GetSessionByKey(ctx context.Context, agentID, sessionKey string) (*SessionRecord, error) {
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT messages, channel, account_id, chat_id, project_id, updated_at FROM sessions WHERE agent_id = %s AND session_key = %s`,
+		fmt.Sprintf(`SELECT messages, channel, account_id, chat_id, project_id, updated_at, parent_session_key, parent_fork_seq FROM sessions WHERE agent_id = %s AND session_key = %s`,
 			d.ph(1), d.ph(2)),
 		agentID, sessionKey)
 	var msgsStr string
 	var rec SessionRecord
-	if err := row.Scan(&msgsStr, &rec.Channel, &rec.AccountID, &rec.ChatID, &rec.ProjectID, &rec.UpdatedAt); err != nil {
+	if err := row.Scan(&msgsStr, &rec.Channel, &rec.AccountID, &rec.ChatID, &rec.ProjectID, &rec.UpdatedAt, &rec.ParentSessionKey, &rec.ParentForkSeq); err != nil {
 		return nil, scanErr(err)
 	}
 	json.Unmarshal([]byte(msgsStr), &rec.Messages)
@@ -3743,21 +3755,21 @@ func (d *DBStore) SaveSession(ctx context.Context, agentID, sessionKey string, s
 	count := len(session.Messages)
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO sessions (agent_id, session_key, channel, account_id, chat_id, project_id, messages, message_count, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			`INSERT INTO sessions (agent_id, session_key, channel, account_id, chat_id, project_id, messages, message_count, updated_at, parent_session_key, parent_fork_seq)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 				ON CONFLICT (agent_id, session_key) DO UPDATE
 				SET messages=$7, message_count=$8, updated_at=$9`,
 			agentID, sessionKey, session.Channel, session.AccountID, session.ChatID, session.ProjectID,
-			string(msgsData), count, now)
+			string(msgsData), count, now, session.ParentSessionKey, session.ParentForkSeq)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO sessions (agent_id, session_key, channel, account_id, chat_id, project_id, messages, message_count, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO sessions (agent_id, session_key, channel, account_id, chat_id, project_id, messages, message_count, updated_at, parent_session_key, parent_fork_seq)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (agent_id, session_key) DO UPDATE SET
 			  messages=excluded.messages, message_count=excluded.message_count, updated_at=excluded.updated_at`,
 		agentID, sessionKey, session.Channel, session.AccountID, session.ChatID, session.ProjectID,
-		string(msgsData), count, now)
+		string(msgsData), count, now, session.ParentSessionKey, session.ParentForkSeq)
 	return err
 }
 
@@ -3897,6 +3909,21 @@ func (d *DBStore) ResolveActiveSessionKey(ctx context.Context, agentID, channel,
 }
 
 func (d *DBStore) DeleteSession(ctx context.Context, agentID, sessionKey string) error {
+	// Refuse to delete a session that other sessions forked from —
+	// children merge this parent's archive prefix at read time, so
+	// dropping the parent would orphan every fork's history prefix.
+	// Caller surfaces ErrSessionHasChildren (HTTP 409) so the UI can
+	// prompt to delete the forks first.
+	var children int
+	if err := d.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM sessions WHERE agent_id = %s AND parent_session_key = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, sessionKey).Scan(&children); err != nil {
+		return err
+	}
+	if children > 0 {
+		return ErrSessionHasChildren
+	}
 	for _, t := range []string{"session_messages", "session_events"} {
 		if _, err := d.db.ExecContext(ctx,
 			fmt.Sprintf(`DELETE FROM %s WHERE agent_id = %s AND session_key = %s`,
@@ -6125,6 +6152,31 @@ func (d *DBStore) migrateSessionsAddLastSummarizedSeq(ctx context.Context) error
 	if _, err := d.db.ExecContext(ctx,
 		`ALTER TABLE sessions ADD COLUMN last_summarized_seq INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("add column last_summarized_seq: %w", err)
+	}
+	return nil
+}
+
+// migrateSessionsAddForkColumns retrofits parent_session_key +
+// parent_fork_seq onto sessions so a chat can fork from another. The
+// forked session inherits the parent's archive[0..parent_fork_seq] as
+// a read-only prefix merged into LLM context + history at read time
+// (never copied). Empty parent_session_key = normal non-fork session.
+func (d *DBStore) migrateSessionsAddForkColumns(ctx context.Context) error {
+	if has, err := d.tableHasColumn(ctx, "sessions", "parent_session_key"); err != nil {
+		return err
+	} else if !has {
+		if _, err := d.db.ExecContext(ctx,
+			`ALTER TABLE sessions ADD COLUMN parent_session_key TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add column parent_session_key: %w", err)
+		}
+	}
+	if has, err := d.tableHasColumn(ctx, "sessions", "parent_fork_seq"); err != nil {
+		return err
+	} else if !has {
+		if _, err := d.db.ExecContext(ctx,
+			`ALTER TABLE sessions ADD COLUMN parent_fork_seq INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add column parent_fork_seq: %w", err)
+		}
 	}
 	return nil
 }

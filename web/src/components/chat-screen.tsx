@@ -6,8 +6,8 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, revealAgentWorkspace, sendChatStream, steerChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
-import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus } from "lucide-react";
+import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, forkChatSession, revealAgentWorkspace, sendChatStream, steerChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
+import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
 
@@ -2373,6 +2373,28 @@ export function ChatScreen() {
     window.history.replaceState(null, "", `/agents/${selectedAgent}/chat/${sid}/`);
   };
 
+  // handleFork spins up a new session B from the assistant turn `msg`.
+  // B inherits this session's archive[0..msg.seq] as a read-only prefix
+  // and opens empty; we switch to it immediately. Inherited turns (seq<0
+  // in the merged history) carry no fork button — only B's own turns do.
+  const handleFork = async (msg: ChatMessage) => {
+    if (!selectedAgent || !sessionId) return;
+    if (msg.seq == null || msg.seq < 0) return;
+    try {
+      const res = await forkChatSession(selectedAgent, sessionId, msg.seq);
+      if (res.sessionKey) {
+        setSessionId(res.sessionKey);
+        setMessages([]);
+        window.history.replaceState(null, "", `/agents/${selectedAgent}/chat/${res.sessionKey}/`);
+        loadSessions(selectedAgent);
+      } else {
+        console.warn("fork failed", res.error);
+      }
+    } catch (e) {
+      console.warn("fork error", e);
+    }
+  };
+
   const formatTime = (ts: number) =>
     new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
@@ -2796,6 +2818,15 @@ export function ChatScreen() {
                             <FolderOpen className="h-3 w-3" />
                             <span>{t("chat.files")}</span>
                           </button>
+                          {msg.seq != null && msg.seq >= 0 && (
+                            <button
+                              onClick={() => handleFork(msg)}
+                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                              title={t("chat.fork")}
+                            >
+                              <GitBranch className="h-3 w-3" />
+                            </button>
+                          )}
                         </>
                       )}
                     </div>

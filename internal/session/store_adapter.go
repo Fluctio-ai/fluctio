@@ -59,6 +59,42 @@ func (a *StoreAdapter) SaveSession(ctx context.Context, agentID, sessionKey, cha
 	return a.st.SaveSession(ctx, agentID, sessionKey, rec)
 }
 
+// CreateForkSession persists a brand-new session row carrying the parent
+// linkage. It reuses SaveSession because the DB ON CONFLICT rule
+// preserves parent_session_key/parent_fork_seq on later writes — the
+// only thing special about a fork's first save is that the SessionRecord
+// carries non-zero parent fields.
+func (a *StoreAdapter) CreateForkSession(ctx context.Context, agentID, sessionKey, channel, accountID, chatID, projectID, parentKey string, forkSeq int) error {
+	rec := &store.SessionRecord{
+		Channel:          channel,
+		AccountID:        accountID,
+		ChatID:           chatID,
+		ProjectID:        projectID,
+		UpdatedAt:        time.Now(),
+		ParentSessionKey: parentKey,
+		ParentForkSeq:    forkSeq,
+	}
+	return a.st.SaveSession(ctx, agentID, sessionKey, rec)
+}
+
+// SessionParent returns the parent linkage stamped on the session row —
+// the read path that powers LLM-context + history merging for forked
+// chats. Treats not-found as "no parent" rather than an error so callers
+// (getByKey) can call it unconditionally on every session.
+func (a *StoreAdapter) SessionParent(ctx context.Context, agentID, sessionKey string) (string, int, error) {
+	rec, err := a.st.GetSession(ctx, agentID, sessionKey)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return "", 0, nil
+		}
+		return "", 0, err
+	}
+	if rec == nil {
+		return "", 0, nil
+	}
+	return rec.ParentSessionKey, rec.ParentForkSeq, nil
+}
+
 // ResolveActiveSessionKey forwards to the store. The session.Manager
 // uses this to pick the active session_key for an inbound (channel,
 // account, chat) triple before any messages get loaded.

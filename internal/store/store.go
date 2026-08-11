@@ -15,6 +15,13 @@ import (
 // errors.Is(err, store.ErrNotFound) at call sites.
 var ErrNotFound = errors.New("store: not found")
 
+// ErrSessionHasChildren is returned by DeleteSession when another session
+// was forked from this one — children merge the parent's archive prefix
+// at read time, so deleting the parent would orphan every fork's history
+// prefix. Caller surfaces it (HTTP 409) so the UI can prompt to delete
+// the forks first.
+var ErrSessionHasChildren = errors.New("session has fork children")
+
 // Store is the unified interface for all persistent data.
 //
 // Tables fall into three buckets:
@@ -436,6 +443,15 @@ type SessionRecord struct {
 	// (only messages with seq > this value). Managed by the summary
 	// path, independent of Messages.
 	LastSummarizedSeq int `json:"lastSummarizedSeq,omitempty"`
+	// ParentSessionKey / ParentForkSeq mark this session as a fork:
+	// the session inherits the parent's session_messages archive
+	// [0..ParentForkSeq] as a read-only prefix to its own messages
+	// (LLM context + history merge it in dynamically, never copied),
+	// so a forked chat sees a continuous conversation without
+	// duplicating archive rows. Empty ParentSessionKey = a normal
+	// non-fork session (ParentForkSeq ignored).
+	ParentSessionKey string `json:"parentSessionKey,omitempty"`
+	ParentForkSeq    int    `json:"parentForkSeq,omitempty"`
 }
 
 // IdleSession is a session that hasn't been touched since a cutoff,

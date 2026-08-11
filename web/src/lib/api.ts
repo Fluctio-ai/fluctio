@@ -1089,6 +1089,24 @@ export async function moveChatSessionToProject(
   return res.json();
 }
 
+// forkChatSession creates a new chat session B forked from
+// sourceSessionKey at forkSeq (the session_messages.seq of an assistant
+// turn in the source session). B inherits the parent's archive
+// [0..forkSeq] as a read-only prefix merged at read time. Returns
+// { sessionKey } on success; { error } on failure.
+export async function forkChatSession(
+  agentId: string,
+  sourceSessionKey: string,
+  forkSeq: number,
+): Promise<{ sessionKey?: string; error?: string }> {
+  const res = await apiFetch(`/api/chat/sessions/fork`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agentId, sourceSessionKey, forkSeq }),
+  });
+  return res.json();
+}
+
 export async function sendChat(agentId: string, sessionId: string, message: string): Promise<{ response: string }> {
   const res = await apiFetch("/api/chat", {
     method: "POST",

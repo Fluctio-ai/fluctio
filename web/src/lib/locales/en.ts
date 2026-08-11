@@ -1837,6 +1837,7 @@ Info
   "agentChats.loadFailed": "Failed to load chats",
   "chat.resend": "Resend (refills the composer)",
   "chat.viewTaskFiles": "View task files",
+  "chat.fork": "Fork conversation from here",
   "chat.files": "Files",
   "chat.sandboxedExec": "Executed inside a sandboxed container",
   "preview.iterationLimit": "Iteration limit reached",

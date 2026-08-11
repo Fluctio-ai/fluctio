@@ -45,6 +45,12 @@ func (noopSessionStore) LookupSessionTriple(context.Context, string, string) (st
 func (noopSessionStore) LookupSessionProject(context.Context, string, string) (string, error) {
 	return "", nil
 }
+func (noopSessionStore) CreateForkSession(context.Context, string, string, string, string, string, string, string, int) error {
+	return nil
+}
+func (noopSessionStore) SessionParent(context.Context, string, string) (string, int, error) {
+	return "", 0, nil
+}
 
 func TestNewManagerWithStoreForUserEmptyUserIDDoesNotPanic(t *testing.T) {
 	mgr := NewManagerWithStoreForUser(t.TempDir(), noopSessionStore{}, "", "agent-1")

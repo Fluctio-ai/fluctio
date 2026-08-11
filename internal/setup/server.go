@@ -52,6 +52,7 @@ type AgentHandle interface {
 	// the old and new scope dirs and releases any active sandbox so
 	// the next turn cold-starts at the new bind-mount path.
 	MoveWebChatSession(ctx context.Context, sessionId, projectID string) error
+	ForkSession(sourceSessionKey string, forkSeq int) (string, error)
 	ReloadWorkspaceFiles()
 	// WriteSessionAttachments materializes user-uploaded bytes (data
 	// URLs / HTTPS URLs) into the agent's session workspace so skills can
@@ -278,6 +279,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("PUT /api/chat/sessions/{key}", auth(s.handleRenameSession))
 	mux.HandleFunc("DELETE /api/chat/sessions/{key}", auth(s.handleDeleteSession))
 	mux.HandleFunc("PATCH /api/chat/sessions/{key}/project", auth(s.handleMoveSessionProject))
+	mux.HandleFunc("POST /api/chat/sessions/fork", auth(s.handleForkSession))
 	// Long-lived SSE subscription so cron-fired (and other async)
 	// messages reach the open chat panel without a manual refresh.
 	mux.HandleFunc("GET /api/chat/subscribe", auth(s.handleChatSubscribe))

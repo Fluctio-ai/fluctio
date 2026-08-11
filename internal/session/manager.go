@@ -44,6 +44,15 @@ type Session struct {
 	provider string
 	model    string
 
+	// parentSessionKey / parentForkSeq mark this session as a fork: it
+	// inherits the parent's session_messages archive[0..parentForkSeq]
+	// as a read-only prefix merged into LLM context + history at read
+	// time (never copied). Empty parentSessionKey = a normal non-fork
+	// session. Set once at creation (OpenForkSession) and reloaded by
+	// getByKey; guard with mu alongside the other persisted fields.
+	parentSessionKey string
+	parentForkSeq    int
+
 	// Steering: turnDepth counts in-flight HandleMessage turns for this
 	// session (a counter, not a bool, so re-entrant/overlapping turns
 	// don't strand the active flag). steerBuf holds user messages that
@@ -69,6 +78,15 @@ type Session struct {
 // goal-scoped tools) can address the right row without re-resolving
 // the (channel, account, chat) quadruple every time.
 func (s *Session) SessionKey() string { return s.sessionKey }
+
+// ParentSessionKey returns the parent session_key for a forked session
+// (empty for a normal non-fork session). The agent loop + history loader
+// merge the parent's archive[0..ParentForkSeq] as a read-only prefix.
+func (s *Session) ParentSessionKey() string { return s.parentSessionKey }
+
+// ParentForkSeq is the inclusive fork point seq inside the parent's
+// session_messages archive. Only meaningful when ParentSessionKey != "".
+func (s *Session) ParentForkSeq() int { return s.parentForkSeq }
 
 // PushPendingCalls parks intercepted tool_calls awaiting user /yes.
 // A round's waiting calls are a batch; one /yes executes them all. desc
@@ -202,6 +220,17 @@ type SessionStore interface {
 	// project context onto inbound messages so the workspace store and
 	// sandbox both route to projects/<pid>/.
 	LookupSessionProject(ctx context.Context, agentID, sessionKey string) (string, error)
+	// CreateForkSession persists a brand-new session row carrying the
+	// parent linkage. Called once at fork creation; subsequent
+	// SaveSession calls preserve the parent (DB ON CONFLICT does not
+	// touch parent_session_key/parent_fork_seq). Empty parentKey = a
+	// normal non-fork session (forkSeq ignored).
+	CreateForkSession(ctx context.Context, agentID, sessionKey, channel, accountID, chatID, projectID, parentKey string, forkSeq int) error
+	// SessionParent returns the (parent_session_key, parent_fork_seq)
+	// stamped on the session row — the read path powering LLM-context
+	// and history merging for forked chats. ("",0,nil) for a normal
+	// non-fork session or when the store has no row yet.
+	SessionParent(ctx context.Context, agentID, sessionKey string) (parentKey string, forkSeq int, err error)
 }
 
 type Manager struct {
@@ -424,6 +453,44 @@ func (m *Manager) OpenNewSession(channel, accountID, chatID string) string {
 	return key
 }
 
+// OpenForkSession creates a brand-new session B that inherits parent A's
+// archive[0..forkSeq] as a read-only prefix. B's own archive and working
+// set start empty; the prefix is merged in at read time (LLM context +
+// history), never copied. B copies A's project_id so the fork clusters
+// beside its parent in the sidebar. For web chats the chatID is forced to
+// B's own session_key (the resolveOrMintKey invariant) so B resolves
+// independently of A instead of being shadowed by A's active-key row.
+//
+// Returns B's session_key. The parent linkage is written via
+// CreateForkSession (a one-shot insert); later SaveSession calls keep
+// the parent columns because DB ON CONFLICT does not touch them.
+func (m *Manager) OpenForkSession(channel, accountID, chatID, projectID, parentKey string, forkSeq int) string {
+	key := generateSessionKey()
+	if channel == "web" {
+		chatID = key
+	}
+	if m.store != nil {
+		_ = m.store.CreateForkSession(m.ctx(), m.agentID, key, channel, accountID, chatID, projectID, parentKey, forkSeq)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := &Session{
+		filePath:         filepath.Join(m.dataDir, key+".jsonl"),
+		store:            m.store,
+		userID:           m.userID,
+		agentID:          m.agentID,
+		sessionKey:       key,
+		channel:          channel,
+		accountID:        accountID,
+		chatID:           chatID,
+		projectID:        projectID,
+		parentSessionKey: parentKey,
+		parentForkSeq:    forkSeq,
+	}
+	m.sessions[key] = s
+	return key
+}
+
 func (m *Manager) getByKey(key, channel, accountID, chatID, projectID string) *Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -433,6 +500,15 @@ func (m *Manager) getByKey(key, channel, accountID, chatID, projectID string) *S
 			if msgs, err := m.store.GetSession(m.ctx(), m.agentID, key); err == nil {
 				s.mu.Lock()
 				s.Messages = msgs
+				s.mu.Unlock()
+			}
+			// Reload parent linkage alongside messages so a forked
+			// session cached before its row was written picks up the
+			// parent prefix once the row lands.
+			if pk, fs, err := m.store.SessionParent(m.ctx(), m.agentID, key); err == nil {
+				s.mu.Lock()
+				s.parentSessionKey = pk
+				s.parentForkSeq = fs
 				s.mu.Unlock()
 			}
 		}
@@ -472,6 +548,10 @@ func (m *Manager) getByKey(key, channel, accountID, chatID, projectID string) *S
 		msgs, err := m.store.GetSession(m.ctx(), m.agentID, key)
 		if err == nil && len(msgs) > 0 {
 			s.Messages = msgs
+		}
+		if pk, fs, err := m.store.SessionParent(m.ctx(), m.agentID, key); err == nil {
+			s.parentSessionKey = pk
+			s.parentForkSeq = fs
 		}
 	} else {
 		s.load()
@@ -600,6 +680,37 @@ func (s *Session) ArchivedMessages() []provider.Message {
 		return s.GetMessages()
 	}
 	return msgs
+}
+
+// ParentPrefixMessages returns the parent's archived messages [0..forkSeq]
+// (inclusive) for a forked session — the read-only conversation prefix
+// merged into LLM context + web history at read time, never physically
+// copied into B's archive. Returns nil for a normal non-fork session.
+//
+// Reads the parent's append-only archive (session_messages) so the prefix
+// is a frozen snapshot: later compaction or new turns in the parent do
+// not change what B sees.
+func (s *Session) ParentPrefixMessages() []provider.Message {
+	s.mu.Lock()
+	pk := s.parentSessionKey
+	fs := s.parentForkSeq
+	store := s.store
+	agentID := s.agentID
+	s.mu.Unlock()
+	if pk == "" || store == nil {
+		return nil
+	}
+	archive, err := store.ListMessages(s.ctx(), agentID, pk)
+	if err != nil || len(archive) == 0 {
+		return nil
+	}
+	if fs < 0 {
+		fs = 0
+	}
+	if fs >= len(archive) {
+		fs = len(archive) - 1
+	}
+	return archive[:fs+1]
 }
 
 // GetMessages returns a copy of all messages.
@@ -937,11 +1048,17 @@ func (m *Manager) resolveWebSessionKey(sessionId string) string {
 // by the dashboard to delete any-channel chats.
 func (m *Manager) DeleteSessionByID(sessionId string) error {
 	key := m.ResolveSessionKey(sessionId)
-	m.mu.Lock()
-	delete(m.sessions, key)
-	m.mu.Unlock()
 	if m.store != nil {
-		return m.store.DeleteSession(m.ctx(), m.agentID, key)
+		if err := m.store.DeleteSession(m.ctx(), m.agentID, key); err != nil {
+			// Leave the cached entry intact on failure (e.g. the parent
+			// still has fork children) so a rejected delete doesn't drop
+			// the in-memory session a concurrent request is using.
+			return err
+		}
+		m.mu.Lock()
+		delete(m.sessions, key)
+		m.mu.Unlock()
+		return nil
 	}
 	// File-backed mode only had a "web_<sid>" filename convention; non-
 	// web sessions don't reach this path in dev mode, so the legacy

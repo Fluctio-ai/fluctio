@@ -1867,6 +1867,13 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := ag.DeleteWebChatSession(r.PathValue("key")); err != nil {
+		if errors.Is(err, store.ErrSessionHasChildren) {
+			jsonResponse(w, http.StatusConflict, map[string]any{
+				"error": "this chat has forked branches — delete them first",
+				"code":  "has_fork_children",
+			})
+			return
+		}
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -1945,6 +1952,53 @@ func (s *Server) handleMoveSessionProject(w http.ResponseWriter, r *http.Request
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleForkSession creates a new chat session forked from an existing
+// one at the given assistant message seq (forkSeq). The fork inherits
+// the parent's archive[0..forkSeq] as a read-only prefix merged at read
+// time, and copies the parent's project_id. Returns the new session_key;
+// the frontend switches to it.
+//
+// Request body: { "agentId": "...", "sourceSessionKey": "...", "forkSeq": <int> }
+//
+// Owner-only — forking mints a new session row under this operator's
+// agent, which a read-only viewer should never trigger.
+func (s *Server) handleForkSession(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AgentID          string `json:"agentId"`
+		SourceSessionKey string `json:"sourceSessionKey"`
+		ForkSeq          int    `json:"forkSeq"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if req.AgentID == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "agentId required"})
+		return
+	}
+	if req.SourceSessionKey == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "sourceSessionKey required"})
+		return
+	}
+	if rec := s.requireAgentOwner(w, r, req.AgentID); rec == nil {
+		return
+	}
+	if !s.requireWritable(w, r) {
+		return
+	}
+	ag := s.resolveAgent(r, req.AgentID)
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "agent not found"})
+		return
+	}
+	newKey, err := ag.ForkSession(req.SourceSessionKey, req.ForkSeq)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"sessionKey": newKey})
 }
 
 // handleFeishuWebhook receives Feishu / Feishu event POSTs. The route is

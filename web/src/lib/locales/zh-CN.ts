@@ -1837,6 +1837,7 @@ const zhCN: Record<string, string> = {
   "agentChats.loadFailed": "加载聊天失败",
   "chat.resend": "重发（重新填充输入框）",
   "chat.viewTaskFiles": "查看任务文件",
+  "chat.fork": "从此处分叉对话",
   "chat.files": "文件",
   "chat.sandboxedExec": "在沙箱容器内执行",
   "preview.iterationLimit": "已达迭代上限",
