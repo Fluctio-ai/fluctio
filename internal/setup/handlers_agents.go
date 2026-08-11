@@ -706,19 +706,23 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// own UserSpace also drop their stale rc.Model — without this they
 	// keep firing the previous model until the 30-min idle eviction.
 	s.invalidateAgent(rec.ID)
+	gen := s.agentScopeDefaultsRead(r, rec.ID)
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"agent": map[string]any{
-			"id":             rec.ID,
-			"userId":         s.effectiveUserID(r),
-			"name":           rec.Name,
-			"model":          s.agentScopeModel(r, rec.ID),
-			"promptMode":     s.agentScopePromptMode(r, rec.ID),
-			"guidance":       s.agentScopeGuidance(r, rec.ID),
-			"splitReplies":   s.agentScopeSplitReplies(r, rec.ID),
-			"autoPersist":    s.agentScopeAutoPersist(r, rec.ID),
-			"sharedIdentity": s.agentScopeSharedIdentity(r, s.effectiveUserID(r), rec.ID),
-			"plugins":        s.agentScopePlugins(r, rec.ID),
-			"config":         rec.Config,
+			"id":                rec.ID,
+			"userId":            s.effectiveUserID(r),
+			"name":              rec.Name,
+			"model":             s.agentScopeModel(r, rec.ID),
+			"promptMode":        s.agentScopePromptMode(r, rec.ID),
+			"guidance":          s.agentScopeGuidance(r, rec.ID),
+			"splitReplies":      s.agentScopeSplitReplies(r, rec.ID),
+			"autoPersist":       s.agentScopeAutoPersist(r, rec.ID),
+			"sharedIdentity":    s.agentScopeSharedIdentity(r, s.effectiveUserID(r), rec.ID),
+			"plugins":           s.agentScopePlugins(r, rec.ID),
+			"maxTokens":         gen["maxTokens"],
+			"temperature":       gen["temperature"],
+			"maxToolIterations": gen["maxToolIterations"],
+			"config":            rec.Config,
 		},
 	})
 }
@@ -740,22 +744,26 @@ func (s *Server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 	desc, _ := rec.Config["description"].(string)
 	// Single-user: caller is always the owner.
 	role := "owner"
+	gen := s.agentScopeDefaultsRead(r, rec.ID)
 	jsonResponse(w, http.StatusOK, map[string]any{
 		"agent": map[string]any{
-			"id":             rec.ID,
-			"name":           rec.Name,
-			"description":    desc,
-			"userId":         s.effectiveUserID(r),
-			"role":           role,
-			"model":          s.agentScopeModel(r, rec.ID),
-			"promptMode":     s.agentScopePromptMode(r, rec.ID),
-			"guidance":       s.agentScopeGuidance(r, rec.ID),
-			"splitReplies":   s.agentScopeSplitReplies(r, rec.ID),
-			"autoPersist":    s.agentScopeAutoPersist(r, rec.ID),
-			"sharedIdentity": s.agentScopeSharedIdentity(r, s.effectiveUserID(r), rec.ID),
-			"plugins":        s.agentScopePlugins(r, rec.ID),
-			"avatarUrl":      "/api/agents/" + rec.ID + "/files/avatar.png",
-			"createdAt":      rec.CreatedAt,
+			"id":                rec.ID,
+			"name":              rec.Name,
+			"description":       desc,
+			"userId":            s.effectiveUserID(r),
+			"role":              role,
+			"model":             s.agentScopeModel(r, rec.ID),
+			"promptMode":        s.agentScopePromptMode(r, rec.ID),
+			"guidance":          s.agentScopeGuidance(r, rec.ID),
+			"splitReplies":      s.agentScopeSplitReplies(r, rec.ID),
+			"autoPersist":       s.agentScopeAutoPersist(r, rec.ID),
+			"sharedIdentity":    s.agentScopeSharedIdentity(r, s.effectiveUserID(r), rec.ID),
+			"plugins":           s.agentScopePlugins(r, rec.ID),
+			"maxTokens":         gen["maxTokens"],
+			"temperature":       gen["temperature"],
+			"maxToolIterations": gen["maxToolIterations"],
+			"avatarUrl":         "/api/agents/" + rec.ID + "/files/avatar.png",
+			"createdAt":         rec.CreatedAt,
 		},
 	})
 }
