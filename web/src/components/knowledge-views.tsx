@@ -968,7 +968,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
         </Button>
       </div>
       <ScrollArea className="flex-1">
-        <div className="columns-1 gap-3 p-4 sm:columns-2 lg:columns-3">
+        <div className="mx-auto max-w-screen-2xl columns-1 gap-3 p-4 sm:columns-2 lg:columns-3 xl:columns-4">
           {loading ? (
             <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
           ) : bookmarks.length === 0 ? (
