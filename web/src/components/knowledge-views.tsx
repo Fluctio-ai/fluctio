@@ -980,10 +980,10 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
               <div key={b.id} className="group mb-3 break-inside-avoid rounded-lg border bg-background p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <a href={b.url} target="_blank" rel="noopener noreferrer" className="block truncate text-sm font-medium hover:underline">
+                    <a href={b.url} target="_blank" rel="noopener noreferrer" className="block break-words text-sm font-medium hover:underline">
                       {b.title || b.url}
                     </a>
-                    <a href={b.url} target="_blank" rel="noopener noreferrer" className="block truncate text-xs text-muted-foreground hover:underline">
+                    <a href={b.url} target="_blank" rel="noopener noreferrer" className="block break-all text-xs text-muted-foreground hover:underline">
                       {b.url}
                     </a>
                   </div>
@@ -999,8 +999,8 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                 {b.summary && (
                   <p className="mt-1.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{b.summary}</p>
                 )}
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground">
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                  <span className="min-w-0 break-words text-xs text-muted-foreground">
                     {relativeTime(b.created_at)}{b.content ? ` · ${t("knowledge.bookmarkBody", { n: b.content.length })}` : ""}
                     {b.promoted_to_article_id && (
                       <span className="ml-2 text-emerald-600 dark:text-emerald-400">{t("knowledge.bookmarkPromoted")}</span>
