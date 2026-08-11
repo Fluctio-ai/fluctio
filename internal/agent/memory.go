@@ -568,7 +568,7 @@ func (a *Agent) maybeAutoTitle(sessionKey string, messages []provider.Message, h
 		} else {
 			slog.Debug("auto-title: persist event failed", "error", err)
 		}
-		hub.Publish(ownerUserID, a.name, sessionKey, EventEnvelope{Seq: seq, Event: evt})
+		hub.Publish(ctx, ownerUserID, a.name, sessionKey, EventEnvelope{Seq: seq, Event: evt})
 	}
 }
 

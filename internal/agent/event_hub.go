@@ -37,7 +37,7 @@ func NewEventHub() *EventHub {
 // hub leaks goroutines and channels on reconnect churn.
 func (h *EventHub) Subscribe(userID, agentID, sessionKey string) (<-chan EventEnvelope, func()) {
 	key := hubKey(userID, agentID, sessionKey)
-	ch := make(chan EventEnvelope, 32)
+	ch := make(chan EventEnvelope, 256)
 	h.mu.Lock()
 	h.subs[key] = append(h.subs[key], ch)
 	h.mu.Unlock()
@@ -60,18 +60,47 @@ func (h *EventHub) Subscribe(userID, agentID, sessionKey string) (<-chan EventEn
 }
 
 // Publish fans an envelope out to every current subscriber. Slow
-// consumers (full buffer) are skipped, not blocked — a stuck client
-// can't stall the agent loop.
-func (h *EventHub) Publish(userID, agentID, sessionKey string, env EventEnvelope) {
+// consumers (full buffer) are skipped for persisted event types — a
+// stuck client can't stall the agent loop and the event is replayed
+// from session_events on reconnect anyway.
+//
+// content_delta is the exception: it is NOT persisted (seq=-1) and is
+// the sole source of the live typing animation. A dropped delta is a
+// permanently missing token in the active bubble, so we block here
+// (back-pressure to the agent loop) until the subscriber drains or ctx
+// ends. The active POST handler is the only real consumer — the
+// subscribe handler skips content_delta — so this never stalls
+// unrelated tabs. GLM-class thinking models burst content_delta after
+// a long reasoning phase; without back-pressure the buffer can fill
+// before the browser (rendering a long markdown bubble) drains it,
+// which surfaced as "GLM 漏字, 刷新才完整".
+func (h *EventHub) Publish(ctx context.Context, userID, agentID, sessionKey string, env EventEnvelope) {
 	key := hubKey(userID, agentID, sessionKey)
 	h.mu.RLock()
 	subs := append([]chan EventEnvelope(nil), h.subs[key]...)
 	h.mu.RUnlock()
 	for _, ch := range subs {
+		h.deliver(ch, env, ctx)
+	}
+}
+
+// deliver sends env to one subscriber. The recover guards against the
+// race where a subscriber's cleanup closes ch between Publish's RUnlock
+// and this send — a panic on a closed channel would otherwise kill the
+// agent goroutine. The blocking content_delta path widens that window,
+// making the recover load-bearing rather than decorative.
+func (h *EventHub) deliver(ch chan EventEnvelope, env EventEnvelope, ctx context.Context) {
+	defer func() { recover() }()
+	if env.Event.Type == "content_delta" {
 		select {
 		case ch <- env:
-		default:
+		case <-ctx.Done():
 		}
+		return
+	}
+	select {
+	case ch <- env:
+	default:
 	}
 }
 

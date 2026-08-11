@@ -69,7 +69,7 @@ func emitEvent(ctx context.Context, evt ChatEvent) {
 	}
 
 	if stream != nil && stream.hub != nil && stream.userID != "" && stream.sessionKey != "" {
-		stream.hub.Publish(stream.userID, stream.agentID, stream.sessionKey, EventEnvelope{Seq: seq, Event: evt})
+		stream.hub.Publish(ctx, stream.userID, stream.agentID, stream.sessionKey, EventEnvelope{Seq: seq, Event: evt})
 	}
 
 	// Legacy channel path: prefer the channel held on streamCtx (set by
