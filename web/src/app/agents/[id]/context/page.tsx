@@ -160,7 +160,7 @@ export default function AgentContextPage() {
     const it = parseInt(maxToolIterations, 10);
     patch.maxToolIterations = Number.isFinite(it) && it > 0 ? it : 0;
     const res = await updateAgent(agentId, patch);
-    if (!res?.ok) throw new Error(res?.error || "save failed");
+    if (res?.error) throw new Error(res.error);
   };
 
   // Save memory.autoTitle (enabled + model). afterRounds / maxTries /
