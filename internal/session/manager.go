@@ -499,6 +499,11 @@ func (m *Manager) getByKey(key, channel, accountID, chatID, projectID string) *S
 // reach into the struct.
 func (s *Session) Key() string { return s.sessionKey }
 
+// AgentID returns the owning agent's ID — the key under which this
+// session's archive rows are stored. Used by the rollback path to
+// delete the orphan user row from session_messages via the store.
+func (s *Session) AgentID() string { return s.agentID }
+
 func (s *Session) Append(msg provider.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -524,6 +529,32 @@ func (s *Session) Append(msg provider.Message) {
 	} else {
 		s.appendToFile(msg)
 	}
+}
+
+// RollbackLastUser removes the trailing message iff it is an unanswered
+// user turn — the last message in the working set AND role=user (the
+// agent never replied, typically because the LLM call failed). It
+// persists the trimmed working set via SaveSession but does NOT touch
+// the session_messages archive; the caller deletes the matching orphan
+// row so history-reload stays consistent. Returns false (no-op) if the
+// last message isn't a user turn. Used by the web chat's "resend a
+// failed message" flow.
+func (s *Session) RollbackLastUser() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.Messages) == 0 {
+		return false
+	}
+	if s.Messages[len(s.Messages)-1].Role != "user" {
+		return false
+	}
+	s.Messages = s.Messages[:len(s.Messages)-1]
+	if s.store != nil {
+		s.store.SaveSession(s.ctx(), s.agentID, s.sessionKey, s.channel, s.accountID, s.chatID, s.projectID, s.Messages)
+	} else {
+		s.rewriteFile()
+	}
+	return true
 }
 
 // AppendArchivedHidden writes msgs to the session_messages archive with

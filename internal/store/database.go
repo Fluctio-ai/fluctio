@@ -3965,6 +3965,61 @@ func (d *DBStore) AppendSessionMessage(ctx context.Context, agentID, sessionKey 
 	return err
 }
 
+// DeleteLastUserMessage deletes the highest-seq session_messages row
+// for the session iff it has role=user — an unanswered pending user
+// turn left behind by a failed LLM call. Returns the deleted seq (>=0),
+// or -1 if the last row was not a user message (no-op). The SELECT +
+// DELETE run in one tx so a concurrent append can't slip a new last
+// row in between. Used by the web chat's failed-turn rollback.
+func (d *DBStore) DeleteLastUserMessage(ctx context.Context, agentID, sessionKey string) (int64, error) {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return -1, err
+	}
+	defer tx.Rollback()
+
+	var seq int64
+	var role string
+	if d.dialect == "postgres" {
+		err = tx.QueryRowContext(ctx,
+			`SELECT seq, role FROM session_messages
+			 WHERE agent_id = $1 AND session_key = $2
+			 ORDER BY seq DESC LIMIT 1`,
+			agentID, sessionKey).Scan(&seq, &role)
+	} else {
+		err = tx.QueryRowContext(ctx,
+			`SELECT seq, role FROM session_messages
+			 WHERE agent_id = ? AND session_key = ?
+			 ORDER BY seq DESC LIMIT 1`,
+			agentID, sessionKey).Scan(&seq, &role)
+	}
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return -1, nil
+		}
+		return -1, err
+	}
+	if role != "user" {
+		return -1, nil
+	}
+	if d.dialect == "postgres" {
+		_, err = tx.ExecContext(ctx,
+			`DELETE FROM session_messages WHERE agent_id = $1 AND session_key = $2 AND seq = $3`,
+			agentID, sessionKey, seq)
+	} else {
+		_, err = tx.ExecContext(ctx,
+			`DELETE FROM session_messages WHERE agent_id = ? AND session_key = ? AND seq = ?`,
+			agentID, sessionKey, seq)
+	}
+	if err != nil {
+		return -1, err
+	}
+	if err := tx.Commit(); err != nil {
+		return -1, err
+	}
+	return seq, nil
+}
+
 // AppendSessionEvent persists one streaming-event delta and returns the
 // assigned seq. seq is per-(user, agent, session) — same pattern as
 // session_messages — and is allocated atomically inside a transaction

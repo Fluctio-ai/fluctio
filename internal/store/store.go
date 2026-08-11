@@ -189,6 +189,13 @@ type Store interface {
 	// the fetch_messages tool to retrieve the verbatim messages of a topic.
 	// Scoped by (agent, session).
 	ListSessionMessagesBySeq(ctx context.Context, agentID, sessionKey string, ranges [][2]int) ([]SessionMessage, error)
+	// DeleteLastUserMessage deletes the highest-seq session_messages
+	// row for the session iff it has role=user (an unanswered pending
+	// user turn). Returns the deleted seq (>=0), or -1 if the last row
+	// was not a user message (no-op). Used by the web chat's failed-turn
+	// rollback so a re-sent question doesn't leave a duplicate orphan
+	// user row that history-reload re-renders alongside the new turn.
+	DeleteLastUserMessage(ctx context.Context, agentID, sessionKey string) (int64, error)
 
 	// --- Chat events (in-flight streaming deltas, persisted for resume) ---
 	//

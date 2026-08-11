@@ -1238,6 +1238,12 @@ export async function sendChatStream(
   // (planMode etc.) directly; unrecognized keys land in a "Client
   // Parameters" system message via renderClientParams.
   params?: Record<string, unknown>,
+  // rollbackPendingUser, when true, asks the server to drop the
+  // trailing unanswered user turn before appending this message — used
+  // by the "resend a failed message" flow so the LLM doesn't see the
+  // failed original and the resend as two identical back-to-back user
+  // turns.
+  rollbackPendingUser?: boolean,
 ): Promise<void> {
   const res = await apiFetch("/api/chat/stream", {
     method: "POST",
@@ -1252,6 +1258,7 @@ export async function sendChatStream(
       // slash-command replies (agent.popLang lifts it onto Lang). Spread
       // after caller params so the locale always reflects the live setting.
       params: { ...(params || {}), lang: currentLocale() },
+      rollbackPendingUser: rollbackPendingUser || undefined,
     }),
     signal,
   });

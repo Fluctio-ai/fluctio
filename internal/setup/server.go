@@ -36,6 +36,13 @@ type AgentHandle interface {
 	// returns false when no turn is running (caller falls back to a
 	// normal send).
 	SteerWeb(sessionId, projectIDHint, text string) bool
+	// RollbackPendingUserWeb drops the trailing unanswered user turn
+	// (no assistant reply) from the session — in-memory working set,
+	// sessions.messages JSONB, and the session_messages archive row.
+	// Used by the "resend a failed message" flow so the LLM doesn't see
+	// the failed original + the resend as two back-to-back user turns.
+	// No-op (returns false) if the last message isn't a pending user.
+	RollbackPendingUserWeb(sessionId, projectIDHint string) bool
 	WebChatHistory(sessionId string, beforeSeq, limit int) ([]map[string]any, int, bool)
 	WebChatSessions() []session.WebSession
 	DeleteWebChatSession(sessionId string) error

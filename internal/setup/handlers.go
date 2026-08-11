@@ -970,6 +970,14 @@ type chatRequest struct {
 	// want the bytes shown directly to a vision model.
 	Attachments []attachmentRequest `json:"attachments,omitempty"`
 	Params      map[string]any      `json:"params,omitempty"`
+	// RollbackPendingUser, when true, asks the handler to drop the
+	// trailing unanswered user turn (in-memory working set, sessions.
+	// messages JSONB, and the session_messages archive row) BEFORE
+	// appending the fresh message in this request. Used by the web
+	// chat's "resend a failed message" flow so the LLM doesn't see the
+	// failed original + the resend as two identical back-to-back user
+	// turns.
+	RollbackPendingUser bool `json:"rollbackPendingUser,omitempty"`
 }
 
 // attachmentRequest is the wire form of a single attachment. URL is the
@@ -1196,6 +1204,14 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// continuation's events can reach this handler's safety-net check.
 	defer cancel()
 	agentCtx = agent.ContextWithStream(agentCtx, nil, s.dataStore, hub, uid, agentID, req.SessionID)
+
+	// "Resend a failed message": drop the trailing unanswered user turn
+	// before the fresh append below so the LLM doesn't see the failed
+	// original + this resend as two identical back-to-back user turns.
+	// No-op (returns false) if the last message isn't a pending user.
+	if req.RollbackPendingUser {
+		ag.RollbackPendingUserWeb(req.SessionID, req.ProjectID)
+	}
 
 	agentDone := make(chan struct{})
 	go func() {

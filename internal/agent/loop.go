@@ -753,6 +753,38 @@ func (a *Agent) HandleWebChatStream(ctx context.Context, sessionId, projectIDHin
 	return a.HandleMessage(ctx, msg)
 }
 
+// RollbackPendingUserWeb removes the trailing unanswered user turn from
+// the web session named by sessionId — both the in-memory working set
+// (and its sessions.messages JSONB mirror) and the session_messages
+// archive row. The POST /api/chat/stream handler calls this BEFORE
+// HandleWebChatStream appends the fresh user turn, so the LLM sees one
+// copy of the reworded question instead of the failed original + the
+// resend as two back-to-back user turns. Returns false if the last
+// message isn't an unanswered user turn (no-op). Session resolution
+// mirrors HandleWebChatStream so we land on the same *Session pointer.
+func (a *Agent) RollbackPendingUserWeb(sessionId, projectIDHint string) bool {
+	if sessionId == "" {
+		sessionId = "web-ui"
+	}
+	channel, accountID, chatID, projectID := a.recoverWebTriple(sessionId)
+	if projectID == "" {
+		projectID = projectIDHint
+	}
+	sess := a.sessions.Get(channel, accountID, chatID, projectID)
+	if sess == nil {
+		return false
+	}
+	if !sess.RollbackLastUser() {
+		return false
+	}
+	if a.dataStore != nil {
+		if _, err := a.dataStore.DeleteLastUserMessage(context.Background(), sess.AgentID(), sess.Key()); err != nil {
+			slog.Warn("rollback: delete last user archive row", "agent", a.name, "session", sess.Key(), "error", err)
+		}
+	}
+	return true
+}
+
 // SteerWeb buffers a steering message for an in-flight web turn on the
 // given session. Returns true if a turn was active and the message was
 // buffered (the running loop will fold it in between tool rounds and

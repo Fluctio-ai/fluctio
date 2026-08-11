@@ -705,6 +705,13 @@ export function ChatScreen() {
   // producing a duplicate bubble. The ref is reset to null at startNewGroup
   // and when a tool_call rolls the bubble into a tool-group.
   const streamingMsgIdRef = useRef<string | null>(null);
+  // pendingRollbackRef flags the next send as a resend of the trailing
+  // failed user turn. handleRetry sets it when you re-click a message
+  // with no successful assistant reply after it; handleSend consumes it
+  // (passes rollbackPendingUser to the server, which drops the orphan
+  // user row before appending the fresh turn). Ref not state so reading
+  // it doesn't trigger a re-render.
+  const pendingRollbackRef = useRef<string | null>(null);
   // First-send navigation (`/chat/` -> `/chat/<sid>/`) triggers the
   // history-loading effect while the POST stream is still in flight.
   // Keep that fetch from clearing optimistic bubbles or advancing the
@@ -1574,6 +1581,13 @@ export function ChatScreen() {
     // used by the steer 409 fallback (server confirmed no active turn).
     const composerText = (overrideText ?? input).trim();
     const text = composerText;
+    // Consume the rollback flag eagerly: even if this send throws or
+    // the user abandons it, the next plain send must NOT carry a stale
+    // rollback (would delete an unrelated later user turn). handleRetry
+    // re-sets it on the next failed-message resend.
+    const rollbackId = pendingRollbackRef.current;
+    pendingRollbackRef.current = null;
+    const rollbackPending = rollbackId !== null;
     const slashAllowedInReadOnlyView = isReadOnlySafeSlashCommand(text);
     // Allow sending with attachments only (no text), but require at least one.
     if (
@@ -1680,16 +1694,29 @@ export function ChatScreen() {
     // to bottom even if the user had scrolled up to read earlier in the
     // conversation.
     stickToBottomRef.current = true;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: `u-${Date.now()}`,
-        role: "user",
-        content: text, // bubble shows text only; attachments rendered separately above
-        timestamp: Date.now(),
-        attachments: userBubbleAttachments.length > 0 ? userBubbleAttachments : undefined,
-      },
-    ]);
+    setMessages((prev) => {
+      // Resend of a trailing failed user turn: the server is rolling
+      // back the orphan user row (rollbackPending below), so also drop
+      // the stale failed user bubble AND any trailing error bubbles
+      // from the view before adding the fresh user bubble. Otherwise
+      // the UI shows two user bubbles (old failed + new resend) until a
+      // refresh, even though the DB is already correct.
+      let base = prev;
+      if (rollbackId) {
+        const idx = prev.findIndex((m) => m.id === rollbackId);
+        if (idx >= 0) base = prev.slice(0, idx);
+      }
+      return [
+        ...base,
+        {
+          id: `u-${Date.now()}`,
+          role: "user",
+          content: text, // bubble shows text only; attachments rendered separately above
+          timestamp: Date.now(),
+          attachments: userBubbleAttachments.length > 0 ? userBubbleAttachments : undefined,
+        },
+      ];
+    });
     setSending(true);
     abortRef.current = new AbortController();
 
@@ -2041,7 +2068,7 @@ export function ChatScreen() {
             break;
           }
         }
-      }, abortRef.current.signal, imageDataUrls, projectIdHint);
+      }, abortRef.current.signal, imageDataUrls, projectIdHint, undefined, rollbackPending);
       // Diff the workspace against the pre-turn snapshot to detect files
       // produced by *exec* (a Python script that saves PDFs, etc.) — these
       // have no tool-call record to anchor them to a bubble, so by design
@@ -2306,9 +2333,20 @@ export function ChatScreen() {
   // handleRetry refills the composer with this message's content so the
   // user can verify/edit before resending. Deliberately not auto-sending —
   // a one-click resend that quietly discards the existing agent reply is
-  // too easy to fire by accident.
+  // too easy to fire by accident. When the retried message is the
+  // trailing failed user turn (no successful assistant reply after it,
+  // only optional error bubbles), the next send also signals the server
+  // to roll that orphan row back so the LLM sees one copy, not two.
+  // Middle-of-history retries (a user turn with a real reply after it)
+  // stay as a plain refill for now; fork is a later feature.
   const handleRetry = (msg: ChatMessage) => {
     setInput(msg.content);
+    const idx = messages.findIndex((m) => m.id === msg.id);
+    const isFailedTail =
+      idx >= 0 &&
+      msg.role === "user" &&
+      messages.slice(idx + 1).every((m) => m.id.startsWith("e-"));
+    pendingRollbackRef.current = isFailedTail ? msg.id : null;
     setTimeout(() => {
       const el = textareaRef.current;
       if (el) {
