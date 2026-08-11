@@ -25,6 +25,7 @@ import {
   FileTextIcon,
   GlobeIcon,
   ListOrderedIcon,
+  PencilIcon,
   PlusIcon,
   QuoteIcon,
   SparklesIcon,
@@ -53,6 +54,7 @@ import {
   saveBookmark,
   deleteBookmark,
   promoteBookmark,
+  updateBookmark,
   kbGetInsights,
   kbGenerateInsights,
   listKBPending,
@@ -907,6 +909,10 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [promoting, setPromoting] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editSummary, setEditSummary] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -951,6 +957,23 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
     setPromoting(null);
   }, [agentId, load, notify, t]);
 
+  const openEdit = useCallback((b: KBBookmark) => {
+    setEditId(b.id);
+    setEditTitle(b.title || "");
+    setEditSummary(b.summary || "");
+  }, []);
+
+  const handleEditSave = useCallback(async () => {
+    if (!agentId || !editId) return;
+    setEditSaving(true);
+    try {
+      const res = await updateBookmark(agentId, editId, { title: editTitle, summary: editSummary });
+      if (res.error) notify(res.error);
+      else { setEditId(null); await load(); }
+    } catch { notify(t("knowledge.failedAddText")); }
+    setEditSaving(false);
+  }, [agentId, editId, editTitle, editSummary, load, notify, t]);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return bookmarks;
@@ -987,14 +1010,24 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                       {b.url}
                     </a>
                   </div>
-                  <button
-                    type="button"
-                    className="shrink-0 rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
-                    onClick={() => handleDelete(b.id)}
-                    aria-label={t("common.delete")}
-                  >
-                    <TrashIcon className="h-3.5 w-3.5" />
-                  </button>
+                  <div className="flex shrink-0 items-center gap-0.5">
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
+                      onClick={() => openEdit(b)}
+                      aria-label={t("common.edit")}
+                    >
+                      <PencilIcon className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+                      onClick={() => handleDelete(b.id)}
+                      aria-label={t("common.delete")}
+                    >
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 </div>
                 {b.summary && (
                   <p className="mt-1.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{b.summary}</p>
@@ -1053,6 +1086,32 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
             <Button variant="outline" onClick={() => setAddOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={handleSave} disabled={saving || !url.trim()}>
               {saving ? t("common.saving") : t("knowledge.addBookmark")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editId !== null} onOpenChange={(o) => { if (!o) setEditId(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t("knowledge.bookmarkEdit")}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>{t("knowledge.bookmarkTitleLabel")}</Label>
+              <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("knowledge.bookmarkSummaryLabel")}</Label>
+              <textarea
+                className="flex min-h-[80px] w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+                value={editSummary}
+                onChange={(e) => setEditSummary(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditId(null)}>{t("common.cancel")}</Button>
+            <Button onClick={handleEditSave} disabled={editSaving}>
+              {editSaving ? t("common.saving") : t("common.save")}
             </Button>
           </DialogFooter>
         </DialogContent>

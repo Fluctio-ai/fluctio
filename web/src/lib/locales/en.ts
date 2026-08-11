@@ -662,6 +662,7 @@ const en: Record<string, string> = {
   "knowledge.bookmarkHideBody": "Hide body",
   "knowledge.bookmarkPromote": "Promote to article",
   "knowledge.bookmarkPromoted": "Promoted to article",
+  "knowledge.bookmarkEdit": "Edit bookmark",
   "knowledge.viewBoard": "Board",
   "knowledge.viewList": "List",
   "knowledge.overdue": "Overdue",
