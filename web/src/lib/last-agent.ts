@@ -21,9 +21,9 @@ export function lastAgentId(): string | null {
   }
 }
 
-// lastAgentPath returns the /agents/<id>/ path of the most recently used
+// lastAgentPath returns the /agents/<id>/chat/ path of the most recently used
 // agent, or null when none is remembered. Callers fall back to /overview/.
 export function lastAgentPath(): string | null {
   const id = lastAgentId();
-  return id ? `/agents/${id}/` : null;
+  return id ? `/agents/${id}/chat/` : null;
 }
