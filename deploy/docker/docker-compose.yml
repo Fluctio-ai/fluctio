@@ -58,9 +58,9 @@ services:
       # Real values live in .env (gitignored); see .env.example.
       FLUCTIO_SANDBOX_ENABLED: "true"
       FLUCTIO_SANDBOX_BACKEND: docker
-      # thinkany/fluctio-sandbox:latest ships Python3 + Node + Camoufox
+      # ghcr.io/fluctio-ai/fluctio-sandbox:latest ships Python3 + Node + Camoufox
       # + git/curl. Override via FLUCTIO_SANDBOX_IMAGE in .env.
-      FLUCTIO_SANDBOX_IMAGE: ${FLUCTIO_SANDBOX_IMAGE:-thinkany/fluctio-sandbox:latest}
+      FLUCTIO_SANDBOX_IMAGE: ${FLUCTIO_SANDBOX_IMAGE:-ghcr.io/fluctio-ai/fluctio-sandbox:latest}
     depends_on:
       postgres:
         condition: service_healthy

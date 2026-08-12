@@ -87,7 +87,7 @@ objectStore:
 sandbox:
   enabled: false
   backend: e2b                  # "e2b" only (docker not available in k8s)
-  image: thinkany/fluctio-sandbox:latest
+  image: ghcr.io/fluctio-ai/fluctio-sandbox:latest
   e2bApiKey: ""
 
 ## Ingress

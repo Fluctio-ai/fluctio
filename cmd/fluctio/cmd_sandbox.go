@@ -37,7 +37,7 @@ func sandboxCreateCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&image, "image", "thinkany/fluctio-sandbox:latest", "Docker image to use")
+	cmd.Flags().StringVar(&image, "image", "ghcr.io/fluctio-ai/fluctio-sandbox:latest", "Docker image to use")
 	return cmd
 }
 

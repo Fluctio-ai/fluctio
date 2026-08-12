@@ -164,7 +164,7 @@ type Manager struct {
 // agent's pooled executor; otherwise the docker container path is used.
 func NewManager(st store.Store, workspaceRoot, image string, policy *sandbox.Policy, previewBase, backend string, pool sandbox.ExecutorPool) *Manager {
 	if image == "" {
-		image = "thinkany/fluctio-sandbox:latest"
+		image = "ghcr.io/fluctio-ai/fluctio-sandbox:latest"
 	}
 	return &Manager{
 		store:         st,
