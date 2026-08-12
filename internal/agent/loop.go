@@ -2167,7 +2167,7 @@ func renderChannelHints(msg bus.InboundMessage, splitEnabled bool) string {
 // place — splitting there adds nothing.
 func isIMChannel(channel string) bool {
 	switch channel {
-	case "wechat", "telegram", "discord", "slack", "line", "feishu":
+	case "wechat", "qq", "telegram", "discord", "slack", "line", "feishu":
 		return true
 	}
 	return false
@@ -2388,7 +2388,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 		slog.Error("plan-mode chat failed", "agent", a.name, "error", err)
 		emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": err.Error()}})
 		emitEvent(ctx, ChatEvent{Type: "done"})
-		return "Sorry, I couldn't draft the plan — the LLM call failed."
+		return slashT(msg.Lang, "error.plan_failed")
 	}
 	a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 
@@ -2937,7 +2937,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
 			emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": err.Error()}})
 			emitEvent(ctx, ChatEvent{Type: "done"})
-			return "Sorry, I encountered an error processing your request."
+			return slashT(msg.Lang, "error.processing_failed")
 		}
 		a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 		a.maybeRecoverToolCalls(resp)
@@ -3075,7 +3075,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			var promptDesc string
 			executeCalls, blockedMap, promptDesc = a.filterAuthorizedCalls(sess, executeCalls)
 			if promptDesc != "" {
-				a.emitAuthPrompt(ctx, promptDesc, msg.Channel)
+				a.emitAuthPrompt(ctx, promptDesc, msg)
 				authPrompted = true
 			}
 			for _, br := range blockedMap {
@@ -3769,7 +3769,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 
 		if err != nil {
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
-			return a.stringStream("Sorry, I encountered an error processing your request.")
+			return a.stringStream(slashT(msg.Lang, "error.processing_failed"))
 		}
 		a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 		a.maybeRecoverToolCalls(resp)
@@ -3916,7 +3916,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			var promptDesc string
 			streamCalls, blockedMap, promptDesc = a.filterAuthorizedCalls(sess, streamCalls)
 			if promptDesc != "" {
-				a.emitAuthPrompt(ctx, promptDesc, msg.Channel)
+				a.emitAuthPrompt(ctx, promptDesc, msg)
 				authPrompted = true
 			}
 			for _, br := range blockedMap {

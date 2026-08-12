@@ -65,6 +65,20 @@ var slashTexts = map[string]slashEntry{
 		"Compaction error: %v",
 		"压缩出错：%v",
 	},
+	// ── runtime errors ──
+	// Returned to the chatter when the LLM call itself fails after all
+	// retries — the agent has no model output to relay, so this string IS
+	// the user-visible reply. Localized so IM chatters (who don't pick the
+	// language per-message) see it in the agent's configured language
+	// instead of the hardcoded English fallback that used to ship.
+	"error.processing_failed": {
+		"Sorry, I ran into a problem handling this request. Please try again in a moment.",
+		"抱歉，处理这条请求时遇到了问题，请稍后重试。",
+	},
+	"error.plan_failed": {
+		"Sorry, I couldn't draft the plan — the model call failed.",
+		"抱歉，起草计划时失败了——模型调用出错。",
+	},
 	"compact.done": {
 		"✅ Compacted: %d → %d messages.",
 		"✅ 已压缩：%d → %d 条消息。",

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/session"
 )
@@ -70,8 +72,13 @@ func (a *Agent) filterAuthorizedCalls(sess *session.Session, calls []provider.To
 
 // emitAuthPrompt surfaces the "needs authorization" message to the user.
 // On web it sends a structured auth_prompt event the front-end renders as
-// tappable buttons; on IM channels (no bubble UI) it falls back to a
-// plain-text content event listing the options.
+// tappable buttons; on IM channels (no bubble UI, no SSE) it ALSO pushes
+// the prompt text through the outbound bus so it actually reaches the
+// chatter's WeChat/QQ/Telegram/etc. — emitEvent only fans out to SSE
+// consumers (session_events table + hub), which IM channels never read,
+// so without the outbound push an IM user sees nothing, never learns the
+// turn is blocked on authorization, and the parked tool_call waits
+// forever for a /yes that never comes.
 //
 // It deliberately does NOT append an assistant message to the running
 // message list — inserting one between an assistant's tool_calls and the
@@ -79,7 +86,7 @@ func (a *Agent) filterAuthorizedCalls(sess *session.Session, calls []provider.To
 // "tool message without preceding tool_calls"). The authorization ask is
 // already embedded in the blocked tool_result, which the model sees as a
 // normal tool response.
-func (a *Agent) emitAuthPrompt(ctx context.Context, desc, channel string) {
+func (a *Agent) emitAuthPrompt(ctx context.Context, desc string, msg bus.InboundMessage) {
 	options := []map[string]string{
 		{"cmd": "/yes", "label_zh": "授权执行", "label_en": "Approve"},
 		{"cmd": "/no", "label_zh": "拒绝", "label_en": "Deny"},
@@ -90,7 +97,7 @@ func (a *Agent) emitAuthPrompt(ctx context.Context, desc, channel string) {
 		"description": desc,
 		"options":     options,
 	}})
-	if channel == "web" {
+	if msg.Channel == "web" {
 		return
 	}
 	content := "⚠️ 需要授权：" + desc + "\n" +
@@ -98,7 +105,26 @@ func (a *Agent) emitAuthPrompt(ctx context.Context, desc, channel string) {
 		"/no — 拒绝 (Deny)\n" +
 		"/auto — 切到自动拒绝 (Auto-deny)\n" +
 		"/yolo — 切到全放行 (Allow all)"
+	// SSE content event keeps web-compatible clients (and session_events
+	// replay) in sync; IM channels never read SSE so the outbound push
+	// below is the one that actually delivers the prompt to the chatter.
 	emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": content}})
+	if isIMChannel(msg.Channel) && a.messageBus != nil {
+		// Non-blocking send: a full outbound queue drops the prompt rather
+		// than stalling the agent loop — matches the compaction-notice
+		// pattern in loop.go. The prompt is best-effort UX; losing it is
+		// no worse than the pre-fix status quo (IM saw nothing at all).
+		select {
+		case a.messageBus.Outbound <- bus.OutboundMessage{
+			Channel:   msg.Channel,
+			AccountID: msg.AccountID,
+			ChatID:    msg.ChatID,
+			Text:      content,
+		}:
+		default:
+			slog.Warn("outbound channel full, dropping auth prompt", "agent", a.name, "channel", msg.Channel)
+		}
+	}
 }
 
 // drainApprovedPending executes tool_calls the user just authorized (/yes

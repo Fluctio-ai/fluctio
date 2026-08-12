@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -154,7 +155,7 @@ func TestEmitAuthPromptOptionsPayload(t *testing.T) {
 	a := &Agent{name: "agent-auth-prompt-test"}
 	events := make(chan ChatEvent, 8)
 	ctx := ContextWithChatEvents(context.Background(), events)
-	a.emitAuthPrompt(ctx, "write outside workspace: /etc/foo", "web")
+	a.emitAuthPrompt(ctx, "write outside workspace: /etc/foo", bus.InboundMessage{Channel: "web"})
 
 	// Drain non-blocking; expect exactly one auth_prompt + no fallback
 	// content event on the web channel.
@@ -211,10 +212,16 @@ done:
 // the content fallback so the UI's parameter-driven buttons are the only
 // rendering.
 func TestEmitAuthPromptIMChannelFallback(t *testing.T) {
-	a := &Agent{name: "agent-auth-prompt-im-test"}
+	// A real MessageBus so the agent's outbound push is observable.
+	// The bus constructor is in internal/bus; we only need the Outbound
+	// channel to be drained, not the full gateway wiring.
+	mb := bus.New()
+	a := &Agent{name: "agent-auth-prompt-im-test", messageBus: mb}
 	events := make(chan ChatEvent, 8)
 	ctx := ContextWithChatEvents(context.Background(), events)
-	a.emitAuthPrompt(ctx, "dangerous command: rm -rf ./", "telegram")
+	a.emitAuthPrompt(ctx, "dangerous command: rm -rf ./", bus.InboundMessage{
+		Channel: "telegram", AccountID: "bot-1", ChatID: "chat-1",
+	})
 
 	var sawContent, sawAuthPrompt bool
 	var contentText string
@@ -245,6 +252,27 @@ done:
 		if !strings.Contains(contentText, cmd) {
 			t.Errorf("IM fallback content missing %q; text=%q", cmd, contentText)
 		}
+	}
+	// Regression for the "IM never sees the auth prompt" bug: emitEvent
+	// only fans out to SSE consumers, which IM channels don't read, so
+	// the prompt must ALSO be pushed through the outbound bus — otherwise
+	// the parked tool_call waits forever for a /yes that never comes.
+	select {
+	case out := <-mb.Outbound:
+		if out.Channel != "telegram" || out.AccountID != "bot-1" || out.ChatID != "chat-1" {
+			t.Errorf("outbound routing wrong: got channel=%q account=%q chat=%q",
+				out.Channel, out.AccountID, out.ChatID)
+		}
+		if !strings.Contains(out.Text, "需要授权") {
+			t.Errorf("outbound text missing 需要授权; got %q", out.Text)
+		}
+		for _, cmd := range []string{"/yes", "/no", "/auto", "/yolo"} {
+			if !strings.Contains(out.Text, cmd) {
+				t.Errorf("outbound text missing %q; got %q", cmd, out.Text)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("IM channel: expected outbound push carrying the auth prompt, got none (IM user would never see the prompt)")
 	}
 }
 
