@@ -1417,7 +1417,18 @@ func (w *WeChat) downloadAndDecryptBytes(media *wechatMediaInfo) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := w.httpClient.Do(req)
+	// Use wechatCDNClient (RSA cipher suites + TLS 1.2 cap), not the
+	// plain w.httpClient. The CDN host (novac2c.cdn.weixin.qq.com) is
+	// the SAME one uploadToCDN already proved needs this exact config:
+	// IPv4 to it is unreachable (TCP timeouts on every address, only the
+	// IPv6 path works via Go Happy Eyeballs) AND the CDN only negotiates
+	// TLS_RSA_WITH_AES_256_GCM_SHA384, which Go 1.17+'s default
+	// ECDHE-only ClientHello doesn't offer → handshake failure. The
+	// download leg hits the same host / same network path / same TLS
+	// config, so it must use the same pinned client — otherwise every
+	// inbound image and file download silently fails with a TLS or TCP
+	// error, which is exactly why no WeChat attachment was ever received.
+	resp, err := wechatCDNClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
