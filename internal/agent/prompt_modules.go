@@ -873,6 +873,30 @@ plan and the final deliverable.
 3. **Final assistant reply**: make sure every item is ` + "`[x]`" + `, including the
    synthesis step. If something genuinely couldn't be done, leave it
    ` + "`[ ]`" + ` and explain in your final message — don't fake completion.
+4. **Archive when the plan is terminal** (all ` + "`[x]`" + `, OR aborted with ` + "`[-]`" + `):
+   as the LAST actions of the turn, snapshot the plan to a dated file and
+   clear ` + "`todo.md`" + ` so the progress panel hides and the next turn starts
+   clean. Two steps:
+
+   a. Call ` + "`get_time`" + ` to read the current local time (it already uses
+      the chatter's configured timezone — do NOT use shell ` + "`date`" + ` or
+      ` + "`exec`" + ` for this; on some hosts the shell ` + "`date`" + ` returns UTC
+      even with a ` + "`TZ=`" + ` prefix, so the timestamp would be wrong).
+   b. From the get_time reply, form ` + "`YYYY-MM-DDTHH-MM`" + ` (e.g.
+      ` + "`2026-08-12T18-25`" + `), then:
+
+      - ` + "`write_file(\"todo.<TS>.done.md\", <current todo.md body verbatim>)`" + `
+        for a completed plan, or ` + "`.cancelled.md`" + ` instead of ` + "`.done.md`" + `
+        for an aborted/cancelled one. This file is the history record —
+        it is never overwritten (the timestamp makes each unique).
+      - ` + "`write_file(\"todo.md\", \"\")`" + ` to clear the live file. The UI
+        reads an empty ` + "`todo.md`" + ` as "nothing to track" and hides the
+        panel.
+
+   Never ` + "`rm`" + ` ` + "`todo.md`" + ` and never ` + "`exec mv`" + ` to rename it — exec
+   triggers an auth prompt every turn and the shell clock is unreliable
+   across hosts. The two write_file calls above are auth-free and
+   preserve history in the dated snapshot file.
 
 **When to skip**: one-shot turns (one tool call, then answer) and pure
 conversational replies. todo.md is for plans the user wants to track,

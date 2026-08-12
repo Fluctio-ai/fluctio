@@ -2205,6 +2205,16 @@ export function ChatScreen() {
       // the happy path, but if a network blip drops that event we don't
       // want a stale "iteration 5/20" sitting under a finished turn.
       setSubagentProgress(null);
+      // Re-fetch todo.md at turn end as a defensive resync. The archive
+      // lifecycle (prompt_modules.go) has the agent clear todo.md via
+      // write_file once the plan is terminal; the per-tool_result refetch
+      // at ~L1959 already covers that path. This catch-all covers any
+      // path that slips past the whitelist (a future tool, a manual FS
+      // change, a dropped event) so todoItems never pins to a stale
+      // snapshot that would reshow the panel next turn via `sending`.
+      getChatTodo(selectedAgent, sessionId)
+        .then((todo) => setTodoItems(todo.items))
+        .catch(() => {});
       textareaRef.current?.focus();
     }
   }, [input, attachments, selectedAgent, sessionId, sending, isReadOnlyView, isReadOnlySafeSlashCommand, loadSessions, pathname, router, urlProjectId]);
