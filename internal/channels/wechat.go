@@ -16,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1294,16 +1295,32 @@ func (w *WeChat) resolveCdnUploadURL(ctx context.Context, upReq wechatGetUploadU
 	return cdnURL, nil
 }
 
-// wechatCDNClient pins TLS for CDN uploads. curl -6 shows the iLink CDN
-// negotiates TLS 1.2 with TLS_RSA_WITH_AES_256_GCM_SHA384 (RSA key exchange);
-// Go 1.17+ defaults to ECDHE-only cipher suites, so its ClientHello carries
-// no cipher the CDN accepts and the handshake fails with "remote error: tls:
-// handshake failure". Explicitly enable the RSA suites (plus ECDHE fallback)
-// and cap at TLS 1.2 to mirror what curl negotiates. (IPv4 to the CDN is
-// unreachable from this host — TCP timeouts on every address — so this relies
-// on Go Happy Eyeballs picking the working IPv6 path.)
+// wechatCDNClient pins TLS + IPv6 preference for CDN I/O.
+//
+// Two network conditions discovered in production (luna.xiao.nu, 2026-08-12):
+//
+//  1. IPv4 to novac2c.cdn.weixin.qq.com is COMPLETELY blocked — all 16
+//     returned addresses TCP-timeout (~5s each). curl -4 fails after
+//     exhausting the list; IPv6 (curl -6) connects in ms.
+//  2. The CDN negotiates ECDHE-RSA-AES128-GCM-SHA256 over TLS 1.2. Go
+//     1.17+'s default suite list happens to include it, so cipher isn't
+//     the blocker here — but the original RSA-pin was kept for the dev
+//     machine where RSA was observed, with ECDHE as fallback.
+//
+// Go's net/http with a plain DualStack dialer is IPv4-FIRST: Happy
+// Eyeballs races an IPv4 dial against IPv6, but the IPv4 dial sits the
+// full ~5s timeout before fallback, and the CDN returns 16 IPv4
+// addresses — that's 80s of timeouts before IPv6 even gets tried, far
+// past the 30s download deadline. Every inbound image/file download
+// therefore hit "context deadline exceeded".
+//
+// Fix: custom DialContext that resolves the host, puts IPv6 addresses
+// FIRST, IPv4 second. The CDN has working IPv6, so the first dial
+// succeeds in ms and IPv4 never gets tried. (If a host ever lacks IPv6,
+// the IPv4 fallback still works — just slower.)
 var wechatCDNClient = &http.Client{
 	Transport: &http.Transport{
+		DialContext: wechatCDNDialContext,
 		TLSClientConfig: &tls.Config{
 			MaxVersion: tls.VersionTLS12,
 			CipherSuites: []uint16{
@@ -1314,6 +1331,109 @@ var wechatCDNClient = &http.Client{
 			},
 		},
 	},
+}
+
+// wechatCDNDialContext dials the CDN with a Happy-Eyeballs-style IPv6-first
+// race. Go's default DualStack dialer is IPv4-first and falls back to IPv6
+// only after the IPv4 dial times out. The CDN returns 16 IPv4 addresses, all
+// of which TCP-timeout (~5s each) on hosts whose outbound 443 is firewalled
+// (common on China-cloud VMs), so a download never reaches the IPv6 attempt
+// inside the 30s budget — every download hit "context deadline exceeded".
+//
+// Race the IPv6 dial against the IPv4 dial concurrently; give IPv6 a 250ms
+// head start (RFC 8305 default Connection Attempt Delay). Whichever connects
+// first wins; the loser is cancelled. Behavior by network:
+//   - IPv6 reachable (the failing-prod case): IPv6 connects in ms, IPv4 never
+//     tried → downloads that were timing out now finish in ms.
+//   - IPv6 unreachable, IPv4 ok (a different server): IPv6 fails fast
+//     (ECONNREFUSED/NXDOMAIN), IPv4 connects → works as before.
+//   - both reachable: whichever is faster wins.
+//
+// No address-family is forced; this is the same algorithm curl uses when
+// given both families, so it adapts to whatever network the host has.
+func wechatCDNDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var v6, v4 []string
+	for _, ip := range ips {
+		s := net.JoinHostPort(ip.IP.String(), port)
+		if ip.IP.To4() == nil {
+			v6 = append(v6, s)
+		} else {
+			v4 = append(v4, s)
+		}
+	}
+	dialer := &net.Dialer{}
+	// raceDial races the two address lists; v6 gets a 250ms head start.
+	raceDial := func(first, second []string, headStart time.Duration) (net.Conn, error) {
+		type result struct {
+			conn net.Conn
+			err  error
+		}
+		out := make(chan result, 1)
+		tryAll := func(addrs []string) {
+			var lastErr error
+			for _, a := range addrs {
+				c, e := dialer.DialContext(ctx, "tcp", a)
+				if c != nil {
+					select {
+					case out <- result{conn: c}:
+					default:
+						_ = c.Close()
+					}
+					return
+				}
+				lastErr = e
+				if ctx.Err() != nil {
+					break
+				}
+			}
+			select {
+			case out <- result{err: lastErr}:
+			default:
+			}
+		}
+		go tryAll(first)
+		// Give the preferred family a head start before starting the other.
+		timer := time.NewTimer(headStart)
+		defer timer.Stop()
+		go func() {
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				return
+			}
+			tryAll(second)
+		}()
+		select {
+		case r := <-out:
+			if r.conn != nil {
+				return r.conn, nil
+			}
+			// First family failed fast; wait for the other.
+			select {
+			case r2 := <-out:
+				if r2.conn != nil {
+					return r2.conn, nil
+				}
+				return nil, r2.err
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if len(v6) > 0 {
+		return raceDial(v6, v4, 250*time.Millisecond)
+	}
+	return dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 }
 
 // wechatUploadCDNPost POSTs the AES-encrypted payload to the CDN once and
