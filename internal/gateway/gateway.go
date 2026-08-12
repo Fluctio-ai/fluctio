@@ -488,7 +488,20 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 					URL:  "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(item.Bytes),
 				})
 			}
-			paths := ag.WriteSessionAttachments(ctx, task.Message.ChatID, task.Message.ProjectID, atts)
+			// Resolve the sessionKey (not the channel chatId) before writing.
+			// WriteSessionAttachments host-writes to sessions/<sessionID>/ and
+			// the docker sandbox bind-mounts sessions/<sessionKey>/ — they must
+			// be the SAME key or the file lands in a directory the container
+			// can't see. task.Message.ChatID is the IM/chat identifier
+			// (e.g. "o9cq8...@im.wechat"), NOT the internal session key
+			// ("s-1786...-xxx") that bindSession + the sandbox pool use.
+			// sessions.Get is idempotent — the same Get HandleMessage runs
+			// later returns this session, so pre-creating it here is safe.
+			attachmentSessionID := task.Message.ChatID
+			if sess := ag.Sessions().Get(task.Message.Channel, task.Message.AccountID, task.Message.ChatID, task.Message.ProjectID); sess != nil {
+				attachmentSessionID = sess.SessionKey()
+			}
+			paths := ag.WriteSessionAttachments(ctx, attachmentSessionID, task.Message.ProjectID, atts)
 			if len(paths) > 0 {
 				var refs strings.Builder
 				for _, p := range paths {
