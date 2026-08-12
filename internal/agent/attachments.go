@@ -49,6 +49,31 @@ type Attachment struct {
 	Name string
 }
 
+// scopedHostDir returns the on-disk workspace directory for a given
+// session/project, mirroring bindSession's scopeDir math (loop.go:
+// sessions/<sessionKey>/ or projects/<pid>/ under the agent workspace
+// root). Used by attachment write paths that run BEFORE bindSession has
+// set Registry.UserRoot for the current turn — at that point UserRoot()
+// still holds the PREVIOUS turn's scope (or the agent root), so writing
+// there would land files in the wrong session directory. A docker
+// sandbox bind-mounts the current session dir, so such misplaced files
+// are invisible inside the container (workspace shows empty even though
+// the [Attached:] breadcrumb was injected). Computing the scope from
+// sessionID/projectID directly avoids the stale-UserRoot race.
+//
+// Returns "" when workspacePath is unset or neither sessionID nor
+// projectID is known (caller falls back to UserRoot / agent root).
+func (a *Agent) scopedHostDir(sessionID, projectID string) string {
+	if a.workspacePath == "" || (sessionID == "" && projectID == "") {
+		return ""
+	}
+	seg := "sessions/" + sessionID
+	if projectID != "" {
+		seg = "projects/" + projectID
+	}
+	return filepath.Join(a.workspacePath, seg)
+}
+
 // WriteSessionAttachments materializes user-attached bytes into the
 // agent's session workspace so skills (image-tool, file readers, etc.)
 // can reach them via /workspace/<filename>. Each URL is one of:
@@ -108,8 +133,15 @@ func (a *Agent) WriteSessionAttachments(ctx context.Context, sessionID, projectI
 		// write_file lands via SetUserRoot), not the shared agent root.
 		// Covers no-sandbox + docker (bind mount). Falls back to the
 		// agent root only before any session is bound.
-		hostDir := ""
-		if a.registry != nil {
+		//
+		// Compute the scope from sessionID/projectID directly instead of
+		// reading Registry.UserRoot(): this runs in the gateway taskqueue
+		// callback BEFORE HandleMessage→bindSession sets UserRoot for the
+		// current turn, so UserRoot() is stale (previous turn's scope or
+		// the agent root) and files would land in the wrong session dir —
+		// invisible inside a docker sandbox bind-mounted to this session.
+		hostDir := a.scopedHostDir(sessionID, projectID)
+		if hostDir == "" && a.registry != nil {
 			hostDir = a.registry.UserRoot()
 		}
 		if hostDir == "" {
@@ -476,8 +508,14 @@ func (a *Agent) persistImageGenOutput(ctx context.Context, sessionID, projectID,
 // three-write loop in WriteSessionAttachments.
 func (a *Agent) writeWorkspaceBytes(ctx context.Context, sessionID, projectID, name string, data []byte) {
 	ext := filepath.Ext(name)
-	hostDir := ""
-	if a.registry != nil {
+	// Same scoped-host-dir logic as WriteSessionAttachments step 1 — see
+	// the stale-UserRoot note there. writeWorkspaceBytes runs inside the
+	// agent loop (bindSession has set UserRoot for the current turn), so
+	// UserRoot() is usually correct here, but computing from sessionID/
+	// projectID directly is race-free and stays correct if a future
+	// caller invokes it outside the turn.
+	hostDir := a.scopedHostDir(sessionID, projectID)
+	if hostDir == "" && a.registry != nil {
 		hostDir = a.registry.UserRoot()
 	}
 	if hostDir == "" {
