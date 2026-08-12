@@ -612,7 +612,23 @@ The sandbox is a **headless** environment (no display). For visual tasks:
 - Save the image to **/workspace/** (NOT /tmp/) and reference it by
   path — the runtime takes care of delivering the file to whatever
   channel the user is on. Do NOT base64-inline the bytes into your
-  reply.`
+  reply.
+
+## Reading PDFs
+The sandbox ships **pdf-inspector** (Firecrawl's Rust PDF→Markdown engine).
+Use it to read any PDF in /workspace instead of hacking with pdftotext or
+raw bytes — it handles tables, multi-column layout, and CID/CJK fonts in
+~150ms with no OCR. One call returns clean Markdown + a classification:
+
+    import pdf_inspector
+    r = pdf_inspector.process_pdf("/workspace/report.pdf")
+    # r.pdf_type: "text_based" | "scanned" | "image_based" | "mixed"
+    # r.markdown: clean Markdown (None if scanned)
+    # r.pages_needing_ocr: 1-indexed page numbers that need OCR
+
+If r.pdf_type is scanned/image_based, pdf-inspector will NOT extract
+text — tell the user the PDF is scanned and you can't read it without an
+OCR step. For text_based/mixed PDFs, read r.markdown directly.`
 
 	if p.cb.sandboxBackend == "e2b" {
 		prompt += "\n- The sandbox is a cloud-hosted E2B environment with network access."

@@ -48,6 +48,14 @@ RUN apt-get update \
 # killing every `camoufox-cli open` at Browser.new_page. Lock to the last
 # known-good combo (the fcd343d :latest image shipped this): camoufox
 # 0.4.11 + camoufox-cli 0.6.0 + playwright<1.50.
+#
+# pdf-inspector: Firecrawl's Rust PDF→Markdown engine with PyO3 bindings.
+# Ships prebuilt Linux x86_64 wheels (no Rust toolchain at build time) and
+# runs fully locally — no ML models, no network. Text-based PDFs (reports,
+# invoices, contracts) in ~150ms with table + multi-column + CID/CJK font
+# support; classifies scanned/image PDFs so the agent routes those to OCR.
+# Faster + higher quality than pymupdf4llm/markitdown. The system prompt
+# points the agent at `pdf_inspector.process_pdf` for /workspace PDFs.
 RUN pip install --break-system-packages --no-cache-dir \
         'camoufox==0.4.11' \
         'camoufox-cli==0.6.0' \
@@ -56,7 +64,8 @@ RUN pip install --break-system-packages --no-cache-dir \
         requests \
         pillow \
         beautifulsoup4 \
-        lxml
+        lxml \
+        pdf-inspector
 
 # Pull Camoufox (anti-detect Firefox) + the system libs it needs to run
 # headless. `--with-deps` shells out to apt for the Firefox runtime
