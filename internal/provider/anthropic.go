@@ -598,8 +598,26 @@ func (p *AnthropicProvider) ChatStream(ctx context.Context, messages []Message, 
 				}
 			case "message_delta":
 				var md anthropicMessageDelta
-				if json.Unmarshal([]byte(data), &md) == nil && md.Usage.OutputTokens > 0 {
-					usage.OutputTokens = md.Usage.OutputTokens
+				if json.Unmarshal([]byte(data), &md) == nil {
+					if md.Usage.OutputTokens > 0 {
+						usage.OutputTokens = md.Usage.OutputTokens
+					}
+					// Some Anthropic-compat backends (Zhipu GLM) carry the
+					// full usage — including input_tokens and the prompt-
+					// cache breakdown — on the final message_delta, leaving
+					// message_start's usage as zeros. Backfill so metering
+					// and cache-hit observability work on those backends.
+					// On native Anthropic message_delta these fields are 0,
+					// so the guards make this a no-op there.
+					if md.Usage.InputTokens > 0 {
+						usage.InputTokens = md.Usage.InputTokens
+					}
+					if md.Usage.CacheReadInputTokens > 0 {
+						usage.CacheReadTokens = md.Usage.CacheReadInputTokens
+					}
+					if md.Usage.CacheCreationInputTokens > 0 {
+						usage.CacheCreationTokens = md.Usage.CacheCreationInputTokens
+					}
 				}
 			case "content_block_start":
 				var cbs anthropicContentBlockStart
@@ -734,8 +752,22 @@ func (p *AnthropicProvider) parseSSE(body io.Reader) (*Response, error) {
 			}
 		case "message_delta":
 			var md anthropicMessageDelta
-			if json.Unmarshal([]byte(data), &md) == nil && md.Usage.OutputTokens > 0 {
-				usage.OutputTokens = md.Usage.OutputTokens
+			if json.Unmarshal([]byte(data), &md) == nil {
+				if md.Usage.OutputTokens > 0 {
+					usage.OutputTokens = md.Usage.OutputTokens
+				}
+				// Backfill input + cache breakdown from message_delta for
+				// Anthropic-compat backends (Zhipu GLM) that only surface
+				// real counts here. No-op on native Anthropic (fields are 0).
+				if md.Usage.InputTokens > 0 {
+					usage.InputTokens = md.Usage.InputTokens
+				}
+				if md.Usage.CacheReadInputTokens > 0 {
+					usage.CacheReadTokens = md.Usage.CacheReadInputTokens
+				}
+				if md.Usage.CacheCreationInputTokens > 0 {
+					usage.CacheCreationTokens = md.Usage.CacheCreationInputTokens
+				}
 			}
 		case "content_block_start":
 			var cbs anthropicContentBlockStart
