@@ -13,7 +13,8 @@ import {
   saveWorkflow,
   type AgentRegisteredTool,
 } from "@/lib/api";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
+import { BUILTIN_TOOL_ZH } from "@/lib/workflow-tools-zh";
 
 // WorkflowEditor (ticket 09, n8n-style). The model is the raw YAML object so
 // unknown fields pass through (decision 8). Canvas = vis-network; double-click
@@ -442,6 +443,7 @@ function NodeProps({
   t: (k: string, vars?: Record<string, string | number>) => string;
 }) {
   const [target, setTarget] = React.useState("");
+  const locale = useLocale().locale;
   const inputVals = (node.input || {}) as Record<string, unknown>;
   return (
     <div className="space-y-1.5">
@@ -474,8 +476,12 @@ function NodeProps({
               ))}
             </select>
           </label>
-          {node.tool && selTool?.description && (
-            <p className="text-muted-foreground italic">{selTool.description}</p>
+          {node.tool && selTool && (
+            <p className="text-muted-foreground italic">
+              {locale === "zh-CN" && selTool.source === "builtin" && BUILTIN_TOOL_ZH[selTool.name]
+                ? BUILTIN_TOOL_ZH[selTool.name]
+                : selTool.description}
+            </p>
           )}
           {selTool?.parameters ? (
             <SchemaForm
