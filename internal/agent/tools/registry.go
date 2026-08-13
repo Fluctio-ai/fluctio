@@ -867,6 +867,10 @@ type ToolInfo struct {
 	//   "mcp"     — exposed by a connected MCP server
 	//   "plugin"  — exposed by a JSON-RPC plugin subprocess
 	Source string `json:"source"`
+	// Parameters is the tool's OpenAI-style JSON schema (the same object the
+	// model sees). Exposed so the workflow editor can render a parameter form
+	// + hint refs instead of forcing the operator to type tool args blind.
+	Parameters any `json:"parameters,omitempty"`
 }
 
 func toolSourceName(s ToolSource) string {
@@ -894,6 +898,7 @@ func (r *Registry) RegisteredTools() []ToolInfo {
 			Name:        name,
 			Description: t.def.Function.Description,
 			Source:      toolSourceName(t.source),
+			Parameters:  t.def.Function.Parameters,
 		})
 	}
 	// Sort: builtin first, then MCP, then plugin; within each group by

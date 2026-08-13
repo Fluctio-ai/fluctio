@@ -1422,6 +1422,10 @@ export interface AgentRegisteredTool {
   name: string;
   description: string;
   source: "builtin" | "mcp" | "plugin" | string;
+  // OpenAI-style JSON schema (same object the model sees). The workflow
+  // editor renders a typed parameter form from this so every tool —
+  // builtin / MCP / plugin — exposes its args the same standard way.
+  parameters?: Record<string, unknown> | null;
 }
 
 // listAgentRegisteredTools fetches the live tool registry for an agent.
