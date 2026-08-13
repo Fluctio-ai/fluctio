@@ -35,17 +35,28 @@ const (
 	SideEffectNonIdempotent SideEffect = "non-idempotent"
 )
 
+// Concurrency declares how overlapping triggers of the same workflow are
+// coordinated (spec decision 13). The default (empty) is allow.
+type Concurrency string
+
+const (
+	ConcurrencyAllow          Concurrency = ""                 // default: runs overlap freely
+	ConcurrencySerial         Concurrency = "serial"           // one at a time, queued
+	ConcurrencyCancelPrevious Concurrency = "cancel_previous" // a new trigger cancels the prior inflight run
+)
+
 // Definition is a versioned workflow. YAML is the single source of truth and
 // the definition never enters the DB (spec decision 8). Optional fields carry
 // `,omitempty` so parse → marshal → parse round-trips with nil/zero collapsing
 // to the same shape (spec decision 8 round-trip hard constraint; ticket 02).
 type Definition struct {
-	ID          string    `yaml:"id,omitempty"`
-	Version     int       `yaml:"version"`
-	Description string    `yaml:"description,omitempty"`
-	Input       InputSpec `yaml:"input,omitempty"`
-	Nodes       []Node    `yaml:"nodes"`
-	Edges       []Edge    `yaml:"edges,omitempty"`
+	ID          string      `yaml:"id,omitempty"`
+	Version     int         `yaml:"version"`
+	Description string      `yaml:"description,omitempty"`
+	Input       InputSpec   `yaml:"input,omitempty"`
+	Nodes       []Node      `yaml:"nodes"`
+	Edges       []Edge      `yaml:"edges,omitempty"`
+	Concurrency Concurrency `yaml:"concurrency,omitempty"`
 }
 
 // InputSpec declares the entry contract. ${input.*} references resolve against

@@ -148,17 +148,17 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 
 	runID := cfg.runID
 	if runID != "" {
-		if err := r.store.MarkRunRunning(ctx, runID); err != nil {
+		if err := r.store.MarkRunRunning(context.Background(), runID); err != nil {
 			return nil, fmt.Errorf("mark run running: %w", err)
 		}
-		resumeSnap, err := r.loadSnapshot(ctx, runID, def)
+		resumeSnap, err := r.loadSnapshot(context.Background(), runID, def)
 		if err != nil {
 			return nil, fmt.Errorf("load resume snapshot: %w", err)
 		}
 		cfg.resume = resumeSnap
 	} else {
 		runID = r.newID()
-		if err := r.store.CreateWorkflowRun(ctx, runID, def.ID, def.Version, input, cfg.session, cfg.owner); err != nil {
+		if err := r.store.CreateWorkflowRun(context.Background(), runID, def.ID, def.Version, input, cfg.session, cfg.owner); err != nil {
 			return nil, fmt.Errorf("create workflow run: %w", err)
 		}
 	}
@@ -174,6 +174,12 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 	current := entryNode(def)
 	var lastOutput map[string]any
 	for current != "" {
+		// Honor a canceled ctx (cancel_previous, spec decision 13) at the next
+		// node boundary — a mid-run cancel stops here, leaving already-completed
+		// nodes in the snapshot.
+		if err := ctx.Err(); err != nil {
+			return r.endRun(runID, def, current, StatusFailed, "canceled: "+err.Error())
+		}
 		name := current
 		if prior, seen := cfg.resume[name]; seen && prior.Status == StatusSucceeded {
 			lastOutput = prior.Output
@@ -183,7 +189,7 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 				return nil, perr
 			}
 			if status != StatusSucceeded {
-				return r.endRun(ctx, runID, def, name, status, msg)
+				return r.endRun(runID, def, name, status, msg)
 			}
 			sc.outputs[name] = out
 			lastOutput = out
@@ -198,15 +204,15 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 			// selErr already says "no matching edge from X" (genuine AC4
 			// no-match) or "edge X→Y: <expr error>" — don't re-prefix and
 			// conflate the two.
-			return r.endRun(ctx, runID, def, name, StatusFailed, selErr.Error())
+			return r.endRun(runID, def, name, StatusFailed, selErr.Error())
 		}
 		current = next
 	}
 
-	if ferr := r.store.FinalizeWorkflowRun(ctx, runID, string(StatusSucceeded), ""); ferr != nil {
+	if ferr := r.store.FinalizeWorkflowRun(context.Background(), runID, string(StatusSucceeded), ""); ferr != nil {
 		return nil, fmt.Errorf("finalize run: %w", ferr)
 	}
-	snap, err := r.loadSnapshot(ctx, runID, def)
+	snap, err := r.loadSnapshot(context.Background(), runID, def)
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot: %w", err)
 	}
@@ -236,12 +242,12 @@ func (r *Runner) executeStep(ctx context.Context, name string, sc refScope, resu
 	out, execErr := r.execNode(ctx, node, sc)
 	if execErr != nil {
 		msg := execErr.Error()
-		if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, attempt, string(StatusFailed), nil, msg); perr != nil {
+		if perr := r.store.AppendWorkflowNodeOutput(context.Background(), runID, name, attempt, string(StatusFailed), nil, msg); perr != nil {
 			return nil, "", "", perr
 		}
 		return nil, StatusFailed, msg, nil
 	}
-	if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, attempt, string(StatusSucceeded), out, ""); perr != nil {
+	if perr := r.store.AppendWorkflowNodeOutput(context.Background(), runID, name, attempt, string(StatusSucceeded), out, ""); perr != nil {
 		return nil, "", "", perr
 	}
 	return out, StatusSucceeded, "", nil
@@ -251,11 +257,11 @@ func (r *Runner) executeStep(ctx context.Context, name string, sc refScope, resu
 // the exec-failure and non-idempotent-refusal paths; the caller persists any
 // new attempt row before calling (the refusal path persists none, since the
 // node isn't re-executed).
-func (r *Runner) endRun(ctx context.Context, runID string, def *Definition, node string, status Status, msg string) (*ExecutionResult, error) {
-	if ferr := r.store.FinalizeWorkflowRun(ctx, runID, string(status), fmt.Sprintf("node %s: %s", node, msg)); ferr != nil {
+func (r *Runner) endRun(runID string, def *Definition, node string, status Status, msg string) (*ExecutionResult, error) {
+	if ferr := r.store.FinalizeWorkflowRun(context.Background(), runID, string(status), fmt.Sprintf("node %s: %s", node, msg)); ferr != nil {
 		return nil, fmt.Errorf("finalize run: %w", ferr)
 	}
-	snap, err := r.loadSnapshot(ctx, runID, def)
+	snap, err := r.loadSnapshot(context.Background(), runID, def)
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot: %w", err)
 	}

@@ -17,8 +17,9 @@ import (
 // directory), registers a tool per definition, and the manual-trigger API +
 // agent-loop LLM trigger sit on top of it. This file is the testable core.
 type Service struct {
-	defs  map[string]*Definition
-	store RunStore
+	defs        map[string]*Definition
+	store       RunStore
+	concurrency *ConcurrencyManager
 }
 
 // NewService builds a Service over the given definitions + persistence seam.
@@ -28,7 +29,7 @@ func NewService(defs map[string]*Definition, store RunStore) *Service {
 	if defs == nil {
 		defs = map[string]*Definition{}
 	}
-	return &Service{defs: defs, store: store}
+	return &Service{defs: defs, store: store, concurrency: NewConcurrencyManager()}
 }
 
 // Definition returns the named workflow, if present.
@@ -65,5 +66,10 @@ func (s *Service) RunWorkflow(ctx context.Context, id string, input map[string]a
 	if !ok {
 		return nil, fmt.Errorf("unknown workflow %q", id)
 	}
+	// Apply the workflow's concurrency policy (spec decision 13): serial may
+	// block until a prior run finishes; cancel_previous may cancel one. allow
+	// is a no-op. release runs after the run completes.
+	ctx, release := s.concurrency.Acquire(ctx, id, def.Concurrency)
+	defer release()
 	return NewRunner(llm, tool, s.store).Run(ctx, def, input, WithOwner(owner), WithSession(session))
 }
