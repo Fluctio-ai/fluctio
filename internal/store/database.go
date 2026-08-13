@@ -288,6 +288,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateAgentsDropUserID(ctx); err != nil {
 		return fmt.Errorf("migrate agents drop user_id: %w", err)
 	}
+	if err := d.migrateWorkflowTables(ctx); err != nil {
+		return fmt.Errorf("migrate workflow tables: %w", err)
+	}
 	return nil
 }
 
