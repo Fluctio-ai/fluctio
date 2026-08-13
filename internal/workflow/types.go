@@ -45,6 +45,11 @@ type Definition struct {
 	Input   InputSpec `yaml:"input,omitempty"`
 	Nodes   []Node    `yaml:"nodes"`
 	Edges   []Edge    `yaml:"edges,omitempty"`
+	// Agents is the per-agent ACL whitelist (spec decision 7): when non-empty,
+	// only the listed agent ids can see/run this workflow as a tool; when empty,
+	// the workflow is NOT globally visible (default-private). Enrollment is
+	// explicit — a workflow with no agents declaration isn't callable by anyone.
+	Agents []string `yaml:"agents,omitempty"`
 }
 
 // InputSpec declares the entry contract. ${input.*} references resolve against

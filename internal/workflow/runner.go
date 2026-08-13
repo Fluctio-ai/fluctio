@@ -63,8 +63,10 @@ func newRunID() string {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	runID  string             // original run id when resuming; "" for a fresh run
-	resume map[string]NodeOutput // populated by Run from the DB (decision 10)
+	runID   string             // original run id when resuming; "" for a fresh run
+	resume  map[string]NodeOutput // populated by Run from the DB (decision 10)
+	owner   string             // run owner (spec decision 14); "" = system
+	session string             // agent session an LLM-triggered run hangs off; "" = none
 }
 
 // WithResume resumes a previously-failed run in place. The runner reuses the
@@ -74,6 +76,17 @@ type runConfig struct {
 // non-idempotent node (spec decision 2).
 func WithResume(runID string) RunOption {
 	return func(c *runConfig) { c.runID = runID }
+}
+
+// WithOwner / WithSession attach the run's ownership (spec decision 14): owner
+// is the calling user (LLM/manual triggers) or "" for system (cron); session
+// is the agent session an LLM-triggered run hangs off, or "" for none.
+func WithOwner(owner string) RunOption {
+	return func(c *runConfig) { c.owner = owner }
+}
+
+func WithSession(session string) RunOption {
+	return func(c *runConfig) { c.session = session }
 }
 
 // refScope bundles the two reference namespaces a node resolves against — the
@@ -145,7 +158,7 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 		cfg.resume = resumeSnap
 	} else {
 		runID = r.newID()
-		if err := r.store.CreateWorkflowRun(ctx, runID, def.ID, def.Version, input, "", ""); err != nil {
+		if err := r.store.CreateWorkflowRun(ctx, runID, def.ID, def.Version, input, cfg.session, cfg.owner); err != nil {
 			return nil, fmt.Errorf("create workflow run: %w", err)
 		}
 	}
