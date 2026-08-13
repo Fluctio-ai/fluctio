@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/session"
 	"github.com/fluctio-ai/fluctio/internal/usage"
+	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
 
 // slashResult holds the result of a slash command.
@@ -68,6 +70,9 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 			handled: true,
 			reply:   slashTf(msg.Lang, "start.greeting", a.name),
 		}
+
+	case "/workflow":
+		return a.slashWorkflow(msg, args)
 
 	case "/claim":
 		return a.slashClaim(msg)
@@ -652,4 +657,50 @@ func truncateSlash(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+// slashWorkflow runs one of this agent's workflows directly, bypassing the LLM
+// (spec decision 19 — IM direct-mapping; cheaper than having the model decide
+// to call the workflow tool). Usage: /workflow <id> [input-json]. The run
+// hangs off the current session with the chatter as owner (decision 14), so it
+// shows up in run history like any other trigger.
+func (a *Agent) slashWorkflow(msg bus.InboundMessage, args []string) slashResult {
+	if a.workflowSvc == nil {
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "workflow.none")}
+	}
+	if len(args) == 0 {
+		defs := a.workflowSvc.Definitions()
+		ids := make([]string, 0, len(defs))
+		for id := range defs {
+			ids = append(ids, id)
+		}
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "workflow.usage", strings.Join(ids, ", "))}
+	}
+	wfID := args[0]
+	input := map[string]any{}
+	if len(args) >= 2 {
+		if err := json.Unmarshal([]byte(args[1]), &input); err != nil {
+			return slashResult{handled: true, reply: slashTf(msg.Lang, "workflow.badInput", err.Error())}
+		}
+	}
+	owner := msg.OwnerUserID
+	if owner == "" {
+		owner = msg.UserID
+	}
+	res, err := a.RunWorkflow(context.Background(), wfID, input, owner, a.resolveSessionKey(msg))
+	if err != nil {
+		return slashResult{handled: true, reply: slashTf(msg.Lang, "workflow.failed", wfID, err.Error())}
+	}
+	return slashResult{handled: true, reply: formatWorkflowResult(res, msg.Lang)}
+}
+
+func formatWorkflowResult(res *workflow.ExecutionResult, lang string) string {
+	if res.Status == workflow.StatusSucceeded {
+		b, _ := json.Marshal(res.Result)
+		return slashTf(lang, "workflow.succeeded", string(b))
+	}
+	if res.Error != nil {
+		return slashTf(lang, "workflow.errorNode", res.Error.Node, res.Error.Message)
+	}
+	return slashTf(lang, "workflow.status", string(res.Status))
 }

@@ -27,6 +27,35 @@ var slashTexts = map[string]slashEntry{
 		"🔒 `%s` is owner/admin only. Ask the owner to add your platform user ID to the `admins.%s` list in agent.json (use `/whoami` to find your ID).",
 		"🔒 `%s` 只有 agent owner / admin 能用。让 owner 把你的 platform 用户 ID 加进 agent.json 的 `admins.%s` 里（用 `/whoami` 查自己的 ID）。",
 	},
+	// ── workflow (/workflow direct trigger, ticket 11) ──
+	"workflow.none": {
+		"This agent has no workflows.",
+		"该 agent 没有工作流。",
+	},
+	"workflow.usage": {
+		"Usage: /workflow <id> [input JSON]. Available: %s",
+		"用法：/workflow <id> [input JSON]。可用：%s",
+	},
+	"workflow.badInput": {
+		"Bad input JSON: %s",
+		"input JSON 解析失败：%s",
+	},
+	"workflow.failed": {
+		"Workflow %s failed: %s",
+		"工作流 %s 失败：%s",
+	},
+	"workflow.succeeded": {
+		"✅ Workflow done. Result: %s",
+		"✅ 工作流完成。结果：%s",
+	},
+	"workflow.errorNode": {
+		"❌ Workflow failed at node %s: %s",
+		"❌ 工作流在节点 %s 失败：%s",
+	},
+	"workflow.status": {
+		"Workflow status: %s",
+		"工作流状态：%s",
+	},
 
 	// ── conversation ──
 	"start.greeting": {
