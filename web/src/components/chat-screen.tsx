@@ -142,6 +142,8 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "insights", description: "Activity insights (last N days)" },
   { name: "personality", description: "List or switch personality" },
   { name: "model", description: "Show or switch LLM model" },
+  { name: "bookmark", description: "Save a web URL as a bookmark" },
+  { name: "plan", description: "Plan mode: numbered plan, no tool calls" },
   { name: "goal", description: "Persistent multi-turn objective" },
   { name: "help", description: "Show command help" },
   { name: "version", description: "Show version" },

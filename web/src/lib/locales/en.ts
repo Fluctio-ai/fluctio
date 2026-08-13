@@ -1707,6 +1707,9 @@ Goal (persistent multi-turn objective)
   /goal resume      — Resume a paused goal
   /goal clear       — Delete the goal
 
+Bookmark
+  /bookmark <url> [note] — Save a web URL as a bookmark
+
 Plan
   /plan <task>      — Run <task> in plan mode: emit a numbered plan, no tool calls
 

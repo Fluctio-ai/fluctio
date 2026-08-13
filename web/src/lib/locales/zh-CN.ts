@@ -1707,6 +1707,9 @@ const zhCN: Record<string, string> = {
   /goal resume   — 恢复暂停的目标
   /goal clear    — 删除目标
 
+收藏
+  /bookmark <url> [备注] — 收藏网页为书签
+
 计划
   /plan <任务>   — 以计划模式运行：输出编号的计划，不调用工具
 
