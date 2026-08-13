@@ -5,10 +5,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/auth"
 	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
 
 // handleWorkflowRun — POST /api/agents/{agentID}/workflows/{wfID}/run
@@ -110,4 +113,152 @@ func (s *Server) handleWorkflowRunsBatchDelete(w http.ResponseWriter, r *http.Re
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "deleted": n})
+}
+
+// handleWorkflowList — GET /api/agents/{agentID}/workflows
+//
+// Lists this agent's workflows (metadata only). Ownership is the visibility
+// gate: only this agent's directory is read, so other agents' workflows never
+// appear (AC1/AC5).
+func (s *Server) handleWorkflowList(w http.ResponseWriter, r *http.Request) {
+	ag := s.resolveAgent(r, r.PathValue("agentID"))
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	defs, err := workflow.LoadDir(ag.WorkflowsDir())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	out := make([]map[string]any, 0, len(defs))
+	for _, def := range defs {
+		out = append(out, map[string]any{
+			"id":          def.ID,
+			"version":     def.Version,
+			"description": def.Description,
+			"concurrency": string(def.Concurrency),
+		})
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "workflows": out})
+}
+
+// handleWorkflowGet — GET /api/agents/{agentID}/workflows/{wfID}
+//
+// Reads one workflow's YAML source (for the editor's YAML pane, ticket 09).
+func (s *Server) handleWorkflowGet(w http.ResponseWriter, r *http.Request) {
+	ag := s.resolveAgent(r, r.PathValue("agentID"))
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	path := filepath.Join(ag.WorkflowsDir(), r.PathValue("wfID")+".yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "workflow not found"})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "yaml": string(b)})
+}
+
+// handleWorkflowRunsList — GET /api/agents/{agentID}/workflows/{wfID}/runs
+//
+// Run history for one workflow (most-recent-first), backs the history view
+// (ticket 08 AC3).
+func (s *Server) handleWorkflowRunsList(w http.ResponseWriter, r *http.Request) {
+	ag := s.resolveAgent(r, r.PathValue("agentID"))
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	runs, err := dbs.ListWorkflowRuns(r.Context(), r.PathValue("wfID"), 50)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "runs": runs})
+}
+
+// handleWorkflowRunGet — GET /api/agents/{agentID}/workflows/{wfID}/runs/{runID}
+//
+// One run's detail: the run-level row + every persisted node output (attempts
+// included), so the UI can render per-node status and the failing node's error
+// (ticket 08 AC3/AC4).
+func (s *Server) handleWorkflowRunGet(w http.ResponseWriter, r *http.Request) {
+	ag := s.resolveAgent(r, r.PathValue("agentID"))
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	runID := r.PathValue("runID")
+	run, err := dbs.GetWorkflowRunRow(r.Context(), runID)
+	if err != nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "run not found"})
+		return
+	}
+	nodes, _ := dbs.ListWorkflowNodeOutputs(r.Context(), runID)
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "run": run, "nodes": nodes})
+}
+
+// handleWorkflowPut — PUT /api/agents/{agentID}/workflows/{wfID}
+//
+// Publishes a new version of a workflow: parse + validate the posted YAML, bump
+// the version (existing+1, or 1 for a new file), write it, then reload the
+// agent's workflow Service so it takes effect without a restart (spec decision
+// 8 — immutable versions; old runs stay bound to the version they ran on).
+// The wfID path segment overrides the YAML's id so the filename stays canonical.
+func (s *Server) handleWorkflowPut(w http.ResponseWriter, r *http.Request) {
+	ag := s.resolveAgent(r, r.PathValue("agentID"))
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	wfID := r.PathValue("wfID")
+	var body struct {
+		YAML string `json:"yaml"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad request body: " + err.Error()})
+		return
+	}
+	def, err := workflow.Parse(wfID, []byte(body.YAML))
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "parse: " + err.Error()})
+		return
+	}
+	path := filepath.Join(ag.WorkflowsDir(), wfID+".yaml")
+	version := 1
+	if old, err := workflow.LoadFile(path); err == nil {
+		version = old.Version + 1
+	}
+	def.Version = version
+	if err := workflow.Validate(def, nil); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "validation: " + err.Error()})
+		return
+	}
+	out, err := workflow.Marshal(def)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := os.MkdirAll(ag.WorkflowsDir(), 0o755); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	ag.ReloadWorkflows()
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "version": version})
 }

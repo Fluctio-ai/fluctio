@@ -4,9 +4,34 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
+	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
+
+// WorkflowsDir returns this agent's workflow YAML directory (home + "workflows").
+// The web API uses it to list / read / write workflow files; loadAgentWorkflows
+// reads the same directory at boot.
+func (a *Agent) WorkflowsDir() string {
+	return filepath.Join(a.homePath, "workflows")
+}
+
+// ReloadWorkflows re-reads this agent's workflow directory and rebuilds its
+// workflow Service, so a saved or edited YAML takes effect without a daemon
+// restart. Called by the save handler after writing the file. A missing dir or
+// a non-DBStore backend leaves the existing Service as-is.
+func (a *Agent) ReloadWorkflows() {
+	dbs, ok := a.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		return
+	}
+	defs, err := workflow.LoadDir(a.WorkflowsDir())
+	if err != nil {
+		return
+	}
+	a.SetWorkflowService(workflow.NewService(defs, dbs))
+}
 
 // SetWorkflowService wires this agent's own workflows (YAMLs the gateway loads
 // from its home/workflows directory at boot) and registers one tool per

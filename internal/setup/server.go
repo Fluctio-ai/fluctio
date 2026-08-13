@@ -73,6 +73,11 @@ type AgentHandle interface {
 	// session is "" for a bare manual run. Returns the ExecutionResult, or
 	// an error when the agent has no workflows / the id is unknown.
 	RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string) (*workflow.ExecutionResult, error)
+	// WorkflowsDir returns the directory holding this agent's workflow YAMLs.
+	WorkflowsDir() string
+	// ReloadWorkflows re-reads this agent's workflow dir and rebuilds its
+	// Service, so edits take effect without a daemon restart.
+	ReloadWorkflows()
 }
 
 // AgentProvider is implemented by gateway.UserSpace's agent manager — used
@@ -274,7 +279,12 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Chat
 	mux.HandleFunc("POST /api/chat", auth(s.handleChat))
+	mux.HandleFunc("GET /api/agents/{agentID}/workflows", auth(s.handleWorkflowList))
+	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}", auth(s.handleWorkflowGet))
+	mux.HandleFunc("PUT /api/agents/{agentID}/workflows/{wfID}", auth(s.handleWorkflowPut))
 	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/run", auth(s.handleWorkflowRun))
+	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}/runs", auth(s.handleWorkflowRunsList))
+	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}/runs/{runID}", auth(s.handleWorkflowRunGet))
 	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}/runs/{runID}", auth(s.handleWorkflowRunDelete))
 	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}/runs", auth(s.handleWorkflowRunsBatchDelete))
 	mux.HandleFunc("POST /api/chat/stream", auth(s.handleChatStream))

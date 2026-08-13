@@ -327,3 +327,54 @@ func (d *DBStore) deleteRunsByID(ctx context.Context, ids []string) error {
 	}
 	return tx.Commit()
 }
+
+// WorkflowRunRow is the run-level record for history listings / detail views.
+type WorkflowRunRow struct {
+	ID         string
+	DefID      string
+	Version    int
+	Status     string
+	SessionID  string
+	Owner      string
+	Error      string
+	StartedAt  string
+	FinishedAt string
+}
+
+// ListWorkflowRuns lists runs for one workflow def, most-recent-first, capped
+// at limit (limit<=0 → 50). Backs the run-history UI (ticket 08).
+func (d *DBStore) ListWorkflowRuns(ctx context.Context, defID string, limit int) ([]WorkflowRunRow, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := d.db.QueryContext(ctx, fmt.Sprintf(
+		`SELECT id, def_id, version, status, session_id, owner, error, started_at, finished_at
+		 FROM workflow_runs WHERE def_id = %s
+		 ORDER BY started_at DESC LIMIT %s`, d.ph(1), d.ph(2)), defID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkflowRunRow
+	for rows.Next() {
+		var r WorkflowRunRow
+		if err := rows.Scan(&r.ID, &r.DefID, &r.Version, &r.Status, &r.SessionID, &r.Owner, &r.Error, &r.StartedAt, &r.FinishedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetWorkflowRunRow returns the full run-level record, or ErrNotFound.
+func (d *DBStore) GetWorkflowRunRow(ctx context.Context, runID string) (WorkflowRunRow, error) {
+	var r WorkflowRunRow
+	err := d.db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT id, def_id, version, status, session_id, owner, error, started_at, finished_at
+		 FROM workflow_runs WHERE id = %s`, d.ph(1)), runID).Scan(
+		&r.ID, &r.DefID, &r.Version, &r.Status, &r.SessionID, &r.Owner, &r.Error, &r.StartedAt, &r.FinishedAt)
+	if err == sql.ErrNoRows {
+		return r, ErrNotFound
+	}
+	return r, err
+}
