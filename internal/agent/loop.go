@@ -2453,11 +2453,82 @@ func (a *Agent) flushLeftoverSteer(sess *session.Session) {
 	}
 }
 
+// ErrContextTooLong is a sentinel returned by llmRetry when the provider
+// rejected the request because the prompt exceeded the model's context
+// window (HTTP 400 with a "too long" / "context length" body, or 413).
+// It is NOT a transient failure — retrying the same payload is pointless,
+// so llmRetry returns it immediately instead of burning retry attempts.
+// The caller (HandleMessage / HandleMessageStream) recognises it and
+// triggers an in-place compaction + resend, mirroring Hermes' restart_
+// with_compressed_messages recovery path. Borrowed from the Hermes agent
+// error-classifier taxonomy, which routes context_length errors to
+// "compress" rather than "retry".
+var ErrContextTooLong = errors.New("context length exceeded")
+
+// classifyLLMError maps a provider error to a coarse recovery category,
+// the same idea as Hermes' classify_api_error. The returned category drives
+// llmRetry's decision: "terminal" (don't retry — billing/auth dead-ends,
+// client cancellation), "context_length" (don't retry the same payload —
+// the caller must compress first), or "retryable" (transient — backoff and
+// retry). Keeping this in the agent layer (not the provider layer) matches
+// the existing classifyCallError / classifyToolError helpers and avoids any
+// change to provider.HTTPError's shape.
+//
+// Status-code mapping follows the Hermes FailoverReason taxonomy:
+//   - 401/403 (non-transient) → terminal     (auth dead-end; refresh is a provider concern)
+//   - 402                     → terminal     (billing exhausted; retrying wastes a call)
+//   - 400 w/ "too long" body  → context_length
+//   - 413                     → context_length
+//   - 408/409/425/429         → retryable
+//   - 5xx                     → retryable
+//   - other 4xx (non-PTL)     → retryable    (conservative; param-fallback already handled in provider)
+func classifyLLMError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "terminal"
+	}
+	var he *provider.HTTPError
+	if !errors.As(err, &he) {
+		// Network-layer failure (send/read/EOF) — transient, retry.
+		return "retryable"
+	}
+	code := he.StatusCode
+	switch {
+	case code == http.StatusPaymentRequired: // 402
+		return "terminal"
+	case code == http.StatusUnauthorized || code == http.StatusForbidden: // 401/403
+		return "terminal"
+	case code == http.StatusRequestEntityTooLarge: // 413
+		return "context_length"
+	case code == http.StatusBadRequest: // 400 — could be PTL or a param error
+		body := strings.ToLower(he.Body)
+		if strings.Contains(body, "context length") ||
+			strings.Contains(body, "too long") ||
+			strings.Contains(body, "too many tokens") ||
+			strings.Contains(body, "maximum context") ||
+			strings.Contains(body, "reduce the length") {
+			return "context_length"
+		}
+		return "retryable"
+	case code == http.StatusTooManyRequests: // 429
+		return "retryable"
+	case code >= 500: // 5xx — overloaded / server error / gateway
+		return "retryable"
+	default:
+		return "retryable"
+	}
+}
+
 // llmRetry wraps an LLM call with retry logic for transient errors (network
-// glitches, server 5xx, EOF). Context cancellation / deadline exceeded are
-// treated as terminal — there's no point retrying when the caller has gone
-// away or the deadline has passed. Uses exponential backoff (1s, 4s, 9s)
-// across up to wechatLLMRetryAttempts calls.
+// glitches, server 5xx, EOF). Context cancellation / deadline exceeded and
+// non-transient HTTP failures (billing/auth) are treated as terminal —
+// there's no point retrying when the caller has gone away or the failure is
+// permanent. Context-length errors are surfaced immediately as
+// ErrContextTooLong so the caller can compress and resend rather than
+// retrying an oversized payload. Uses exponential backoff (1s, 4s, 9s)
+// across up to llmRetryAttempts calls.
 //
 // The label argument is used for structured logging (typically a.name).
 const llmRetryAttempts = 3
@@ -2475,9 +2546,25 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 		}
 		lastErr = err
 
-		// Context errors are terminal — don't retry.
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// Classify the error to decide whether retrying helps at all.
+		// This is the Hermes-style recovery router: terminal errors
+		// (cancellation, billing, auth) and context-length errors are
+		// not worth retrying — return immediately so the caller can take
+		// the right recovery action (compress-and-resend for PTL, give
+		// up for billing) instead of burning two more attempts.
+		category := classifyLLMError(err)
+		if category == "terminal" {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
+			slog.Warn("LLM call failed with terminal error, not retrying",
+				"agent", label, "error", err)
 			return nil, err
+		}
+		if category == "context_length" {
+			slog.Warn("LLM call rejected for context length, surfacing for compaction",
+				"agent", label, "error", err)
+			return nil, fmt.Errorf("%w: %s", ErrContextTooLong, err.Error())
 		}
 
 		if attempt < llmRetryAttempts {
@@ -2495,6 +2582,79 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 	slog.Error("LLM call failed after all retries",
 		"agent", label, "attempts", llmRetryAttempts, "error", lastErr)
 	return nil, lastErr
+}
+
+// callLLMWithPTLRecovery wraps one ReAct-round LLM call with context-length
+// (PTL) recovery: if the provider rejects the request because the prompt is
+// too long, it compresses the conversation-history portion of messages
+// in-place and retries the call once. This is FastClaw's equivalent of
+// Hermes' restart_with_compressed_messages recovery path — the alternative
+// (reporting an error and aborting the turn) is exactly the "long task
+// dies mid-way" failure mode the loop-level fault-tolerance upgrade targets.
+//
+// messages is the full LLM-bound slice (system msgs + history). The first
+// element is always the system prompt; compaction must never touch it, so
+// the recovery splits messages into [system-prefix] + [history], compresses
+// only the history, and reassembles. On a successful compaction the returned
+// messages slice reflects the shrinkage so the caller can persist it onto
+// the session (otherwise the next round would resend the same oversized
+// payload and PTL again).
+//
+// callLLM performs the actual (retryable) provider call via llmRetry. PTL
+// recovery fires at most once — a second PTL on the compressed payload means
+// even the summary won't fit, and there's nothing more useful to do than
+// surface the error.
+func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.Message, tools []provider.Tool, callLLM func(context.Context, []provider.Message, []provider.Tool) (*provider.Response, error)) (*provider.Response, []provider.Message, error) {
+	// llmRetry keeps the transient-error backoff (network/5xx/429) and
+	// routes terminal + context-length errors immediately, so the PTL
+	// branch below fires on the first oversized response rather than
+	// after two wasted retries.
+	resp, err := llmRetry(ctx, a.name, func(ctx context.Context) (*provider.Response, error) {
+		return callLLM(ctx, messages, tools)
+	})
+	if err == nil {
+		return resp, messages, nil
+	}
+	if !errors.Is(err, ErrContextTooLong) {
+		return nil, messages, err
+	}
+
+	// PTL: compress the history portion and retry once. Find the split
+	// point — the system messages live at the front (role=="system");
+	// everything after the last system message is conversation history
+	// safe to compact. Guard against an all-system edge case (no history
+	// to compress → nothing we can do).
+	split := len(messages)
+	for split > 0 && messages[split-1].Role == "system" {
+		split--
+	}
+	if split == 0 {
+		// No history to compact — the system prompt alone overflows.
+		slog.Error("PTL recovery: system prompt alone exceeds context window",
+			"agent", a.name, "msg_count", len(messages))
+		return nil, messages, err
+	}
+	sysPrefix := messages[:split]
+	history := messages[split:]
+	// Force an aggressive threshold (half the normal compaction trigger)
+	// so compression actually removes enough tokens to clear the PTL.
+	threshold := a.compactionThresholdNow("")
+	forceThreshold := max(threshold/2, 1000)
+	compactResult, cerr := CompactMessages(history, a.homePath, a.provider, a.model, forceThreshold)
+	if cerr != nil || compactResult == nil || !compactResult.Pruned {
+		slog.Warn("PTL recovery: compaction did not reduce history",
+			"agent", a.name, "error", cerr)
+		return nil, messages, err
+	}
+	slog.Info("PTL recovery: compacted history, retrying LLM call",
+		"agent", a.name,
+		"before_msgs", len(history), "after_msgs", len(compactResult.Messages))
+	messages = append(append([]provider.Message{}, sysPrefix...), compactResult.Messages...)
+
+	resp, err = llmRetry(ctx, a.name, func(ctx context.Context) (*provider.Response, error) {
+		return callLLM(ctx, messages, tools)
+	})
+	return resp, messages, err
 }
 
 // HandleMessage processes an inbound message through the ReAct loop.
@@ -2827,6 +2987,23 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// directly instead of burning more rounds chasing dead URLs.
 	allFailedRounds := 0
 	const failedRoundsLimit = 3
+	// toolFailStreak is a per-tool-name count of CONSECUTIVE failures
+	// (different args allowed — same-args is already caught by
+	// consecutiveCount above). Borrowed from Hermes' same-tool failure
+	// streak guardrail: when a single tool keeps failing across rounds
+	// even though other tools in those rounds succeeded (so
+	// allFailedRounds resets), this trips and temporarily hides that one
+	// tool from the next LLM call so the model is forced to change tack
+	// instead of grinding the same broken tool. Hermes uses 3 warn / 8
+	// hard-stop; we pick a single mid-value since FastClaw has no
+	// warn-only tier yet.
+	toolFailStreak := make(map[string]int)
+	const toolFailStreakLimit = 5
+	var trippedTools []string // tools that hit the limit this turn (for the hide-nudge)
+	// truncationRetried caps the max-output continuation at one retry per
+	// turn so a model that keeps hitting the cap can't loop forever asking
+	// itself to "continue". Phase 3 (see looksTruncated + the nudge below).
+	truncationRetried := false
 
 	// replyParts accumulates every non-empty assistant text segment
 	// emitted across iterations (preamble lines before tool calls + the
@@ -2884,12 +3061,6 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		}
 		messages = hcBefore.Messages
 
-		// PII scrubbing: redact sensitive data before sending to LLM
-		llmMessages := messages
-		if a.piiScrubEnabled {
-			llmMessages = privacy.ScrubMessages(messages, privacy.Options{Entropy: a.piiEntropyEnabled})
-		}
-
 		if a.provider == nil {
 			slog.Error("agent has no provider configured", "agent", a.name, "model", a.model)
 			noProviderMsg := "Agent is not configured with a usable LLM provider. Check that cfg.Providers contains the prefix referenced by model `" + a.model + "`."
@@ -2907,7 +3078,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			slog.Warn("disabling tools after consecutive failed rounds",
 				"agent", a.name, "failed_rounds", allFailedRounds)
 			callTools = nil
-			llmMessages = append(llmMessages, provider.Message{
+			messages = append(messages, provider.Message{
 				Role: "system",
 				Content: fmt.Sprintf(
 					"The last %d rounds of tool calls all failed (HTTP errors or empty results). Stop calling tools and answer the user directly with what you know — explain that authoritative sources weren't reachable and provide your best-effort response based on training knowledge, clearly marked as unverified.",
@@ -2915,9 +3086,46 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 				),
 			})
 		}
-		dumpLLMRequest(a.name, a.model, llmMessages, callTools)
-		resp, err := llmRetry(ctx, a.name, func(ctx context.Context) (*provider.Response, error) {
-			return a.streamChatToResponse(ctx, llmMessages, callTools)
+		// Per-tool streak circuit breaker: hide any single tool that has
+		// failed toolFailStreakLimit times in a row (different args each
+		// time) so the model can't keep grinding it. Finer-grained than
+		// the allFailedRounds kill-switch — keeps the working tools live
+		// while sidelining just the broken one. Borrowed from Hermes'
+		// ToolCallGuardrailConfig same-tool failure streak.
+		if len(callTools) > 0 {
+			callTools, trippedTools = hideTrippedTools(callTools, toolFailStreak, toolFailStreakLimit, trippedTools)
+			if len(trippedTools) > 0 {
+				slog.Warn("hiding tools after per-tool failure streak",
+					"agent", a.name, "tools", trippedTools)
+				messages = append(messages, provider.Message{
+					Role: "system",
+					Content: fmt.Sprintf(
+						"These tools have failed repeatedly and are temporarily unavailable this turn: %s. Do not attempt them; use a different tool or answer directly with what you already know.",
+						strings.Join(trippedTools, ", "),
+					),
+				})
+			}
+		}
+		// PII scrub snapshot for the dump only — the actual call's scrub
+		// happens inside the callLLMWithPTLRecovery callback so a PTL
+		// compaction (which shrinks the raw `messages`) stays consistent.
+		dumpMessages := messages
+		if a.piiScrubEnabled {
+			dumpMessages = privacy.ScrubMessages(messages, privacy.Options{Entropy: a.piiEntropyEnabled})
+		}
+		dumpLLMRequest(a.name, a.model, dumpMessages, callTools)
+		// callLLMWithPTLRecovery adds context-length (PTL) recovery on top
+		// of llmRetry: if the provider rejects an oversized prompt, it
+		// compacts the history portion of messages once and retries, so a
+		// long-running task survives a context-window overflow mid-turn
+		// instead of dying with "processing_failed".
+		var resp *provider.Response
+		resp, messages, err = a.callLLMWithPTLRecovery(ctx, messages, callTools, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
+			llm := msgs
+			if a.piiScrubEnabled {
+				llm = privacy.ScrubMessages(msgs, privacy.Options{Entropy: a.piiEntropyEnabled})
+			}
+			return a.streamChatToResponse(ctx, llm, tools)
 		})
 
 		// Hook: AfterModelCall
@@ -2954,6 +3162,28 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 				emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": emptyMsg}})
 				emitEvent(ctx, ChatEvent{Type: "done"})
 				return emptyMsg
+			}
+			// Max-output truncation recovery (Phase 3): when the response
+			// used ~all of the output budget AND has no tool calls, it was
+			// almost certainly cut off mid-answer. Rather than deliver a
+			// half-finished reply, retain what we have, nudge the model to
+			// continue, and loop once. Borrowed from OpenSpace's
+			// FORCE_TOOL_ON_MAX_OUTPUT_RECOVERY — same idea (the response
+			// hit the cap, so make the model finish) without provider-side
+			// finish_reason (FastClaw's Response has none, so we infer via
+			// token usage). Capped at one retry via truncationRetried so a
+			// model that keeps maxing out can't spin.
+			if !truncationRetried && looksTruncated(resp, a.maxTokens) {
+				truncationRetried = true
+				slog.Warn("response likely truncated at max_tokens, requesting continuation",
+					"agent", a.name, "output_tokens", resp.Usage.OutputTokens, "max_tokens", a.maxTokens)
+				asst := provider.Message{Role: "assistant", Content: resp.Content, Thinking: resp.Thinking, Metadata: kbSourcesMetadata(kbSources), Timestamp: time.Now().UnixMilli(), RawAssistant: resp.RawAssistant}
+				sess.Append(asst)
+				emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": resp.Content}})
+				replyParts = append(replyParts, resp.Content)
+				messages = append(messages, asst)
+				messages = append(messages, continuationNudge())
+				continue
 			}
 			kbMeta := kbSourcesMetadata(kbSources)
 			asst := provider.Message{Role: "assistant", Content: resp.Content, Thinking: resp.Thinking, Metadata: kbMeta, Timestamp: time.Now().UnixMilli(), RawAssistant: resp.RawAssistant}
@@ -3195,10 +3425,18 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 				if cat, hint := classifyToolError(resultContent); cat != "" {
 					resultContent = resultContent + "\n[失败类别: " + cat + "] [可恢复: " + hint + "]"
 				}
+				// Per-tool consecutive-failure streak. Unlike
+				// allFailedRounds (which resets on ANY round success),
+				// this counts one tool's failures across rounds even
+				// when sibling tools in the same round succeed — the
+				// "web_search keeps 502ing while read_file works" shape
+				// that allFailedRounds can't see.
+				toolFailStreak[r.toolName]++
 			} else {
 				// One call in this round produced a real result —
 				// the round as a whole isn't "all failed".
 				roundAllFailed = false
+				toolFailStreak[r.toolName] = 0
 			}
 
 			// Index in FTS if available
@@ -3365,6 +3603,50 @@ func firstNonEmptyLine(s string) string {
 		return line
 	}
 	return ""
+}
+
+// hideTrippedTools removes any tool whose consecutive-failure streak has hit
+// the limit from the LLM-bound tool list for this round, and records newly-
+// tripped tool names so the caller can nudge the model about them. already
+// carries tools that tripped on a prior round of the SAME turn so we don't
+// re-nudge (and so a tool stays hidden once tripped). Returns the filtered
+// tool slice and the accumulated tripped list.
+//
+// This is the per-tool counterpart to the allFailedRounds kill-switch:
+// instead of dropping ALL tools when every round fails, it surgically hides
+// just the one repeat-offender while leaving the rest available — the
+// "web_search 502s five times but read_file works fine" shape that a
+// whole-round counter can't isolate.
+func hideTrippedTools(toolDefs []provider.Tool, streak map[string]int, limit int, already []string) ([]provider.Tool, []string) {
+	if len(streak) == 0 {
+		return toolDefs, already
+	}
+	trippedSet := make(map[string]bool, len(already))
+	for _, n := range already {
+		trippedSet[n] = true
+	}
+	newlyTripped := []string{}
+	for name, count := range streak {
+		if count >= limit && !trippedSet[name] {
+			newlyTripped = append(newlyTripped, name)
+			trippedSet[name] = true
+		}
+	}
+	if len(newlyTripped) == 0 {
+		// Still filter by the full trippedSet so tools that tripped in an
+		// earlier round stay hidden this round.
+		if len(already) == 0 {
+			return toolDefs, already
+		}
+	}
+	filtered := make([]provider.Tool, 0, len(toolDefs))
+	for _, t := range toolDefs {
+		if trippedSet[t.Function.Name] {
+			continue
+		}
+		filtered = append(filtered, t)
+	}
+	return filtered, append(already, newlyTripped...)
 }
 
 // padOrphanToolResults walks the session and appends a synthetic
@@ -3760,8 +4042,11 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		messages = hcBefore.Messages
 
 		dumpLLMRequest(a.name, a.model, messages, toolDefs)
-		resp, err := llmRetry(ctx, a.name, func(ctx context.Context) (*provider.Response, error) {
-			return a.provider.Chat(ctx, messages, toolDefs, a.model, a.maxTokens, a.temperature)
+		// Same PTL recovery as the non-streaming path: compact + retry on
+		// context-length overflow so a long task survives instead of dying.
+		var resp *provider.Response
+		resp, messages, err = a.callLLMWithPTLRecovery(ctx, messages, toolDefs, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
+			return a.provider.Chat(ctx, msgs, tools, a.model, a.maxTokens, a.temperature)
 		})
 
 		hcAfter := &HookContext{AgentName: a.name, Point: AfterModelCall, Messages: messages, Response: resp, Error: err, StartTime: hcBefore.StartTime, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, GoalSessionKey: a.registry.GoalSessionKey()}
@@ -4144,6 +4429,46 @@ func annotateReachability(toolName, resultContent string, reg *tools.Registry) s
 // burning the entire budget on exploration without ever circling back
 // to synthesis — surfacing the constraint explicitly is the cheapest
 // nudge that produces a usable artifact.
+// looksTruncated is the Phase-3 heuristic for "the model hit max_tokens and
+// got cut off mid-answer". FastClaw's provider.Response carries no finish_
+// reason, so we infer from token usage: when maxTokens is set and the
+// response consumed ≥90% of it without emitting any tool calls, the answer
+// was very likely truncated. Conservative on purpose — the downside of a
+// false positive is one harmless "please continue" round; the downside of a
+// false negative is a half-delivered reply. The 90% floor avoids firing on
+// ordinary long answers that happen to use a lot of tokens but still
+// finished cleanly well under the cap.
+func looksTruncated(resp *provider.Response, maxTokens int) bool {
+	if resp == nil || maxTokens <= 0 {
+		return false
+	}
+	if resp.HasToolCalls() {
+		// A truncated tool_call is a different (and trickier) failure —
+		// Phase 3 only handles text truncation. Tool-call truncation
+		// surfaces as a JSON-parse failure in the executor and is
+		// already classified by classifyToolError.
+		return false
+	}
+	out := resp.Usage.OutputTokens
+	if out <= 0 {
+		// Provider didn't report usage — can't infer, don't fire.
+		return false
+	}
+	return out >= maxTokens*9/10
+}
+
+// continuationNudge is the system message appended after a truncated
+// assistant reply so the model finishes it on the next round. The just-
+// produced (partial) assistant message is already in `messages` before this
+// nudge, so the model sees its own cutoff text and can pick up exactly
+// where it stopped rather than restarting the answer.
+func continuationNudge() provider.Message {
+	return provider.Message{
+		Role: "system",
+		Content: "Your previous response appears to have been cut off by the maximum output length. Continue exactly where you left off — do not repeat what you already wrote, just complete the remaining content and finish the answer.",
+	}
+}
+
 func capReachedNudge(maxIterations int) provider.Message {
 	return provider.Message{
 		Role: "system",
