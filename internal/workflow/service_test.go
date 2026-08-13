@@ -7,23 +7,6 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
 
-// AC 1 core — the per-agent ACL: a workflow is visible to its whitelisted
-// agents only; with no whitelist it is default-private (visible to no one).
-func TestService_VisibleTo(t *testing.T) {
-	svc := workflow.NewService(nil, nil)
-	whitelisted := &workflow.Definition{Agents: []string{"a1", "a2"}}
-	if !svc.VisibleTo(whitelisted, "a1") {
-		t.Error("agent in whitelist should be visible")
-	}
-	if svc.VisibleTo(whitelisted, "a3") {
-		t.Error("agent not in whitelist should be invisible")
-	}
-	private := &workflow.Definition{} // no agents → default-private
-	if svc.VisibleTo(private, "anyone") {
-		t.Error("default-private workflow should be invisible to everyone")
-	}
-}
-
 // Spec decision 7 — the tool schema is generated from the workflow's input
 // schema; a schema-less workflow still gets a bare-object tool schema.
 func TestService_ToolSchema(t *testing.T) {
@@ -41,20 +24,21 @@ func TestService_ToolSchema(t *testing.T) {
 	}
 }
 
-// AC 2/3/4 — RunWorkflow executes via the runner and the run's ownership
-// (owner/session, spec decision 14) lands in workflow_runs. AC 5 (schema
-// rejection) is exercised through runner.Run's Validate precondition, already
-// covered by validate_test.go; an unknown id errors.
+// AC 2/3/4 — RunWorkflow executes via a fresh runner built from the injected
+// leaf callers, and the run's ownership (owner/session, spec decision 14) lands
+// in workflow_runs. AC 5 (schema rejection) is exercised through runner.Run's
+// Validate precondition, already covered by validate_test.go; an unknown id
+// errors before any runner is built (llm/tool unused).
 func TestService_RunWorkflow(t *testing.T) {
 	def := mustParse(t, linearYAML)
 	defs := map[string]*workflow.Definition{def.ID: def}
 
 	st := newTestStore(t)
 	tools := &fakeTools{out: map[string]string{"get_data": `{"summary":"s"}`}}
-	runner := workflow.NewRunner(&fakeLLM{resp: `{"r":"ok"}`}, tools, st)
-	svc := workflow.NewService(defs, runner)
+	llm := &fakeLLM{resp: `{"r":"ok"}`}
+	svc := workflow.NewService(defs, st)
 
-	res, err := svc.RunWorkflow(context.Background(), def.ID, map[string]any{"topic": "cats"}, "user-1", "sess-1")
+	res, err := svc.RunWorkflow(context.Background(), def.ID, map[string]any{"topic": "cats"}, "user-1", "sess-1", llm, tools)
 	if err != nil {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
@@ -72,7 +56,7 @@ func TestService_RunWorkflow(t *testing.T) {
 		t.Errorf("run owner=%q session=%q, want user-1/sess-1", owner, session)
 	}
 
-	if _, err := svc.RunWorkflow(context.Background(), "nope", nil, "", ""); err == nil {
+	if _, err := svc.RunWorkflow(context.Background(), "nope", nil, "", "", nil, nil); err == nil {
 		t.Error("expected error for unknown workflow id")
 	}
 }

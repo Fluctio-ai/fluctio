@@ -35,6 +35,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 	"github.com/fluctio-ai/fluctio/internal/usage"
 	"github.com/fluctio-ai/fluctio/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
 
 // Agent is the ReAct agent loop.
@@ -180,6 +181,12 @@ type Agent struct {
 	// ordinary agents, which then never see those tools and keep their
 	// per-chat file isolation. See SetProjectRuntime.
 	projectRuntime *coderuntime.Manager
+
+	// workflowSvc, when non-nil, holds this agent's own workflows (the
+	// gateway loads them from this agent's home/workflows directory at boot)
+	// and backs the per-workflow tools registered by SetWorkflowService. Nil
+	// = this agent has no workflows. See SetWorkflowService.
+	workflowSvc *workflow.Service
 
 	// contextWindow is the agent's active model's context-window size
 	// (tokens), injected by the manager from Phase 1's ResolvedAgent.

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/usage"
 	"github.com/fluctio-ai/fluctio/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
 
 // loadAgentSkillEntries collects every agent-scope skills.entries row
@@ -533,6 +535,15 @@ func (sp *UserSpace) EnsureAgent(ctx context.Context, st store.Store, mb *bus.Me
 			ag.SetProjectRuntime(sp.ProjectRuntime)
 		}
 	}
+	// Load this agent's own workflows (spec decision 8) when foreign-attaching
+	// into a caller's user space — the agent object is fresh in this space, so
+	// its workflow tools must be (re)registered. Mirrors loadUserSpace; silent
+	// when the backend isn't *store.DBStore.
+	if dbs, ok := st.(*store.DBStore); ok {
+		if ag := sp.Agents.AgentByID(rc.ID); ag != nil {
+			loadAgentWorkflows(ag, dbs)
+		}
+	}
 	// Wire hook plugins onto the freshly-attached agent. Mirrors what
 	// loadUserSpace does for owner agents — without this, hook
 	// plugins would only fire for the agent's owner and never for
@@ -736,6 +747,16 @@ func loadUserSpace(ctx context.Context, userID string, mb *bus.MessageBus, st st
 		}
 	}
 
+	// Workflows (spec decision 8): each agent owns the YAMLs in its own
+	// home/workflows directory. Load them per-agent and register one tool per
+	// definition. Silent when the dir is absent (no workflows yet) or the
+	// backend isn't *store.DBStore (workflow persistence needs SQLite).
+	if dbs, ok := st.(*store.DBStore); ok {
+		for _, ag := range agentMgr.All() {
+			loadAgentWorkflows(ag, dbs)
+		}
+	}
+
 	// Wire hook plugins onto each agent's HookRegistry. Per-agent
 	// enable comes from the configs row at (scope=agent, agent_id=X,
 	// name=plugins.enabled) — falling back to the plugin manifest's
@@ -758,6 +779,27 @@ func loadUserSpace(ctx context.Context, userID string, mb *bus.MessageBus, st st
 		PluginMgr:      pluginMgr,
 		ProjectRuntime: projectRuntime,
 	}, nil
+}
+
+// loadAgentWorkflows loads the agent's own workflow YAMLs from
+// <homePath>/workflows and, when any are present, builds a per-agent
+// workflow.Service and registers one tool per definition on the agent. A
+// missing directory is the common "no workflows yet" case and is silent;
+// other read errors are logged. dbs must be *store.DBStore (the only backend
+// implementing workflow persistence) — callers gate on that.
+func loadAgentWorkflows(ag *agent.Agent, dbs *store.DBStore) {
+	dir := filepath.Join(ag.HomePath(), "workflows")
+	defs, err := workflow.LoadDir(dir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("workflow load failed", "agent", ag.ID(), "dir", dir, "error", err)
+		}
+		return
+	}
+	if len(defs) == 0 {
+		return
+	}
+	ag.SetWorkflowService(workflow.NewService(defs, dbs))
 }
 
 // registerHookPluginsForAgent walks every running hook-type plugin

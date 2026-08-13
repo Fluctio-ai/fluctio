@@ -25,6 +25,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/usage"
 	"github.com/fluctio-ai/fluctio/internal/users"
 	"github.com/fluctio-ai/fluctio/internal/workspace"
+	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
 
 // AgentHandle is the surface the web UI uses to talk to a running agent.
@@ -67,6 +68,11 @@ type AgentHandle interface {
 	// estimates for the context-page UI. Mirrors agent.CompactionPreview
 	// so handlers stay on the AgentHandle abstraction.
 	CompactionPreview() agent.CompactionPreview
+	// RunWorkflow manually triggers one of this agent's own workflows
+	// (spec decision 14, manual-trigger path). owner is the calling user;
+	// session is "" for a bare manual run. Returns the ExecutionResult, or
+	// an error when the agent has no workflows / the id is unknown.
+	RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string) (*workflow.ExecutionResult, error)
 }
 
 // AgentProvider is implemented by gateway.UserSpace's agent manager — used
@@ -268,6 +274,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Chat
 	mux.HandleFunc("POST /api/chat", auth(s.handleChat))
+	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/run", auth(s.handleWorkflowRun))
 	mux.HandleFunc("POST /api/chat/stream", auth(s.handleChatStream))
 	mux.HandleFunc("POST /api/chat/team/stream", auth(s.handleTeamChatStream))
 	mux.HandleFunc("POST /api/chat/steer", auth(s.handleChatSteer))

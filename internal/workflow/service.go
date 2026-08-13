@@ -3,28 +3,32 @@ package workflow
 import (
 	"context"
 	"fmt"
-	"slices"
 )
 
-// Service is the integration surface between the workflow subsystem and the
-// rest of the platform (spec decision 7): it holds the loaded definitions and
-// the runner, answers the per-agent ACL (which workflows an agent can see as a
-// tool), generates each workflow's tool schema from its input schema, and runs
-// a workflow on demand. Agent boot, the manual-trigger API, and the agent-loop
-// LLM trigger all sit on top of this — they're wired in ticket 05's integration
-// step; this file is the testable core.
+// Service is the integration surface between the workflow subsystem and one
+// agent (spec decision 7, ownership model): it holds the workflows loaded from
+// that agent's own directory and runs one on demand. Visibility is by ownership
+// — every definition here belongs to this agent — so there is no cross-agent
+// ACL list. The per-run leaf capabilities (LLM + tool callers) are injected at
+// RunWorkflow time so the run uses the agent's current provider/registry
+// (hot-reload-safe).
+//
+// Agent boot builds one Service per agent (LoadDir over the agent's workflows
+// directory), registers a tool per definition, and the manual-trigger API +
+// agent-loop LLM trigger sit on top of it. This file is the testable core.
 type Service struct {
-	defs   map[string]*Definition
-	runner *Runner
+	defs  map[string]*Definition
+	store RunStore
 }
 
-// NewService builds a Service over the given definitions + runner. defs is keyed
-// by definition id (LoadDir / LoadFile's output shape).
-func NewService(defs map[string]*Definition, runner *Runner) *Service {
+// NewService builds a Service over the given definitions + persistence seam.
+// defs is keyed by definition id (LoadDir / LoadFile's output shape). store may
+// be nil only when the caller never invokes RunWorkflow (e.g. schema-only use).
+func NewService(defs map[string]*Definition, store RunStore) *Service {
 	if defs == nil {
 		defs = map[string]*Definition{}
 	}
-	return &Service{defs: defs, runner: runner}
+	return &Service{defs: defs, store: store}
 }
 
 // Definition returns the named workflow, if present.
@@ -34,17 +38,9 @@ func (s *Service) Definition(id string) (*Definition, bool) {
 }
 
 // Definitions returns every loaded workflow, keyed by id. Agent boot iterates
-// this to register a tool per visible workflow.
+// this to register a tool per workflow.
 func (s *Service) Definitions() map[string]*Definition {
 	return s.defs
-}
-
-// VisibleTo implements the per-agent ACL (spec decision 7): a workflow is
-// visible only to agents in its Agents whitelist. A workflow with no whitelist
-// is default-private (visible to no one) — enrollment is explicit, so a
-// half-configured workflow is never accidentally callable.
-func (s *Service) VisibleTo(def *Definition, agentID string) bool {
-	return slices.Contains(def.Agents, agentID)
 }
 
 // ToolSchema returns the JSON-schema for the workflow tool's parameters,
@@ -59,14 +55,15 @@ func (s *Service) ToolSchema(def *Definition) map[string]any {
 }
 
 // RunWorkflow executes the named workflow under the given owner/session (spec
-// decision 14). It does NOT re-check the ACL — visibility is enforced by the
-// caller (agent registration filters by VisibleTo; the manual API gates on the
-// caller's identity) — this runs whatever it's handed. Validation (ticket 02)
-// runs inside Run, so a schema-violating input is rejected here.
-func (s *Service) RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string) (*ExecutionResult, error) {
+// decision 14), using the supplied leaf callers. The runner is built fresh per
+// call (spec decision 12 — stateless, isolated runs), reading the agent's
+// current provider/registry through llm/tool, so a provider hot-reload takes
+// effect on the next call without rebuilding the Service. Validation (ticket
+// 02) runs inside Run, so a schema-violating input is rejected here.
+func (s *Service) RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string, llm LLMCaller, tool ToolCaller) (*ExecutionResult, error) {
 	def, ok := s.defs[id]
 	if !ok {
 		return nil, fmt.Errorf("unknown workflow %q", id)
 	}
-	return s.runner.Run(ctx, def, input, WithOwner(owner), WithSession(session))
+	return NewRunner(llm, tool, s.store).Run(ctx, def, input, WithOwner(owner), WithSession(session))
 }

@@ -40,16 +40,12 @@ const (
 // `,omitempty` so parse → marshal → parse round-trips with nil/zero collapsing
 // to the same shape (spec decision 8 round-trip hard constraint; ticket 02).
 type Definition struct {
-	ID      string    `yaml:"id,omitempty"`
-	Version int       `yaml:"version"`
-	Input   InputSpec `yaml:"input,omitempty"`
-	Nodes   []Node    `yaml:"nodes"`
-	Edges   []Edge    `yaml:"edges,omitempty"`
-	// Agents is the per-agent ACL whitelist (spec decision 7): when non-empty,
-	// only the listed agent ids can see/run this workflow as a tool; when empty,
-	// the workflow is NOT globally visible (default-private). Enrollment is
-	// explicit — a workflow with no agents declaration isn't callable by anyone.
-	Agents []string `yaml:"agents,omitempty"`
+	ID          string    `yaml:"id,omitempty"`
+	Version     int       `yaml:"version"`
+	Description string    `yaml:"description,omitempty"`
+	Input       InputSpec `yaml:"input,omitempty"`
+	Nodes       []Node    `yaml:"nodes"`
+	Edges       []Edge    `yaml:"edges,omitempty"`
 }
 
 // InputSpec declares the entry contract. ${input.*} references resolve against
