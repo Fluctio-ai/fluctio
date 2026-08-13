@@ -38,7 +38,7 @@ func TestService_RunWorkflow(t *testing.T) {
 	llm := &fakeLLM{resp: `{"r":"ok"}`}
 	svc := workflow.NewService(defs, st)
 
-	res, err := svc.RunWorkflow(context.Background(), def.ID, map[string]any{"topic": "cats"}, "user-1", "sess-1", llm, tools)
+	res, err := svc.RunWorkflow(context.Background(), def.ID, map[string]any{"topic": "cats"}, "user-1", "sess-1", llm, tools, nil)
 	if err != nil {
 		t.Fatalf("RunWorkflow: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestService_RunWorkflow(t *testing.T) {
 		t.Errorf("run owner=%q session=%q, want user-1/sess-1", owner, session)
 	}
 
-	if _, err := svc.RunWorkflow(context.Background(), "nope", nil, "", "", nil, nil); err == nil {
+	if _, err := svc.RunWorkflow(context.Background(), "nope", nil, "", "", nil, nil, nil); err == nil {
 		t.Error("expected error for unknown workflow id")
 	}
 }

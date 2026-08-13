@@ -27,6 +27,15 @@ type ToolCaller interface {
 	Call(ctx context.Context, name string, args map[string]any) (string, error)
 }
 
+// CodeCaller drives a code node: run a script in the given language inside a
+// sandbox and return its raw stdout, which the runner parses against the
+// node's output schema (spec decision 3). SandboxCodeCaller (adapters.go)
+// wraps sandbox.Executor. A nil CodeCaller (the default) makes any code node
+// fail at runtime with a clear "no code caller" error.
+type CodeCaller interface {
+	Run(ctx context.Context, language, code string) (string, error)
+}
+
 // RunStore is the persistence seam. *store.DBStore implements it; the runner
 // holds the interface so its graph/contract logic is testable without a DB.
 type RunStore interface {
@@ -43,14 +52,33 @@ type RunStore interface {
 type Runner struct {
 	llm   LLMCaller
 	tool  ToolCaller
+	code  CodeCaller
 	store RunStore
 	newID func() string
 }
 
+// RunnerOption configures a Runner at construction. The only option today is
+// WithCodeCaller; llm/tool/store stay positional because every runner needs
+// them, so existing three-arg callers keep working (code defaults to nil).
+type RunnerOption func(*Runner)
+
+// WithCodeCaller wires the sandbox code caller (spec decision 3). Without it a
+// code node fails at runtime with a clear "no code caller" error; tool/llm-only
+// workflows need not set it.
+func WithCodeCaller(c CodeCaller) RunnerOption {
+	return func(r *Runner) { r.code = c }
+}
+
 // NewRunner wires the leaf callers + persistence. Tests inject fakes here;
-// production callers use ProviderLLMCaller / RegistryToolCaller from adapters.go.
-func NewRunner(llm LLMCaller, tool ToolCaller, rs RunStore) *Runner {
-	return &Runner{llm: llm, tool: tool, store: rs, newID: newRunID}
+// production callers use ProviderLLMCaller / RegistryToolCaller /
+// SandboxCodeCaller from adapters.go. code defaults to nil when no option is
+// passed, so a tool/llm-only workflow runs without a sandbox.
+func NewRunner(llm LLMCaller, tool ToolCaller, rs RunStore, opts ...RunnerOption) *Runner {
+	r := &Runner{llm: llm, tool: tool, store: rs, newID: newRunID}
+	for _, o := range opts {
+		o(r)
+	}
+	return r
 }
 
 func newRunID() string {
@@ -219,9 +247,26 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 	return &ExecutionResult{
 		RunID:    runID,
 		Status:   StatusSucceeded,
-		Result:   lastOutput,
+		Result:   resolveWorkflowOutput(def, sc, lastOutput),
 		Snapshot: snap,
 	}, nil
+}
+
+// resolveWorkflowOutput builds the workflow-level Result (spec decision 4 data
+// flow, extended by the output-map feature). When the definition declares an
+// output map, each value is resolved as a reference (${input.*} / ${node.*});
+// a value that is exactly ${ref} keeps its native type, inline refs are
+// substituted as text. With no output map the last node's output is the
+// result — the pre-output-map behavior, preserved for existing workflows.
+func resolveWorkflowOutput(def *Definition, sc refScope, lastOutput map[string]any) map[string]any {
+	if len(def.Output) == 0 {
+		return lastOutput
+	}
+	out := make(map[string]any, len(def.Output))
+	for k, v := range def.Output {
+		out[k] = resolveValue(v, sc)
+	}
+	return out
 }
 
 // executeStep runs one node's leaf action and persists the outcome, applying
@@ -318,6 +363,19 @@ func (r *Runner) execNode(ctx context.Context, node Node, sc refScope) (map[stri
 		raw, err := r.llm.Call(ctx, prompt)
 		if err != nil {
 			return nil, fmt.Errorf("llm: %w", err)
+		}
+		return parseOutput(raw), nil
+	case KindCode:
+		if r.code == nil {
+			return nil, fmt.Errorf("code: no sandbox code caller wired")
+		}
+		lang := node.Language
+		if lang == "" {
+			lang = "python"
+		}
+		raw, err := r.code.Run(ctx, lang, resolveRefs(node.Code, sc))
+		if err != nil {
+			return nil, fmt.Errorf("code: %w", err)
 		}
 		return parseOutput(raw), nil
 	default:

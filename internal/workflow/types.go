@@ -14,13 +14,15 @@ const (
 	StatusNeedsIntervention Status = "needs_intervention" // non-idempotent node failed; resume refused (spec decision 2)
 )
 
-// NodeKind labels how a node executes. The tracer bullet ships tool + llm;
-// code (sandbox) and branch nodes arrive in later tickets.
+// NodeKind labels how a node executes: a tool node calls one registered tool,
+// an llm node makes a bare provider call, a code node runs a script in the
+// sandbox (spec decision 3).
 type NodeKind string
 
 const (
 	KindTool NodeKind = "tool"
 	KindLLM  NodeKind = "llm"
+	KindCode NodeKind = "code"
 )
 
 // SideEffect declares a node's side-effect category (spec decision 2, ADR 0002).
@@ -49,14 +51,19 @@ const (
 // the definition never enters the DB (spec decision 8). Optional fields carry
 // `,omitempty` so parse → marshal → parse round-trips with nil/zero collapsing
 // to the same shape (spec decision 8 round-trip hard constraint; ticket 02).
+// Output is an optional workflow-level result map: its values are ${input.*}
+// / ${node.*} references the runner resolves on a successful run to produce
+// ExecutionResult.Result (without it, Result defaults to the last node's
+// output).
 type Definition struct {
-	ID          string      `yaml:"id,omitempty"`
-	Version     int         `yaml:"version"`
-	Description string      `yaml:"description,omitempty"`
-	Input       InputSpec   `yaml:"input,omitempty"`
-	Nodes       []Node      `yaml:"nodes"`
-	Edges       []Edge      `yaml:"edges,omitempty"`
-	Concurrency Concurrency `yaml:"concurrency,omitempty"`
+	ID          string         `yaml:"id,omitempty"`
+	Version     int            `yaml:"version"`
+	Description string         `yaml:"description,omitempty"`
+	Input       InputSpec      `yaml:"input,omitempty"`
+	Nodes       []Node         `yaml:"nodes"`
+	Edges       []Edge         `yaml:"edges,omitempty"`
+	Output      map[string]any `yaml:"output,omitempty"`
+	Concurrency Concurrency    `yaml:"concurrency,omitempty"`
 }
 
 // InputSpec declares the entry contract. ${input.*} references resolve against
@@ -66,16 +73,19 @@ type InputSpec struct {
 }
 
 // Node is one step. A tool node calls one registered tool; an LLM node makes a
-// bare provider call. References in Input/Prompt resolve against ${input.*}
-// and upstream ${node.*} outputs (spec decision 4). Output is the node's
-// declared output schema — when absent, field references into this node are
-// trusted (the leaf's raw return is parsed at runtime).
+// bare provider call; a code node runs Code (a script in Language, default
+// "python") in the sandbox. References in Input/Prompt resolve against
+// ${input.*} and upstream ${node.*} outputs (spec decision 4). Output is the
+// node's declared output schema — when absent, field references into this node
+// are trusted (the leaf's raw return is parsed at runtime).
 type Node struct {
 	Name       string         `yaml:"name"`
 	Kind       NodeKind       `yaml:"kind"`
 	Tool       string         `yaml:"tool,omitempty"`
 	Input      map[string]any `yaml:"input,omitempty"`
 	Prompt     string         `yaml:"prompt,omitempty"`
+	Code       string         `yaml:"code,omitempty"`
+	Language   string         `yaml:"lang,omitempty"`
 	Output     map[string]any `yaml:"output,omitempty"`
 	SideEffect SideEffect     `yaml:"side_effect,omitempty"`
 }

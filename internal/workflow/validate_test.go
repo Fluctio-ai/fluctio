@@ -219,3 +219,67 @@ edges:
 `)
 	errContains(t, workflow.Validate(def, nil), "ghost")
 }
+
+// A code node must carry a code body in a supported language (spec decision 3).
+func TestValidate_CodeNode(t *testing.T) {
+	// missing code body
+	def := mustParse(t, `
+version: 1
+nodes:
+  - name: c
+    kind: code
+    lang: python
+`)
+	errContains(t, workflow.Validate(def, nil), "c", "code")
+
+	// unsupported language
+	def2 := mustParse(t, `
+version: 1
+nodes:
+  - name: c
+    kind: code
+    lang: ruby
+    code: "puts 1"
+`)
+	errContains(t, workflow.Validate(def2, nil), "ruby")
+
+	// valid code node (default language python)
+	def3 := mustParse(t, `
+version: 1
+nodes:
+  - name: c
+    kind: code
+    code: "print(1)"
+`)
+	if err := workflow.Validate(def3, nil); err != nil {
+		t.Errorf("valid code node rejected: %v", err)
+	}
+}
+
+// An unknown node kind is rejected at design time.
+func TestValidate_UnknownKind(t *testing.T) {
+	def := mustParse(t, `
+version: 1
+nodes:
+  - name: c
+    kind: codd
+    code: "print(1)"
+`)
+	errContains(t, workflow.Validate(def, nil), "codd")
+}
+
+// The workflow-level output map's ${...} references resolve against the same
+// graph + input schema as node-level refs (spec decision 4).
+func TestValidate_OutputMapRefs(t *testing.T) {
+	def := mustParse(t, `
+version: 1
+nodes:
+  - name: src
+    kind: tool
+    tool: t
+    output: {x: {type: string}}
+output:
+  leaked: ${ghost.field}
+`)
+	errContains(t, workflow.Validate(def, nil), "ghost")
+}

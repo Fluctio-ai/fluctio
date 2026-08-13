@@ -135,12 +135,12 @@ nodes:
 	var res1 *workflow.ExecutionResult
 	done1 := make(chan struct{})
 	go func() {
-		res1, _ = svc.RunWorkflow(context.Background(), def.ID, nil, "", "", slow, &fakeTools{})
+		res1, _ = svc.RunWorkflow(context.Background(), def.ID, nil, "", "", slow, &fakeTools{}, nil)
 		close(done1)
 	}()
 	<-slow.started // first run is inside its node
 
-	res2, err := svc.RunWorkflow(context.Background(), def.ID, nil, "", "", &fakeLLM{resp: `{"ok":true}`}, &fakeTools{})
+	res2, err := svc.RunWorkflow(context.Background(), def.ID, nil, "", "", &fakeLLM{resp: `{"ok":true}`}, &fakeTools{}, nil)
 	if err != nil {
 		t.Fatalf("second RunWorkflow: %v", err)
 	}

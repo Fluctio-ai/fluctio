@@ -236,3 +236,149 @@ edges:
 		t.Errorf("persisted node outputs = %+v, want a failed boom row", rows)
 	}
 }
+
+// fakeCode is the Seam A fake for CodeCaller — it records the interpolated
+// script + language and returns a canned raw output the runner parses.
+type fakeCode struct {
+	out string
+	err error
+	got []codeCall
+}
+
+type codeCall struct {
+	lang string
+	code string
+}
+
+func (f *fakeCode) Run(_ context.Context, language, code string) (string, error) {
+	f.got = append(f.got, codeCall{lang: language, code: code})
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.out, nil
+}
+
+// A code node runs its script in the sandbox (here faked), with ${input.*}
+// references interpolated into the code body before the call. Its raw stdout is
+// parsed the same way a tool/llm node's return is — JSON object → output map.
+func TestRunner_CodeNode(t *testing.T) {
+	const yamlDef = `
+version: 1
+input:
+  schema:
+    type: object
+    properties:
+      n: {type: integer}
+nodes:
+  - name: compute
+    kind: code
+    lang: python
+    code: |
+      n = ${input.n}
+      print(json.dumps({"doubled": n * 2}))
+`
+	def, err := workflow.Parse("code", []byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	code := &fakeCode{out: `{"doubled": 84}`}
+	st := newTestStore(t)
+	r := workflow.NewRunner(&fakeLLM{}, &fakeTools{}, st, workflow.WithCodeCaller(code))
+
+	res, err := r.Run(context.Background(), def, map[string]any{"n": 42})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != workflow.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded", res.Status)
+	}
+	// ${input.n} was interpolated into the code body before the call.
+	if len(code.got) != 1 {
+		t.Fatalf("code calls = %d, want 1", len(code.got))
+	}
+	if code.got[0].lang != "python" {
+		t.Errorf("lang = %q, want python", code.got[0].lang)
+	}
+	if !strings.Contains(code.got[0].code, "n = 42") {
+		t.Errorf("code body = %q, want ${input.n} resolved to 'n = 42'", code.got[0].code)
+	}
+	// stdout JSON parsed into the node output → result (no output map → last node).
+	if res.Result["doubled"] != float64(84) {
+		t.Errorf("result = %#v, want doubled=84", res.Result)
+	}
+}
+
+// A code node with no CodeCaller wired fails with a clear message at runtime
+// (the default code=nil path) rather than panicking.
+func TestRunner_CodeNodeNoCaller(t *testing.T) {
+	const yamlDef = `
+version: 1
+nodes:
+  - name: compute
+    kind: code
+    code: "print(1)"
+`
+	def, err := workflow.Parse("codenocall", []byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	st := newTestStore(t)
+	r := workflow.NewRunner(&fakeLLM{}, &fakeTools{}, st) // no WithCodeCaller
+
+	res, err := r.Run(context.Background(), def, map[string]any{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != workflow.StatusFailed {
+		t.Fatalf("status = %q, want failed", res.Status)
+	}
+	if res.Error == nil || !strings.Contains(res.Error.Message, "code caller") {
+		t.Errorf("error = %+v, want a \"code caller\" message", res.Error)
+	}
+}
+
+// A workflow-level output map reshapes the Result: each value is resolved as a
+// reference (${node.field} / ${input.field}). A whole-${ref} value keeps its
+// native type; an inline ref is substituted as text. Without the map, the last
+// node's raw output would be the Result — here that leak is asserted against.
+func TestRunner_WorkflowOutputMap(t *testing.T) {
+	const yamlDef = `
+version: 1
+nodes:
+  - name: fetch
+    kind: tool
+    tool: get_data
+output:
+  fetched: ${fetch.result}
+  mixed: "raw ${fetch.result} tail"
+`
+	def, err := workflow.Parse("out", []byte(yamlDef))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	tools := &fakeTools{out: map[string]string{"get_data": `{"result":"hello"}`}}
+	st := newTestStore(t)
+	r := workflow.NewRunner(&fakeLLM{}, tools, st)
+
+	res, err := r.Run(context.Background(), def, map[string]any{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Status != workflow.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded", res.Status)
+	}
+	// whole-ref keeps the native string type.
+	if res.Result["fetched"] != "hello" {
+		t.Errorf("fetched = %#v, want \"hello\"", res.Result["fetched"])
+	}
+	// inline ref substituted as text.
+	if res.Result["mixed"] != "raw hello tail" {
+		t.Errorf("mixed = %#v, want \"raw hello tail\"", res.Result["mixed"])
+	}
+	// a key absent from the output map is NOT leaked from the last node.
+	if _, leaked := res.Result["result"]; leaked {
+		t.Errorf("Result leaked the last-node key %q (output map should fully own Result)", "result")
+	}
+}

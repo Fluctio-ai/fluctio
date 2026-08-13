@@ -2,10 +2,15 @@ package workflow
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/sandbox"
 )
 
 // ProviderLLMCaller adapts a provider.Provider to LLMCaller: it issues a single
@@ -57,13 +62,65 @@ func (c *RegistryToolCaller) Call(ctx context.Context, name string, args map[str
 	return c.R.Execute(ctx, name, string(b))
 }
 
-// NewProviderRunner is the production wiring: a provider-backed LLM caller and
+// codeExecTimeout caps one code-node script run — the workflow-level ceiling
+// over the sandbox backend's own timeout.
+const codeExecTimeout = 30 * time.Second
+
+// langSpec maps a node Language to its file extension + interpreter command.
+// Validate rejects unknown languages; this map is the runtime fallback for the
+// default ("python") and the accepted aliases.
+var langSpec = map[string]struct{ ext, interpreter string }{
+	"python": {".py", "python"},
+	"py":     {".py", "python"},
+	"sh":     {".sh", "sh"},
+	"shell":  {".sh", "sh"},
+}
+
+// SandboxCodeCaller adapts a sandbox.Executor to CodeCaller (spec decision 3):
+// it writes the script to a uniquely-named temp file inside the sandbox and
+// runs it with the language interpreter, returning combined stdout+stderr. The
+// runner parses stdout against the node's output schema, so a well-behaved
+// script prints only its JSON result to stdout (stderr stays free for logs). A
+// non-zero exit comes back as an error carrying the script's combined output —
+// the actionable diagnostic (e.g. a python traceback).
+type SandboxCodeCaller struct {
+	Ex sandbox.Executor
+}
+
+// Run implements CodeCaller.
+func (c *SandboxCodeCaller) Run(ctx context.Context, language, code string) (string, error) {
+	spec, ok := langSpec[language]
+	if !ok {
+		return "", fmt.Errorf("unsupported language %q", language)
+	}
+	name := "wf_code_" + randSuffix(8) + spec.ext
+	if _, err := c.Ex.WriteFile(ctx, name, code); err != nil {
+		return "", fmt.Errorf("write script: %w", err)
+	}
+	out, err := c.Ex.Exec(ctx, spec.interpreter+" "+name, codeExecTimeout)
+	if err != nil {
+		if out != "" {
+			return "", fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
+		}
+		return "", err
+	}
+	return out, nil
+}
+
+func randSuffix(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// NewProviderRunner is the production wiring: a provider-backed LLM caller,
 // a registry-backed tool caller over the given persistence seam. Callers pick
 // model / maxTokens / temperature; per-node model selection comes later.
-func NewProviderRunner(p provider.Provider, model string, maxTokens int, temp float64, reg ToolExecutor, rs RunStore) *Runner {
+func NewProviderRunner(p provider.Provider, model string, maxTokens int, temp float64, reg ToolExecutor, code CodeCaller, rs RunStore) *Runner {
 	return NewRunner(
 		&ProviderLLMCaller{P: p, Model: model, MaxTokens: maxTokens, Temp: temp},
 		&RegistryToolCaller{R: reg},
 		rs,
+		WithCodeCaller(code),
 	)
 }

@@ -58,7 +58,40 @@ func (a *Agent) RunWorkflow(ctx context.Context, id string, input map[string]any
 	}
 	llm := &workflow.ProviderLLMCaller{P: a.provider, Model: a.model, MaxTokens: a.maxTokens, Temp: a.temperature}
 	tool := &workflow.RegistryToolCaller{R: a.registry}
-	return a.workflowSvc.RunWorkflow(ctx, id, input, owner, session, llm, tool)
+	// Only reach for a sandbox executor when this workflow actually has a code
+	// node — otherwise a tool/llm-only run would needlessly start a container.
+	var code workflow.CodeCaller
+	if def, ok := a.workflowSvc.Definition(id); ok && usesCodeNode(def) {
+		code = a.workflowCodeCaller(ctx, session)
+	}
+	return a.workflowSvc.RunWorkflow(ctx, id, input, owner, session, llm, tool, code)
+}
+
+// workflowCodeCaller builds a SandboxCodeCaller over this agent's per-session
+// sandbox executor when one is available, so code nodes run in the same
+// isolated sandbox as the agent's exec tool. Returns nil when no sandbox pool
+// is wired or the executor can't be obtained — a code node then fails at
+// runtime with a clear "no code caller" error rather than failing workflow
+// boot. Workflows are not project-scoped, so the project slot is empty.
+func (a *Agent) workflowCodeCaller(ctx context.Context, session string) workflow.CodeCaller {
+	if a.sandboxPool == nil {
+		return nil
+	}
+	ex, err := a.sandboxPool.Get(ctx, a.name, "", session)
+	if err != nil || ex == nil {
+		return nil
+	}
+	return &workflow.SandboxCodeCaller{Ex: ex}
+}
+
+// usesCodeNode reports whether def contains any code node.
+func usesCodeNode(def *workflow.Definition) bool {
+	for _, n := range def.Nodes {
+		if n.Kind == workflow.KindCode {
+			return true
+		}
+	}
+	return false
 }
 
 // registerWorkflowTools adds one tool per workflow definition. The closure

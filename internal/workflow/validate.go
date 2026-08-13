@@ -58,7 +58,13 @@ func Validate(def *Definition, input map[string]any) error {
 	if err := exactlyOneEntry(def); err != nil {
 		return err
 	}
+	if err := validateNodeKinds(def); err != nil {
+		return err
+	}
 	if err := validateRefs(def); err != nil {
+		return err
+	}
+	if err := validateOutputRefs(def); err != nil {
 		return err
 	}
 	if input != nil {
@@ -101,6 +107,59 @@ func exactlyOneEntry(def *Definition) error {
 	default:
 		return &ValidationError{Message: fmt.Sprintf("expected exactly one entry node, got %d (%s)", len(entries), strings.Join(entries, ", "))}
 	}
+}
+
+// validateNodeKinds guards code-node required fields (spec decision 3): a code
+// node carries a body in a supported language (the set mirrors langSpec in
+// adapters.go), and every node's Kind is one of the known values. Tool/llm
+// required fields (tool name / prompt) are deliberately not enforced here —
+// the leaf surfaces a clear error at runtime, and an llm node without a prompt
+// is harmless to validate (and handy as a graph placeholder).
+func validateNodeKinds(def *Definition) error {
+	for _, n := range def.Nodes {
+		switch n.Kind {
+		case KindTool, KindLLM:
+			// not enforced — see the doc note above.
+		case KindCode:
+			if n.Code == "" {
+				return &ValidationError{Node: n.Name, Field: "code", Message: "code node requires a code body"}
+			}
+			if n.Language != "" {
+				if _, ok := langSpec[n.Language]; !ok {
+					return &ValidationError{Node: n.Name, Field: "lang", Message: fmt.Sprintf("unsupported language %q (want python or sh)", n.Language)}
+				}
+			}
+		default:
+			return &ValidationError{Node: n.Name, Field: "kind", Message: fmt.Sprintf("unknown node kind %q", n.Kind)}
+		}
+	}
+	return nil
+}
+
+// validateOutputRefs checks the workflow-level Output map's ${...} references
+// (spec decision 4) — they resolve against the same graph + input schema as
+// node-level references, so a typo is caught at design time rather than after
+// a successful run. Node label "(output)" pins the error to this map.
+func validateOutputRefs(def *Definition) error {
+	if len(def.Output) == 0 {
+		return nil
+	}
+	declared := make(map[string]bool, len(def.Nodes))
+	for _, n := range def.Nodes {
+		declared[n.Name] = true
+	}
+	outputSchema := make(map[string]map[string]any, len(def.Nodes))
+	for _, n := range def.Nodes {
+		if len(n.Output) > 0 {
+			outputSchema[n.Name] = n.Output
+		}
+	}
+	for _, s := range collectStrings(def.Output) {
+		if err := checkRefs("(output)", s, declared, outputSchema, def); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // validateRefs walks every node's Prompt + every string nested anywhere in its

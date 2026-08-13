@@ -30,6 +30,7 @@ type AnyDef = {
   description?: string;
   concurrency?: string;
   input?: { schema?: Record<string, unknown> };
+  output?: Record<string, unknown>;
   nodes?: AnyNode[];
   edges?: AnyEdge[];
   [k: string]: unknown;
@@ -39,6 +40,8 @@ type AnyNode = {
   kind: string;
   tool?: string;
   prompt?: string;
+  code?: string;
+  lang?: string;
   input?: Record<string, unknown>;
   output?: Record<string, unknown>;
   side_effect?: string;
@@ -52,7 +55,7 @@ type AnyEdge = {
   [k: string]: unknown;
 };
 
-const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981" };
+const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b" };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyNetwork = { destroy: () => void; on: (e: string, cb: (p: any) => void) => void };
@@ -183,7 +186,7 @@ export function WorkflowEditor({
     });
   };
 
-  const addNode = (kind: "tool" | "llm") => {
+  const addNode = (kind: "tool" | "llm" | "code") => {
     const name = `${kind}_${Date.now().toString(36).slice(-4)}`;
     mutate((d) => {
       d.nodes!.push({ name, kind });
@@ -301,6 +304,26 @@ export function WorkflowEditor({
               }}
             />
           </div>
+          <div>
+            <span className="text-muted-foreground">{t("workflow.outputMap")}</span>
+            <Textarea
+              rows={4}
+              className="font-mono text-xs mt-1"
+              value={def.output ? JSON.stringify(def.output, null, 2) : ""}
+              onChange={(e) => {
+                let s: Record<string, unknown> | undefined;
+                try {
+                  s = e.target.value ? JSON.parse(e.target.value) : undefined;
+                } catch {
+                  return;
+                }
+                mutate((d) => {
+                  if (s) d.output = s;
+                  else delete d.output;
+                });
+              }}
+            />
+          </div>
         </div>
       </details>
 
@@ -310,6 +333,9 @@ export function WorkflowEditor({
         </Button>
         <Button size="sm" variant="outline" onClick={() => addNode("llm")}>
           <Plus className="h-3.5 w-3.5" /> {t("workflow.addLLM")}
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => addNode("code")}>
+          <Plus className="h-3.5 w-3.5" /> {t("workflow.addCode")}
         </Button>
         <Button size="sm" variant="outline" onClick={deleteSelected} disabled={!selNode && selEdge == null}>
           <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
@@ -457,6 +483,7 @@ function NodeProps({
         >
           <option value="tool">tool</option>
           <option value="llm">llm</option>
+          <option value="code">code</option>
         </select>
       </label>
       {node.kind === "tool" && (
@@ -512,6 +539,28 @@ function NodeProps({
       )}
       {node.kind === "llm" && (
         <Field label={t("workflow.prompt")} value={node.prompt || ""} onChange={(v) => onEdit("prompt", v)} multiline />
+      )}
+      {node.kind === "code" && (
+        <>
+          <label className="block">
+            {t("workflow.codeLang")}
+            <select
+              className="ml-1 border rounded px-1 bg-background"
+              value={node.lang || "python"}
+              onChange={(e) => onEdit("lang", e.target.value)}
+            >
+              <option value="python">python</option>
+              <option value="sh">sh</option>
+            </select>
+          </label>
+          <Field
+            label={t("workflow.codeBody")}
+            value={node.code || ""}
+            onChange={(v) => onEdit("code", v)}
+            multiline
+            placeholder="# python/sh 代码；print 结果到 stdout；可用 ${input.x} / ${node.y}"
+          />
+        </>
       )}
       <Field
         label={t("workflow.sideEffect")}

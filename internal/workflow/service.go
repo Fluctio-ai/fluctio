@@ -59,9 +59,10 @@ func (s *Service) ToolSchema(def *Definition) map[string]any {
 // decision 14), using the supplied leaf callers. The runner is built fresh per
 // call (spec decision 12 — stateless, isolated runs), reading the agent's
 // current provider/registry through llm/tool, so a provider hot-reload takes
-// effect on the next call without rebuilding the Service. Validation (ticket
-// 02) runs inside Run, so a schema-violating input is rejected here.
-func (s *Service) RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string, llm LLMCaller, tool ToolCaller) (*ExecutionResult, error) {
+// effect on the next call without rebuilding the Service. code is the sandbox
+// caller for code nodes; pass nil when no workflow uses them. Validation
+// (ticket 02) runs inside Run, so a schema-violating input is rejected here.
+func (s *Service) RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string, llm LLMCaller, tool ToolCaller, code CodeCaller) (*ExecutionResult, error) {
 	def, ok := s.defs[id]
 	if !ok {
 		return nil, fmt.Errorf("unknown workflow %q", id)
@@ -71,5 +72,5 @@ func (s *Service) RunWorkflow(ctx context.Context, id string, input map[string]a
 	// is a no-op. release runs after the run completes.
 	ctx, release := s.concurrency.Acquire(ctx, id, def.Concurrency)
 	defer release()
-	return NewRunner(llm, tool, s.store).Run(ctx, def, input, WithOwner(owner), WithSession(session))
+	return NewRunner(llm, tool, s.store, WithCodeCaller(code)).Run(ctx, def, input, WithOwner(owner), WithSession(session))
 }
