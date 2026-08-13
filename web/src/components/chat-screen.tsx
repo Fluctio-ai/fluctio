@@ -2822,11 +2822,10 @@ export function ChatScreen() {
                           </button>
                           <button
                             onClick={() => setFilesSheetOpen(true)}
-                            className="opacity-0 group-hover:opacity-100 inline-flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-muted text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
                             title={t("chat.viewTaskFiles")}
                           >
                             <FolderOpen className="h-3 w-3" />
-                            <span>{t("chat.files")}</span>
                           </button>
                           {msg.seq != null && msg.seq >= 0 && (
                             <button
