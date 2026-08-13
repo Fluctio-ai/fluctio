@@ -30,6 +30,7 @@ type ToolCaller interface {
 // holds the interface so its graph/contract logic is testable without a DB.
 type RunStore interface {
 	CreateWorkflowRun(ctx context.Context, id, defID string, version int, input map[string]any, sessionID, owner string) error
+	MarkRunRunning(ctx context.Context, id string) error
 	FinalizeWorkflowRun(ctx context.Context, id, status, errMsg string) error
 	AppendWorkflowNodeOutput(ctx context.Context, runID, nodeID string, attempt int, status string, output map[string]any, errMsg string) error
 	ListWorkflowNodeOutputs(ctx context.Context, runID string) ([]store.WorkflowNodeOutputRow, error)
@@ -55,6 +56,23 @@ func newRunID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return "wf_" + hex.EncodeToString(b[:])
+}
+
+// RunOption configures a Run call. The only option today is WithResume.
+type RunOption func(*runConfig)
+
+type runConfig struct {
+	runID  string             // original run id when resuming; "" for a fresh run
+	resume map[string]NodeOutput // populated by Run from the DB (decision 10)
+}
+
+// WithResume resumes a previously-failed run in place. The runner reuses the
+// run_id, reloads the authoritative snapshot from workflow_node_outputs
+// (decision 10 — it does not trust a caller-supplied copy), skips succeeded
+// nodes, re-runs failed ones at attempt+1, and refuses to auto-rerun a failed
+// non-idempotent node (spec decision 2).
+func WithResume(runID string) RunOption {
+	return func(c *runConfig) { c.runID = runID }
 }
 
 // refScope bundles the two reference namespaces a node resolves against — the
@@ -84,10 +102,17 @@ func (s refScope) lookup(expr string) (any, bool) {
 
 // Run executes def's nodes in topological order against input. A node failure
 // stops the run: the result carries status=failed, the failing node + original
-// error, and a snapshot of every node attempted this run (spec decision 5). The
-// snapshot is assembled from the persisted node-output rows, not held in memory
-// across the run (spec decision 10 — no redundant copy).
-func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any) (*ExecutionResult, error) {
+// error, and a snapshot of every node attempted this run (spec decision 5).
+// The snapshot is assembled from the persisted node-output rows (spec decision
+// 10 — no redundant copy) and its run_id is what callers pass to WithResume.
+//
+// WithResume(runID) resumes a failed run in place: run_id is reused, the
+// runner reloads the snapshot from the DB (decision 10 — no trusting a
+// caller copy), skips succeeded nodes (no re-invocation, no duplicate side
+// effect), re-runs failed nodes at attempt+1 (workflow_node_outputs appends,
+// never overwrites — decision 15), flips the run to "running" first (decision
+// 15), and refuses to auto-rerun a failed non-idempotent node (decision 2).
+func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any, opts ...RunOption) (*ExecutionResult, error) {
 	if input == nil {
 		input = map[string]any{}
 	}
@@ -99,39 +124,66 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any)
 		return nil, err
 	}
 
-	runID := r.newID()
-	if err := r.store.CreateWorkflowRun(ctx, runID, def.ID, def.Version, input, "", ""); err != nil {
-		return nil, fmt.Errorf("create workflow run: %w", err)
+	var cfg runConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	runID := cfg.runID
+	if runID != "" {
+		// Decision 15: failed→running while the resume is in flight.
+		if err := r.store.MarkRunRunning(ctx, runID); err != nil {
+			return nil, fmt.Errorf("mark run running: %w", err)
+		}
+		// Decision 10: the DB is the authoritative snapshot — reload it.
+		resumeSnap, err := r.loadSnapshot(ctx, runID, def)
+		if err != nil {
+			return nil, fmt.Errorf("load resume snapshot: %w", err)
+		}
+		cfg.resume = resumeSnap
+	} else {
+		runID = r.newID()
+		if err := r.store.CreateWorkflowRun(ctx, runID, def.ID, def.Version, input, "", ""); err != nil {
+			return nil, fmt.Errorf("create workflow run: %w", err)
+		}
 	}
 
 	sc := refScope{input: input, outputs: map[string]map[string]any{}}
+	// Seed completed-node outputs so downstream ${node.*} refs resolve without
+	// re-executing those nodes.
+	for name, no := range cfg.resume {
+		if no.Status == StatusSucceeded {
+			sc.outputs[name] = no.Output
+		}
+	}
 
 	for _, name := range order {
+		// One resume lookup per node drives skip / refuse / attempt together.
+		prior, seen := cfg.resume[name]
+		if seen && prior.Status == StatusSucceeded {
+			continue
+		}
 		node := nodeByName(def, name)
-		out, execErr := r.execNode(ctx, node, sc)
 
-		if execErr != nil {
-			msg := execErr.Error()
-			if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, 1, string(StatusFailed), nil, msg); perr != nil {
-				return nil, fmt.Errorf("persist failed node %s: %w", name, perr)
-			}
-			failMsg := fmt.Sprintf("node %s: %s", name, msg)
-			if ferr := r.store.FinalizeWorkflowRun(ctx, runID, string(StatusFailed), failMsg); ferr != nil {
-				return nil, fmt.Errorf("finalize failed run: %w", ferr)
-			}
-			snap, lerr := r.loadSnapshot(ctx, runID, def)
-			if lerr != nil {
-				return nil, fmt.Errorf("load snapshot: %w", lerr)
-			}
-			return &ExecutionResult{
-				RunID:    runID,
-				Status:   StatusFailed,
-				Error:    &NodeError{Node: name, Message: msg},
-				Snapshot: snap,
-			}, nil
+		if seen && prior.Status == StatusFailed && node.SideEffect == SideEffectNonIdempotent {
+			return r.endRun(ctx, runID, def, name, StatusNeedsIntervention,
+				"non-idempotent node failed; manual intervention required to resume")
 		}
 
-		if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, 1, string(StatusSucceeded), out, ""); perr != nil {
+		attempt := 1
+		if seen {
+			attempt = prior.Attempt + 1
+		}
+
+		out, execErr := r.execNode(ctx, node, sc)
+		if execErr != nil {
+			msg := execErr.Error()
+			if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, attempt, string(StatusFailed), nil, msg); perr != nil {
+				return nil, fmt.Errorf("persist failed node %s: %w", name, perr)
+			}
+			return r.endRun(ctx, runID, def, name, StatusFailed, msg)
+		}
+		if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, attempt, string(StatusSucceeded), out, ""); perr != nil {
 			return nil, fmt.Errorf("persist node %s output: %w", name, perr)
 		}
 		sc.outputs[name] = out
@@ -156,6 +208,26 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any)
 	}, nil
 }
 
+// endRun finalizes a failing run and assembles the ExecutionResult. Shared by
+// the exec-failure and non-idempotent-refusal paths; the caller persists any
+// new attempt row before calling (the refusal path persists none, since the
+// node isn't re-executed).
+func (r *Runner) endRun(ctx context.Context, runID string, def *Definition, node string, status Status, msg string) (*ExecutionResult, error) {
+	if ferr := r.store.FinalizeWorkflowRun(ctx, runID, string(status), fmt.Sprintf("node %s: %s", node, msg)); ferr != nil {
+		return nil, fmt.Errorf("finalize run: %w", ferr)
+	}
+	snap, err := r.loadSnapshot(ctx, runID, def)
+	if err != nil {
+		return nil, fmt.Errorf("load snapshot: %w", err)
+	}
+	return &ExecutionResult{
+		RunID:    runID,
+		Status:   status,
+		Error:    &NodeError{Node: node, Message: msg},
+		Snapshot: snap,
+	}, nil
+}
+
 // loadSnapshot assembles the completed-nodes snapshot straight from the
 // persisted node-output rows (spec decision 10). Kind is the one field the
 // table doesn't store, so it is re-read from the definition. When a node has
@@ -174,11 +246,12 @@ func (r *Runner) loadSnapshot(ctx context.Context, runID string, def *Definition
 	snap := make(map[string]NodeOutput, len(latest))
 	for name, rw := range latest {
 		snap[name] = NodeOutput{
-			Name:   name,
-			Kind:   nodeByName(def, name).Kind,
-			Status: Status(rw.Status),
-			Output: rw.Output,
-			Error:  rw.Error,
+			Name:    name,
+			Kind:    nodeByName(def, name).Kind,
+			Status:  Status(rw.Status),
+			Output:  rw.Output,
+			Error:   rw.Error,
+			Attempt: rw.Attempt,
 		}
 	}
 	return snap, nil

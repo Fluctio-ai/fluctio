@@ -138,6 +138,16 @@ func (d *DBStore) ListWorkflowNodeOutputs(ctx context.Context, runID string) ([]
 	return out, rows.Err()
 }
 
+// MarkRunRunning flips a run back to "running" and clears its finish time,
+// used at resume start (spec decision 15: failed→running while the resume is
+// in flight).
+func (d *DBStore) MarkRunRunning(ctx context.Context, id string) error {
+	_, err := d.db.ExecContext(ctx, fmt.Sprintf(
+		`UPDATE workflow_runs SET status = 'running', finished_at = NULL WHERE id = %s`,
+		d.ph(1)), id)
+	return err
+}
+
 // GetWorkflowRun returns the run-level record, or ErrNotFound if it doesn't exist.
 func (d *DBStore) GetWorkflowRun(ctx context.Context, id string) (status, errMsg string, err error) {
 	err = d.db.QueryRowContext(ctx, fmt.Sprintf(

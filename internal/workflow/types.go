@@ -8,9 +8,10 @@ package workflow
 type Status string
 
 const (
-	StatusRunning   Status = "running"
-	StatusSucceeded Status = "succeeded"
-	StatusFailed    Status = "failed"
+	StatusRunning           Status = "running"
+	StatusSucceeded         Status = "succeeded"
+	StatusFailed            Status = "failed"
+	StatusNeedsIntervention Status = "needs_intervention" // non-idempotent node failed; resume refused (spec decision 2)
 )
 
 // NodeKind labels how a node executes. The tracer bullet ships tool + llm;
@@ -20,6 +21,18 @@ type NodeKind string
 const (
 	KindTool NodeKind = "tool"
 	KindLLM  NodeKind = "llm"
+)
+
+// SideEffect declares a node's side-effect category (spec decision 2, ADR 0002).
+// It governs resume: pure/idempotent nodes can be safely re-run after a
+// failure; non-idempotent nodes that failed require manual intervention and
+// are not auto-rerun. Nodes without an explicit declaration default to pure.
+type SideEffect string
+
+const (
+	SideEffectPure         SideEffect = "pure"
+	SideEffectIdempotent   SideEffect = "idempotent"
+	SideEffectNonIdempotent SideEffect = "non-idempotent"
 )
 
 // Definition is a versioned workflow. YAML is the single source of truth and
@@ -46,12 +59,13 @@ type InputSpec struct {
 // declared output schema — when absent, field references into this node are
 // trusted (the leaf's raw return is parsed at runtime).
 type Node struct {
-	Name   string         `yaml:"name"`
-	Kind   NodeKind       `yaml:"kind"`
-	Tool   string         `yaml:"tool,omitempty"`
-	Input  map[string]any `yaml:"input,omitempty"`
-	Prompt string         `yaml:"prompt,omitempty"`
-	Output map[string]any `yaml:"output,omitempty"`
+	Name       string         `yaml:"name"`
+	Kind       NodeKind       `yaml:"kind"`
+	Tool       string         `yaml:"tool,omitempty"`
+	Input      map[string]any `yaml:"input,omitempty"`
+	Prompt     string         `yaml:"prompt,omitempty"`
+	Output     map[string]any `yaml:"output,omitempty"`
+	SideEffect SideEffect     `yaml:"side_effect,omitempty"`
 }
 
 // RouteKind is the branch language on an edge (spec decision 3). The tracer
@@ -94,9 +108,10 @@ type NodeError struct {
 
 // NodeOutput is one node's outcome inside the snapshot.
 type NodeOutput struct {
-	Name   string         `json:"name"`
-	Kind   NodeKind       `json:"kind"`
-	Status Status         `json:"status"`
-	Output map[string]any `json:"output,omitempty"`
-	Error  string         `json:"error,omitempty"`
+	Name    string         `json:"name"`
+	Kind    NodeKind       `json:"kind"`
+	Status  Status         `json:"status"`
+	Output  map[string]any `json:"output,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	Attempt int            `json:"attempt,omitempty"`
 }

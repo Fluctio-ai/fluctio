@@ -17,20 +17,19 @@ func Parse(defID string, data []byte) (*Definition, error) {
 	if err := yaml.Unmarshal(data, &d); err != nil {
 		return nil, fmt.Errorf("parse workflow yaml: %w", err)
 	}
-	normalizeEmptyMaps(&d)
+	normalize(&d)
 	if defID != "" {
 		d.ID = defID
 	}
 	return &d, nil
 }
 
-// normalizeEmptyMaps nils out empty map fields so a definition round-trips
-// cleanly: yaml.v3 omits empty maps on marshal, so an explicit `output: {}`
-// would otherwise parse to a non-nil empty map, marshal to nothing, re-parse
-// to nil, and break semantic equality (spec decision 8 round-trip hard
-// constraint). nil and empty map are semantically identical at runtime
-// (resolveInput treats len==0 as nothing-to-resolve).
-func normalizeEmptyMaps(d *Definition) {
+// normalize pins Definition invariants Parse callers can rely on:
+//   - empty-map fields collapse to nil so parse→marshal→parse round-trips
+//     cleanly (yaml.v3 omits empty maps on marshal; an explicit `output: {}`
+//     would otherwise re-parse to nil and break DeepEqual — spec decision 8).
+//   - a node with no side_effect defaults to pure (spec decision 2).
+func normalize(d *Definition) {
 	if len(d.Input.Schema) == 0 {
 		d.Input.Schema = nil
 	}
@@ -40,6 +39,9 @@ func normalizeEmptyMaps(d *Definition) {
 		}
 		if len(d.Nodes[i].Output) == 0 {
 			d.Nodes[i].Output = nil
+		}
+		if d.Nodes[i].SideEffect == "" {
+			d.Nodes[i].SideEffect = SideEffectPure
 		}
 	}
 }
