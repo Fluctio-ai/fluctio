@@ -110,3 +110,6 @@ gw.err.*
 
 # Local superpowers agent/worktree docs (private, not for repo)
 /.superpowers/
+
+# Local workflow tickets (mattpocock to-tickets output, disposable, not for repo)
+/.scratch/
