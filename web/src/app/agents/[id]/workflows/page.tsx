@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
+import { WorkflowEditor } from "@/components/workflow-editor";
 
 // Workflows page (ticket 08): list this agent's workflows, manually trigger one
 // (JSON input), and browse run history with per-node output + the failing
@@ -125,6 +126,16 @@ export default function WorkflowsPage() {
           <p className="text-muted-foreground">{t("workflow.selectHint")}</p>
         ) : (
           <>
+            <section className="space-y-2">
+              <h3 className="font-semibold">{t("workflow.editor")}</h3>
+              <WorkflowEditor
+                agentId={agentId ?? ""}
+                wfID={selected}
+                onSaved={() => {
+                  if (agentId) listWorkflows(agentId).then(setWorkflows);
+                }}
+              />
+            </section>
             <section className="space-y-2">
               <h3 className="font-semibold">{t("workflow.trigger")}</h3>
               <p className="text-xs text-muted-foreground">{t("workflow.inputHint")}</p>
