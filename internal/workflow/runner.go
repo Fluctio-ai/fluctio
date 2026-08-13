@@ -91,6 +91,9 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any)
 	if input == nil {
 		input = map[string]any{}
 	}
+	if err := Validate(def, input); err != nil {
+		return nil, fmt.Errorf("validate: %w", err)
+	}
 	order, err := topoOrder(def)
 	if err != nil {
 		return nil, err

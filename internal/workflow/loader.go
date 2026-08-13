@@ -17,10 +17,31 @@ func Parse(defID string, data []byte) (*Definition, error) {
 	if err := yaml.Unmarshal(data, &d); err != nil {
 		return nil, fmt.Errorf("parse workflow yaml: %w", err)
 	}
+	normalizeEmptyMaps(&d)
 	if defID != "" {
 		d.ID = defID
 	}
 	return &d, nil
+}
+
+// normalizeEmptyMaps nils out empty map fields so a definition round-trips
+// cleanly: yaml.v3 omits empty maps on marshal, so an explicit `output: {}`
+// would otherwise parse to a non-nil empty map, marshal to nothing, re-parse
+// to nil, and break semantic equality (spec decision 8 round-trip hard
+// constraint). nil and empty map are semantically identical at runtime
+// (resolveInput treats len==0 as nothing-to-resolve).
+func normalizeEmptyMaps(d *Definition) {
+	if len(d.Input.Schema) == 0 {
+		d.Input.Schema = nil
+	}
+	for i := range d.Nodes {
+		if len(d.Nodes[i].Input) == 0 {
+			d.Nodes[i].Input = nil
+		}
+		if len(d.Nodes[i].Output) == 0 {
+			d.Nodes[i].Output = nil
+		}
+	}
 }
 
 // LoadFile reads and parses one workflows/*.yaml file. The id is the filename
@@ -52,4 +73,12 @@ func LoadDir(dir string) (map[string]*Definition, error) {
 		out[d.ID] = d
 	}
 	return out, nil
+}
+
+// Marshal serialises a Definition back to YAML. With Parse it gives the
+// round-trip guarantee (spec decision 8): parse(marshal(parse(x))) is
+// semantically equal to parse(x). Optional fields use ,omitempty so nil/zero
+// values collapse to the same shape on both sides.
+func Marshal(def *Definition) ([]byte, error) {
+	return yaml.Marshal(def)
 }
