@@ -38,10 +38,12 @@ func (e *ValidationError) Error() string {
 }
 
 // Validate checks a definition + optional input against the structural contract
-// (spec decisions 3, 4, 6, 8): references resolve to existing nodes and
-// declared output fields; the graph is acyclic with exactly one entry;
-// llm_route edges have a sibling default; and when input is supplied it
-// satisfies the declared input schema. Returns nil when execution-ready.
+// (spec decisions 4, 6, 8): references resolve to existing nodes and declared
+// output fields; the graph is acyclic with exactly one entry; and when input
+// is supplied it satisfies the declared input schema. The llm_route/default
+// rule is deliberately NOT enforced here — spec decision 3 makes a missing
+// match a runtime node failure (handled by the runner), not a design-time
+// error. Returns nil when structurally execution-ready.
 //
 // It does no I/O and is safe to call before Run. Run itself calls Validate as
 // a precondition, so a definition that passes here won't be rejected later for
@@ -57,9 +59,6 @@ func Validate(def *Definition, input map[string]any) error {
 		return err
 	}
 	if err := validateRefs(def); err != nil {
-		return err
-	}
-	if err := validateRouteDefaults(def); err != nil {
 		return err
 	}
 	if input != nil {
@@ -189,37 +188,6 @@ func checkRefs(node, s string, declared map[string]bool, outputSchema map[string
 		if schema, ok := outputSchema[ns]; ok && len(parts) >= 2 {
 			if _, has := schema[parts[1]]; !has {
 				return &ValidationError{Node: node, Field: "${" + expr + "}", Message: fmt.Sprintf("field %q not in %s output schema", parts[1], ns)}
-			}
-		}
-	}
-	return nil
-}
-
-// validateRouteDefaults enforces spec decision 3: a node with an llm_route
-// out-edge must also have a default out-edge (the router fallback). Branch
-// execution itself is ticket 04.
-func validateRouteDefaults(def *Definition) error {
-	out := make(map[string][]Edge)
-	for _, e := range def.Edges {
-		out[e.From] = append(out[e.From], e)
-	}
-	for _, n := range def.Nodes {
-		hasRoute, hasDefault := false, false
-		var routeEdge Edge
-		for _, e := range out[n.Name] {
-			switch e.Route {
-			case RouteLLMRoute:
-				hasRoute = true
-				routeEdge = e
-			case RouteDefault:
-				hasDefault = true
-			}
-		}
-		if hasRoute && !hasDefault {
-			return &ValidationError{
-				Node:    n.Name,
-				Edge:    routeEdge.From + "→" + routeEdge.To,
-				Message: "llm_route edge requires a sibling default edge",
 			}
 		}
 	}

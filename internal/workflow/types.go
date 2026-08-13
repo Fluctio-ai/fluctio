@@ -68,25 +68,25 @@ type Node struct {
 	SideEffect SideEffect     `yaml:"side_effect,omitempty"`
 }
 
-// RouteKind is the branch language on an edge (spec decision 3). The tracer
-// bullet only validates llm_route/default; deterministic-expression routing
-// and branch execution arrive in ticket 04.
-type RouteKind string
-
-const (
-	RoutePlain    RouteKind = ""         // plain linear edge
-	RouteDefault  RouteKind = "default"  // LLM-router fallback
-	RouteLLMRoute RouteKind = "llm_route" // LLM picks among siblings
-)
-
-// Edge is a from→to connection. Route is the branch language (spec decision
-// 3). Ticket 02 only *validates* that llm_route edges have a sibling default;
-// branch *execution* is 04.
+// Edge is a from→to connection. When is the branch language (spec decision 3):
+//   - ""           plain linear edge (always taken; the node has one such out-edge)
+//   - "default"    fallback, taken when no other edge matched
+//   - "llm_route"  the runner asks the LLM to pick among sibling llm_route edges
+//   - any other    a deterministic expression on upstream outputs, e.g. "${score} > 0.8"
+//
+// Description is shown to the LLM when When == "llm_route" (ticket 04).
 type Edge struct {
-	From  string    `yaml:"from"`
-	To    string    `yaml:"to"`
-	Route RouteKind `yaml:"route,omitempty"`
+	From        string `yaml:"from"`
+	To          string `yaml:"to"`
+	When        string `yaml:"when,omitempty"`
+	Description string `yaml:"desc,omitempty"`
 }
+
+// Edge.When sentinel values.
+const (
+	WhenDefault  = "default"
+	WhenLLMRoute = "llm_route"
+)
 
 // ExecutionResult is the unified return for every run (spec decision 5): the
 // terminal status, the final node's output on success, an error pointing at

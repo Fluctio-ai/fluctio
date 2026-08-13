@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -100,28 +101,31 @@ func (s refScope) lookup(expr string) (any, bool) {
 	return dig(root, parts[1:])
 }
 
-// Run executes def's nodes in topological order against input. A node failure
-// stops the run: the result carries status=failed, the failing node + original
-// error, and a snapshot of every node attempted this run (spec decision 5).
-// The snapshot is assembled from the persisted node-output rows (spec decision
-// 10 — no redundant copy) and its run_id is what callers pass to WithResume.
+// Run executes def starting at the single entry node and follows outgoing
+// edges (spec decision 3): plain edges walk a linear chain; deterministic
+// `when` expressions pick the first true branch; llm_route edges ask the LLM
+// to choose (falling back to `default`, or failing the node if nothing matches
+// — "LLM 路由无 default 则该节点失败" is a runtime failure). A node failure
+// stops the run with status=failed + the failing node and a snapshot of
+// everything attempted (decision 5). The snapshot is assembled from
+// workflow_node_outputs (decision 10); its run_id is what WithResume takes.
 //
-// WithResume(runID) resumes a failed run in place: run_id is reused, the
-// runner reloads the snapshot from the DB (decision 10 — no trusting a
-// caller copy), skips succeeded nodes (no re-invocation, no duplicate side
-// effect), re-runs failed nodes at attempt+1 (workflow_node_outputs appends,
-// never overwrites — decision 15), flips the run to "running" first (decision
-// 15), and refuses to auto-rerun a failed non-idempotent node (decision 2).
+// WithResume(runID) reloads the snapshot from the DB (decision 10), flips the
+// run to "running" (decision 15), skips succeeded nodes (no re-invocation),
+// re-runs failed nodes at attempt+1 (append-only, decision 15), and refuses
+// to auto-rerun a failed non-idempotent node (decision 2).
+//
+// Resume caveat: edge selection re-runs even for skipped (succeeded) nodes.
+// Deterministic branches reproduce from the cached output; llm_route re-asks
+// the LLM and may diverge from the original path — accepted for the tracer
+// bullet (decision 12's "stateless reproducible" can't hold when the LLM
+// router is in the loop).
 func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any, opts ...RunOption) (*ExecutionResult, error) {
 	if input == nil {
 		input = map[string]any{}
 	}
 	if err := Validate(def, input); err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
-	}
-	order, err := topoOrder(def)
-	if err != nil {
-		return nil, err
 	}
 
 	var cfg runConfig
@@ -131,11 +135,9 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 
 	runID := cfg.runID
 	if runID != "" {
-		// Decision 15: failed→running while the resume is in flight.
 		if err := r.store.MarkRunRunning(ctx, runID); err != nil {
 			return nil, fmt.Errorf("mark run running: %w", err)
 		}
-		// Decision 10: the DB is the authoritative snapshot — reload it.
 		resumeSnap, err := r.loadSnapshot(ctx, runID, def)
 		if err != nil {
 			return nil, fmt.Errorf("load resume snapshot: %w", err)
@@ -149,44 +151,43 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 	}
 
 	sc := refScope{input: input, outputs: map[string]map[string]any{}}
-	// Seed completed-node outputs so downstream ${node.*} refs resolve without
-	// re-executing those nodes.
 	for name, no := range cfg.resume {
 		if no.Status == StatusSucceeded {
 			sc.outputs[name] = no.Output
 		}
 	}
 
-	for _, name := range order {
-		// One resume lookup per node drives skip / refuse / attempt together.
-		prior, seen := cfg.resume[name]
-		if seen && prior.Status == StatusSucceeded {
-			continue
-		}
-		node := nodeByName(def, name)
-
-		if seen && prior.Status == StatusFailed && node.SideEffect == SideEffectNonIdempotent {
-			return r.endRun(ctx, runID, def, name, StatusNeedsIntervention,
-				"non-idempotent node failed; manual intervention required to resume")
-		}
-
-		attempt := 1
-		if seen {
-			attempt = prior.Attempt + 1
-		}
-
-		out, execErr := r.execNode(ctx, node, sc)
-		if execErr != nil {
-			msg := execErr.Error()
-			if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, attempt, string(StatusFailed), nil, msg); perr != nil {
-				return nil, fmt.Errorf("persist failed node %s: %w", name, perr)
+	// Walk the graph from the single entry node (Validate guarantees one).
+	current := entryNode(def)
+	var lastOutput map[string]any
+	for current != "" {
+		name := current
+		if prior, seen := cfg.resume[name]; seen && prior.Status == StatusSucceeded {
+			lastOutput = prior.Output
+		} else {
+			out, status, msg, perr := r.executeStep(ctx, name, sc, cfg.resume, runID, def)
+			if perr != nil {
+				return nil, perr
 			}
-			return r.endRun(ctx, runID, def, name, StatusFailed, msg)
+			if status != StatusSucceeded {
+				return r.endRun(ctx, runID, def, name, status, msg)
+			}
+			sc.outputs[name] = out
+			lastOutput = out
 		}
-		if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, attempt, string(StatusSucceeded), out, ""); perr != nil {
-			return nil, fmt.Errorf("persist node %s output: %w", name, perr)
+
+		edges := outEdges(def, name)
+		if len(edges) == 0 {
+			break // terminal node
 		}
-		sc.outputs[name] = out
+		next, selErr := r.selectEdge(ctx, edges, sc)
+		if selErr != nil {
+			// selErr already says "no matching edge from X" (genuine AC4
+			// no-match) or "edge X→Y: <expr error>" — don't re-prefix and
+			// conflate the two.
+			return r.endRun(ctx, runID, def, name, StatusFailed, selErr.Error())
+		}
+		current = next
 	}
 
 	if ferr := r.store.FinalizeWorkflowRun(ctx, runID, string(StatusSucceeded), ""); ferr != nil {
@@ -196,16 +197,41 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot: %w", err)
 	}
-	var result map[string]any
-	if len(order) > 0 {
-		result = sc.outputs[order[len(order)-1]]
-	}
 	return &ExecutionResult{
 		RunID:    runID,
 		Status:   StatusSucceeded,
-		Result:   result,
+		Result:   lastOutput,
 		Snapshot: snap,
 	}, nil
+}
+
+// executeStep runs one node's leaf action and persists the outcome, applying
+// the resume rules (skip is the caller's job; refuse non-idempotent failures;
+// re-run at attempt+1). It returns the parsed output plus a terminal
+// status+message when the step itself ends the run, or a go error on a
+// persistence failure.
+func (r *Runner) executeStep(ctx context.Context, name string, sc refScope, resume map[string]NodeOutput, runID string, def *Definition) (map[string]any, Status, string, error) {
+	node := nodeByName(def, name)
+	prior, seen := resume[name]
+	if seen && prior.Status == StatusFailed && node.SideEffect == SideEffectNonIdempotent {
+		return nil, StatusNeedsIntervention, "non-idempotent node failed; manual intervention required to resume", nil
+	}
+	attempt := 1
+	if seen {
+		attempt = prior.Attempt + 1
+	}
+	out, execErr := r.execNode(ctx, node, sc)
+	if execErr != nil {
+		msg := execErr.Error()
+		if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, attempt, string(StatusFailed), nil, msg); perr != nil {
+			return nil, "", "", perr
+		}
+		return nil, StatusFailed, msg, nil
+	}
+	if perr := r.store.AppendWorkflowNodeOutput(ctx, runID, name, attempt, string(StatusSucceeded), out, ""); perr != nil {
+		return nil, "", "", perr
+	}
+	return out, StatusSucceeded, "", nil
 }
 
 // endRun finalizes a failing run and assembles the ExecutionResult. Shared by
@@ -434,4 +460,164 @@ func nodeByName(def *Definition, name string) Node {
 		}
 	}
 	return Node{Name: name}
+}
+
+// --- branch execution (spec decision 3, ticket 04) ---
+
+// entryNode returns the single in-degree-0 node (Validate guarantees one).
+func entryNode(def *Definition) string {
+	indeg := indegree(def)
+	for _, n := range def.Nodes {
+		if indeg[n.Name] == 0 {
+			return n.Name
+		}
+	}
+	return ""
+}
+
+// outEdges returns def's edges leaving node, in declaration order.
+func outEdges(def *Definition, node string) []Edge {
+	var out []Edge
+	for _, e := range def.Edges {
+		if e.From == node {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// selectEdge picks the next node from a node's outgoing edges: a plain edge
+// walks on; otherwise the first true deterministic `when` wins; otherwise an
+// llm_route LLM pick; otherwise default; otherwise no match (runtime failure).
+func (r *Runner) selectEdge(ctx context.Context, edges []Edge, sc refScope) (string, error) {
+	var plains, deterministics, llmRoutes []Edge
+	var defaultEdge *Edge
+	for i := range edges {
+		switch e := edges[i]; e.When {
+		case "":
+			plains = append(plains, e)
+		case WhenDefault:
+			defaultEdge = &edges[i]
+		case WhenLLMRoute:
+			llmRoutes = append(llmRoutes, e)
+		default:
+			deterministics = append(deterministics, e)
+		}
+	}
+	if len(plains) > 0 {
+		return plains[0].To, nil
+	}
+	for _, e := range deterministics {
+		ok, err := evalExpr(e.When, sc)
+		if err != nil {
+			return "", fmt.Errorf("edge %s→%s: %w", e.From, e.To, err)
+		}
+		if ok {
+			return e.To, nil
+		}
+	}
+	if len(llmRoutes) > 0 {
+		if chosen, ok := r.llmRoute(ctx, llmRoutes); ok {
+			return chosen, nil
+		}
+		// non-candidate reply → fall through to default (or no-match failure)
+	}
+	if defaultEdge != nil {
+		return defaultEdge.To, nil
+	}
+	return "", fmt.Errorf("no matching edge from %q", edges[0].From)
+}
+
+// llmRoute asks the LLM to choose one candidate edge by node name. Returns
+// ok=false for a non-candidate reply (caller falls through to default).
+func (r *Runner) llmRoute(ctx context.Context, candidates []Edge) (string, bool) {
+	var b strings.Builder
+	b.WriteString("Pick exactly one option. Reply with only its node name.\n")
+	for _, e := range candidates {
+		desc := e.Description
+		if desc == "" {
+			desc = e.To
+		}
+		fmt.Fprintf(&b, "- %s: %s\n", e.To, desc)
+	}
+	content, err := r.llm.Call(ctx, b.String())
+	if err != nil {
+		return "", false
+	}
+	choice := strings.TrimSpace(content)
+	var env struct {
+		Choice string `json:"choice"`
+	}
+	if json.Unmarshal([]byte(choice), &env) == nil && env.Choice != "" {
+		choice = env.Choice
+	}
+	for _, e := range candidates {
+		if e.To == choice {
+			return e.To, true
+		}
+	}
+	return "", false
+}
+
+// evalExpr evaluates a deterministic when expression "${ref} OP literal".
+var exprPattern = regexp.MustCompile(`^\$\{([^}]+)\}\s*(>=|<=|==|!=|>|<)\s*(.+)$`)
+
+func evalExpr(expr string, sc refScope) (bool, error) {
+	m := exprPattern.FindStringSubmatch(strings.TrimSpace(expr))
+	if m == nil {
+		return false, fmt.Errorf("bad when expression %q", expr)
+	}
+	ref, op, literal := m[1], m[2], strings.TrimSpace(m[3])
+	val, ok := sc.lookup(ref)
+	if !ok {
+		return false, fmt.Errorf("unresolved reference ${%s}", ref)
+	}
+	return compare(val, op, literal)
+}
+
+// compare applies op to val and a literal. Numbers compare numerically; == / !=
+// also work on strings.
+func compare(val any, op, literal string) (bool, error) {
+	vf, verr := toFloat(val)
+	lf, lerr := toFloat(literal)
+	if verr == nil && lerr == nil {
+		switch op {
+		case ">":
+			return vf > lf, nil
+		case "<":
+			return vf < lf, nil
+		case ">=":
+			return vf >= lf, nil
+		case "<=":
+			return vf <= lf, nil
+		case "==":
+			return vf == lf, nil
+		case "!=":
+			return vf != lf, nil
+		}
+		return false, fmt.Errorf("unknown operator %q", op)
+	}
+	switch op {
+	case "==":
+		return fmt.Sprint(val) == literal, nil
+	case "!=":
+		return fmt.Sprint(val) != literal, nil
+	}
+	return false, fmt.Errorf("operator %q needs numbers, got %T and %q", op, val, literal)
+}
+
+func toFloat(v any) (float64, error) {
+	switch x := v.(type) {
+	case float64:
+		return x, nil
+	case float32:
+		return float64(x), nil
+	case int:
+		return float64(x), nil
+	case int64:
+		return float64(x), nil
+	case string:
+		return strconv.ParseFloat(x, 64)
+	}
+	return 0, fmt.Errorf("not a number: %T", v)
 }

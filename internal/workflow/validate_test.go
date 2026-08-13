@@ -172,41 +172,7 @@ edges:
 	errContains(t, err, "entry")
 }
 
-// Scope: an llm_route edge needs a sibling default edge on the same source.
-// (Branch *execution* is ticket 04; only the structural rule lives here.)
-func TestValidate_LLMRouteNeedsDefault(t *testing.T) {
-	noDefault := mustParse(t, `
-version: 1
-nodes:
-  - name: router
-    kind: llm
-    output: {choice: {type: string}}
-  - {name: a, kind: tool, tool: ta}
-  - {name: b, kind: tool, tool: tb}
-edges:
-  - {from: router, to: a, route: llm_route}
-  - {from: router, to: b, route: llm_route}
-`)
-	errContains(t, workflow.Validate(noDefault, nil), "default", "router")
-
-	withDefault := mustParse(t, `
-version: 1
-nodes:
-  - name: router
-    kind: llm
-    output: {choice: {type: string}}
-  - {name: a, kind: tool, tool: ta}
-  - {name: b, kind: tool, tool: tb}
-edges:
-  - {from: router, to: a, route: llm_route}
-  - {from: router, to: b, route: default}
-`)
-	if err := workflow.Validate(withDefault, nil); err != nil {
-		t.Errorf("llm_route with default should validate, got: %v", err)
-	}
-}
-
-// AC4 corner case — explicit empty maps (`output: {}`, `schema: {}`) must
+// AC4 corollary — explicit empty maps (`output: {}`, `schema: {}`) must
 // round-trip equal. Without nil/empty-map normalization this trips
 // DeepEqual on the re-parsed definition.
 func TestRoundTrip_EmptyMaps(t *testing.T) {
