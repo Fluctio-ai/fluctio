@@ -3,6 +3,7 @@ package setup
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/auth"
+	"github.com/fluctio-ai/fluctio/internal/cron"
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
@@ -261,4 +263,145 @@ func (s *Server) handleWorkflowPut(w http.ResponseWriter, r *http.Request) {
 	}
 	ag.ReloadWorkflows()
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "version": version})
+}
+
+// --- Workflow cron schedules (ticket 10, spec decision 16) ---
+
+// workflowCronLoc is the timezone workflow schedules are interpreted in —
+// spec decision 16 mandates UTC+8. Falls back to UTC if Asia/Shanghai is
+// unavailable on the host.
+var workflowCronLoc = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}()
+
+// handleWorkflowScheduleCreate — POST /api/agents/{agentID}/workflows/{wfID}/schedules
+//
+// Creates a cron schedule. Body: {"cron_expr":"0 8 * * *","input":{...},"enabled"?:bool}.
+// next_run is computed in UTC+8 (first future occurrence). The schedule fires
+// the workflow with owner="system", session="".
+func (s *Server) handleWorkflowScheduleCreate(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agentID")
+	wfID := r.PathValue("wfID")
+	if s.resolveAgent(r, agentID) == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	var body struct {
+		CronExpr string         `json:"cron_expr"`
+		Input    map[string]any `json:"input"`
+		Enabled  *bool          `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad body: " + err.Error()})
+		return
+	}
+	if body.CronExpr == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "cron_expr required"})
+		return
+	}
+	owner := ""
+	if ident, ok := auth.FromContext(r.Context()); ok {
+		owner = ident.EffectiveUserID()
+	}
+	enabled := true
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	next := cron.NextOccurrenceIn(body.CronExpr, time.Now(), workflowCronLoc)
+	sched := store.WorkflowScheduleRow{
+		ID:          fmt.Sprintf("wfs_%d", time.Now().UnixNano()),
+		AgentID:     agentID,
+		WorkflowID:  wfID,
+		OwnerUserID: owner,
+		CronExpr:    body.CronExpr,
+		Input:       body.Input,
+		Enabled:     enabled,
+		NextRun:     next.UTC().Format(time.RFC3339),
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	if err := dbs.CreateWorkflowSchedule(r.Context(), sched); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "schedule": sched})
+}
+
+// handleWorkflowScheduleList — GET /api/agents/{agentID}/workflows/{wfID}/schedules
+func (s *Server) handleWorkflowScheduleList(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agentID")
+	wfID := r.PathValue("wfID")
+	if s.resolveAgent(r, agentID) == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	all, err := dbs.ListWorkflowSchedules(r.Context(), agentID)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	out := make([]store.WorkflowScheduleRow, 0, len(all))
+	for _, sc := range all {
+		if sc.WorkflowID == wfID {
+			out = append(out, sc)
+		}
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "schedules": out})
+}
+
+// handleWorkflowScheduleToggle — PATCH /api/agents/{agentID}/workflows/{wfID}/schedules/{schedID}
+// Body: {"enabled": bool}. Enables/disables without deleting.
+func (s *Server) handleWorkflowScheduleToggle(w http.ResponseWriter, r *http.Request) {
+	if s.resolveAgent(r, r.PathValue("agentID")) == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.Enabled == nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "enabled required"})
+		return
+	}
+	if err := dbs.SetWorkflowScheduleEnabled(r.Context(), r.PathValue("schedID"), *body.Enabled); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleWorkflowScheduleDelete — DELETE /api/agents/{agentID}/workflows/{wfID}/schedules/{schedID}
+func (s *Server) handleWorkflowScheduleDelete(w http.ResponseWriter, r *http.Request) {
+	if s.resolveAgent(r, r.PathValue("agentID")) == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	if err := dbs.DeleteWorkflowSchedule(r.Context(), r.PathValue("schedID")); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }

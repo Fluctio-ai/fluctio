@@ -52,6 +52,25 @@ func (d *DBStore) migrateWorkflowTables(ctx context.Context) error {
 			created_at   TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_workflow_node_outputs_run ON workflow_node_outputs (run_id, node_id, attempt)`,
+		// workflow_schedules backs the cron trigger (spec decision 16): one row
+		// per scheduled (agent, workflow) fire. owner_user_id resolves the agent
+		// at fire time; the run itself is recorded with owner="system".
+		`CREATE TABLE IF NOT EXISTS workflow_schedules (
+			id            TEXT PRIMARY KEY,
+			agent_id      TEXT NOT NULL,
+			workflow_id   TEXT NOT NULL,
+			owner_user_id TEXT NOT NULL DEFAULT '',
+			cron_expr     TEXT NOT NULL,
+			input_json    TEXT NOT NULL DEFAULT '{}',
+			enabled       INTEGER NOT NULL DEFAULT 1,
+			last_run      TEXT,
+			next_run      TEXT NOT NULL,
+			locked_by     TEXT,
+			locked_at     TEXT,
+			created_at    TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_workflow_schedules_due ON workflow_schedules (enabled, next_run)`,
+		`CREATE INDEX IF NOT EXISTS idx_workflow_schedules_agent ON workflow_schedules (agent_id)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {

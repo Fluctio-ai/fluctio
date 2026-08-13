@@ -848,6 +848,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runWorkflowRetention(ctx)
 	}()
+	// Workflow cron scheduler (spec decision 16): polls workflow_schedules
+	// every minute and fires due ones — run owner="system", session="", cron
+	// evaluated in Asia/Shanghai (UTC+8).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runWorkflowScheduler(ctx)
+	}()
 	// llm_call_diag retention: prunes the per-LLM-call diagnostic trail past
 	// its window (default 3d via FLUCTIO_LLM_CALL_DIAG_RETENTION_HOURS, 0
 	// disables). See specs/2026-07-22-llm-call-observability.md.
