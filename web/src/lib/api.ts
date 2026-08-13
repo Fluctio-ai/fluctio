@@ -3109,3 +3109,114 @@ export async function rebindAgentIM(
   });
   return res.json();
 }
+
+// --- Workflows (tickets 05–09) ---
+export interface WorkflowSummary {
+  id: string;
+  version: number;
+  description: string;
+  concurrency: string;
+}
+export interface WorkflowRunRow {
+  ID: string;
+  DefID: string;
+  Version: number;
+  Status: string;
+  SessionID: string;
+  Owner: string;
+  Error: string;
+  StartedAt: string;
+  FinishedAt: string;
+}
+export interface WorkflowNodeOutput {
+  NodeID: string;
+  Attempt: number;
+  Status: string;
+  Output: Record<string, unknown> | null;
+  Error: string;
+}
+export interface WorkflowExecutionResult {
+  ok: boolean;
+  result?: {
+    run_id: string;
+    status: string;
+    result?: Record<string, unknown>;
+    error?: { node: string; message: string };
+    completed_nodes_snapshot?: Record<string, unknown>;
+  };
+  error?: string;
+}
+
+export async function listWorkflows(agentId: string): Promise<WorkflowSummary[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/workflows`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.workflows || [];
+}
+export async function getWorkflowYAML(agentId: string, wfId: string): Promise<string> {
+  const res = await apiFetch(`/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}`);
+  const data = await res.json();
+  return data.yaml || "";
+}
+export async function saveWorkflow(
+  agentId: string,
+  wfId: string,
+  yaml: string,
+): Promise<{ ok: boolean; version?: number; error?: string }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ yaml }),
+    },
+  );
+  return res.json();
+}
+export async function runWorkflow(
+  agentId: string,
+  wfId: string,
+  input: Record<string, unknown>,
+): Promise<WorkflowExecutionResult> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/run`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  return res.json();
+}
+export async function listWorkflowRuns(
+  agentId: string,
+  wfId: string,
+): Promise<WorkflowRunRow[]> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/runs`,
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.runs || [];
+}
+export async function getWorkflowRun(
+  agentId: string,
+  wfId: string,
+  runId: string,
+): Promise<{ run: WorkflowRunRow; nodes: WorkflowNodeOutput[] }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/runs/${encodeURIComponent(runId)}`,
+  );
+  return res.json();
+}
+export async function deleteWorkflowRun(
+  agentId: string,
+  wfId: string,
+  runId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/runs/${encodeURIComponent(runId)}`,
+    { method: "DELETE" },
+  );
+  return res.json();
+}

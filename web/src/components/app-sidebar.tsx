@@ -29,6 +29,7 @@ import {
   PlusIcon,
   SettingsIcon,
   SparklesIcon,
+  WorkflowIcon,
   WrenchIcon,
 } from "lucide-react";
 import {
@@ -52,7 +53,7 @@ import { useT } from "@/lib/i18n";
 // the sidebar showing the platform nav for /agents/<id>/project/...
 function extractAgentId(pathname: string): string | null {
   const match = pathname.match(
-    /^\/agents\/([^/]+)\/(chat|customize|skills|models|sessions|channels|chats|scheduler|project|wiki|knowledge|memory|regex-hooks)/,
+    /^\/agents\/([^/]+)\/(chat|workflows|customize|skills|models|sessions|channels|chats|scheduler|project|wiki|knowledge|memory|regex-hooks)/,
   );
   return match ? match[1] : null;
 }
@@ -84,6 +85,11 @@ const AGENT_NAV = (
       url: `${base}/`,
       icon: PlusIcon,
       active: onNewChatRoute && !hasSession,
+    },
+    {
+      title: t("nav.workflow"),
+      url: `/agents/${agentId}/workflows/`,
+      icon: WorkflowIcon,
     },
   ];
 };
