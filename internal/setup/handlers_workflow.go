@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/auth"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // handleWorkflowRun — POST /api/agents/{agentID}/workflows/{wfID}/run
@@ -42,4 +44,70 @@ func (s *Server) handleWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "result": res})
+}
+
+// handleWorkflowRunDelete — DELETE /api/agents/{agentID}/workflows/{wfID}/runs/{runID}
+//
+// Manually removes one run and its node outputs (spec decision 11, manual
+// cleanup by run). The agent gate mirrors the run trigger: only a caller who
+// can reach this agent may delete its runs.
+func (s *Server) handleWorkflowRunDelete(w http.ResponseWriter, r *http.Request) {
+	if s.resolveAgent(r, r.PathValue("agentID")) == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	if err := dbs.DeleteWorkflowRun(r.Context(), r.PathValue("runID")); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleWorkflowRunsBatchDelete — DELETE /api/agents/{agentID}/workflows/{wfID}/runs
+//
+// Batch-deletes runs matching the query filter (spec decision 11, manual
+// cleanup by condition). Query params (at least one required — a bare DELETE
+// never wipes the table):
+//   - status:      succeeded | failed | needs_intervention
+//   - older_than:  Go duration relative to now, e.g. "72h" (finished_at before now-d)
+//   - owner:       run owner user id
+//
+// Returns {"ok":true,"deleted":N}.
+func (s *Server) handleWorkflowRunsBatchDelete(w http.ResponseWriter, r *http.Request) {
+	if s.resolveAgent(r, r.PathValue("agentID")) == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	q := r.URL.Query()
+	status := q.Get("status")
+	owner := q.Get("owner")
+	var olderThan time.Time
+	if v := q.Get("older_than"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad older_than (use a positive Go duration like 72h)"})
+			return
+		}
+		olderThan = time.Now().Add(-d)
+	}
+	if status == "" && olderThan.IsZero() && owner == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "at least one of status / older_than / owner is required"})
+		return
+	}
+	n, err := dbs.DeleteWorkflowRunsBy(r.Context(), status, olderThan, owner, 1000)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "deleted": n})
 }

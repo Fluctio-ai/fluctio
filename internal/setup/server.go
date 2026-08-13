@@ -275,6 +275,8 @@ func (s *Server) Run(ctx context.Context) error {
 	// Chat
 	mux.HandleFunc("POST /api/chat", auth(s.handleChat))
 	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/run", auth(s.handleWorkflowRun))
+	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}/runs/{runID}", auth(s.handleWorkflowRunDelete))
+	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}/runs", auth(s.handleWorkflowRunsBatchDelete))
 	mux.HandleFunc("POST /api/chat/stream", auth(s.handleChatStream))
 	mux.HandleFunc("POST /api/chat/team/stream", auth(s.handleTeamChatStream))
 	mux.HandleFunc("POST /api/chat/steer", auth(s.handleChatSteer))

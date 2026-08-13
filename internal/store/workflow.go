@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -156,4 +157,173 @@ func (d *DBStore) GetWorkflowRun(ctx context.Context, id string) (status, errMsg
 		return "", "", ErrNotFound
 	}
 	return status, errMsg, err
+}
+
+// PruneWorkflowRuns deletes finished runs past their retention window, cascading
+// to workflow_node_outputs (spec decision 11): succeeded runs older than
+// successBefore, and runs in a failure terminal state (failed /
+// needs_intervention) older than failedBefore. A zero cutoff for either state
+// disables pruning for that state. 'running' runs (finished_at IS NULL) are
+// never matched. Bounded batches keep a large backlog from holding the write
+// lock in one transaction. Returns the total runs deleted. Deliberately not on
+// the store.Store interface — the retention sweep reaches it via a *DBStore
+// type assertion, so no-op test stores don't stub it.
+func (d *DBStore) PruneWorkflowRuns(ctx context.Context, successBefore, failedBefore time.Time, batchSize int) (int64, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	var total int64
+	for {
+		ids, err := d.selectExpiredRunIDs(ctx, successBefore, failedBefore, batchSize)
+		if err != nil {
+			return total, err
+		}
+		if len(ids) == 0 {
+			return total, nil
+		}
+		if err := d.deleteRunsByID(ctx, ids); err != nil {
+			return total, err
+		}
+		total += int64(len(ids))
+		if len(ids) < batchSize {
+			return total, nil
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+}
+
+// DeleteWorkflowRun removes one run (by id) and its node outputs — the manual
+// "delete this run" entry point. No-op (returns nil) if the run doesn't exist.
+func (d *DBStore) DeleteWorkflowRun(ctx context.Context, runID string) error {
+	return d.deleteRunsByID(ctx, []string{runID})
+}
+
+// DeleteWorkflowRunsBy removes runs matching the given filter (any of status /
+// olderThan / owner may be zero-value to skip that clause), cascading to node
+// outputs, in bounded batches. olderThan matches only finished runs. A fully
+// empty filter is a no-op (refuses to delete everything). Returns the total
+// runs deleted.
+func (d *DBStore) DeleteWorkflowRunsBy(ctx context.Context, status string, olderThan time.Time, owner string, batchSize int) (int64, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	var total int64
+	for {
+		ids, err := d.selectRunIDsByFilter(ctx, status, olderThan, owner, batchSize)
+		if err != nil {
+			return total, err
+		}
+		if len(ids) == 0 {
+			return total, nil
+		}
+		if err := d.deleteRunsByID(ctx, ids); err != nil {
+			return total, err
+		}
+		total += int64(len(ids))
+		if len(ids) < batchSize {
+			return total, nil
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+}
+
+// selectExpiredRunIDs returns up to limit run ids whose finished_at is before
+// the applicable retention cutoff. finished_at is RFC3339 (UTC); cutoffs are
+// formatted the same way so the string compare matches how rows are stored.
+// NULL finished_at (running) never compares less than a cutoff, so live runs
+// are excluded.
+func (d *DBStore) selectExpiredRunIDs(ctx context.Context, successBefore, failedBefore time.Time, limit int) ([]string, error) {
+	var clauses []string
+	var args []any
+	if !successBefore.IsZero() {
+		clauses = append(clauses, fmt.Sprintf("(status = 'succeeded' AND finished_at < %s)", d.ph(len(args)+1)))
+		args = append(args, successBefore.UTC().Format(time.RFC3339))
+	}
+	if !failedBefore.IsZero() {
+		clauses = append(clauses, fmt.Sprintf("(status IN ('failed','needs_intervention') AND finished_at < %s)", d.ph(len(args)+1)))
+		args = append(args, failedBefore.UTC().Format(time.RFC3339))
+	}
+	if len(clauses) == 0 {
+		return nil, nil
+	}
+	q := fmt.Sprintf(`SELECT id FROM workflow_runs WHERE %s ORDER BY id LIMIT %s`,
+		strings.Join(clauses, " OR "), d.ph(len(args)+1))
+	args = append(args, limit)
+	return d.queryRunIDs(ctx, q, args...)
+}
+
+// selectRunIDsByFilter returns up to limit run ids matching the given manual
+// cleanup filter. Returns nil for an empty filter (no clause), so the caller
+// can't accidentally wipe the table.
+func (d *DBStore) selectRunIDsByFilter(ctx context.Context, status string, olderThan time.Time, owner string, limit int) ([]string, error) {
+	var clauses []string
+	var args []any
+	if status != "" {
+		clauses = append(clauses, fmt.Sprintf("status = %s", d.ph(len(args)+1)))
+		args = append(args, status)
+	}
+	if !olderThan.IsZero() {
+		clauses = append(clauses, fmt.Sprintf("finished_at < %s", d.ph(len(args)+1)))
+		args = append(args, olderThan.UTC().Format(time.RFC3339))
+	}
+	if owner != "" {
+		clauses = append(clauses, fmt.Sprintf("owner = %s", d.ph(len(args)+1)))
+		args = append(args, owner)
+	}
+	if len(clauses) == 0 {
+		return nil, nil
+	}
+	q := fmt.Sprintf(`SELECT id FROM workflow_runs WHERE %s ORDER BY id LIMIT %s`,
+		strings.Join(clauses, " AND "), d.ph(len(args)+1))
+	args = append(args, limit)
+	return d.queryRunIDs(ctx, q, args...)
+}
+
+func (d *DBStore) queryRunIDs(ctx context.Context, q string, args ...any) ([]string, error) {
+	rows, err := d.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// deleteRunsByID removes the named runs and their node outputs in one
+// transaction so a partial delete can't orphan either side.
+func (d *DBStore) deleteRunsByID(ctx context.Context, ids []string) error {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = d.ph(i + 1)
+		args[i] = id
+	}
+	inList := strings.Join(placeholders, ", ")
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM workflow_node_outputs WHERE run_id IN (%s)`, inList), args...); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM workflow_runs WHERE id IN (%s)`, inList), args...); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

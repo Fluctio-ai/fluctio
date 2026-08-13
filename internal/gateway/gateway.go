@@ -838,6 +838,16 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runSessionEventsRetention(ctx)
 	}()
+	// workflow retention: prunes finished workflow_runs past their window
+	// (spec decision 11) — succeeded runs older than
+	// FLUCTIO_WORKFLOW_RETENTION_SUCCESS_HOURS (default 7d), failed /
+	// needs_intervention runs older than _FAILED_HOURS (default 30d). Either
+	// ≤ 0 disables that state; both ≤ 0 disables the sweep.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runWorkflowRetention(ctx)
+	}()
 	// llm_call_diag retention: prunes the per-LLM-call diagnostic trail past
 	// its window (default 3d via FLUCTIO_LLM_CALL_DIAG_RETENTION_HOURS, 0
 	// disables). See specs/2026-07-22-llm-call-observability.md.
