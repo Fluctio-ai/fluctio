@@ -54,6 +54,13 @@ func (a *Agent) SetWorkflowService(svc *workflow.Service) {
 // session is the agent session an LLM-triggered run hangs off ("" for none).
 // Returns an error when this agent has no workflows configured.
 func (a *Agent) RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string) (*workflow.ExecutionResult, error) {
+	return a.RunWorkflowStream(ctx, id, input, owner, session, nil)
+}
+
+// RunWorkflowStream is RunWorkflow with a progress-event sink (M4 node-level
+// streaming). The sink receives NodeStart / NodeComplete / Done events as the
+// runner executes; nil reproduces RunWorkflow exactly.
+func (a *Agent) RunWorkflowStream(ctx context.Context, id string, input map[string]any, owner, session string, sink func(workflow.RunEvent)) (*workflow.ExecutionResult, error) {
 	if a.workflowSvc == nil {
 		return nil, fmt.Errorf("agent %q has no workflows", a.name)
 	}
@@ -65,7 +72,7 @@ func (a *Agent) RunWorkflow(ctx context.Context, id string, input map[string]any
 	if def, ok := a.workflowSvc.Definition(id); ok && usesCodeNode(def) {
 		code = a.workflowCodeCaller(ctx, session)
 	}
-	return a.workflowSvc.RunWorkflow(ctx, id, input, owner, session, llm, tool, code)
+	return a.workflowSvc.RunWorkflowStream(ctx, id, input, owner, session, llm, tool, code, sink)
 }
 
 // workflowCodeCaller builds a SandboxCodeCaller over this agent's per-session

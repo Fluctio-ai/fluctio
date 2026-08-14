@@ -36,6 +36,15 @@ type CodeCaller interface {
 	Run(ctx context.Context, language, code string) (string, error)
 }
 
+// HTTPCaller drives an http node (M3 domain node): one outbound request
+// returning the status code + raw response body, which the runner parses into
+// {status, body}. NetHTTPCaller (adapters.go) wraps net/http. A nil HTTPCaller
+// makes any http node fail at runtime with a clear "no http caller" error;
+// production always wires one via Service.RunWorkflow (it is stateless).
+type HTTPCaller interface {
+	Do(ctx context.Context, method, url string, headers map[string]string, body string) (status int, respBody string, err error)
+}
+
 // RunStore is the persistence seam. *store.DBStore implements it; the runner
 // holds the interface so its graph/contract logic is testable without a DB.
 type RunStore interface {
@@ -53,6 +62,7 @@ type Runner struct {
 	llm   LLMCaller
 	tool  ToolCaller
 	code  CodeCaller
+	http  HTTPCaller
 	store RunStore
 	newID func() string
 }
@@ -67,6 +77,13 @@ type RunnerOption func(*Runner)
 // workflows need not set it.
 func WithCodeCaller(c CodeCaller) RunnerOption {
 	return func(r *Runner) { r.code = c }
+}
+
+// WithHTTPCaller wires the outbound HTTP caller (M3 http node). Stateless, so
+// production always sets it (Service.RunWorkflow does); tests inject a fake or
+// leave it nil to assert the "no http caller" runtime error.
+func WithHTTPCaller(h HTTPCaller) RunnerOption {
+	return func(r *Runner) { r.http = h }
 }
 
 // NewRunner wires the leaf callers + persistence. Tests inject fakes here;
@@ -91,10 +108,11 @@ func newRunID() string {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	runID   string             // original run id when resuming; "" for a fresh run
+	runID   string                // original run id when resuming; "" for a fresh run
 	resume  map[string]NodeOutput // populated by Run from the DB (decision 10)
-	owner   string             // run owner (spec decision 14); "" = system
-	session string             // agent session an LLM-triggered run hangs off; "" = none
+	owner   string                // run owner (spec decision 14); "" = system
+	session string                // agent session an LLM-triggered run hangs off; "" = none
+	sink    func(RunEvent)        // M4 streaming: progress events; nil = no streaming
 }
 
 // WithResume resumes a previously-failed run in place. The runner reuses the
@@ -117,12 +135,28 @@ func WithSession(session string) RunOption {
 	return func(c *runConfig) { c.session = session }
 }
 
+// WithEventSink wires a progress-event sink for M4 node-level streaming. The
+// runner emits NodeStart / NodeComplete / Done events during Run; a nil sink
+// (the default) emits nothing, so existing callers are unaffected.
+func WithEventSink(sink func(RunEvent)) RunOption {
+	return func(c *runConfig) { c.sink = sink }
+}
+
+// emit forwards a progress event to the run's sink when one is wired (M4
+// streaming). Safe to call with a nil sink — the common non-streaming path.
+func (r *Runner) emit(cfg runConfig, e RunEvent) {
+	if cfg.sink != nil {
+		cfg.sink(e)
+	}
+}
+
 // refScope bundles the two reference namespaces a node resolves against — the
 // run input and the completed nodes' outputs — so the resolve helpers carry one
 // value instead of an (input, outputs) pair everywhere (spec decision 4).
 type refScope struct {
 	input   map[string]any
 	outputs map[string]map[string]any
+	vars    map[string]any // M5 writable variable space (set node); read via ${var.name}
 }
 
 func (s refScope) lookup(expr string) (any, bool) {
@@ -131,9 +165,12 @@ func (s refScope) lookup(expr string) (any, bool) {
 		return nil, false
 	}
 	var root map[string]any
-	if parts[0] == "input" {
+	switch parts[0] {
+	case "input":
 		root = s.input
-	} else {
+	case "var": // M5 writable variable space
+		root = s.vars
+	default:
 		root = s.outputs[parts[0]]
 	}
 	if root == nil {
@@ -191,7 +228,7 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 		}
 	}
 
-	sc := refScope{input: input, outputs: map[string]map[string]any{}}
+	sc := refScope{input: input, outputs: map[string]map[string]any{}, vars: map[string]any{}}
 	for name, no := range cfg.resume {
 		if no.Status == StatusSucceeded {
 			sc.outputs[name] = no.Output
@@ -209,16 +246,20 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 			return r.endRun(runID, def, current, StatusFailed, "canceled: "+err.Error())
 		}
 		name := current
+		r.emit(cfg, RunEvent{Type: EventNodeStart, Node: name})
 		if prior, seen := cfg.resume[name]; seen && prior.Status == StatusSucceeded {
 			lastOutput = prior.Output
+			r.emit(cfg, RunEvent{Type: EventNodeComplete, Node: name, Status: StatusSucceeded, Output: lastOutput})
 		} else {
 			out, status, msg, perr := r.executeStep(ctx, name, sc, cfg.resume, runID, def)
 			if perr != nil {
 				return nil, perr
 			}
 			if status != StatusSucceeded {
+				r.emit(cfg, RunEvent{Type: EventNodeComplete, Node: name, Status: status, Error: msg})
 				return r.endRun(runID, def, name, status, msg)
 			}
+			r.emit(cfg, RunEvent{Type: EventNodeComplete, Node: name, Status: StatusSucceeded, Output: out})
 			sc.outputs[name] = out
 			lastOutput = out
 		}
@@ -244,10 +285,12 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 	if err != nil {
 		return nil, fmt.Errorf("load snapshot: %w", err)
 	}
+	result := resolveWorkflowOutput(def, sc, lastOutput)
+	r.emit(cfg, RunEvent{Type: EventDone, Status: StatusSucceeded, Output: result})
 	return &ExecutionResult{
 		RunID:    runID,
 		Status:   StatusSucceeded,
-		Result:   resolveWorkflowOutput(def, sc, lastOutput),
+		Result:   result,
 		Snapshot: snap,
 	}, nil
 }
@@ -378,6 +421,70 @@ func (r *Runner) execNode(ctx context.Context, node Node, sc refScope) (map[stri
 			return nil, fmt.Errorf("code: %w", err)
 		}
 		return parseOutput(raw), nil
+	case KindReply:
+		// A reply node emits a templated response: Prompt is the reply body
+		// with ${input.*} / ${node.*} references resolved inline. Its {text}
+		// output is what an IM/slash caller reads back as the workflow's reply
+		// (M3 domain node — no leaf call, pure templating).
+		return map[string]any{"text": resolveRefs(node.Prompt, sc)}, nil
+	case KindQuestionRewrite:
+		// A question-rewrite node asks the LLM to reformulate a query for
+		// retrieval (Prompt is the instruction, with ${...} for the source).
+		// The raw reply is canonicalized to a {query} field so downstream nodes
+		// reference ${rewrite.query} regardless of the model's reply shape.
+		raw, err := r.llm.Call(ctx, resolveRefs(node.Prompt, sc))
+		if err != nil {
+			return nil, fmt.Errorf("question_rewrite: %w", err)
+		}
+		return rewrittenQuery(raw), nil
+	case KindHTTP:
+		if r.http == nil {
+			return nil, fmt.Errorf("http: no http caller wired")
+		}
+		args := resolveInput(node.Input, sc)
+		method, _ := args["method"].(string)
+		if method == "" {
+			method = "GET"
+		}
+		url, _ := args["url"].(string)
+		body, _ := args["body"].(string)
+		status, respBody, err := r.http.Do(ctx, method, url, headerMap(args["headers"]), body)
+		if err != nil {
+			return nil, fmt.Errorf("http: %w", err)
+		}
+		return map[string]any{
+			"status": status,
+			"body":   parseOutput(respBody),
+		}, nil
+	case KindKBSearch:
+		// A kb_search node is the first-class wrapper over the builtin
+		// knowledgebase_search tool, so the editor offers a "search the
+		// knowledge base" node instead of requiring users to find the tool by
+		// name. Input is resolved and forwarded verbatim; the tool's raw return
+		// is parsed like any tool node (plain text → {result}).
+		raw, err := r.tool.Call(ctx, "knowledgebase_search", resolveInput(node.Input, sc))
+		if err != nil {
+			return nil, fmt.Errorf("kb_search: %w", err)
+		}
+		return parseOutput(raw), nil
+	case KindSet:
+		// A set node writes resolved values into the run's writable variable
+		// space (M5); downstream nodes read them via ${var.name}. Input is a
+		// {var_name: value} map — each value resolves ${...} refs first.
+		// sc.vars is a shared map (maps copy by reference in a value struct),
+		// so writes here are visible to later nodes in Run.
+		args := resolveInput(node.Input, sc)
+		set := make([]string, 0, len(args))
+		for k, v := range args {
+			sc.vars[k] = v
+			set = append(set, k)
+		}
+		return map[string]any{"vars": set}, nil
+	case KindCondition:
+		// A condition node is a pass-through branch point: it runs no leaf and
+		// emits an empty output; its outgoing edges' `when` decide which branch
+		// the run takes (selectEdge runs as for any node, right after this).
+		return map[string]any{}, nil
 	default:
 		return nil, fmt.Errorf("unknown node kind %q", node.Kind)
 	}
@@ -474,6 +581,38 @@ func parseOutput(raw string) map[string]any {
 		}
 	}
 	return map[string]any{"result": raw}
+}
+
+// rewrittenQuery canonicalizes a question-rewrite node's LLM reply into a
+// {query} field (M3 domain node): a bare-text reply {result: raw} becomes
+// {query: raw}; a JSON object already carrying "query" passes through; any
+// other JSON gets query=<trimmed raw> added. Downstream nodes thus always have
+// ${node.query} regardless of how the model framed its answer.
+func rewrittenQuery(raw string) map[string]any {
+	parsed := parseOutput(raw)
+	if _, ok := parsed["query"]; ok {
+		return parsed
+	}
+	if r, ok := parsed["result"]; ok && len(parsed) == 1 {
+		return map[string]any{"query": r}
+	}
+	parsed["query"] = strings.TrimSpace(raw)
+	return parsed
+}
+
+// headerMap coerces an http node's headers input (YAML decodes a map to
+// map[string]any) into the map[string]string the HTTPCaller wants. Non-string
+// values are stringified; a missing/empty headers value yields nil.
+func headerMap(v any) map[string]string {
+	m, ok := v.(map[string]any)
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, vv := range m {
+		out[k] = fmt.Sprint(vv)
+	}
+	return out
 }
 
 // --- graph utilities ---

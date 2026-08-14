@@ -63,6 +63,15 @@ func (s *Service) ToolSchema(def *Definition) map[string]any {
 // caller for code nodes; pass nil when no workflow uses them. Validation
 // (ticket 02) runs inside Run, so a schema-violating input is rejected here.
 func (s *Service) RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string, llm LLMCaller, tool ToolCaller, code CodeCaller) (*ExecutionResult, error) {
+	return s.RunWorkflowStream(ctx, id, input, owner, session, llm, tool, code, nil)
+}
+
+// RunWorkflowStream is RunWorkflow with a progress-event sink (M4 node-level
+// streaming): the runner emits NodeStart / NodeComplete / Done events as it
+// walks the graph. A nil sink behaves exactly like RunWorkflow. The sink is
+// called synchronously from the runner goroutine, so a streaming caller must
+// forward events without blocking (buffer + flush) to avoid stalling the run.
+func (s *Service) RunWorkflowStream(ctx context.Context, id string, input map[string]any, owner, session string, llm LLMCaller, tool ToolCaller, code CodeCaller, sink func(RunEvent)) (*ExecutionResult, error) {
 	def, ok := s.defs[id]
 	if !ok {
 		return nil, fmt.Errorf("unknown workflow %q", id)
@@ -72,5 +81,9 @@ func (s *Service) RunWorkflow(ctx context.Context, id string, input map[string]a
 	// is a no-op. release runs after the run completes.
 	ctx, release := s.concurrency.Acquire(ctx, id, def.Concurrency)
 	defer release()
-	return NewRunner(llm, tool, s.store, WithCodeCaller(code)).Run(ctx, def, input, WithOwner(owner), WithSession(session))
+	opts := []RunOption{WithOwner(owner), WithSession(session)}
+	if sink != nil {
+		opts = append(opts, WithEventSink(sink))
+	}
+	return NewRunner(llm, tool, s.store, WithCodeCaller(code), WithHTTPCaller(NetHTTPCaller{})).Run(ctx, def, input, opts...)
 }

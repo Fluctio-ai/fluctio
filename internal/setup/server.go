@@ -73,6 +73,10 @@ type AgentHandle interface {
 	// session is "" for a bare manual run. Returns the ExecutionResult, or
 	// an error when the agent has no workflows / the id is unknown.
 	RunWorkflow(ctx context.Context, id string, input map[string]any, owner, session string) (*workflow.ExecutionResult, error)
+	// RunWorkflowStream is RunWorkflow with a progress-event sink for M4
+	// node-level streaming (NodeStart / NodeComplete / Done events). A nil
+	// sink behaves exactly like RunWorkflow.
+	RunWorkflowStream(ctx context.Context, id string, input map[string]any, owner, session string, sink func(workflow.RunEvent)) (*workflow.ExecutionResult, error)
 	// WorkflowsDir returns the directory holding this agent's workflow YAMLs.
 	WorkflowsDir() string
 	// ReloadWorkflows re-reads this agent's workflow dir and rebuilds its
@@ -284,6 +288,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("PUT /api/agents/{agentID}/workflows/{wfID}", auth(s.handleWorkflowPut))
 	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}", auth(s.handleWorkflowDelete))
 	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/run", auth(s.handleWorkflowRun))
+	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/run/stream", auth(s.handleWorkflowRunStream))
 	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}/runs", auth(s.handleWorkflowRunsList))
 	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}/runs/{runID}", auth(s.handleWorkflowRunGet))
 	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}/runs/{runID}", auth(s.handleWorkflowRunDelete))

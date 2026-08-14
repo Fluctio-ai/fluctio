@@ -16,13 +16,20 @@ const (
 
 // NodeKind labels how a node executes: a tool node calls one registered tool,
 // an llm node makes a bare provider call, a code node runs a script in the
-// sandbox (spec decision 3).
+// sandbox (spec decision 3). Domain kinds (M3) are first-class nodes with a
+// dedicated editor UI that map to existing leaves at runtime.
 type NodeKind string
 
 const (
-	KindTool NodeKind = "tool"
-	KindLLM  NodeKind = "llm"
-	KindCode NodeKind = "code"
+	KindTool  NodeKind = "tool"
+	KindLLM   NodeKind = "llm"
+	KindCode  NodeKind = "code"
+	KindReply NodeKind = "reply" // M3 domain node: emits a templated reply (Prompt → {text})
+	KindQuestionRewrite NodeKind = "question_rewrite" // M3 domain node: LLM rewrites a query (Prompt → {query})
+	KindHTTP NodeKind = "http" // M3 domain node: outbound HTTP request (Input → {status, body})
+	KindKBSearch NodeKind = "kb_search" // M3 domain node: wraps the builtin knowledgebase_search tool
+	KindSet NodeKind = "set" // M5 node: writes resolved values into the run's writable variable space (${var.*})
+	KindCondition NodeKind = "condition" // pass-through branch point: no leaf, its outgoing edges' `when` pick the branch
 )
 
 // SideEffect declares a node's side-effect category (spec decision 2, ADR 0002).
@@ -128,6 +135,26 @@ type NodeError struct {
 	Node    string `json:"node"`
 	Message string `json:"message"`
 }
+
+// RunEvent is one progress event emitted during a run (M4 node-level
+// streaming). The runner emits NodeStart when it begins a node, NodeComplete
+// when a node finishes (Output on success, Error on failure), and a terminal
+// Done carrying the workflow result on success. A nil sink (the default) emits
+// nothing — existing callers see no change.
+type RunEvent struct {
+	Type   string         `json:"type"`
+	Node   string         `json:"node,omitempty"`
+	Status Status         `json:"status,omitempty"`
+	Output map[string]any `json:"output,omitempty"`
+	Error  string         `json:"error,omitempty"`
+}
+
+// RunEvent.Type values.
+const (
+	EventNodeStart    = "node_start"
+	EventNodeComplete = "node_complete"
+	EventDone         = "done"
+)
 
 // NodeOutput is one node's outcome inside the snapshot.
 type NodeOutput struct {

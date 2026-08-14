@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -105,6 +107,41 @@ func (c *SandboxCodeCaller) Run(ctx context.Context, language, code string) (str
 		return "", err
 	}
 	return out, nil
+}
+
+// httpExecTimeout caps one http-node request — the workflow-level ceiling,
+// matching the code-node limit.
+const httpExecTimeout = 30 * time.Second
+
+// NetHTTPCaller is the production HTTPCaller for the M3 http node: a stateless
+// net/http client. It builds the request from the node's resolved input,
+// forwards declared headers, and returns the final status + raw body (the
+// runner parses the body into {status, body}).
+type NetHTTPCaller struct{}
+
+// Do implements HTTPCaller.
+func (NetHTTPCaller) Do(ctx context.Context, method, url string, headers map[string]string, body string) (int, string, error) {
+	var bodyReader io.Reader
+	if body != "" {
+		bodyReader = strings.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+	if err != nil {
+		return 0, "", fmt.Errorf("build request: %w", err)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := (&http.Client{Timeout: httpExecTimeout}).Do(req)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, "", fmt.Errorf("read body: %w", err)
+	}
+	return resp.StatusCode, string(b), nil
 }
 
 func randSuffix(n int) string {

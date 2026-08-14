@@ -51,6 +51,65 @@ func (s *Server) handleWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "result": res})
 }
 
+// handleWorkflowRunStream — POST /api/agents/{agentID}/workflows/{wfID}/run/stream
+//
+// Manually triggers a workflow and streams node-level progress as SSE (M4):
+// one "data:" line per RunEvent (node_start / node_complete / done) as nodes
+// execute, then a terminal "result" event carrying the ExecutionResult, then
+// the stream closes. A go-level error (no run started) is sent as a final
+// "error" event. Body is the workflow input object (may be empty).
+func (s *Server) handleWorkflowRunStream(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("agentID")
+	wfID := r.PathValue("wfID")
+	ag := s.resolveAgent(r, agentID)
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	var input map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad input JSON: " + err.Error()})
+		return
+	}
+	owner := ""
+	if ident, ok := auth.FromContext(r.Context()); ok {
+		owner = ident.EffectiveUserID()
+	}
+
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// The sink forwards each event as an SSE "data:" line and flushes so the
+	// client sees progress in real time. RunWorkflowStream calls it inline from
+	// the runner goroutine, so flush is the only (fast) work done here.
+	sink := func(e workflow.RunEvent) {
+		if b, err := json.Marshal(e); err == nil {
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
+	res, err := ag.RunWorkflowStream(r.Context(), wfID, input, owner, "", sink)
+	if err != nil {
+		// Headers are already SSE at this point; send a terminal error event.
+		b, _ := json.Marshal(map[string]any{"type": "error", "error": err.Error()})
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return
+	}
+	// Terminal result event carrying the full ExecutionResult, then close.
+	b, _ := json.Marshal(map[string]any{"type": "result", "result": res})
+	fmt.Fprintf(w, "data: %s\n\n", b)
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
 // handleWorkflowRunDelete — DELETE /api/agents/{agentID}/workflows/{wfID}/runs/{runID}
 //
 // Manually removes one run and its node outputs (spec decision 11, manual

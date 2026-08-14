@@ -58,7 +58,7 @@ type AnyEdge = {
   [k: string]: unknown;
 };
 
-const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b" };
+const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b", reply: "#06b6d4", question_rewrite: "#a855f7", http: "#f97316", kb_search: "#14b8a6", set: "#64748b", condition: "#ef4444" };
 const LANGS = ["python", "sh"];
 const TYPES = ["string", "number", "integer", "boolean", "object", "array"];
 const OPS = [">", "<", ">=", "<=", "==", "!=", "contain", "not_contain"];
@@ -207,10 +207,24 @@ export function WorkflowEditor({
     });
   };
 
-  const addNode = (kind: "tool" | "llm" | "code") => {
+  const addNode = (kind: "tool" | "llm" | "code" | "reply" | "question_rewrite" | "http" | "kb_search" | "set" | "condition") => {
     const name = `${kind}_${Date.now().toString(36).slice(-4)}`;
     mutate((d) => {
-      d.nodes!.push({ name, kind });
+      if (kind === "question_rewrite") {
+        // query-reformulation node: prefill a default rewrite instruction + a
+        // {query} output schema so downstream nodes can pick ${node.query} from
+        // the FieldRef dropdown out of the box.
+        d.nodes!.push({ name, kind, prompt: "请将以下问题改写为适合知识库检索的简洁查询：${input.question}", output: { query: { type: "string" } } });
+      } else if (kind === "http") {
+        // http node: prefill a GET scaffold; url is required (validated).
+        d.nodes!.push({ name, kind, input: { method: "GET", url: "" } });
+      } else if (kind === "kb_search") {
+        // kb_search wraps the builtin knowledgebase_search; prefill query bound
+        // to the workflow input so a newly-added node runs out of the box.
+        d.nodes!.push({ name, kind, input: { query: "${input.question}" } });
+      } else {
+        d.nodes!.push({ name, kind });
+      }
     });
     setSelNode(name);
     setSelEdge(null);
@@ -372,6 +386,24 @@ export function WorkflowEditor({
             </Button>
             <Button size="sm" variant="outline" onClick={() => addNode("code")}>
               <Plus className="h-3.5 w-3.5" /> {t("workflow.addCode")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("reply")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addReply")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("question_rewrite")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addRewrite")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("http")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addHTTP")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("kb_search")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addKBSearch")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("set")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addSet")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("condition")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addCondition")}
             </Button>
             <Button size="sm" variant="outline" onClick={deleteSelected} disabled={!selNode && selEdge == null}>
               <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
@@ -1076,6 +1108,9 @@ function NodeProps({
 }) {
   const [target, setTarget] = React.useState("");
   const locale = useLocale().locale;
+  // kb_search fixes the tool to the builtin knowledgebase_search; find its
+  // schema once so the panel renders the same SchemaForm a tool node would.
+  const kbSearchTool = node.kind === "kb_search" ? tools.find((x) => x.name === "knowledgebase_search") : undefined;
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const codeRef = useRef<HTMLTextAreaElement>(null);
   const insertAt = (ref: string, field: "prompt" | "code", ta: HTMLTextAreaElement | null) => {
@@ -1098,6 +1133,12 @@ function NodeProps({
           <option value="tool">tool</option>
           <option value="llm">llm</option>
           <option value="code">code</option>
+          <option value="reply">reply</option>
+          <option value="question_rewrite">question_rewrite</option>
+          <option value="http">http</option>
+          <option value="kb_search">kb_search</option>
+          <option value="set">set</option>
+          <option value="condition">condition</option>
         </select>
       </label>
 
@@ -1186,6 +1227,111 @@ function NodeProps({
             placeholder="# python/sh 代码；print 结果到 stdout；可用 ${input.x} / ${node.y}"
           />
         </div>
+      )}
+
+      {(node.kind === "reply" || node.kind === "question_rewrite") && (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-muted-foreground">
+              {node.kind === "reply" ? t("workflow.replyBody") : t("workflow.rewritePrompt")}
+            </span>
+            <InsertField options={refOptions} onInsert={(ref) => insertAt(ref, "prompt", promptRef.current)} />
+          </div>
+          <Textarea
+            ref={promptRef}
+            rows={4}
+            className="font-mono text-xs"
+            value={node.prompt || ""}
+            onChange={(e) => onEdit("prompt", e.target.value)}
+            placeholder={node.kind === "reply"
+              ? "回复内容；可用 ${node.x} / ${input.x} 引用上游"
+              : "改写指令；用 ${input.x} / ${node.x} 引用要改写的内容（输出 {query}）"}
+          />
+        </div>
+      )}
+
+      {node.kind === "http" && (
+        <div className="space-y-1">
+          <label className="block">
+            {t("workflow.httpMethod")}
+            <select
+              className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-background text-sm"
+              value={(node.input?.method as string) || "GET"}
+              onChange={(e) => onEdit("input", { ...(node.input || {}), method: e.target.value })}
+            >
+              {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </label>
+          <label className="block">
+            {t("workflow.httpUrl")}
+            <input
+              className="border rounded-lg px-2.5 py-1 h-8 bg-transparent w-full font-mono text-sm"
+              value={(node.input?.url as string) || ""}
+              onChange={(e) => onEdit("input", { ...(node.input || {}), url: e.target.value })}
+              placeholder="https://… 可用 ${input.x} / ${node.y} 引用"
+            />
+          </label>
+          <div>
+            <span className="text-muted-foreground">{t("workflow.httpHeaders")}</span>
+            <KVRows
+              obj={((node.input?.headers as Record<string, unknown>) || {}) as Record<string, unknown>}
+              options={refOptions}
+              onChange={(v) => onEdit("input", { ...(node.input || {}), headers: v })}
+            />
+          </div>
+          <label className="block">
+            <span className="text-muted-foreground">{t("workflow.httpBody")}</span>
+            <Textarea
+              rows={3}
+              className="font-mono text-xs"
+              value={(node.input?.body as string) || ""}
+              onChange={(e) => onEdit("input", { ...(node.input || {}), body: e.target.value })}
+              placeholder="请求体；可用 ${input.x} / ${node.y} 引用（GET 留空）"
+            />
+          </label>
+        </div>
+      )}
+
+      {node.kind === "kb_search" && (
+        <>
+          <p className="text-muted-foreground italic">
+            {kbSearchTool
+              ? (locale === "zh-CN" ? "搜索知识库（wiki 文章 / 灵感闪记 / 待办）" : kbSearchTool.description)
+              : "knowledgebase_search 工具未注册"}
+          </p>
+          {kbSearchTool?.parameters ? (
+            <SchemaForm
+              schema={kbSearchTool.parameters}
+              values={(node.input || {}) as Record<string, unknown>}
+              onChange={(v) => onEdit("input", v)}
+              agentId={agentId}
+            />
+          ) : (
+            <div>
+              <span className="text-muted-foreground">{t("workflow.toolInput")}</span>
+              <KVRows
+                obj={(node.input || {}) as Record<string, unknown>}
+                options={refOptions}
+                onChange={(v) => onEdit("input", v)}
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      {node.kind === "set" && (
+        <div>
+          <span className="text-muted-foreground">{t("workflow.setHint")}</span>
+          <KVRows
+            obj={(node.input || {}) as Record<string, unknown>}
+            options={refOptions}
+            onChange={(v) => onEdit("input", v)}
+          />
+        </div>
+      )}
+
+      {node.kind === "condition" && (
+        <p className="text-muted-foreground italic">{t("workflow.condNodeHint")}</p>
       )}
 
       <label className="block">

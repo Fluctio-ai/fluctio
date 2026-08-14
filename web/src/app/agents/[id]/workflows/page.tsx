@@ -12,9 +12,10 @@ import {
   getWorkflowRun,
   listWorkflows,
   listWorkflowRuns,
-  runWorkflow,
+  runWorkflowStream,
   saveWorkflow,
   type WorkflowNodeOutput,
+  type WorkflowRunEvent,
   type WorkflowRunRow,
   type WorkflowSummary,
 } from "@/lib/api";
@@ -37,6 +38,7 @@ export default function WorkflowsPage() {
   const [input, setInput] = useState("{}");
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<string>("");
+  const [liveEvents, setLiveEvents] = useState<WorkflowRunEvent[]>([]);
   const [selRun, setSelRun] = useState<{ run: WorkflowRunRow; nodes: WorkflowNodeOutput[] } | null>(null);
 
   useEffect(() => {
@@ -71,14 +73,17 @@ export default function WorkflowsPage() {
     if (!agentId || !selected) return;
     setRunning(true);
     setLastResult("");
+    setLiveEvents([]);
     try {
       const parsed = JSON.parse(input || "{}");
-      const res = await runWorkflow(agentId, selected, parsed);
-      setLastResult(
-        res.ok && res.result
-          ? JSON.stringify(res.result, null, 2)
-          : "Error: " + (res.error || "run failed"),
-      );
+      await runWorkflowStream(agentId, selected, parsed, (e) => {
+        setLiveEvents((cur) => [...cur, e]);
+        if (e.type === "result") {
+          setLastResult(e.result ? JSON.stringify(e.result, null, 2) : "");
+        } else if (e.type === "error") {
+          setLastResult("Error: " + (e.error || "run failed"));
+        }
+      });
       refreshRuns();
     } catch (e) {
       setLastResult("Error: " + (e instanceof Error ? e.message : String(e)));
@@ -86,6 +91,18 @@ export default function WorkflowsPage() {
       setRunning(false);
     }
   };
+
+  // liveNodes aggregates the event stream into per-node status (M4 streaming):
+  // node_start marks a node running; node_complete finalizes it.
+  const liveNodes = liveEvents.reduce<Record<string, { status: string; error?: string }>>(
+    (acc, e) => {
+      if (!e.node) return acc;
+      if (e.type === "node_start") acc[e.node] = { status: "running" };
+      else if (e.type === "node_complete") acc[e.node] = { status: e.status || "", error: e.error };
+      return acc;
+    },
+    {},
+  );
 
   const onPickRun = async (runId: string) => {
     if (!agentId || !selected) return;
@@ -178,6 +195,17 @@ export default function WorkflowsPage() {
                 <Play className="h-4 w-4" />
                 {running ? t("workflow.running") : t("workflow.run")}
               </Button>
+              {Object.keys(liveNodes).length > 0 && (
+                <div className="space-y-1">
+                  {Object.entries(liveNodes).map(([name, n]) => (
+                    <div key={name} className="flex items-center gap-2 text-xs border rounded px-2 py-1">
+                      <StatusBadge status={n.status} />
+                      <span className="font-medium">{name}</span>
+                      {n.error && <span className="text-destructive truncate">{n.error}</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
               {lastResult && (
                 <pre className="text-xs bg-muted p-2 rounded max-h-56 overflow-auto whitespace-pre-wrap">
                   {lastResult}

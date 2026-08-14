@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -118,8 +119,20 @@ func exactlyOneEntry(def *Definition) error {
 func validateNodeKinds(def *Definition) error {
 	for _, n := range def.Nodes {
 		switch n.Kind {
-		case KindTool, KindLLM:
+		case KindTool, KindLLM, KindKBSearch, KindSet, KindCondition:
 			// not enforced — see the doc note above.
+		case KindReply:
+			if n.Prompt == "" {
+				return &ValidationError{Node: n.Name, Field: "prompt", Message: "reply node requires a reply template"}
+			}
+		case KindQuestionRewrite:
+			if n.Prompt == "" {
+				return &ValidationError{Node: n.Name, Field: "prompt", Message: "question_rewrite node requires a prompt"}
+			}
+		case KindHTTP:
+			if _, ok := n.Input["url"]; !ok {
+				return &ValidationError{Node: n.Name, Field: "url", Message: "http node requires input.url"}
+			}
 		case KindCode:
 			if n.Code == "" {
 				return &ValidationError{Node: n.Name, Field: "code", Message: "code node requires a code body"}
@@ -239,6 +252,11 @@ func checkRefs(node, s string, declared map[string]bool, outputSchema map[string
 			}
 			continue
 		}
+		if ns == "var" {
+			// M5 writable variables are dynamic (written by set nodes at
+			// runtime); not statically validated.
+			continue
+		}
 		if !declared[ns] {
 			return &ValidationError{Node: node, Field: "${" + expr + "}", Message: fmt.Sprintf("references unknown node %q", ns)}
 		}
@@ -297,9 +315,15 @@ func typeMatches(want string, v any) bool {
 		_, ok := v.(string)
 		return ok
 	case "integer":
-		switch v.(type) {
-		case int, int64:
+		switch x := v.(type) {
+		case int:
 			return true
+		case int64:
+			return true
+		case float64:
+			// JSON decodes every number to float64; 7.0 is a valid integer
+			// (found via the HTTP e2e path — direct Go callers pass int).
+			return x == math.Trunc(x)
 		}
 		return false
 	case "number":

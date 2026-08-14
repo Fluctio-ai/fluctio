@@ -115,6 +115,34 @@ nodes:
 	}
 }
 
+// JSON decodes every number to float64; an integer-typed input field must
+// accept a float64 with an integral value (7.0 == 7). Found via the HTTP e2e
+// path, where every integer input was rejected before the fix.
+func TestValidate_InputIntegerJSON(t *testing.T) {
+	def := mustParse(t, `
+version: 1
+input:
+  schema:
+    type: object
+    required: [n]
+    properties:
+      n: {type: integer}
+nodes:
+  - name: r
+    kind: reply
+    prompt: "n=${input.n}"
+`)
+	if err := workflow.Validate(def, map[string]any{"n": float64(7)}); err != nil {
+		t.Errorf("float64(7) rejected for integer field: %v", err)
+	}
+	if err := workflow.Validate(def, map[string]any{"n": 7}); err != nil {
+		t.Errorf("int 7 rejected for integer field: %v", err)
+	}
+	if err := workflow.Validate(def, map[string]any{"n": float64(7.5)}); err == nil {
+		t.Error("7.5 accepted for integer field, want rejected")
+	}
+}
+
 // AC4 — parse → marshal → parse is semantically equal (DeepEqual on the
 // re-parsed definition). Guards the 09 UI editor's round-trip invariant.
 func TestRoundTrip(t *testing.T) {
@@ -282,4 +310,52 @@ output:
   leaked: ${ghost.field}
 `)
 	errContains(t, workflow.Validate(def, nil), "ghost")
+}
+
+// A reply node (M3 domain node) must carry a reply template in Prompt.
+func TestValidate_ReplyNode(t *testing.T) {
+	// missing prompt → rejected
+	def := mustParse(t, `
+version: 1
+nodes:
+  - name: r
+    kind: reply
+`)
+	errContains(t, workflow.Validate(def, nil), "r", "reply template")
+
+	// valid reply node with a prompt resolves clean.
+	def2 := mustParse(t, `
+version: 1
+nodes:
+  - name: r
+    kind: reply
+    prompt: "Hello world"
+`)
+	if err := workflow.Validate(def2, nil); err != nil {
+		t.Errorf("valid reply node rejected: %v", err)
+	}
+}
+
+// A question_rewrite node (M3) must carry a prompt.
+func TestValidate_QuestionRewriteNode(t *testing.T) {
+	def := mustParse(t, `
+version: 1
+nodes:
+  - name: rw
+    kind: question_rewrite
+`)
+	errContains(t, workflow.Validate(def, nil), "rw", "question_rewrite")
+}
+
+// An http node (M3) must declare input.url.
+func TestValidate_HTTPNode(t *testing.T) {
+	def := mustParse(t, `
+version: 1
+nodes:
+  - name: h
+    kind: http
+    input:
+      method: POST
+`)
+	errContains(t, workflow.Validate(def, nil), "h", "url")
 }

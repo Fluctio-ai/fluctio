@@ -3199,6 +3199,66 @@ export async function runWorkflow(
   );
   return res.json();
 }
+
+// WorkflowRunEvent mirrors the backend RunEvent (M4 node-level streaming): the
+// runner emits node_start / node_complete as it walks the graph, then a terminal
+// "result" (carrying the ExecutionResult) or "error".
+export type WorkflowRunEvent = {
+  type: string;
+  node?: string;
+  status?: string;
+  output?: Record<string, unknown>;
+  error?: string;
+  result?: Record<string, unknown>;
+};
+
+// runWorkflowStream triggers a workflow over the SSE endpoint (POST .../run/stream,
+// M4) and forwards each progress event to onEvent as it arrives. A POST + auth
+// header can't use EventSource, so this reads the response body as a stream and
+// splits on the SSE frame delimiter ("\n\n"). Resolves when the stream closes.
+export async function runWorkflowStream(
+  agentId: string,
+  wfId: string,
+  input: Record<string, unknown>,
+  onEvent: (e: WorkflowRunEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/run/stream`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+      signal,
+    },
+  );
+  if (!res.ok || !res.body) {
+    onEvent({ type: "error", error: `HTTP ${res.status}` });
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      for (const line of block.split("\n")) {
+        if (line.startsWith("data: ")) {
+          try {
+            onEvent(JSON.parse(line.slice(6)) as WorkflowRunEvent);
+          } catch {
+            // ignore a malformed frame
+          }
+        }
+      }
+    }
+  }
+}
 export async function listWorkflowRuns(
   agentId: string,
   wfId: string,
