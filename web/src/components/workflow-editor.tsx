@@ -910,44 +910,37 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
       </select>
       {isExpr && (
         <div className="space-y-1 border rounded p-1 bg-muted/30">
-          {parsed ? (
-            <>
-              <select className="border rounded px-1 bg-background text-xs w-full" value={combine}
-                onChange={(e) => update(e.target.value as "&&" | "||", rows)}>
-                <option value="&&">全部满足 (AND)</option>
-                <option value="||">任一满足 (OR)</option>
-              </select>
-              {rows.map((r, i) => (
-                <div key={i} className="space-y-1">
-                  <div className="flex gap-1 items-center">
-                    <select className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
-                      value={r.field ? `\${${r.field}}` : ""}
-                      onChange={(e) => {
-                        const m = e.target.value.match(/^\$\{([^}]+)\}$/);
-                        update(combine, rows.map((x, j) => j === i ? { ...x, field: m ? m[1] : x.field } : x));
-                      }}>
-                      <option value="">— 字段 —</option>
-                      {refOptions.map((o) => <option key={o.ref} value={o.ref}>{o.label}</option>)}
-                    </select>
-                    <select className="border rounded px-1 bg-background text-xs" value={r.op}
-                      onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}>
-                      {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                    <button type="button" className="text-destructive text-xs px-1" disabled={rows.length <= 1}
-                      onClick={() => update(combine, rows.filter((_, j) => j !== i))}>✕</button>
-                  </div>
-                  <ValuePicker options={refOptions} value={r.value} t={t}
-                    onChange={(val) => update(combine, rows.map((x, j) => j === i ? { ...x, value: val } : x))} />
-                </div>
-              ))}
-              <Button size="sm" variant="outline" className="w-full" onClick={() => update(combine, [...rows, { field: "", op: "==", value: "" }])}>
-                <Plus className="h-3 w-3" /> {t("workflow.condAddRow")}
-              </Button>
-            </>
-          ) : (
-            <input className="border rounded px-1 bg-background text-xs w-full" value={when}
-              onChange={(e) => onChange(e.target.value)} placeholder="${node.score} > 0.8" />
-          )}
+          <select className="border rounded px-1 bg-background text-xs w-full" value={combine}
+            onChange={(e) => update(e.target.value as "&&" | "||", rows)}>
+            <option value="&&">全部满足 (AND)</option>
+            <option value="||">任一满足 (OR)</option>
+          </select>
+          {rows.map((r, i) => (
+            <div key={i} className="space-y-1">
+              <div className="flex gap-1 items-center">
+                <select className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
+                  value={r.field ? `\${${r.field}}` : ""}
+                  onChange={(e) => {
+                    const m = e.target.value.match(/^\$\{([^}]+)\}$/);
+                    update(combine, rows.map((x, j) => j === i ? { ...x, field: m ? m[1] : x.field } : x));
+                  }}>
+                  <option value="">— 字段 —</option>
+                  {refOptions.map((o) => <option key={o.ref} value={o.ref}>{o.label}</option>)}
+                </select>
+                <select className="border rounded px-1 bg-background text-xs" value={r.op}
+                  onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}>
+                  {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <button type="button" className="text-destructive text-xs px-1" disabled={rows.length <= 1}
+                  onClick={() => update(combine, rows.filter((_, j) => j !== i))}>✕</button>
+              </div>
+              <ValuePicker options={refOptions} value={r.value} t={t}
+                onChange={(val) => update(combine, rows.map((x, j) => j === i ? { ...x, value: val } : x))} />
+            </div>
+          ))}
+          <Button size="sm" variant="outline" className="w-full" onClick={() => update(combine, [...rows, { field: "", op: "==", value: "" }])}>
+            <Plus className="h-3 w-3" /> {t("workflow.condAddRow")}
+          </Button>
         </div>
       )}
     </div>
@@ -1274,103 +1267,13 @@ function EdgeProps({
   onEdit: (p: string, v: string) => void;
   t: (k: string, vars?: Record<string, string | number>) => string;
 }) {
-  const when = edge.when || "";
-  const isExpr = when !== "" && when !== "default" && when !== "llm_route";
-  const parsed = isExpr ? parseWhen(when) : null;
-  const [combine, setCombine] = React.useState<"&&" | "||">(parsed?.combine || "&&");
-  const [rows, setRows] = React.useState<CondRow[]>(parsed?.rows || [{ field: "", op: "==", value: "" }]);
-  const update = (c: "&&" | "||", rs: CondRow[]) => {
-    setCombine(c);
-    setRows(rs);
-    onEdit("when", rowsToWhen(c, rs));
-  };
   return (
     <div className="space-y-1.5">
       <p className="text-muted-foreground">
         {edge.from} → {edge.to}
       </p>
-      <label className="block">
-        {t("workflow.edgeWhen")}
-        <select
-          className="border rounded px-1 bg-background w-full"
-          value={isExpr ? "__expr" : when}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === "__expr") update(combine, rows.length ? rows : [{ field: "", op: "==", value: "" }]);
-            else onEdit("when", v);
-          }}
-        >
-          <option value="">plain（顺序）</option>
-          <option value="default">default（兜底）</option>
-          <option value="llm_route">llm_route（LLM 选）</option>
-          <option value="__expr">条件…</option>
-        </select>
-      </label>
-      {isExpr && (
-        <div className="space-y-1.5 border rounded p-1.5 bg-muted/30">
-          {parsed ? (
-            <>
-              <div className="flex items-center gap-1">
-                <span className="text-xs text-muted-foreground shrink-0">匹配</span>
-                <select
-                  className="border rounded px-1 bg-background text-xs"
-                  value={combine}
-                  onChange={(e) => update(e.target.value as "&&" | "||", rows)}
-                >
-                  <option value="&&">全部满足 (AND)</option>
-                  <option value="||">任一满足 (OR)</option>
-                </select>
-              </div>
-              {rows.map((r, i) => (
-                <div key={i} className="space-y-1 border-t pt-1">
-                  <div className="flex gap-1 items-center">
-                    <select
-                      className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
-                      value={r.field ? `\${${r.field}}` : ""}
-                      onChange={(e) => {
-                        const m = e.target.value.match(/^\$\{([^}]+)\}$/);
-                        update(combine, rows.map((x, j) => j === i ? { ...x, field: m ? m[1] : x.field } : x));
-                      }}
-                    >
-                      <option value="">— 选字段 —</option>
-                      {refOptions.map((o) => <option key={o.ref} value={o.ref}>{o.label}</option>)}
-                    </select>
-                    <select
-                      className="border rounded px-1 bg-background text-xs"
-                      value={r.op}
-                      onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}
-                    >
-                      {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                    <button
-                      className="text-destructive text-xs px-1"
-                      disabled={rows.length <= 1}
-                      onClick={() => update(combine, rows.filter((_, j) => j !== i))}
-                    >✕</button>
-                  </div>
-                  <input
-                    className="border rounded px-1 bg-background text-xs w-full"
-                    value={r.value}
-                    placeholder="值（数字或字符串）"
-                    onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
-                  />
-                </div>
-              ))}
-              <Button size="sm" variant="outline" className="w-full" onClick={() => update(combine, [...rows, { field: "", op: "==", value: "" }])}>
-                <Plus className="h-3 w-3" /> + 条件
-              </Button>
-            </>
-          ) : (
-            <Field
-              label={t("workflow.edgeExpr")}
-              value={when}
-              onChange={(v) => onEdit("when", v)}
-              placeholder="${node.score} > 0.8"
-            />
-          )}
-        </div>
-      )}
-      {when === "llm_route" && (
+      <ConditionRows when={edge.when || ""} refOptions={refOptions} onChange={(w) => onEdit("when", w)} t={t} defaultExpr />
+      {edge.when === "llm_route" && (
         <Field label={t("workflow.edgeDesc")} value={edge.desc || ""} onChange={(v) => onEdit("desc", v)} />
       )}
     </div>
