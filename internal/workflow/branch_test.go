@@ -168,3 +168,54 @@ edges:
 		t.Error("second should not run when first already matched")
 	}
 }
+
+// AC 6 — `when` combines conditions with && / || (single-level; && binds
+// tighter than ||). Backs the editor's structured multi-condition branches so
+// a user picks field/operator/value rows instead of hand-writing expressions.
+func TestBranch_CondinedExpr(t *testing.T) {
+	const def = `
+version: 1
+nodes:
+  - {name: src, kind: tool, tool: t, output: {score: {type: number}, lang: {type: string}}}
+  - {name: both, kind: tool, tool: tb}
+  - {name: either, kind: tool, tool: te}
+edges:
+  - {from: src, to: both, when: "${src.score} > 0.8 && ${src.lang} == en"}
+  - {from: src, to: either, when: "${src.score} > 0.8 || ${src.lang} == en"}
+`
+	// score 0.9 + lang en → both conditions true → "both" matches (first edge).
+	tools := &fakeTools{out: map[string]string{"t": `{"score":0.9,"lang":"en"}`, "tb": `{}`, "te": `{}`}}
+	res, err := workflow.NewRunner(&fakeLLM{}, tools, newTestStore(t)).Run(context.Background(), mustParse(t, def), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != workflow.StatusSucceeded {
+		t.Fatalf("status %s, want succeeded", res.Status)
+	}
+	if _, ok := res.Snapshot["both"]; !ok {
+		t.Error("both (&& with both sides true) should match first")
+	}
+
+	// score 0.5 + lang en → && false (score) but || true (lang) → either matches.
+	tools2 := &fakeTools{out: map[string]string{"t": `{"score":0.5,"lang":"en"}`, "tb": `{}`, "te": `{}`}}
+	res2, err := workflow.NewRunner(&fakeLLM{}, tools2, newTestStore(t)).Run(context.Background(), mustParse(t, def), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := res2.Snapshot["both"]; ok {
+		t.Error("both should NOT match when the && fails on score")
+	}
+	if _, ok := res2.Snapshot["either"]; !ok {
+		t.Error("either (|| with lang==en true) should match")
+	}
+
+	// score 0.5 + lang fr → both && false, either || false → no matching edge → run fails.
+	tools3 := &fakeTools{out: map[string]string{"t": `{"score":0.5,"lang":"fr"}`, "tb": `{}`, "te": `{}`}}
+	res3, err := workflow.NewRunner(&fakeLLM{}, tools3, newTestStore(t)).Run(context.Background(), mustParse(t, def), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res3.Status != workflow.StatusFailed {
+		t.Errorf("status %s, want failed (no matching edge)", res3.Status)
+	}
+}

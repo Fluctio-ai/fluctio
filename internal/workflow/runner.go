@@ -640,7 +640,37 @@ func (r *Runner) llmRoute(ctx context.Context, candidates []Edge) (string, bool)
 var exprPattern = regexp.MustCompile(`^\$\{([^}]+)\}\s*(>=|<=|==|!=|>|<)\s*(.+)$`)
 
 func evalExpr(expr string, sc refScope) (bool, error) {
-	m := exprPattern.FindStringSubmatch(strings.TrimSpace(expr))
+	expr = strings.TrimSpace(expr)
+	// Combine multiple conditions with && (and) or || (or). The edge language
+	// is single-level: no parentheses, and a literal must not contain the
+	// operator string (use separate edges + default for richer logic — spec
+	// decision 3). && binds tighter than ||, so "a && b || c" reads as
+	// "(a && b) || c".
+	if parts := splitTop(expr, "&&"); len(parts) > 1 {
+		for _, p := range parts {
+			ok, err := evalExpr(p, sc)
+			if err != nil {
+				return false, err
+			}
+			if !ok {
+				return false, nil
+			}
+		}
+		return true, nil
+	}
+	if parts := splitTop(expr, "||"); len(parts) > 1 {
+		for _, p := range parts {
+			ok, err := evalExpr(p, sc)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	m := exprPattern.FindStringSubmatch(expr)
 	if m == nil {
 		return false, fmt.Errorf("bad when expression %q", expr)
 	}
@@ -650,6 +680,18 @@ func evalExpr(expr string, sc refScope) (bool, error) {
 		return false, fmt.Errorf("unresolved reference ${%s}", ref)
 	}
 	return compare(val, op, literal)
+}
+
+// splitTop splits expr on a combine operator (&& or ||), trimming each part.
+// It does not understand parentheses or quoted operators — the edge language
+// is deliberately single-level (see the evalExpr note).
+func splitTop(expr, op string) []string {
+	parts := strings.Split(expr, op)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return out
 }
 
 // compare applies op to val and a literal. Numbers compare numerically; == / !=

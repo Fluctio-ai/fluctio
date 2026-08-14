@@ -56,6 +56,9 @@ type AnyEdge = {
 };
 
 const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b" };
+const LANGS = ["python", "sh"];
+const TYPES = ["string", "number", "integer", "boolean", "object", "array"];
+const OPS = [">", "<", ">=", "<=", "==", "!="];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyNetwork = { destroy: () => void; on: (e: string, cb: (p: any) => void) => void };
@@ -267,6 +270,7 @@ export function WorkflowEditor({
   const selNodeObj = selNode ? def.nodes!.find((n) => n.name === selNode) : null;
   const selEdgeObj = selEdge != null ? def.edges![selEdge] : null;
   const selTool = selNodeObj?.tool ? tools.find((x) => x.name === selNodeObj.tool) : undefined;
+  const refOptions = buildRefOptions(def);
 
   return (
     <section className="space-y-3">
@@ -286,42 +290,17 @@ export function WorkflowEditor({
           />
           <div>
             <span className="text-muted-foreground">{t("workflow.inputSchema")}</span>
-            <Textarea
-              rows={4}
-              className="font-mono text-xs mt-1"
-              value={def.input?.schema ? JSON.stringify(def.input.schema, null, 2) : ""}
-              onChange={(e) => {
-                let s: Record<string, unknown> | undefined;
-                try {
-                  s = e.target.value ? JSON.parse(e.target.value) : undefined;
-                } catch {
-                  return;
-                }
-                mutate((d) => {
-                  if (s) d.input = { schema: s };
-                  else delete d.input;
-                });
-              }}
+            <InputSchemaEditor
+              schema={def.input?.schema as Record<string, unknown> | undefined}
+              onChange={(s) => mutate((d) => { if (s) d.input = { schema: s }; else delete d.input; })}
             />
           </div>
           <div>
             <span className="text-muted-foreground">{t("workflow.outputMap")}</span>
-            <Textarea
-              rows={4}
-              className="font-mono text-xs mt-1"
-              value={def.output ? JSON.stringify(def.output, null, 2) : ""}
-              onChange={(e) => {
-                let s: Record<string, unknown> | undefined;
-                try {
-                  s = e.target.value ? JSON.parse(e.target.value) : undefined;
-                } catch {
-                  return;
-                }
-                mutate((d) => {
-                  if (s) d.output = s;
-                  else delete d.output;
-                });
-              }}
+            <OutputMapEditor
+              output={def.output}
+              options={refOptions}
+              onChange={(o) => mutate((d) => { if (o) d.output = o; else delete d.output; })}
             />
           </div>
         </div>
@@ -360,12 +339,13 @@ export function WorkflowEditor({
               others={def.nodes!}
               tools={tools}
               selTool={selTool}
+              refOptions={refOptions}
               onEdit={editNode}
               onAddEdge={addEdge}
               t={t}
             />
           ) : selEdgeObj ? (
-            <EdgeProps edge={selEdgeObj} onEdit={editEdge} t={t} />
+            <EdgeProps key={selEdge} edge={selEdgeObj} refOptions={refOptions} onEdit={editEdge} t={t} />
           ) : (
             <p className="text-muted-foreground">{t("workflow.selectHint2")}</p>
           )}
@@ -382,6 +362,265 @@ export function WorkflowEditor({
         />
       </div>
     </section>
+  );
+}
+
+// --- M1 humanization helpers (MaxKB-style field pickers + structured editors) ---
+
+type RefOption = { ref: string; label: string };
+
+// buildRefOptions lists every field a downstream node may reference: the
+// workflow's input fields plus each node's declared output fields. A node with
+// no declared output schema exposes a whole-node ${name} entry. This is the
+// dropdown source for FieldRef / InsertField, so users pick instead of typing
+// ${node.field} by hand.
+function buildRefOptions(def: AnyDef): RefOption[] {
+  const opts: RefOption[] = [];
+  const inputProps = (def.input?.schema?.properties || {}) as Record<string, unknown>;
+  for (const k of Object.keys(inputProps)) {
+    opts.push({ ref: `\${input.${k}}`, label: `input.${k}` });
+  }
+  for (const n of def.nodes || []) {
+    const out = (n.output || {}) as Record<string, unknown>;
+    const keys = Object.keys(out);
+    if (keys.length > 0) {
+      for (const k of keys) opts.push({ ref: `\${${n.name}.${k}}`, label: `${n.name}.${k}` });
+    } else {
+      opts.push({ ref: `\${${n.name}}`, label: `${n.name}（整个输出）` });
+    }
+  }
+  return opts;
+}
+
+// FieldRef — a value that is (or contains) a reference. The text box accepts
+// free-form; the dropdown inserts/replaces with a picked ${node.field}. Used
+// for whole-value slots (tool arg, output-map value, condition value).
+function FieldRef({ options, value, onChange, placeholder }: {
+  options: RefOption[];
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="flex gap-1">
+      <input
+        className="border rounded px-1 bg-background flex-1 font-mono text-xs min-w-0"
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <select
+        className="border rounded px-1 bg-background text-xs shrink-0"
+        value=""
+        onChange={(e) => { if (e.target.value) onChange(e.target.value); }}
+      >
+        <option value="">${"{}"}</option>
+        {options.map((o) => (
+          <option key={o.ref} value={o.ref}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// InsertField — a "+ 字段" dropdown whose selection the caller splices into a
+// textarea at the cursor (prompt / code bodies where references embed inside
+// larger text).
+function InsertField({ options, onInsert }: { options: RefOption[]; onInsert: (ref: string) => void }) {
+  return (
+    <select
+      className="border rounded px-1 bg-background text-xs"
+      value=""
+      onChange={(e) => { if (e.target.value) onInsert(e.target.value); }}
+    >
+      <option value="">+ 插入字段</option>
+      {options.map((o) => (
+        <option key={o.ref} value={o.ref}>{o.label}</option>
+      ))}
+    </select>
+  );
+}
+
+// KVRows — generic key/value row editor. valueMode="ref" renders values as
+// FieldRef (tool input without a schema, output-map entries); "type" renders a
+// type dropdown (node output schema declarations).
+function KVRows({ obj, options, onChange, valueMode = "ref" }: {
+  obj: Record<string, unknown>;
+  options?: RefOption[];
+  onChange: (v: Record<string, unknown> | undefined) => void;
+  valueMode?: "ref" | "type";
+}) {
+  const entries = Object.entries(obj);
+  const commit = (next: Record<string, unknown>) => {
+    const cleaned = Object.fromEntries(Object.entries(next).filter(([k]) => k));
+    onChange(Object.keys(cleaned).length ? cleaned : undefined);
+  };
+  const addKey = valueMode === "type" ? `field_${entries.length + 1}` : `key_${entries.length + 1}`;
+  return (
+    <div className="space-y-1 mt-1">
+      {entries.map(([k, v], i) => (
+        <div key={i} className="flex gap-1 items-center">
+          <input
+            className="border rounded px-1 bg-background text-xs w-24 shrink-0"
+            value={k}
+            onChange={(e) => {
+              const next: Record<string, unknown> = { ...obj };
+              const val = next[k];
+              delete next[k];
+              next[e.target.value] = val;
+              commit(next);
+            }}
+          />
+          {valueMode === "type" ? (
+            <select
+              className="border rounded px-1 bg-background text-xs flex-1"
+              value={v && typeof v === "object" && "type" in v ? String((v as { type: string }).type) : "string"}
+              onChange={(e) => commit({ ...obj, [k]: { type: e.target.value } })}
+            >
+              {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
+            </select>
+          ) : (
+            <FieldRef
+              options={options || []}
+              value={typeof v === "string" ? v : JSON.stringify(v)}
+              onChange={(val) => commit({ ...obj, [k]: val })}
+              placeholder="${node.field} 或文本"
+            />
+          )}
+          <button
+            className="text-destructive text-xs px-1"
+            onClick={() => { const next = { ...obj }; delete next[k]; commit(next); }}
+          >✕</button>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => commit({ ...obj, [addKey]: valueMode === "type" ? "string" : "" })}
+      >
+        <Plus className="h-3 w-3" /> {valueMode === "type" ? "+ 字段" : "+ 项"}
+      </Button>
+    </div>
+  );
+}
+
+// InputSchemaEditor — structured editor for the workflow entry input schema
+// (field name + type + required checkbox), replacing the raw JSON textarea.
+function InputSchemaEditor({ schema, onChange }: {
+  schema: Record<string, unknown> | undefined;
+  onChange: (s: Record<string, unknown> | undefined) => void;
+}) {
+  const props = (schema?.properties || {}) as Record<string, { type?: string }>;
+  const required = new Set((schema?.required || []) as string[]);
+  const entries = Object.entries(props);
+  const commit = (nextProps: Record<string, { type?: string }>, nextReq: Set<string>) => {
+    const np = Object.fromEntries(Object.entries(nextProps).filter(([, v]) => v));
+    if (Object.keys(np).length === 0) { onChange(undefined); return; }
+    onChange({
+      type: "object",
+      properties: np,
+      required: Array.from(nextReq).filter((r) => np[r]),
+    });
+  };
+  return (
+    <div className="space-y-1 mt-1">
+      {entries.map(([name, p], i) => (
+        <div key={i} className="flex gap-1 items-center">
+          <input
+            className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
+            value={name}
+            onChange={(e) => {
+              const nn = e.target.value;
+              const next: Record<string, { type?: string }> = { ...props };
+              const v = next[name];
+              delete next[name];
+              next[nn] = v;
+              const nr = new Set(required);
+              if (nr.has(name)) { nr.delete(name); nr.add(nn); }
+              commit(next, nr);
+            }}
+          />
+          <select
+            className="border rounded px-1 bg-background text-xs"
+            value={p?.type || "string"}
+            onChange={(e) => commit({ ...props, [name]: { ...p, type: e.target.value } }, required)}
+          >
+            {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
+          </select>
+          <input
+            type="checkbox"
+            checked={required.has(name)}
+            title="required"
+            onChange={(e) => {
+              const nr = new Set(required);
+              if (e.target.checked) nr.add(name); else nr.delete(name);
+              commit(props, nr);
+            }}
+          />
+          <button
+            className="text-destructive text-xs px-1"
+            onClick={() => { const next = { ...props }; delete next[name]; const nr = new Set(required); nr.delete(name); commit(next, nr); }}
+          >✕</button>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => commit({ ...props, [`field_${entries.length + 1}`]: { type: "string" } }, required)}
+      >
+        <Plus className="h-3 w-3" /> + 字段
+      </Button>
+    </div>
+  );
+}
+
+// OutputMapEditor — structured editor for Definition.Output (key + FieldRef
+// value rows), replacing the raw JSON textarea.
+function OutputMapEditor({ output, options, onChange }: {
+  output: Record<string, unknown> | undefined;
+  options: RefOption[];
+  onChange: (o: Record<string, unknown> | undefined) => void;
+}) {
+  const entries = Object.entries(output || {});
+  const commit = (next: Record<string, unknown>) => {
+    const cleaned = Object.fromEntries(Object.entries(next).filter(([k]) => k));
+    onChange(Object.keys(cleaned).length ? cleaned : undefined);
+  };
+  return (
+    <div className="space-y-1 mt-1">
+      {entries.map(([k, v], i) => (
+        <div key={i} className="flex gap-1 items-center">
+          <input
+            className="border rounded px-1 bg-background text-xs w-24 shrink-0"
+            value={k}
+            onChange={(e) => {
+              const next: Record<string, unknown> = { ...output };
+              const val = next[k];
+              delete next[k];
+              next[e.target.value] = val;
+              commit(next);
+            }}
+          />
+          <FieldRef
+            options={options}
+            value={typeof v === "string" ? v : JSON.stringify(v)}
+            onChange={(val) => commit({ ...output, [k]: val })}
+            placeholder="${node.field} 或文本"
+          />
+          <button
+            className="text-destructive text-xs px-1"
+            onClick={() => { const next = { ...output }; delete next[k]; commit(next); }}
+          >✕</button>
+        </div>
+      ))}
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => commit({ ...output, [`key_${entries.length + 1}`]: "" })}
+      >
+        <Plus className="h-3 w-3" /> + 输出项
+      </Button>
+    </div>
   );
 }
 
@@ -456,6 +695,7 @@ function NodeProps({
   others,
   tools,
   selTool,
+  refOptions,
   onEdit,
   onAddEdge,
   t,
@@ -464,13 +704,22 @@ function NodeProps({
   others: AnyNode[];
   tools: AgentRegisteredTool[];
   selTool: AgentRegisteredTool | undefined;
+  refOptions: RefOption[];
   onEdit: (p: string, v: unknown) => void;
   onAddEdge: (target: string) => void;
   t: (k: string, vars?: Record<string, string | number>) => string;
 }) {
   const [target, setTarget] = React.useState("");
   const locale = useLocale().locale;
-  const inputVals = (node.input || {}) as Record<string, unknown>;
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+  const codeRef = useRef<HTMLTextAreaElement>(null);
+  const insertAt = (ref: string, field: "prompt" | "code", ta: HTMLTextAreaElement | null) => {
+    const cur = (node[field] as string) || "";
+    if (!ta) { onEdit(field, cur + ref); return; }
+    const s = ta.selectionStart ?? cur.length;
+    const e = ta.selectionEnd ?? s;
+    onEdit(field, cur.slice(0, s) + ref + cur.slice(e));
+  };
   return (
     <div className="space-y-1.5">
       <Field label={t("workflow.nodeName")} value={node.name} onChange={(v) => onEdit("name", v)} />
@@ -486,6 +735,7 @@ function NodeProps({
           <option value="code">code</option>
         </select>
       </label>
+
       {node.kind === "tool" && (
         <>
           <label className="block">
@@ -513,35 +763,40 @@ function NodeProps({
           {selTool?.parameters ? (
             <SchemaForm
               schema={selTool.parameters}
-              values={inputVals}
+              values={(node.input || {}) as Record<string, unknown>}
               onChange={(v) => onEdit("input", v)}
             />
           ) : (
             <div>
               <span className="text-muted-foreground">{t("workflow.toolInput")}</span>
-              <Textarea
-                rows={3}
-                className="font-mono text-xs mt-1"
-                value={node.input ? JSON.stringify(node.input, null, 2) : ""}
-                onChange={(e) => {
-                  let v: Record<string, unknown> | undefined;
-                  try {
-                    v = e.target.value ? JSON.parse(e.target.value) : undefined;
-                  } catch {
-                    return;
-                  }
-                  onEdit("input", v);
-                }}
+              <KVRows
+                obj={(node.input || {}) as Record<string, unknown>}
+                options={refOptions}
+                onChange={(v) => onEdit("input", v)}
               />
             </div>
           )}
         </>
       )}
+
       {node.kind === "llm" && (
-        <Field label={t("workflow.prompt")} value={node.prompt || ""} onChange={(v) => onEdit("prompt", v)} multiline />
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-muted-foreground">{t("workflow.prompt")}</span>
+            <InsertField options={refOptions} onInsert={(ref) => insertAt(ref, "prompt", promptRef.current)} />
+          </div>
+          <Textarea
+            ref={promptRef}
+            rows={4}
+            className="font-mono text-xs"
+            value={node.prompt || ""}
+            onChange={(e) => onEdit("prompt", e.target.value)}
+          />
+        </div>
       )}
+
       {node.kind === "code" && (
-        <>
+        <div className="space-y-1">
           <label className="block">
             {t("workflow.codeLang")}
             <select
@@ -549,41 +804,40 @@ function NodeProps({
               value={node.lang || "python"}
               onChange={(e) => onEdit("lang", e.target.value)}
             >
-              <option value="python">python</option>
-              <option value="sh">sh</option>
+              {LANGS.map((l) => <option key={l} value={l}>{l}</option>)}
             </select>
           </label>
-          <Field
-            label={t("workflow.codeBody")}
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-muted-foreground">{t("workflow.codeBody")}</span>
+            <InsertField options={refOptions} onInsert={(ref) => insertAt(ref, "code", codeRef.current)} />
+          </div>
+          <Textarea
+            ref={codeRef}
+            rows={4}
+            className="font-mono text-xs"
             value={node.code || ""}
-            onChange={(v) => onEdit("code", v)}
-            multiline
+            onChange={(e) => onEdit("code", e.target.value)}
             placeholder="# python/sh 代码；print 结果到 stdout；可用 ${input.x} / ${node.y}"
           />
-        </>
+        </div>
       )}
+
       <Field
         label={t("workflow.sideEffect")}
         value={node.side_effect || ""}
+        placeholder="pure / idempotent / non-idempotent"
         onChange={(v) => onEdit("side_effect", v)}
       />
+
       <details>
         <summary className="text-muted-foreground cursor-pointer">{t("workflow.outputSchema")}</summary>
-        <Textarea
-          rows={3}
-          className="font-mono text-xs mt-1"
-          value={node.output ? JSON.stringify(node.output, null, 2) : ""}
-          onChange={(e) => {
-            let v: Record<string, unknown> | undefined;
-            try {
-              v = e.target.value ? JSON.parse(e.target.value) : undefined;
-            } catch {
-              return;
-            }
-            onEdit("output", v);
-          }}
+        <KVRows
+          obj={(node.output || {}) as Record<string, unknown>}
+          valueMode="type"
+          onChange={(v) => onEdit("output", v)}
         />
       </details>
+
       <div>
         <label className="block">{t("workflow.addEdge")}</label>
         <select
@@ -606,17 +860,54 @@ function NodeProps({
   );
 }
 
+type CondRow = { field: string; op: string; value: string };
+
+// parseWhen reads a `when` expression back into structured rows for the editor.
+// Returns null for plain/default/llm_route or anything that isn't a flat
+// && / || combination of ${ref} OP literal terms — the editor then falls back
+// to the raw textarea so an advanced expression is never destroyed.
+function parseWhen(when: string): { combine: "&&" | "||"; rows: CondRow[] } | null {
+  const w = when.trim();
+  if (!w || w === "default" || w === "llm_route") return null;
+  let combine: "&&" | "||" = "&&";
+  let parts: string[];
+  if (w.includes("&&")) { combine = "&&"; parts = w.split("&&"); }
+  else if (w.includes("||")) { combine = "||"; parts = w.split("||"); }
+  else parts = [w];
+  const rows: CondRow[] = [];
+  for (const p of parts) {
+    const m = p.trim().match(/^\$\{([^}]+)\}\s*(>=|<=|==|!=|>|<)\s*(.+)$/);
+    if (!m) return null;
+    rows.push({ field: m[1], op: m[2], value: m[3].trim() });
+  }
+  return { combine, rows };
+}
+
+function rowsToWhen(combine: "&&" | "||", rows: CondRow[]): string {
+  return rows.map((r) => `\${${r.field}} ${r.op} ${r.value}`).join(combine === "&&" ? " && " : " || ");
+}
+
 function EdgeProps({
   edge,
+  refOptions,
   onEdit,
   t,
 }: {
   edge: AnyEdge;
+  refOptions: RefOption[];
   onEdit: (p: string, v: string) => void;
   t: (k: string, vars?: Record<string, string | number>) => string;
 }) {
   const when = edge.when || "";
   const isExpr = when !== "" && when !== "default" && when !== "llm_route";
+  const parsed = isExpr ? parseWhen(when) : null;
+  const [combine, setCombine] = React.useState<"&&" | "||">(parsed?.combine || "&&");
+  const [rows, setRows] = React.useState<CondRow[]>(parsed?.rows || [{ field: "", op: "==", value: "" }]);
+  const update = (c: "&&" | "||", rs: CondRow[]) => {
+    setCombine(c);
+    setRows(rs);
+    onEdit("when", rowsToWhen(c, rs));
+  };
   return (
     <div className="space-y-1.5">
       <p className="text-muted-foreground">
@@ -629,23 +920,79 @@ function EdgeProps({
           value={isExpr ? "__expr" : when}
           onChange={(e) => {
             const v = e.target.value;
-            if (v === "__expr") onEdit("when", "${score} > 0.8");
+            if (v === "__expr") update(combine, rows.length ? rows : [{ field: "", op: "==", value: "" }]);
             else onEdit("when", v);
           }}
         >
           <option value="">plain（顺序）</option>
           <option value="default">default（兜底）</option>
           <option value="llm_route">llm_route（LLM 选）</option>
-          <option value="__expr">表达式…</option>
+          <option value="__expr">条件…</option>
         </select>
       </label>
       {isExpr && (
-        <Field
-          label={t("workflow.edgeExpr")}
-          value={when}
-          onChange={(v) => onEdit("when", v)}
-          placeholder="${node.score} > 0.8"
-        />
+        <div className="space-y-1.5 border rounded p-1.5 bg-muted/30">
+          {parsed ? (
+            <>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-muted-foreground shrink-0">匹配</span>
+                <select
+                  className="border rounded px-1 bg-background text-xs"
+                  value={combine}
+                  onChange={(e) => update(e.target.value as "&&" | "||", rows)}
+                >
+                  <option value="&&">全部满足 (AND)</option>
+                  <option value="||">任一满足 (OR)</option>
+                </select>
+              </div>
+              {rows.map((r, i) => (
+                <div key={i} className="space-y-1 border-t pt-1">
+                  <div className="flex gap-1 items-center">
+                    <select
+                      className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
+                      value={r.field ? `\${${r.field}}` : ""}
+                      onChange={(e) => {
+                        const m = e.target.value.match(/^\$\{([^}]+)\}$/);
+                        update(combine, rows.map((x, j) => j === i ? { ...x, field: m ? m[1] : x.field } : x));
+                      }}
+                    >
+                      <option value="">— 选字段 —</option>
+                      {refOptions.map((o) => <option key={o.ref} value={o.ref}>{o.label}</option>)}
+                    </select>
+                    <select
+                      className="border rounded px-1 bg-background text-xs"
+                      value={r.op}
+                      onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}
+                    >
+                      {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <button
+                      className="text-destructive text-xs px-1"
+                      disabled={rows.length <= 1}
+                      onClick={() => update(combine, rows.filter((_, j) => j !== i))}
+                    >✕</button>
+                  </div>
+                  <input
+                    className="border rounded px-1 bg-background text-xs w-full"
+                    value={r.value}
+                    placeholder="值（数字或字符串）"
+                    onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                  />
+                </div>
+              ))}
+              <Button size="sm" variant="outline" className="w-full" onClick={() => update(combine, [...rows, { field: "", op: "==", value: "" }])}>
+                <Plus className="h-3 w-3" /> + 条件
+              </Button>
+            </>
+          ) : (
+            <Field
+              label={t("workflow.edgeExpr")}
+              value={when}
+              onChange={(v) => onEdit("when", v)}
+              placeholder="${node.score} > 0.8"
+            />
+          )}
+        </div>
       )}
       {when === "llm_route" && (
         <Field label={t("workflow.edgeDesc")} value={edge.desc || ""} onChange={(v) => onEdit("desc", v)} />
