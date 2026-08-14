@@ -434,14 +434,20 @@ export function WorkflowEditor({
                   others={def.nodes!}
                   tools={tools}
                   selTool={selTool}
-                  refOptions={refOptions}
+                  refOptions={buildRefOptions(def, selNodeObj.name)}
                   agentId={agentId}
                   onEdit={editNode}
                   onAddEdge={addEdge}
                   t={t}
                 />
               ) : selEdgeObj ? (
-                <EdgeProps key={selEdge} edge={selEdgeObj} refOptions={refOptions} onEdit={editEdge} t={t} />
+                <EdgeProps
+                  key={selEdge}
+                  edge={selEdgeObj}
+                  refOptions={buildRefOptions(def, selEdgeObj.to)}
+                  onEdit={editEdge}
+                  t={t}
+                />
               ) : (
                 <p className="text-muted-foreground">{t("workflow.selectHint2")}</p>
               )}
@@ -471,13 +477,18 @@ type RefOption = { ref: string; label: string };
 // no declared output schema exposes a whole-node ${name} entry. This is the
 // dropdown source for FieldRef / InsertField, so users pick instead of typing
 // ${node.field} by hand.
-function buildRefOptions(def: AnyDef): RefOption[] {
+function buildRefOptions(def: AnyDef, forNode?: string): RefOption[] {
   const opts: RefOption[] = [];
   const inputProps = (def.input?.schema?.properties || {}) as Record<string, unknown>;
   for (const k of Object.keys(inputProps)) {
     opts.push({ ref: `\${input.${k}}`, label: `input.${k}` });
   }
+  // With forNode set, only nodes upstream of it (a path exists to it) are
+  // offered — parameters can only bind what can actually flow in, so the
+  // picker matches how the runner will resolve at runtime.
+  const ups = forNode ? upstreamOf(def.edges, forNode) : null;
   for (const n of def.nodes || []) {
+    if (ups && !ups.has(n.name)) continue;
     const out = (n.output || {}) as Record<string, unknown>;
     const keys = Object.keys(out);
     if (keys.length > 0) {
@@ -487,6 +498,24 @@ function buildRefOptions(def: AnyDef): RefOption[] {
     }
   }
   return opts;
+}
+
+// upstreamOf returns every node with a path to `name` (reverse BFS over the
+// edges). A branch edge still counts — the picker stays conservative and
+// offers anything reachable, matching Validate's graph-level view.
+function upstreamOf(edges: { from: string; to: string }[] | undefined, name: string): Set<string> {
+  const ups = new Set<string>();
+  const stack = [name];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    for (const e of edges || []) {
+      if (e.to === cur && !ups.has(e.from)) {
+        ups.add(e.from);
+        stack.push(e.from);
+      }
+    }
+  }
+  return ups;
 }
 
 // FieldRef — a value that is (or contains) a reference. The text box accepts
@@ -1061,6 +1090,7 @@ export function SchemaForm({
   onChange,
   agentId,
   header,
+  options,
 }: {
   schema?: Record<string, unknown> | null;
   values: Record<string, unknown>;
@@ -1069,6 +1099,11 @@ export function SchemaForm({
   /** Optional override for the field-group label — the run page's waiting
    * form (M6) passes a fill-it-in hint instead of the editor's ref-syntax one. */
   header?: string;
+  /** Upstream reference picks (${input.*} / upstream node outputs). Present
+   * only in the editor — plain parameters become FieldRef (typed + dropdown)
+   * and complex ones get an InsertField, so binding never needs hand-typing
+   * ${...}. Absent for end-user forms (values, not references). */
+  options?: RefOption[];
 }) {
   const props = (schema?.properties || {}) as Record<string, { type?: string; description?: string; enum?: string[] }>;
   const required = new Set((schema?.required || []) as string[]);
@@ -1149,12 +1184,29 @@ export function SchemaForm({
                 ))}
               </select>
             ) : isComplex ? (
-              <Textarea
-                rows={2}
-                className="font-mono text-xs"
-                value={typeof v === "string" ? v : JSON.stringify(v ?? "")}
-                placeholder={p.description || (header ? "" : "${...} JSON")}
-                onChange={(e) => onChange({ ...values, [k]: e.target.value })}
+              <div className="space-y-1">
+                {options && options.length > 0 && (
+                  <InsertField
+                    options={options}
+                    onInsert={(ref) => onChange({ ...values, [k]: (typeof values[k] === "string" ? values[k] : "") + ref })}
+                  />
+                )}
+                <Textarea
+                  rows={2}
+                  className="font-mono text-xs"
+                  value={typeof v === "string" ? v : JSON.stringify(v ?? "")}
+                  placeholder={p.description || (header ? "" : "${...} JSON")}
+                  onChange={(e) => onChange({ ...values, [k]: e.target.value })}
+                />
+              </div>
+            ) : options && options.length > 0 ? (
+              // Editor context: plain parameters are FieldRef — free text or a
+              // picked ${ref} that resolves to the upstream value's native type.
+              <FieldRef
+                options={options}
+                value={typeof v === "string" || typeof v === "number" ? String(v) : ""}
+                placeholder={p.description || ""}
+                onChange={(val) => onChange({ ...values, [k]: val })}
               />
             ) : (
               <input
@@ -1259,6 +1311,7 @@ function NodeProps({
               values={(node.input || {}) as Record<string, unknown>}
               onChange={(v) => onEdit("input", v)}
               agentId={agentId}
+              options={refOptions}
             />
           ) : (
             <div>
@@ -1392,6 +1445,7 @@ function NodeProps({
               values={(node.input || {}) as Record<string, unknown>}
               onChange={(v) => onEdit("input", v)}
               agentId={agentId}
+              options={refOptions}
             />
           ) : (
             <div>
