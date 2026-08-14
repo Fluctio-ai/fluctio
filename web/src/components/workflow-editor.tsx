@@ -29,6 +29,7 @@ import { BUILTIN_TOOL_ZH } from "@/lib/workflow-tools-zh";
 type AnyDef = {
   id?: string;
   version?: number;
+  title?: string;
   description?: string;
   concurrency?: string;
   input?: { schema?: Record<string, unknown> };
@@ -79,6 +80,7 @@ export function WorkflowEditor({
   const [yamlText, setYamlText] = useState("");
   const [selNode, setSelNode] = useState<string | null>(null);
   const [selEdge, setSelEdge] = useState<number | null>(null);
+  const [tab, setTab] = useState<"basic" | "visual" | "yaml">("visual");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -221,6 +223,20 @@ export function WorkflowEditor({
       d.edges!.push({ from: selNode, to: target });
     });
   };
+  // editEdgeAt mutates a specific edge by index (used by the condition node's
+  // branch editor, which edits several edges without selecting each).
+  const editEdgeAt = (i: number, prop: string, value: string) => {
+    mutate((d) => {
+      const e = d.edges![i];
+      if (!e) return;
+      if (value === "") delete (e as Record<string, unknown>)[prop];
+      else (e as Record<string, unknown>)[prop] = value;
+    });
+  };
+  const addBranchEdge = (from: string, target: string) => {
+    if (!from || from === target) return;
+    mutate((d) => { d.edges!.push({ from, to: target, when: "" }); });
+  };
   const editNode = (prop: string, value: unknown) => {
     if (!selNode) return;
     const n = selNode;
@@ -276,54 +292,20 @@ export function WorkflowEditor({
 
   return (
     <section className="space-y-3">
-      <details className="border rounded p-2 text-xs">
-        <summary className="font-semibold cursor-pointer">{t("workflow.flowProps")}</summary>
-        <div className="mt-2 space-y-2">
-          <Field
-            label={t("workflow.description")}
-            value={def.description || ""}
-            onChange={(v) => mutate((d) => { if (v) d.description = v; else delete d.description; })}
-          />
-          <Field
-            label={t("workflow.concurrency")}
-            value={def.concurrency || ""}
-            onChange={(v) => mutate((d) => { if (v) d.concurrency = v; else delete d.concurrency; })}
-            placeholder="allow / serial / cancel_previous"
-          />
-          <div>
-            <span className="text-muted-foreground">{t("workflow.inputSchema")}</span>
-            <InputSchemaEditor
-              schema={def.input?.schema as Record<string, unknown> | undefined}
-              onChange={(s) => mutate((d) => { if (s) d.input = { schema: s }; else delete d.input; })}
-            />
-          </div>
-          <div>
-            <span className="text-muted-foreground">{t("workflow.outputMap")}</span>
-            <OutputMapEditor
-              output={def.output}
-              options={refOptions}
-              onChange={(o) => mutate((d) => { if (o) d.output = o; else delete d.output; })}
-            />
-          </div>
-        </div>
-      </details>
-
       <div className="flex items-center gap-2 flex-wrap">
-        <Button size="sm" variant="outline" onClick={() => addNode("tool")}>
-          <Plus className="h-3.5 w-3.5" /> {t("workflow.addTool")}
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNode("llm")}>
-          <Plus className="h-3.5 w-3.5" /> {t("workflow.addLLM")}
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNode("code")}>
-          <Plus className="h-3.5 w-3.5" /> {t("workflow.addCode")}
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => addNode("condition")}>
-          <Plus className="h-3.5 w-3.5" /> {t("workflow.addCondition")}
-        </Button>
-        <Button size="sm" variant="outline" onClick={deleteSelected} disabled={!selNode && selEdge == null}>
-          <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
-        </Button>
+        <div className="flex gap-1 border-b text-xs">
+          {([["basic", "workflow.tabBasic"], ["visual", "workflow.tabVisual"], ["yaml", "workflow.tabYaml"]] as const).map(([k, key]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setTab(k)}
+              className={"px-2 py-1 border-b-2 " + (tab === k ? "border-primary font-semibold" : "border-transparent text-muted-foreground")}
+            >
+              {t(key)}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1" />
         <Button size="sm" onClick={save} disabled={saving}>
           <Save className="h-3.5 w-3.5" /> {saving ? t("workflow.saving") : t("workflow.save")}
         </Button>
@@ -334,39 +316,110 @@ export function WorkflowEditor({
         )}
       </div>
 
-      <div className="flex gap-3">
-        <div ref={containerRef} className="h-80 flex-1 rounded border bg-muted/30" />
-        <div className="w-72 shrink-0 overflow-y-auto max-h-80 space-y-2 text-xs">
-          <h4 className="font-semibold">{t("workflow.props")}</h4>
-          {selNodeObj ? (
-            <NodeProps
-              node={selNodeObj}
-              others={def.nodes!}
-              tools={tools}
-              selTool={selTool}
-              refOptions={refOptions}
-              agentId={agentId}
-              onEdit={editNode}
-              onAddEdge={addEdge}
-              t={t}
+      {tab === "basic" && (
+        <details className="border rounded p-2 text-xs" open>
+          <summary className="font-semibold cursor-pointer">{t("workflow.flowProps")}</summary>
+          <div className="mt-2 space-y-2">
+            <Field
+              label={t("workflow.workflowTitle")}
+              value={def.title || ""}
+              onChange={(v) => mutate((d) => { if (v) d.title = v; else delete d.title; })}
             />
-          ) : selEdgeObj ? (
-            <EdgeProps key={selEdge} edge={selEdgeObj} refOptions={refOptions} onEdit={editEdge} t={t} />
-          ) : (
-            <p className="text-muted-foreground">{t("workflow.selectHint2")}</p>
-          )}
-        </div>
-      </div>
+            <Field
+              label={t("workflow.description")}
+              value={def.description || ""}
+              onChange={(v) => mutate((d) => { if (v) d.description = v; else delete d.description; })}
+            />
+            <label className="block">
+              {t("workflow.concurrency")}
+              <select
+                className="ml-1 border rounded px-1 bg-background w-full text-xs"
+                value={def.concurrency || ""}
+                onChange={(e) => mutate((d) => { if (e.target.value) d.concurrency = e.target.value; else delete d.concurrency; })}
+              >
+                <option value="">{t("workflow.concurrencyAllow")}</option>
+                <option value="serial">{t("workflow.concurrencySerial")}</option>
+                <option value="cancel_previous">{t("workflow.concurrencyCancel")}</option>
+              </select>
+            </label>
+            <div>
+              <span className="text-muted-foreground">{t("workflow.inputSchema")}</span>
+              <InputSchemaEditor
+                schema={def.input?.schema as Record<string, unknown> | undefined}
+                onChange={(s) => mutate((d) => { if (s) d.input = { schema: s }; else delete d.input; })}
+              />
+            </div>
+            <div>
+              <span className="text-muted-foreground">{t("workflow.outputMap")}</span>
+              <OutputMapEditor
+                output={def.output}
+                options={refOptions}
+                onChange={(o) => mutate((d) => { if (o) d.output = o; else delete d.output; })}
+              />
+            </div>
+          </div>
+        </details>
+      )}
 
-      <div className="space-y-1">
-        <h4 className="text-xs font-semibold">YAML</h4>
-        <Textarea
-          value={yamlText}
-          onChange={(e) => onYamlChange(e.target.value)}
-          rows={10}
-          className="font-mono text-xs"
-        />
-      </div>
+      {tab === "visual" && (
+        <>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button size="sm" variant="outline" onClick={() => addNode("tool")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addTool")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("llm")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addLLM")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("code")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addCode")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("condition")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addCondition")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={deleteSelected} disabled={!selNode && selEdge == null}>
+              <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
+            </Button>
+          </div>
+          <div className="flex gap-3">
+            <div ref={containerRef} className="h-[480px] flex-1 rounded border bg-muted/30" />
+            <div className="w-72 shrink-0 overflow-y-auto max-h-[480px] space-y-2 text-xs">
+              <h4 className="font-semibold">{t("workflow.props")}</h4>
+              {selNodeObj ? (
+                <NodeProps
+                  node={selNodeObj}
+                  others={def.nodes!}
+                  tools={tools}
+                  selTool={selTool}
+                  refOptions={refOptions}
+                  agentId={agentId}
+                  edges={def.edges!}
+                  onEdit={editNode}
+                  onEditEdgeAt={editEdgeAt}
+                  onAddEdge={addEdge}
+                  onAddBranchEdge={addBranchEdge}
+                  t={t}
+                />
+              ) : selEdgeObj ? (
+                <EdgeProps key={selEdge} edge={selEdgeObj} refOptions={refOptions} onEdit={editEdge} t={t} />
+              ) : (
+                <p className="text-muted-foreground">{t("workflow.selectHint2")}</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {tab === "yaml" && (
+        <div className="space-y-1">
+          <h4 className="text-xs font-semibold">YAML</h4>
+          <Textarea
+            value={yamlText}
+            onChange={(e) => onYamlChange(e.target.value)}
+            rows={28}
+            className="font-mono text-xs"
+          />
+        </div>
+      )}
     </section>
   );
 }
@@ -781,6 +834,120 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
   );
 }
 
+// ConditionRows edits one edge's `when` as structured rows (field + operator +
+// value, AND/OR combine). Falls back to a raw input when the expression can't
+// be structurally parsed. Shared by EdgeProps and the condition node's branches.
+function ConditionRows({ when, refOptions, onChange, t }: {
+  when: string;
+  refOptions: RefOption[];
+  onChange: (when: string) => void;
+  t: (k: string, vars?: Record<string, string | number>) => string;
+}) {
+  const isExpr = when !== "" && when !== "default" && when !== "llm_route";
+  const parsed = isExpr ? parseWhen(when) : null;
+  const [combine, setCombine] = React.useState<"&&" | "||">(parsed?.combine || "&&");
+  const [rows, setRows] = React.useState<CondRow[]>(parsed?.rows || [{ field: "", op: "==", value: "" }]);
+  const update = (c: "&&" | "||", rs: CondRow[]) => {
+    setCombine(c); setRows(rs); onChange(rowsToWhen(c, rs));
+  };
+  return (
+    <div className="space-y-1">
+      <select
+        className="border rounded px-1 bg-background text-xs w-full"
+        value={isExpr ? "__expr" : when}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === "__expr") update(combine, rows.length ? rows : [{ field: "", op: "==", value: "" }]);
+          else onChange(v);
+        }}
+      >
+        <option value="">plain（顺序）</option>
+        <option value="default">default（兜底）</option>
+        <option value="llm_route">llm_route（LLM 选）</option>
+        <option value="__expr">条件…</option>
+      </select>
+      {isExpr && (
+        <div className="space-y-1 border rounded p-1 bg-muted/30">
+          {parsed ? (
+            <>
+              <select className="border rounded px-1 bg-background text-xs w-full" value={combine}
+                onChange={(e) => update(e.target.value as "&&" | "||", rows)}>
+                <option value="&&">全部满足 (AND)</option>
+                <option value="||">任一满足 (OR)</option>
+              </select>
+              {rows.map((r, i) => (
+                <div key={i} className="space-y-1">
+                  <div className="flex gap-1 items-center">
+                    <select className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
+                      value={r.field ? `\${${r.field}}` : ""}
+                      onChange={(e) => {
+                        const m = e.target.value.match(/^\$\{([^}]+)\}$/);
+                        update(combine, rows.map((x, j) => j === i ? { ...x, field: m ? m[1] : x.field } : x));
+                      }}>
+                      <option value="">— 字段 —</option>
+                      {refOptions.map((o) => <option key={o.ref} value={o.ref}>{o.label}</option>)}
+                    </select>
+                    <select className="border rounded px-1 bg-background text-xs" value={r.op}
+                      onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}>
+                      {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                    <button type="button" className="text-destructive text-xs px-1" disabled={rows.length <= 1}
+                      onClick={() => update(combine, rows.filter((_, j) => j !== i))}>✕</button>
+                  </div>
+                  <input className="border rounded px-1 bg-background text-xs w-full" value={r.value} placeholder="值（数字或字符串）"
+                    onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                </div>
+              ))}
+              <Button size="sm" variant="outline" className="w-full" onClick={() => update(combine, [...rows, { field: "", op: "==", value: "" }])}>
+                <Plus className="h-3 w-3" /> {t("workflow.condAddRow")}
+              </Button>
+            </>
+          ) : (
+            <input className="border rounded px-1 bg-background text-xs w-full" value={when}
+              onChange={(e) => onChange(e.target.value)} placeholder="${node.score} > 0.8" />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ConditionBranches — the condition node's branch editor: lists the node's
+// outgoing edges, each rendered as a branch with its own ConditionRows (field +
+// operator + value). Add a branch by picking a target node (creates an edge).
+function ConditionBranches({ node, edges, others, refOptions, onEdgeWhen, onAddBranch, t }: {
+  node: AnyNode;
+  edges: AnyEdge[];
+  others: AnyNode[];
+  refOptions: RefOption[];
+  onEdgeWhen: (edgeIndex: number, when: string) => void;
+  onAddBranch: (target: string) => void;
+  t: (k: string, vars?: Record<string, string | number>) => string;
+}) {
+  const branchIdxs = edges.map((e, i) => ({ e, i })).filter(({ e }) => e.from === node.name);
+  const [newTarget, setNewTarget] = React.useState("");
+  return (
+    <div className="space-y-2">
+      <span className="text-muted-foreground">{t("workflow.condBranchesHint")}</span>
+      {branchIdxs.map(({ e, i }) => (
+        <div key={i} className="border rounded p-1.5 space-y-1 bg-muted/20">
+          <div className="font-medium text-xs">→ {e.to}</div>
+          <ConditionRows when={e.when || ""} refOptions={refOptions} onChange={(w) => onEdgeWhen(i, w)} t={t} />
+        </div>
+      ))}
+      <div className="flex gap-1">
+        <select className="border rounded px-1 bg-background text-xs flex-1" value={newTarget} onChange={(e) => setNewTarget(e.target.value)}>
+          <option value="">{t("workflow.condAddBranchTo")}</option>
+          {others.filter((o) => o.name !== node.name).map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
+        </select>
+        <Button size="sm" variant="outline" disabled={!newTarget} onClick={() => { onAddBranch(newTarget); setNewTarget(""); }}>
+          <Plus className="h-3 w-3" /> {t("workflow.condAddBranch")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // SchemaForm renders a typed field per property of an OpenAI-style JSON schema.
 // It's the standard surface every tool exposes itself through (registry
 // ToolInfo.Parameters), so the editor needs no tool-specific code: a builtin
@@ -890,8 +1057,11 @@ function NodeProps({
   selTool,
   refOptions,
   agentId,
+  edges,
   onEdit,
+  onEditEdgeAt,
   onAddEdge,
+  onAddBranchEdge,
   t,
 }: {
   node: AnyNode;
@@ -900,8 +1070,11 @@ function NodeProps({
   selTool: AgentRegisteredTool | undefined;
   refOptions: RefOption[];
   agentId: string;
+  edges: AnyEdge[];
   onEdit: (p: string, v: unknown) => void;
+  onEditEdgeAt: (i: number, prop: string, value: string) => void;
   onAddEdge: (target: string) => void;
+  onAddBranchEdge: (from: string, target: string) => void;
   t: (k: string, vars?: Record<string, string | number>) => string;
 }) {
   const [target, setTarget] = React.useState("");
@@ -1020,7 +1193,15 @@ function NodeProps({
       )}
 
       {node.kind === "condition" && (
-        <p className="text-muted-foreground italic">{t("workflow.condNodeHint")}</p>
+        <ConditionBranches
+          node={node}
+          edges={edges}
+          others={others}
+          refOptions={refOptions}
+          onEdgeWhen={(i, w) => onEditEdgeAt(i, "when", w)}
+          onAddBranch={(target) => onAddBranchEdge(node.name, target)}
+          t={t}
+        />
       )}
 
       <label className="block">

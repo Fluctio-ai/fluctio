@@ -59,6 +59,7 @@ const (
 type Definition struct {
 	ID          string         `yaml:"id,omitempty"`
 	Version     int            `yaml:"version"`
+	Title       string         `yaml:"title,omitempty"`
 	Description string         `yaml:"description,omitempty"`
 	Input       InputSpec      `yaml:"input,omitempty"`
 	Nodes       []Node         `yaml:"nodes"`
