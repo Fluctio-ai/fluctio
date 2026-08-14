@@ -18,7 +18,7 @@ import {
   type AgentRegisteredTool,
 } from "@/lib/api";
 import { useLocale, useT } from "@/lib/i18n";
-import { BUILTIN_TOOL_ZH } from "@/lib/workflow-tools-zh";
+import { BUILTIN_TOOL_ZH, groupToolsForDropdown } from "@/lib/workflow-tools-zh";
 
 // WorkflowEditor (ticket 09, n8n-style). The model is the raw YAML object so
 // unknown fields pass through (decision 8). Canvas = vis-network; double-click
@@ -1345,10 +1345,14 @@ function NodeProps({
               onChange={(e) => onEdit("tool", e.target.value)}
             >
               <option value="">— 选择工具 —</option>
-              {tools.map((x) => (
-                <option key={x.name} value={x.name}>
-                  {x.name} ({x.source})
-                </option>
+              {groupToolsForDropdown(tools, locale).map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.tools.map((x) => (
+                    <option key={x.name} value={x.name}>
+                      {x.name} ({x.source})
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </label>
