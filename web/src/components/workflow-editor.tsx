@@ -1115,6 +1115,20 @@ export function SchemaForm({
                 value={Array.isArray(v) ? (v as string[]) : (typeof v === "string" && v ? [v] : [])}
                 onChange={(val) => onChange({ ...values, [k]: val })}
               />
+            ) : p.type === "boolean" ? (
+              // Booleans must arrive as real JSON booleans — a text input
+              // submits "true" as a string, which schema validation (tool args
+              // and M6 form values alike) rejects. A tri-state select emits
+              // true/false; "" means unset (serialized away).
+              <select
+                className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
+                value={v === true ? "true" : v === false ? "false" : ""}
+                onChange={(e) => onChange({ ...values, [k]: e.target.value === "" ? undefined : e.target.value === "true" })}
+              >
+                <option value="">—</option>
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
             ) : p.enum ? (
               <select
                 className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
@@ -1131,14 +1145,14 @@ export function SchemaForm({
                 rows={2}
                 className="font-mono text-xs"
                 value={typeof v === "string" ? v : JSON.stringify(v ?? "")}
-                placeholder={p.description || "${...} JSON"}
+                placeholder={p.description || (header ? "" : "${...} JSON")}
                 onChange={(e) => onChange({ ...values, [k]: e.target.value })}
               />
             ) : (
               <input
                 className="border rounded-lg px-2.5 py-1 h-8 bg-transparent w-full font-mono text-sm"
                 value={typeof v === "string" || typeof v === "number" ? String(v) : ""}
-                placeholder={p.description || "${...}"}
+                placeholder={p.description || (header ? "" : "${...}")}
                 onChange={(e) => onChange({ ...values, [k]: e.target.value })}
               />
             )}
