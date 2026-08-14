@@ -87,6 +87,28 @@ export function WorkflowEditor({
   const t = useT();
   const dark = useDark();
   const [def, setDef] = useState<AnyDef | null>(null);
+  // Resizable width of the right-hand props panel (w-72 = 288 default, clamped
+  // 220–560 so long schemas/condition rows can be read without scrolling).
+  const [propsW, setPropsW] = useState(288);
+  const startPropsDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = propsW;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      setPropsW(Math.min(560, Math.max(220, startW - dx)));
+    };
+    const up = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
   const [yamlText, setYamlText] = useState("");
   const [selNode, setSelNode] = useState<string | null>(null);
   const [selEdge, setSelEdge] = useState<number | null>(null);
@@ -430,9 +452,18 @@ export function WorkflowEditor({
               <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
             </Button>
           </div>
-          <div className="flex gap-3">
+          <div className="flex">
             <div ref={containerRef} className="h-[480px] flex-1 rounded border bg-muted/30" />
-            <div className="w-72 shrink-0 overflow-y-auto max-h-[480px] space-y-2 text-xs">
+            {/* Resizable props panel: same transparent drag handle as the
+                workflow-list / knowledge-base dividers. */}
+            <div
+              className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+              onPointerDown={startPropsDrag}
+            />
+            <div
+              className="shrink-0 border-l bg-muted/30 overflow-y-auto max-h-[480px] space-y-2 text-xs"
+              style={{ width: propsW }}
+            >
               <h4 className="font-semibold">{t("workflow.props")}</h4>
               {selNodeObj ? (
                 <NodeProps
