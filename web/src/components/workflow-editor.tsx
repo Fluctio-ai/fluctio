@@ -3,6 +3,8 @@
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { load as yLoad, dump as yDump } from "js-yaml";
+import CodeMirror from "@uiw/react-codemirror";
+import { yaml as yamlLang } from "@codemirror/lang-yaml";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -83,6 +85,7 @@ export function WorkflowEditor({
   injectOutput?: { node: string; schema: Record<string, unknown>; nonce: number } | null;
 }) {
   const t = useT();
+  const dark = useDark();
   const [def, setDef] = useState<AnyDef | null>(null);
   const [yamlText, setYamlText] = useState("");
   const [selNode, setSelNode] = useState<string | null>(null);
@@ -455,17 +458,34 @@ export function WorkflowEditor({
           </div>
         </div>
 
-      <div style={{ display: tab === "yaml" ? undefined : "none" }}>
+      <div style={{ display: tab === "yaml" ? undefined : "none" }} className="space-y-1">
           <h4 className="text-xs font-semibold">YAML</h4>
-          <Textarea
+          {/* IDE-style editor: line numbers, YAML syntax highlighting, bracket
+              matching, auto-indent. Theme follows the app's dark class. */}
+          <CodeMirror
             value={yamlText}
-            onChange={(e) => onYamlChange(e.target.value)}
-            rows={28}
-            className="font-mono text-xs"
+            height="600px"
+            theme={dark ? "dark" : "light"}
+            extensions={[yamlLang()]}
+            onChange={onYamlChange}
+            basicSetup={{ foldGutter: true, highlightActiveLine: true }}
           />
         </div>
     </section>
   );
+}
+
+// useDark tracks the app theme (dark class on <html>, flipped by ThemeProvider)
+// so the YAML editor restyles live on a theme switch.
+function useDark(): boolean {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  useEffect(() => {
+    const el = document.documentElement;
+    const obs = new MutationObserver(() => setDark(el.classList.contains("dark")));
+    obs.observe(el, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+  return dark;
 }
 
 // --- M1 humanization helpers (MaxKB-style field pickers + structured editors) ---
