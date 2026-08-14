@@ -214,6 +214,22 @@ func (m *Manager) routeOutbound(ctx context.Context) {
 			key := channelKey(msg.Channel, msg.AccountID)
 			m.mu.Lock()
 			ch, ok := m.channels[key]
+			if !ok && msg.AccountID == "" {
+				// Account-agnostic callers (the message tool — driven off
+				// channel + chat_id alone) send with an empty AccountID, so the
+				// key is "channel:". Resolve it to the channel's registered
+				// adapter. With a single account per channel this is exact; if
+				// multiple accounts are registered on the same channel the
+				// caller must supply AccountID (first registered wins).
+				prefix := msg.Channel + ":"
+				for k, c := range m.channels {
+					if strings.HasPrefix(k, prefix) {
+						ch, ok = c, true
+						key = k
+						break
+					}
+				}
+			}
 			m.mu.Unlock()
 			if !ok {
 				slog.Warn("unknown outbound channel", "key", key)

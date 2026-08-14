@@ -630,13 +630,14 @@ function OutputMapEditor({ output, options, onChange }: {
 // keyword and matching chat sessions (title / preview / chatId) drop down live,
 // so picking "AI 新闻" fills BOTH fields. A flat <select> doesn't scale as chats
 // accumulate, so this filters as you type.
-function SessionPicker({ agentId, channel, chatId, onChange }: {
+function SessionPicker({ agentId, channel, chatId, account, onChange }: {
   agentId: string;
   channel: string;
   chatId: string;
-  onChange: (channel: string, chatId: string) => void;
+  account?: string;
+  onChange: (channel: string, chatId: string, account: string) => void;
 }) {
-  type Sess = { channel?: string; chatId?: string; title?: string; preview?: string };
+  type Sess = { channel?: string; chatId?: string; title?: string; preview?: string; accountId?: string };
   const [sessions, setSessions] = useState<Sess[]>([]);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -675,7 +676,7 @@ function SessionPicker({ agentId, channel, chatId, onChange }: {
               key={s.chatId}
               onMouseDown={(e) => {
                 e.preventDefault();
-                onChange(s.channel || "", s.chatId || "");
+                onChange(s.channel || "", s.chatId || "", s.accountId || "");
                 setQ("");
                 setOpen(false);
               }}
@@ -719,7 +720,7 @@ function SchemaForm({
         {`参数（可用 \${input.x} / \${node.y} 引用）`}
       </span>
       {keys.map((k) => {
-        if (hasChannelChat && k === "channel") return null; // filled by the chat_id picker below
+        if (hasChannelChat && (k === "channel" || k === "account")) return null; // filled by the chat_id picker
         const p = props[k];
         const v = values[k];
         const isComplex = p.type === "object" || p.type === "array";
@@ -734,7 +735,12 @@ function SchemaForm({
                 agentId={agentId!}
                 channel={String(values.channel || "")}
                 chatId={String(values.chat_id || "")}
-                onChange={(c, cid) => onChange({ ...values, channel: c, chat_id: cid })}
+                account={keys.includes("account") ? String(values.account || "") : undefined}
+                onChange={(c, cid, acc) => {
+                  const next: Record<string, unknown> = { ...values, channel: c, chat_id: cid };
+                  if (keys.includes("account")) next.account = acc;
+                  onChange(next);
+                }}
               />
             ) : p.enum ? (
               <select

@@ -15,9 +15,10 @@ import (
 var messageImageMarkdownRe = regexp.MustCompile(`!\[[^\]]*\]\(`)
 
 type messageArgs struct {
-	Channel string `json:"channel"`
-	ChatID  string `json:"chat_id"`
-	Text    string `json:"text"`
+	Channel   string `json:"channel"`
+	ChatID    string `json:"chat_id"`
+	Text      string `json:"text"`
+	AccountID string `json:"account"`
 }
 
 // RegisterMessage registers the message tool with the given message bus.
@@ -45,6 +46,10 @@ func registerMessage(r *Registry) {
 			"chat_id": map[string]interface{}{
 				"type":        "string",
 				"description": "Full target chat ID (same form as in inbound messages)",
+			},
+			"account": map[string]interface{}{
+				"type":        "string",
+				"description": "Source account ID for the channel. Auto-filled when you pick a session in the workflow editor. Required when a channel has multiple accounts; leave empty for single-account channels.",
 			},
 			"text": map[string]interface{}{
 				"type":        "string",
@@ -78,6 +83,7 @@ func makeMessageTool(mb *bus.MessageBus, allowSplitFn func() bool) ToolFunc {
 
 		mb.Outbound <- bus.OutboundMessage{
 			Channel:    args.Channel,
+			AccountID:  args.AccountID,
 			ChatID:     args.ChatID,
 			Text:       args.Text,
 			AllowSplit: allowSplit,
