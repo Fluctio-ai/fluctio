@@ -457,7 +457,7 @@ function FieldRef({ options, value, onChange, placeholder }: {
         onChange={(e) => onChange(e.target.value)}
       />
       <select
-        className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm shrink-0"
+        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm shrink-0"
         value=""
         onChange={(e) => { if (e.target.value) onChange(e.target.value); }}
       >
@@ -477,7 +477,7 @@ function InsertField({ options, onInsert }: { options: RefOption[]; onInsert: (r
   const t = useT();
   return (
     <select
-      className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm"
+      className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm"
       value=""
       onChange={(e) => { if (e.target.value) onInsert(e.target.value); }}
     >
@@ -510,7 +510,7 @@ function KVRows({ obj, options, onChange, valueMode = "ref" }: {
       {entries.map(([k, v], i) => (
         <div key={i} className="flex gap-1 items-center">
           <input
-            className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm w-24 shrink-0"
+            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-24 shrink-0"
             value={k}
             onChange={(e) => {
               const next: Record<string, unknown> = { ...obj };
@@ -522,7 +522,7 @@ function KVRows({ obj, options, onChange, valueMode = "ref" }: {
           />
           {valueMode === "type" ? (
             <select
-              className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm flex-1"
+              className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1"
               value={v && typeof v === "object" && "type" in v ? String((v as { type: string }).type) : "string"}
               onChange={(e) => commit({ ...obj, [k]: { type: e.target.value } })}
             >
@@ -580,7 +580,17 @@ function InputSchemaEditor({ schema, onChange }: {
       {entries.map(([name, p], i) => (
         <div key={i} className="flex gap-1 items-center">
           <input
-            className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm w-20 shrink-0"
+            type="checkbox"
+            checked={required.has(name)}
+            title="required"
+            onChange={(e) => {
+              const nr = new Set(required);
+              if (e.target.checked) nr.add(name); else nr.delete(name);
+              commit(props, nr);
+            }}
+          />
+          <input
+            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-20 shrink-0"
             value={name}
             onChange={(e) => {
               const nn = e.target.value;
@@ -594,24 +604,14 @@ function InputSchemaEditor({ schema, onChange }: {
             }}
           />
           <select
-            className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm shrink-0"
+            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm shrink-0"
             value={p?.type || "string"}
             onChange={(e) => commit({ ...props, [name]: { ...p, type: e.target.value } }, required)}
           >
             {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
           </select>
           <input
-            type="checkbox"
-            checked={required.has(name)}
-            title="required"
-            onChange={(e) => {
-              const nr = new Set(required);
-              if (e.target.checked) nr.add(name); else nr.delete(name);
-              commit(props, nr);
-            }}
-          />
-          <input
-            className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm flex-1 min-w-0"
+            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
             value={p?.description || ""}
             placeholder={t("workflow.fieldDescPh")}
             onChange={(e) => commit({ ...props, [name]: { ...p, description: e.target.value } }, required)}
@@ -651,7 +651,7 @@ function OutputMapEditor({ output, options, onChange }: {
       {entries.map(([k, v], i) => (
         <div key={i} className="flex gap-1 items-center">
           <input
-            className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm w-24 shrink-0"
+            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-24 shrink-0"
             value={k}
             onChange={(e) => {
               const next: Record<string, unknown> = { ...output };
@@ -845,7 +845,7 @@ function ValuePicker({ options, value, onChange, t }: {
   return (
     <div className="flex gap-1">
       <select
-        className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm shrink-0"
+        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm shrink-0"
         value={mode}
         onChange={(e) => { setMode(e.target.value as "var" | "literal"); onChange(""); }}
       >
@@ -854,7 +854,7 @@ function ValuePicker({ options, value, onChange, t }: {
       </select>
       {mode === "var" ? (
         <select
-          className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm flex-1 min-w-0"
+          className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
           value={value}
           onChange={(e) => onChange(e.target.value)}
         >
@@ -863,7 +863,7 @@ function ValuePicker({ options, value, onChange, t }: {
         </select>
       ) : (
         <input
-          className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm flex-1 min-w-0"
+          className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="0.8 / en / …"
@@ -896,7 +896,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
   return (
     <div className="space-y-1">
       <select
-        className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm w-full"
+        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-full"
         value={isExpr ? "__expr" : when}
         onChange={(e) => {
           const v = e.target.value;
@@ -911,7 +911,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
       </select>
       {isExpr && (
         <div className="space-y-1 border rounded p-1 bg-muted/30">
-          <select className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm w-full" value={combine}
+          <select className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-full" value={combine}
             onChange={(e) => update(e.target.value as "&&" | "||", rows)}>
             <option value="&&">全部满足 (AND)</option>
             <option value="||">任一满足 (OR)</option>
@@ -919,7 +919,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
           {rows.map((r, i) => (
             <div key={i} className="space-y-1">
               <div className="flex gap-1 items-center">
-                <select className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm flex-1 min-w-0"
+                <select className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
                   value={r.field ? `\${${r.field}}` : ""}
                   onChange={(e) => {
                     const m = e.target.value.match(/^\$\{([^}]+)\}$/);
@@ -928,7 +928,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
                   <option value="">— 字段 —</option>
                   {refOptions.map((o) => <option key={o.ref} value={o.ref}>{o.label}</option>)}
                 </select>
-                <select className="border rounded-lg px-2.5 py-1 h-8 bg-transparent text-sm" value={r.op}
+                <select className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm" value={r.op}
                   onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}>
                   {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
