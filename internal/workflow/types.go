@@ -12,6 +12,7 @@ const (
 	StatusSucceeded         Status = "succeeded"
 	StatusFailed            Status = "failed"
 	StatusNeedsIntervention Status = "needs_intervention" // non-idempotent node failed; resume refused (spec decision 2)
+	StatusWaiting           Status = "waiting"            // M6: run paused on a form node; non-terminal, resumed via form values
 )
 
 // NodeKind labels how a node executes: a tool node calls one registered tool,
@@ -30,6 +31,7 @@ const (
 	KindKBSearch NodeKind = "kb_search" // M3 domain node: wraps the builtin knowledgebase_search tool
 	KindSet NodeKind = "set" // M5 node: writes resolved values into the run's writable variable space (${var.*})
 	KindCondition NodeKind = "condition" // pass-through branch point: no leaf, its outgoing edges' `when` pick the branch
+	KindForm NodeKind = "form" // M6 node: run pauses waiting for user-filled form values; Input is the field schema
 )
 
 // SideEffect declares a node's side-effect category (spec decision 2, ADR 0002).
@@ -122,12 +124,25 @@ const (
 // terminal status, the final node's output on success, an error pointing at
 // the failing node on failure, and a snapshot of every node executed this run.
 // The snapshot is the input to resume + the diagnostics surface (ADR 0002).
+// M6 adds the waiting outcome: a form node with no supplied values returns
+// Status=waiting + PendingForm instead of a terminal state; the run resumes
+// with WithResume(runID)+WithFormValues.
 type ExecutionResult struct {
-	RunID    string                `json:"run_id"`
-	Status   Status                `json:"status"`
-	Result   map[string]any        `json:"result,omitempty"`
-	Error    *NodeError            `json:"error,omitempty"`
-	Snapshot map[string]NodeOutput `json:"completed_nodes_snapshot"`
+	RunID       string                `json:"run_id"`
+	Status      Status                `json:"status"`
+	Result      map[string]any        `json:"result,omitempty"`
+	Error       *NodeError            `json:"error,omitempty"`
+	PendingForm *PendingForm          `json:"pending_form,omitempty"`
+	Snapshot    map[string]NodeOutput `json:"completed_nodes_snapshot"`
+}
+
+// PendingForm describes the form a waiting run is paused on (M6): the node's
+// name plus its field schema (a JSON-schema subset — properties / required /
+// type / enum), so a client renders the form and POSTs the values to the
+// resume endpoint.
+type PendingForm struct {
+	Node   string         `json:"node"`
+	Schema map[string]any `json:"schema"`
 }
 
 // NodeError identifies which node failed and carries the original error text.

@@ -87,3 +87,24 @@ func (s *Service) RunWorkflowStream(ctx context.Context, id string, input map[st
 	}
 	return NewRunner(llm, tool, s.store, WithCodeCaller(code), WithHTTPCaller(NetHTTPCaller{})).Run(ctx, def, input, opts...)
 }
+
+// ResumeWorkflowStream resumes a waiting run (M6) with the user's form
+// answers: WithResume(runID) reloads the snapshot (succeeded nodes are
+// skipped, the original input is replayed from the run row), WithFormValues
+// supplies the waiting form node's values — validated against its schema,
+// becoming that node's output — and the walk continues to the terminal state
+// (which may be another waiting form). owner is the resuming caller. A nil
+// sink behaves like a plain resume.
+func (s *Service) ResumeWorkflowStream(ctx context.Context, id, runID, formNode string, formValues map[string]any, owner string, llm LLMCaller, tool ToolCaller, code CodeCaller, sink func(RunEvent)) (*ExecutionResult, error) {
+	def, ok := s.defs[id]
+	if !ok {
+		return nil, fmt.Errorf("unknown workflow %q", id)
+	}
+	ctx, release := s.concurrency.Acquire(ctx, id, def.Concurrency)
+	defer release()
+	opts := []RunOption{WithResume(runID), WithFormValues(formNode, formValues), WithOwner(owner)}
+	if sink != nil {
+		opts = append(opts, WithEventSink(sink))
+	}
+	return NewRunner(llm, tool, s.store, WithCodeCaller(code), WithHTTPCaller(NetHTTPCaller{})).Run(ctx, def, nil, opts...)
+}

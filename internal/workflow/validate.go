@@ -142,6 +142,14 @@ func validateNodeKinds(def *Definition) error {
 					return &ValidationError{Node: n.Name, Field: "lang", Message: fmt.Sprintf("unsupported language %q (want python or sh)", n.Language)}
 				}
 			}
+		case KindForm:
+			// M6: Input is the form's field schema — it must declare at least
+			// one property, else the waiting form would render nothing and the
+			// run would park on an unanswerable prompt.
+			props, _ := n.Input["properties"].(map[string]any)
+			if len(props) == 0 {
+				return &ValidationError{Node: n.Name, Field: "input", Message: "form node requires input.properties (at least one field definition)"}
+			}
 		default:
 			return &ValidationError{Node: n.Name, Field: "kind", Message: fmt.Sprintf("unknown node kind %q", n.Kind)}
 		}
@@ -275,7 +283,14 @@ func checkRefs(node, s string, declared map[string]bool, outputSchema map[string
 // required + properties.<field>.type). Full JSON schema is out of scope for
 // the tracer bullet.
 func validateInput(def *Definition, input map[string]any) error {
-	schema := def.Input.Schema
+	return validateAgainstSchema(def.Input.Schema, input, "input")
+}
+
+// validateAgainstSchema checks values against a JSON-schema subset — the
+// shared engine behind workflow input validation and M6 form-value validation
+// at resume: required fields present, declared types match. fieldPrefix names
+// the value space in error messages ("input" / "form").
+func validateAgainstSchema(schema map[string]any, values map[string]any, fieldPrefix string) error {
 	if len(schema) == 0 {
 		return nil
 	}
@@ -285,13 +300,13 @@ func validateInput(def *Definition, input map[string]any) error {
 			if name == "" {
 				continue
 			}
-			if _, ok := input[name]; !ok {
-				return &ValidationError{Field: "input." + name, Message: fmt.Sprintf("missing required input field %q", name)}
+			if _, ok := values[name]; !ok {
+				return &ValidationError{Field: fieldPrefix + "." + name, Message: fmt.Sprintf("missing required %s field %q", fieldPrefix, name)}
 			}
 		}
 	}
 	props, _ := schema["properties"].(map[string]any)
-	for name, val := range input {
+	for name, val := range values {
 		ps, _ := props[name].(map[string]any)
 		if ps == nil {
 			continue
@@ -301,7 +316,7 @@ func validateInput(def *Definition, input map[string]any) error {
 			continue
 		}
 		if !typeMatches(wantType, val) {
-			return &ValidationError{Field: "input." + name, Message: fmt.Sprintf("input field %q want type %s, got %T", name, wantType, val)}
+			return &ValidationError{Field: fieldPrefix + "." + name, Message: fmt.Sprintf("%s field %q want type %s, got %T", fieldPrefix, name, wantType, val)}
 		}
 	}
 	return nil

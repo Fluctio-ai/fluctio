@@ -77,6 +77,11 @@ type AgentHandle interface {
 	// node-level streaming (NodeStart / NodeComplete / Done events). A nil
 	// sink behaves exactly like RunWorkflow.
 	RunWorkflowStream(ctx context.Context, id string, input map[string]any, owner, session string, sink func(workflow.RunEvent)) (*workflow.ExecutionResult, error)
+	// ResumeWorkflowStream resumes a waiting run (M6 form interaction) with
+	// the user's form answers; formNode is the run's pending_form_node and
+	// session the run's original session. A nil sink behaves like a plain
+	// resume.
+	ResumeWorkflowStream(ctx context.Context, id, runID, formNode string, formValues map[string]any, owner, session string, sink func(workflow.RunEvent)) (*workflow.ExecutionResult, error)
 	// WorkflowsDir returns the directory holding this agent's workflow YAMLs.
 	WorkflowsDir() string
 	// ReloadWorkflows re-reads this agent's workflow dir and rebuilds its
@@ -289,6 +294,8 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}", auth(s.handleWorkflowDelete))
 	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/run", auth(s.handleWorkflowRun))
 	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/run/stream", auth(s.handleWorkflowRunStream))
+	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/runs/{runID}/resume", auth(s.handleWorkflowRunResume))
+	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/runs/{runID}/resume/stream", auth(s.handleWorkflowRunResumeStream))
 	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}/runs", auth(s.handleWorkflowRunsList))
 	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}/runs/{runID}", auth(s.handleWorkflowRunGet))
 	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}/runs/{runID}", auth(s.handleWorkflowRunDelete))

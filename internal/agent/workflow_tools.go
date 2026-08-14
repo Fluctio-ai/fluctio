@@ -64,15 +64,34 @@ func (a *Agent) RunWorkflowStream(ctx context.Context, id string, input map[stri
 	if a.workflowSvc == nil {
 		return nil, fmt.Errorf("agent %q has no workflows", a.name)
 	}
+	llm, tool, code := a.workflowLeaves(ctx, id, session)
+	return a.workflowSvc.RunWorkflowStream(ctx, id, input, owner, session, llm, tool, code, sink)
+}
+
+// ResumeWorkflowStream resumes one of this agent's waiting runs (M6) with the
+// user's form answers. session is the run's original session (reused so code
+// nodes keep the same sandbox context); owner is the resuming caller.
+func (a *Agent) ResumeWorkflowStream(ctx context.Context, id, runID, formNode string, formValues map[string]any, owner, session string, sink func(workflow.RunEvent)) (*workflow.ExecutionResult, error) {
+	if a.workflowSvc == nil {
+		return nil, fmt.Errorf("agent %q has no workflows", a.name)
+	}
+	llm, tool, code := a.workflowLeaves(ctx, id, session)
+	return a.workflowSvc.ResumeWorkflowStream(ctx, id, runID, formNode, formValues, owner, llm, tool, code, sink)
+}
+
+// workflowLeaves builds the per-run leaf capabilities off this agent's
+// current provider + registry (so a provider hot-reload takes effect on the
+// next call): the LLM + tool callers every run needs, plus a sandbox code
+// caller only when the named workflow actually has a code node — otherwise a
+// tool/llm-only run would needlessly start a container.
+func (a *Agent) workflowLeaves(ctx context.Context, id, session string) (workflow.LLMCaller, workflow.ToolCaller, workflow.CodeCaller) {
 	llm := &workflow.ProviderLLMCaller{P: a.provider, Model: a.model, MaxTokens: a.maxTokens, Temp: a.temperature}
 	tool := &workflow.RegistryToolCaller{R: a.registry}
-	// Only reach for a sandbox executor when this workflow actually has a code
-	// node — otherwise a tool/llm-only run would needlessly start a container.
 	var code workflow.CodeCaller
 	if def, ok := a.workflowSvc.Definition(id); ok && usesCodeNode(def) {
 		code = a.workflowCodeCaller(ctx, session)
 	}
-	return a.workflowSvc.RunWorkflowStream(ctx, id, input, owner, session, llm, tool, code, sink)
+	return llm, tool, code
 }
 
 // workflowCodeCaller builds a SandboxCodeCaller over this agent's per-session

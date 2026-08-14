@@ -110,6 +110,118 @@ func (s *Server) handleWorkflowRunStream(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// --- M6 form resume (form 人机交互) ---
+
+// parseWorkflowResume is the shared pre-flight for both resume endpoints: the
+// agent resolves, the run exists under this workflow, it is in the waiting
+// state, and the body carries a "form" object. On failure it has already
+// written the JSON error response and returns ok=false.
+func (s *Server) parseWorkflowResume(w http.ResponseWriter, r *http.Request) (ag AgentHandle, run store.WorkflowRunRow, form map[string]any, ok bool) {
+	ag = s.resolveAgent(r, r.PathValue("agentID"))
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return nil, run, nil, false
+	}
+	var body struct {
+		Form map[string]any `json:"form"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad body (want {\"form\": {...}}): " + err.Error()})
+		return nil, run, nil, false
+	}
+	dbs, ok2 := s.dataStore.(*store.DBStore)
+	if !ok2 || dbs == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return nil, run, nil, false
+	}
+	run, err := dbs.GetWorkflowRunRow(r.Context(), r.PathValue("runID"))
+	if err != nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "run not found"})
+		return nil, run, nil, false
+	}
+	if run.DefID != r.PathValue("wfID") {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "run not found under this workflow"})
+		return nil, run, nil, false
+	}
+	if run.Status != string(workflow.StatusWaiting) {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "run is not waiting for a form (status " + run.Status + ")"})
+		return nil, run, nil, false
+	}
+	if body.Form == nil {
+		body.Form = map[string]any{}
+	}
+	return ag, run, body.Form, true
+}
+
+// handleWorkflowRunResume — POST /api/agents/{agentID}/workflows/{wfID}/runs/{runID}/resume
+//
+// Resumes a waiting run with the user's form answers (M6): the runner
+// validates them against the waiting node's schema, records them as that
+// node's output, and continues the walk — possibly to another waiting form,
+// whose schema rides the returned ExecutionResult.pending_form.
+// Response: {"ok":true,"result":<ExecutionResult>}.
+func (s *Server) handleWorkflowRunResume(w http.ResponseWriter, r *http.Request) {
+	ag, run, form, ok := s.parseWorkflowResume(w, r)
+	if !ok {
+		return
+	}
+	owner := ""
+	if ident, ok := auth.FromContext(r.Context()); ok {
+		owner = ident.EffectiveUserID()
+	}
+	res, err := ag.ResumeWorkflowStream(r.Context(), r.PathValue("wfID"), run.ID, run.PendingFormNode, form, owner, run.SessionID, nil)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "result": res})
+}
+
+// handleWorkflowRunResumeStream — POST .../runs/{runID}/resume/stream
+//
+// ResumeWorkflowStream over SSE, mirroring handleWorkflowRunStream: node
+// events as they execute, then a terminal "result" event. This is what the
+// run-detail UI calls after the user submits the form, so post-form nodes
+// stream exactly like a fresh run.
+func (s *Server) handleWorkflowRunResumeStream(w http.ResponseWriter, r *http.Request) {
+	ag, run, form, ok := s.parseWorkflowResume(w, r)
+	if !ok {
+		return
+	}
+	owner := ""
+	if ident, ok := auth.FromContext(r.Context()); ok {
+		owner = ident.EffectiveUserID()
+	}
+
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	sink := func(e workflow.RunEvent) {
+		if b, err := json.Marshal(e); err == nil {
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
+	res, err := ag.ResumeWorkflowStream(r.Context(), r.PathValue("wfID"), run.ID, run.PendingFormNode, form, owner, run.SessionID, sink)
+	if err != nil {
+		b, _ := json.Marshal(map[string]any{"type": "error", "error": err.Error()})
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return
+	}
+	b, _ := json.Marshal(map[string]any{"type": "result", "result": res})
+	fmt.Fprintf(w, "data: %s\n\n", b)
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
 // handleWorkflowRunDelete — DELETE /api/agents/{agentID}/workflows/{wfID}/runs/{runID}
 //
 // Manually removes one run and its node outputs (spec decision 11, manual

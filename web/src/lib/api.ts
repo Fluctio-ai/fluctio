@@ -3131,6 +3131,10 @@ export interface WorkflowRunRow {
   Error: string;
   StartedAt: string;
   FinishedAt: string;
+  /** M6: set while status=waiting — the node the run parks on + its form
+   * schema (JSON string) so the run-detail UI can render the form. */
+  PendingFormNode?: string;
+  PendingFormSchema?: string;
 }
 export interface WorkflowNodeOutput {
   NodeID: string;
@@ -3146,6 +3150,8 @@ export interface WorkflowExecutionResult {
     status: string;
     result?: Record<string, unknown>;
     error?: { node: string; message: string };
+    /** M6: present when status=waiting — the form node + schema to render. */
+    pending_form?: { node: string; schema: Record<string, unknown> };
     completed_nodes_snapshot?: Record<string, unknown>;
   };
   error?: string;
@@ -3290,4 +3296,53 @@ export async function deleteWorkflowRun(
     { method: "DELETE" },
   );
   return res.json();
+}
+
+// resumeWorkflowStream resumes a waiting run (M6 form interaction) with the
+// user's form answers over the SSE endpoint (POST .../runs/{runID}/resume/stream),
+// same frame protocol as runWorkflowStream: post-form nodes stream live, and a
+// terminal "result" event carries the (possibly again-waiting) ExecutionResult.
+export async function resumeWorkflowStream(
+  agentId: string,
+  wfId: string,
+  runId: string,
+  form: Record<string, unknown>,
+  onEvent: (e: WorkflowRunEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/runs/${encodeURIComponent(runId)}/resume/stream`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ form }),
+      signal,
+    },
+  );
+  if (!res.ok || !res.body) {
+    onEvent({ type: "error", error: `HTTP ${res.status}` });
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      for (const line of block.split("\n")) {
+        if (line.startsWith("data: ")) {
+          try {
+            onEvent(JSON.parse(line.slice(6)) as WorkflowRunEvent);
+          } catch {
+            // ignore a malformed frame
+          }
+        }
+      }
+    }
+  }
 }

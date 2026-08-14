@@ -12,6 +12,7 @@ import {
   getWorkflowRun,
   listWorkflows,
   listWorkflowRuns,
+  resumeWorkflowStream,
   runWorkflowStream,
   saveWorkflow,
   type WorkflowNodeOutput,
@@ -22,7 +23,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { usePageHeader } from "@/components/sidebar";
-import { WorkflowEditor } from "@/components/workflow-editor";
+import { SchemaForm, WorkflowEditor } from "@/components/workflow-editor";
 
 // Workflows page (ticket 08): list this agent's workflows, manually trigger one
 // (JSON input), and browse run history with per-node output + the failing
@@ -40,6 +41,11 @@ export default function WorkflowsPage() {
   const [lastResult, setLastResult] = useState<string>("");
   const [liveEvents, setLiveEvents] = useState<WorkflowRunEvent[]>([]);
   const [selRun, setSelRun] = useState<{ run: WorkflowRunRow; nodes: WorkflowNodeOutput[] } | null>(null);
+  // M6 form interaction: the run the live stream / picked history row is
+  // waiting on, the values being typed into its form, and the in-flight flag.
+  const [waitingForm, setWaitingForm] = useState<{ runID: string; node: string; schema: Record<string, unknown> } | null>(null);
+  const [formValues, setFormValues] = useState<Record<string, unknown>>({});
+  const [resuming, setResuming] = useState(false);
 
   useEffect(() => {
     if (!agentId) return;
@@ -69,17 +75,32 @@ export default function WorkflowsPage() {
     refreshRuns();
   }, [selected, refreshRuns]);
 
+  // asWaitingResult narrows the terminal SSE "result" payload to the fields
+  // the waiting path reads (status / run_id / pending_form).
+  const asWaitingResult = (
+    r: Record<string, unknown> | undefined,
+  ): { run_id?: string; pending_form?: { node: string; schema: Record<string, unknown> } } | undefined =>
+    r as { run_id?: string; pending_form?: { node: string; schema: Record<string, unknown> } } | undefined;
+
   const onRun = async () => {
     if (!agentId || !selected) return;
     setRunning(true);
     setLastResult("");
     setLiveEvents([]);
+    setWaitingForm(null);
+    setFormValues({});
     try {
       const parsed = JSON.parse(input || "{}");
       await runWorkflowStream(agentId, selected, parsed, (e) => {
         setLiveEvents((cur) => [...cur, e]);
         if (e.type === "result") {
-          setLastResult(e.result ? JSON.stringify(e.result, null, 2) : "");
+          const wr = asWaitingResult(e.result);
+          if (e.result?.status === "waiting" && wr?.pending_form) {
+            setWaitingForm({ runID: wr.run_id || "", node: wr.pending_form.node, schema: wr.pending_form.schema });
+            setLastResult("");
+          } else {
+            setLastResult(e.result ? JSON.stringify(e.result, null, 2) : "");
+          }
         } else if (e.type === "error") {
           setLastResult("Error: " + (e.error || "run failed"));
         }
@@ -89,6 +110,40 @@ export default function WorkflowsPage() {
       setLastResult("Error: " + (e instanceof Error ? e.message : String(e)));
     } finally {
       setRunning(false);
+    }
+  };
+
+  // onSubmitForm resumes the waiting run with the typed values. The resumed
+  // walk streams back through the same live-events surface; a failed resume
+  // (e.g. a required field missing) keeps the form up — the run stays waiting.
+  const onSubmitForm = async () => {
+    if (!agentId || !selected || !waitingForm) return;
+    const runID = waitingForm.runID;
+    setResuming(true);
+    try {
+      await resumeWorkflowStream(agentId, selected, runID, formValues, (e) => {
+        setLiveEvents((cur) => [...cur, e]);
+        if (e.type === "result") {
+          const wr = asWaitingResult(e.result);
+          if (e.result?.status === "waiting" && wr?.pending_form) {
+            // Multi-form workflow: the walk parked on the next form.
+            setWaitingForm({ runID: wr.run_id || runID, node: wr.pending_form.node, schema: wr.pending_form.schema });
+            setFormValues({});
+            setLastResult("");
+          } else {
+            setWaitingForm(null);
+            setLastResult(e.result ? JSON.stringify(e.result, null, 2) : "");
+          }
+        } else if (e.type === "error") {
+          setLastResult("Error: " + (e.error || "resume failed"));
+        }
+      });
+      refreshRuns();
+      if (selRun?.run.ID === runID) setSelRun(await getWorkflowRun(agentId, selected, runID));
+    } catch (e) {
+      setLastResult("Error: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setResuming(false);
     }
   };
 
@@ -106,7 +161,17 @@ export default function WorkflowsPage() {
 
   const onPickRun = async (runId: string) => {
     if (!agentId || !selected) return;
-    setSelRun(await getWorkflowRun(agentId, selected, runId));
+    const d = await getWorkflowRun(agentId, selected, runId);
+    setSelRun(d);
+    // A waiting history row reopens its form (M6): render + submit resumes it.
+    if (d.run.Status === "waiting" && d.run.PendingFormNode && d.run.PendingFormSchema) {
+      try {
+        setWaitingForm({ runID: runId, node: d.run.PendingFormNode, schema: JSON.parse(d.run.PendingFormSchema) });
+        setFormValues({});
+      } catch {
+        // bad persisted schema JSON — leave the form closed
+      }
+    }
   };
 
   const onDeleteRun = async (runId: string) => {
@@ -211,6 +276,24 @@ export default function WorkflowsPage() {
                   {lastResult}
                 </pre>
               )}
+              {waitingForm && (
+                <div className="space-y-2 border rounded-lg p-3">
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status="waiting" />
+                    <span className="text-sm font-medium">{t("workflow.formWaiting")}</span>
+                    <span className="text-xs text-muted-foreground font-mono">{waitingForm.node}</span>
+                  </div>
+                  <SchemaForm
+                    schema={waitingForm.schema}
+                    values={formValues}
+                    onChange={setFormValues}
+                    header={t("workflow.formFillHint")}
+                  />
+                  <Button size="sm" onClick={onSubmitForm} disabled={resuming}>
+                    {resuming ? t("workflow.running") : t("workflow.formSubmit")}
+                  </Button>
+                </div>
+              )}
             </section>
 
             <section className="space-y-2">
@@ -284,6 +367,8 @@ function StatusBadge({ status }: { status: string }) {
       ? "default"
       : status === "failed" || status === "needs_intervention"
         ? "destructive"
-        : "secondary";
-  return <Badge variant={variant as "default" | "destructive" | "secondary"}>{status}</Badge>;
+        : status === "waiting"
+          ? "outline"
+          : "secondary";
+  return <Badge variant={variant as "default" | "destructive" | "secondary" | "outline"}>{status}</Badge>;
 }

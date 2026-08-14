@@ -207,7 +207,7 @@ export function WorkflowEditor({
     });
   };
 
-  const addNode = (kind: "tool" | "llm" | "code" | "reply" | "question_rewrite" | "http" | "kb_search" | "set" | "condition") => {
+  const addNode = (kind: "tool" | "llm" | "code" | "reply" | "question_rewrite" | "http" | "kb_search" | "set" | "condition" | "form") => {
     const name = `${kind}_${Date.now().toString(36).slice(-4)}`;
     mutate((d) => {
       if (kind === "question_rewrite") {
@@ -222,6 +222,10 @@ export function WorkflowEditor({
         // kb_search wraps the builtin knowledgebase_search; prefill query bound
         // to the workflow input so a newly-added node runs out of the box.
         d.nodes!.push({ name, kind, input: { query: "${input.question}" } });
+      } else if (kind === "form") {
+        // M6 form node: prefill an approve/notes schema so a newly-added node
+        // demonstrates both a required boolean and an optional text field.
+        d.nodes!.push({ name, kind, input: { properties: { approve: { type: "boolean" }, notes: { type: "string" } }, required: ["approve"] } });
       } else {
         d.nodes!.push({ name, kind });
       }
@@ -404,6 +408,9 @@ export function WorkflowEditor({
             </Button>
             <Button size="sm" variant="outline" onClick={() => addNode("condition")}>
               <Plus className="h-3.5 w-3.5" /> {t("workflow.addCondition")}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => addNode("form")}>
+              <Plus className="h-3.5 w-3.5" /> {t("workflow.addForm")}
             </Button>
             <Button size="sm" variant="outline" onClick={deleteSelected} disabled={!selNode && selEdge == null}>
               <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
@@ -983,20 +990,77 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
   );
 }
 
+// FormSchemaEditor edits a form node's field schema (M6): a JSON textarea
+// (properties / required) with live validation — a parse error keeps the text
+// but flags it, so half-typed JSON never silently drops the schema. External
+// changes (YAML pane) are adopted only when they differ from what this editor
+// last produced, so typing here isn't clobbered mid-keystroke.
+function FormSchemaEditor({
+  value,
+  onChange,
+  t,
+}: {
+  value: Record<string, unknown> | undefined;
+  onChange: (v: Record<string, unknown>) => void;
+  t: (k: string, vars?: Record<string, string | number>) => string;
+}) {
+  const [text, setText] = useState(() => (value && Object.keys(value).length ? JSON.stringify(value, null, 2) : ""));
+  const [err, setErr] = useState<string | null>(null);
+  const lastPushed = useRef<string>("");
+  useEffect(() => {
+    const cur = value && Object.keys(value).length ? JSON.stringify(value, null, 2) : "";
+    if (cur !== lastPushed.current) setText(cur);
+  }, [value]);
+  const apply = (v: string) => {
+    setText(v);
+    try {
+      const parsed = v.trim() ? JSON.parse(v) : {};
+      if (typeof parsed !== "object" || Array.isArray(parsed) || parsed === null) {
+        setErr(t("workflow.formSchemaObject"));
+        return;
+      }
+      setErr(null);
+      lastPushed.current = JSON.stringify(parsed, null, 2);
+      onChange(parsed as Record<string, unknown>);
+    } catch {
+      setErr(t("workflow.yamlError"));
+    }
+  };
+  return (
+    <div className="space-y-1">
+      <span className="text-muted-foreground">{t("workflow.formSchemaHint")}</span>
+      <Textarea
+        rows={6}
+        className="font-mono text-xs"
+        value={text}
+        onChange={(e) => apply(e.target.value)}
+        placeholder={'{\n  "properties": { "email": { "type": "string" } },\n  "required": ["email"]\n}'}
+      />
+      {err && <p className="text-destructive">{err}</p>}
+    </div>
+  );
+}
+
 // SchemaForm renders a typed field per property of an OpenAI-style JSON schema.
 // It's the standard surface every tool exposes itself through (registry
 // ToolInfo.Parameters), so the editor needs no tool-specific code: a builtin
 // get_time, an MCP tool, and a plugin tool all produce the same kind of form.
-function SchemaForm({
+// Exported for the workflows page, which reuses it to render a waiting run's
+// pending form (M6) with the exact same field surface.
+export function SchemaForm({
   schema,
   values,
   onChange,
   agentId,
+  header,
 }: {
   schema?: Record<string, unknown> | null;
   values: Record<string, unknown>;
   onChange: (v: Record<string, unknown>) => void;
   agentId?: string;
+  /** Optional override for the field-group label — the run page's waiting
+   * form (M6) passes a fill-it-in hint instead of the editor's ref-syntax one. */
+  header?: string;
 }) {
   const props = (schema?.properties || {}) as Record<string, { type?: string; description?: string; enum?: string[] }>;
   const required = new Set((schema?.required || []) as string[]);
@@ -1012,7 +1076,7 @@ function SchemaForm({
   return (
     <div className="space-y-1.5">
       <span className="text-muted-foreground font-medium">
-        {`参数（可用 \${input.x} / \${node.y} 引用）`}
+        {header ?? `参数（可用 \${input.x} / \${node.y} 引用）`}
       </span>
       {keys.map((k) => {
         if (hasChannelChat && (k === "channel" || (accountKey !== null && k === accountKey))) return null; // filled by the session picker
@@ -1139,6 +1203,7 @@ function NodeProps({
           <option value="kb_search">kb_search</option>
           <option value="set">set</option>
           <option value="condition">condition</option>
+          <option value="form">form</option>
         </select>
       </label>
 
@@ -1332,6 +1397,10 @@ function NodeProps({
 
       {node.kind === "condition" && (
         <p className="text-muted-foreground italic">{t("workflow.condNodeHint")}</p>
+      )}
+
+      {node.kind === "form" && (
+        <FormSchemaEditor value={node.input as Record<string, unknown> | undefined} onChange={(v) => onEdit("input", v)} t={t} />
       )}
 
       <label className="block">

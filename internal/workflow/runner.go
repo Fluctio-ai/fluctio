@@ -53,6 +53,8 @@ type RunStore interface {
 	FinalizeWorkflowRun(ctx context.Context, id, status, errMsg string) error
 	AppendWorkflowNodeOutput(ctx context.Context, runID, nodeID string, attempt int, status string, output map[string]any, errMsg string) error
 	ListWorkflowNodeOutputs(ctx context.Context, runID string) ([]store.WorkflowNodeOutputRow, error)
+	SetRunWaiting(ctx context.Context, id, formNode string, schema map[string]any) error
+	GetWorkflowRunInput(ctx context.Context, id string) (map[string]any, error)
 }
 
 // Runner executes a Definition's graph against input and returns an
@@ -108,11 +110,13 @@ func newRunID() string {
 type RunOption func(*runConfig)
 
 type runConfig struct {
-	runID   string                // original run id when resuming; "" for a fresh run
-	resume  map[string]NodeOutput // populated by Run from the DB (decision 10)
-	owner   string                // run owner (spec decision 14); "" = system
-	session string                // agent session an LLM-triggered run hangs off; "" = none
-	sink    func(RunEvent)        // M4 streaming: progress events; nil = no streaming
+	runID      string                // original run id when resuming; "" for a fresh run
+	resume     map[string]NodeOutput // populated by Run from the DB (decision 10)
+	owner      string                // run owner (spec decision 14); "" = system
+	session    string                // agent session an LLM-triggered run hangs off; "" = none
+	sink       func(RunEvent)        // M4 streaming: progress events; nil = no streaming
+	formNode   string                // M6: the form node WithFormValues answers; "" = none
+	formValues map[string]any        // M6: user-supplied form answers for formNode
 }
 
 // WithResume resumes a previously-failed run in place. The runner reuses the
@@ -140,6 +144,14 @@ func WithSession(session string) RunOption {
 // (the default) emits nothing, so existing callers are unaffected.
 func WithEventSink(sink func(RunEvent)) RunOption {
 	return func(c *runConfig) { c.sink = sink }
+}
+
+// WithFormValues supplies the user's answers for the named form node during a
+// resume (M6). The values are validated against the node's schema and become
+// its output; a different form node reached later still waits (multi-form
+// workflows resume one form at a time).
+func WithFormValues(node string, values map[string]any) RunOption {
+	return func(c *runConfig) { c.formNode = node; c.formValues = values }
 }
 
 // emit forwards a progress event to the run's sink when one is wired (M4
@@ -221,6 +233,11 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 			return nil, fmt.Errorf("load resume snapshot: %w", err)
 		}
 		cfg.resume = resumeSnap
+		// A resume caller doesn't re-send the input; replay ${input.*}
+		// references against the run's original input object.
+		if orig, ierr := r.store.GetWorkflowRunInput(context.Background(), runID); ierr == nil && len(orig) > 0 {
+			input = orig
+		}
 	} else {
 		runID = r.newID()
 		if err := r.store.CreateWorkflowRun(context.Background(), runID, def.ID, def.Version, input, cfg.session, cfg.owner); err != nil {
@@ -251,9 +268,26 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 			lastOutput = prior.Output
 			r.emit(cfg, RunEvent{Type: EventNodeComplete, Node: name, Status: StatusSucceeded, Output: lastOutput})
 		} else {
-			out, status, msg, perr := r.executeStep(ctx, name, sc, cfg.resume, runID, def)
+			out, status, msg, perr := r.executeStep(ctx, name, sc, cfg, runID, def)
 			if perr != nil {
 				return nil, perr
+			}
+			if status == StatusWaiting {
+				// M6: the run parks on a form node. Waiting is non-terminal —
+				// executeStep already persisted the waiting node row + the
+				// run's pending form; return the schema so the client can
+				// render it and resume with WithFormValues.
+				r.emit(cfg, RunEvent{Type: EventNodeComplete, Node: name, Status: StatusWaiting})
+				snap, err := r.loadSnapshot(context.Background(), runID, def)
+				if err != nil {
+					return nil, fmt.Errorf("load snapshot: %w", err)
+				}
+				return &ExecutionResult{
+					RunID:       runID,
+					Status:      StatusWaiting,
+					PendingForm: &PendingForm{Node: name, Schema: nodeByName(def, name).Input},
+					Snapshot:    snap,
+				}, nil
 			}
 			if status != StatusSucceeded {
 				r.emit(cfg, RunEvent{Type: EventNodeComplete, Node: name, Status: status, Error: msg})
@@ -315,17 +349,20 @@ func resolveWorkflowOutput(def *Definition, sc refScope, lastOutput map[string]a
 // executeStep runs one node's leaf action and persists the outcome, applying
 // the resume rules (skip is the caller's job; refuse non-idempotent failures;
 // re-run at attempt+1). It returns the parsed output plus a terminal
-// status+message when the step itself ends the run, or a go error on a
-// persistence failure.
-func (r *Runner) executeStep(ctx context.Context, name string, sc refScope, resume map[string]NodeOutput, runID string, def *Definition) (map[string]any, Status, string, error) {
+// status+message when the step itself ends the run (failed, or waiting on a
+// form — M6), or a go error on a persistence failure.
+func (r *Runner) executeStep(ctx context.Context, name string, sc refScope, cfg runConfig, runID string, def *Definition) (map[string]any, Status, string, error) {
 	node := nodeByName(def, name)
-	prior, seen := resume[name]
+	prior, seen := cfg.resume[name]
 	if seen && prior.Status == StatusFailed && node.SideEffect == SideEffectNonIdempotent {
 		return nil, StatusNeedsIntervention, "non-idempotent node failed; manual intervention required to resume", nil
 	}
 	attempt := 1
 	if seen {
 		attempt = prior.Attempt + 1
+	}
+	if node.Kind == KindForm {
+		return r.execFormNode(node, attempt, cfg, runID)
 	}
 	out, execErr := r.execNode(ctx, node, sc)
 	if execErr != nil {
@@ -339,6 +376,45 @@ func (r *Runner) executeStep(ctx context.Context, name string, sc refScope, resu
 		return nil, "", "", perr
 	}
 	return out, StatusSucceeded, "", nil
+}
+
+// execFormNode handles a form node (M6). With no matching answers the node
+// parks the run: it appends a "waiting" attempt row, records the pending form
+// on the run, and the caller turns StatusWaiting into a waiting
+// ExecutionResult. With answers (a resume supplying WithFormValues for this
+// node) the values are validated against the node's schema and become the
+// node's output — downstream nodes read them via ${name.field}, the same data
+// flow as any node output. Only an interactive run may wait: cron runs
+// (owner="system") and LLM-triggered runs (session != "") have no form UI, so
+// a form node there fails the run with a clear message instead.
+func (r *Runner) execFormNode(node Node, attempt int, cfg runConfig, runID string) (map[string]any, Status, string, error) {
+	if cfg.formValues == nil || cfg.formNode != node.Name {
+		if cfg.owner == "" || cfg.owner == "system" || cfg.session != "" {
+			msg := "form node requires a manual (web) trigger; cron- and LLM-triggered runs cannot wait on a form"
+			if perr := r.store.AppendWorkflowNodeOutput(context.Background(), runID, node.Name, attempt, string(StatusFailed), nil, msg); perr != nil {
+				return nil, "", "", perr
+			}
+			return nil, StatusFailed, msg, nil
+		}
+		if perr := r.store.AppendWorkflowNodeOutput(context.Background(), runID, node.Name, attempt, string(StatusWaiting), nil, ""); perr != nil {
+			return nil, "", "", perr
+		}
+		if perr := r.store.SetRunWaiting(context.Background(), runID, node.Name, node.Input); perr != nil {
+			return nil, "", "", perr
+		}
+		return nil, StatusWaiting, "", nil
+	}
+	if verr := validateAgainstSchema(node.Input, cfg.formValues, "form"); verr != nil {
+		msg := verr.Error()
+		if perr := r.store.AppendWorkflowNodeOutput(context.Background(), runID, node.Name, attempt, string(StatusFailed), nil, msg); perr != nil {
+			return nil, "", "", perr
+		}
+		return nil, StatusFailed, msg, nil
+	}
+	if perr := r.store.AppendWorkflowNodeOutput(context.Background(), runID, node.Name, attempt, string(StatusSucceeded), cfg.formValues, ""); perr != nil {
+		return nil, "", "", perr
+	}
+	return cfg.formValues, StatusSucceeded, "", nil
 }
 
 // endRun finalizes a failing run and assembles the ExecutionResult. Shared by

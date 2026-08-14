@@ -38,7 +38,9 @@ func (d *DBStore) migrateWorkflowTables(ctx context.Context) error {
 			owner        TEXT NOT NULL DEFAULT '',
 			error        TEXT NOT NULL DEFAULT '',
 			started_at   TEXT NOT NULL,
-			finished_at  TEXT
+			finished_at  TEXT,
+			pending_form_node   TEXT NOT NULL DEFAULT '',
+			pending_form_schema TEXT NOT NULL DEFAULT ''
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_workflow_runs_def ON workflow_runs (def_id)`,
 		`CREATE TABLE IF NOT EXISTS workflow_node_outputs (
@@ -75,6 +77,22 @@ func (d *DBStore) migrateWorkflowTables(ctx context.Context) error {
 	for _, s := range stmts {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {
 			return fmt.Errorf("migrate workflow tables: %w\nSQL: %s", err, s)
+		}
+	}
+	// M6 form columns: retrofit onto installs created before the form feature
+	// (CREATE IF NOT EXISTS won't add them). Same guard pattern as
+	// migrateAgentGoalsAddRouting.
+	for _, col := range []string{"pending_form_node", "pending_form_schema"} {
+		has, err := d.tableHasColumn(ctx, "workflow_runs", col)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`ALTER TABLE workflow_runs ADD COLUMN %s TEXT NOT NULL DEFAULT ''`, col)); err != nil {
+			return fmt.Errorf("add workflow_runs.%s: %w", col, err)
 		}
 	}
 	return nil
@@ -158,14 +176,71 @@ func (d *DBStore) ListWorkflowNodeOutputs(ctx context.Context, runID string) ([]
 	return out, rows.Err()
 }
 
+// GetWorkflowRunInput returns the run's original input object (input_json) —
+// what the resume path replays ${input.*} references against, since a resume
+// caller doesn't re-send the input.
+func (d *DBStore) GetWorkflowRunInput(ctx context.Context, id string) (map[string]any, error) {
+	var inputJSON string
+	err := d.db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT input_json FROM workflow_runs WHERE id = %s`, d.ph(1)), id).Scan(&inputJSON)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var in map[string]any
+	if inputJSON != "" {
+		_ = json.Unmarshal([]byte(inputJSON), &in)
+	}
+	if in == nil {
+		in = map[string]any{}
+	}
+	return in, nil
+}
+
 // MarkRunRunning flips a run back to "running" and clears its finish time,
 // used at resume start (spec decision 15: failed→running while the resume is
-// in flight).
+// in flight). It also drops any pending-form fields — a resumed run either
+// supplies the form values (waiting ends) or fails again, so a stale
+// pending_form must not outlive the resume.
 func (d *DBStore) MarkRunRunning(ctx context.Context, id string) error {
 	_, err := d.db.ExecContext(ctx, fmt.Sprintf(
-		`UPDATE workflow_runs SET status = 'running', finished_at = NULL WHERE id = %s`,
+		`UPDATE workflow_runs SET status = 'running', finished_at = NULL, pending_form_node = '', pending_form_schema = '' WHERE id = %s`,
 		d.ph(1)), id)
 	return err
+}
+
+// SetRunWaiting parks a run on a form node (M6): status=waiting, the pending
+// form's node + schema recorded for clients, no finish time (waiting is
+// non-terminal). The waiting node row itself is a separate
+// AppendWorkflowNodeOutput("waiting") call.
+func (d *DBStore) SetRunWaiting(ctx context.Context, id, formNode string, schema map[string]any) error {
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return fmt.Errorf("marshal form schema: %w", err)
+	}
+	_, err = d.db.ExecContext(ctx, fmt.Sprintf(
+		`UPDATE workflow_runs SET status = 'waiting', pending_form_node = %s, pending_form_schema = %s, error = '', finished_at = NULL WHERE id = %s`,
+		d.ph(1), d.ph(2), d.ph(3)),
+		formNode, string(b), id)
+	return err
+}
+
+// TimeoutWaitingRuns flips waiting runs started before cutoff to
+// needs_intervention (M6 form timeout): a form nobody answers doesn't linger
+// as waiting forever, and needs_intervention (not failed) keeps it visible as
+// a human decision. Returns the rows flipped.
+func (d *DBStore) TimeoutWaitingRuns(ctx context.Context, before time.Time, msg string) (int64, error) {
+	res, err := d.db.ExecContext(ctx, fmt.Sprintf(
+		`UPDATE workflow_runs SET status = 'needs_intervention', error = %s, finished_at = %s
+		 WHERE status = 'waiting' AND started_at < %s`,
+		d.ph(1), d.ph(2), d.ph(3)),
+		msg, nowRFC3339(), before.UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // GetWorkflowRun returns the run-level record, or ErrNotFound if it doesn't exist.
@@ -358,6 +433,10 @@ type WorkflowRunRow struct {
 	Error      string
 	StartedAt  string
 	FinishedAt string
+	// M6: set while status=waiting — the node the run is parked on and its
+	// form schema (JSON string), so the run-detail UI can render the form.
+	PendingFormNode   string
+	PendingFormSchema string
 }
 
 // ListWorkflowRuns lists runs for one workflow def, most-recent-first, capped
@@ -367,7 +446,7 @@ func (d *DBStore) ListWorkflowRuns(ctx context.Context, defID string, limit int)
 		limit = 50
 	}
 	rows, err := d.db.QueryContext(ctx, fmt.Sprintf(
-		`SELECT id, def_id, version, status, session_id, owner, error, started_at, finished_at
+		`SELECT id, def_id, version, status, session_id, owner, error, started_at, finished_at, pending_form_node, pending_form_schema
 		 FROM workflow_runs WHERE def_id = %s
 		 ORDER BY started_at DESC LIMIT %s`, d.ph(1), d.ph(2)), defID, limit)
 	if err != nil {
@@ -377,9 +456,11 @@ func (d *DBStore) ListWorkflowRuns(ctx context.Context, defID string, limit int)
 	var out []WorkflowRunRow
 	for rows.Next() {
 		var r WorkflowRunRow
-		if err := rows.Scan(&r.ID, &r.DefID, &r.Version, &r.Status, &r.SessionID, &r.Owner, &r.Error, &r.StartedAt, &r.FinishedAt); err != nil {
+		var finished sql.NullString
+		if err := rows.Scan(&r.ID, &r.DefID, &r.Version, &r.Status, &r.SessionID, &r.Owner, &r.Error, &r.StartedAt, &finished, &r.PendingFormNode, &r.PendingFormSchema); err != nil {
 			return nil, err
 		}
+		r.FinishedAt = finished.String
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -388,12 +469,14 @@ func (d *DBStore) ListWorkflowRuns(ctx context.Context, defID string, limit int)
 // GetWorkflowRunRow returns the full run-level record, or ErrNotFound.
 func (d *DBStore) GetWorkflowRunRow(ctx context.Context, runID string) (WorkflowRunRow, error) {
 	var r WorkflowRunRow
+	var finished sql.NullString
 	err := d.db.QueryRowContext(ctx, fmt.Sprintf(
-		`SELECT id, def_id, version, status, session_id, owner, error, started_at, finished_at
+		`SELECT id, def_id, version, status, session_id, owner, error, started_at, finished_at, pending_form_node, pending_form_schema
 		 FROM workflow_runs WHERE id = %s`, d.ph(1)), runID).Scan(
-		&r.ID, &r.DefID, &r.Version, &r.Status, &r.SessionID, &r.Owner, &r.Error, &r.StartedAt, &r.FinishedAt)
+		&r.ID, &r.DefID, &r.Version, &r.Status, &r.SessionID, &r.Owner, &r.Error, &r.StartedAt, &finished, &r.PendingFormNode, &r.PendingFormSchema)
 	if err == sql.ErrNoRows {
 		return r, ErrNotFound
 	}
+	r.FinishedAt = finished.String
 	return r, err
 }
