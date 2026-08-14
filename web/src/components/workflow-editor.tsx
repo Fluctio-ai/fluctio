@@ -1216,16 +1216,16 @@ function NodeProps({
           value={node.kind}
           onChange={(e) => onEdit("kind", e.target.value)}
         >
+          {/* Palette kinds only (same four as the add-node buttons). A node
+              still carrying a legacy kind keeps it visible as an extra option
+              so an old YAML doesn't render a blank select. */}
           <option value="tool">tool</option>
           <option value="llm">llm</option>
           <option value="code">code</option>
-          <option value="reply">reply</option>
-          <option value="question_rewrite">question_rewrite</option>
-          <option value="http">http</option>
-          <option value="kb_search">kb_search</option>
-          <option value="set">set</option>
-          <option value="condition">condition</option>
           <option value="form">form</option>
+          {!["tool", "llm", "code", "form"].includes(node.kind) && (
+            <option value={node.kind}>{node.kind}</option>
+          )}
         </select>
       </label>
 
