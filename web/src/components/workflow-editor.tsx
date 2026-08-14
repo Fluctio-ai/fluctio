@@ -152,7 +152,10 @@ export function WorkflowEditor({
           { nodes, edges },
           {
             nodes: { shape: "box", margin: 12, font: { size: 13 } },
-            edges: { arrows: "to", font: { size: 11, align: "middle" } },
+            edges: { arrows: "to", font: { size: 11, align: "middle" }, smooth: { enabled: true, type: "cubicBezier", forceDirection: "horizontal" } },
+            // Left-to-right hierarchical layout with generous separation so
+            // edges run long enough for their `when` labels to render fully.
+            layout: { hierarchical: { direction: "LR", levelSeparation: 260, nodeSpacing: 150, sortMethod: "directed" } },
             interaction: { hover: true },
           },
         );
