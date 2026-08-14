@@ -11,6 +11,7 @@ import {
   getChatSessions,
   getWorkflowYAML,
   listAgentRegisteredTools,
+  listKBSources,
   saveWorkflow,
   type AgentRegisteredTool,
 } from "@/lib/api";
@@ -692,6 +693,85 @@ function SessionPicker({ agentId, channel, chatId, account, onChange }: {
   );
 }
 
+// ArticlePicker — a combobox over the agent's KB sources (articles) for the
+// knowledgebase_* tools' source_id (single) / source_ids (array). Type a title
+// to filter, click to pick; multi-pick toggles membership and shows chips.
+// Saves pasting opaque uuids by hand.
+function ArticlePicker({ agentId, multiple, value, onChange }: {
+  agentId: string;
+  multiple: boolean;
+  value: string | string[];
+  onChange: (v: string | string[]) => void;
+}) {
+  const [srcs, setSrcs] = useState<{ id: string; title?: string }[]>([]);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let off = false;
+    listKBSources(agentId)
+      .then((s) => { if (!off) setSrcs(s as { id: string; title?: string }[]); })
+      .catch(() => {});
+    return () => { off = true; };
+  }, [agentId]);
+  const ql = q.trim().toLowerCase();
+  const filtered = srcs.filter((s) => !ql || (s.title || "").toLowerCase().includes(ql) || s.id.includes(ql));
+  const selected: string[] = multiple
+    ? (Array.isArray(value) ? value : typeof value === "string" && value ? [value] : [])
+    : (typeof value === "string" && value ? [value] : []);
+  const cur = multiple ? null : srcs.find((s) => s.id === value);
+  const display = q || (multiple ? (selected.length ? `${selected.length} 篇已选` : "") : (cur ? cur.title || cur.id : ""));
+  const pick = (id: string) => {
+    if (multiple) {
+      const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
+      onChange(next);
+    } else {
+      onChange(id);
+      setQ("");
+      setOpen(false);
+    }
+  };
+  return (
+    <div className="relative">
+      <input
+        className="border rounded px-1 bg-background w-full text-xs"
+        placeholder={multiple ? "搜文章标题，点选切换（可多选）…" : "搜文章标题…"}
+        value={display}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {multiple && selected.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-0.5">
+          {selected.map((id) => {
+            const s = srcs.find((x) => x.id === id);
+            return (
+              <span key={id} className="text-[10px] bg-muted px-1 rounded flex items-center gap-0.5">
+                {(s?.title || id).slice(0, 16)}
+                <button type="button" onMouseDown={(e) => { e.preventDefault(); pick(id); }} className="text-destructive">✕</button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {open && (
+        <div className="absolute z-10 left-0 right-0 mt-0.5 max-h-48 overflow-auto bg-background border rounded shadow text-xs">
+          {filtered.length === 0 && <p className="px-1 py-1 text-muted-foreground">无匹配文章</p>}
+          {filtered.map((s) => (
+            <button
+              type="button"
+              key={s.id}
+              onMouseDown={(e) => { e.preventDefault(); pick(s.id); }}
+              className={"block w-full text-left px-1 py-0.5 hover:bg-muted " + (selected.includes(s.id) ? "bg-muted/60" : "")}
+            >
+              {multiple ? (selected.includes(s.id) ? "☑ " : "☐ ") : ""}{s.title || s.id}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // SchemaForm renders a typed field per property of an OpenAI-style JSON schema.
 // It's the standard surface every tool exposes itself through (registry
 // ToolInfo.Parameters), so the editor needs no tool-specific code: a builtin
@@ -741,6 +821,20 @@ function SchemaForm({
                   if (keys.includes("account")) next.account = acc;
                   onChange(next);
                 }}
+              />
+            ) : k === "source_id" && agentId ? (
+              <ArticlePicker
+                agentId={agentId}
+                multiple={false}
+                value={typeof v === "string" ? v : ""}
+                onChange={(val) => onChange({ ...values, [k]: val })}
+              />
+            ) : k === "source_ids" && agentId ? (
+              <ArticlePicker
+                agentId={agentId}
+                multiple={true}
+                value={Array.isArray(v) ? (v as string[]) : (typeof v === "string" && v ? [v] : [])}
+                onChange={(val) => onChange({ ...values, [k]: val })}
               />
             ) : p.enum ? (
               <select
