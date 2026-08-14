@@ -149,9 +149,10 @@ type ToolFunc func(ctx context.Context, args json.RawMessage) (string, error)
 type ToolSource int
 
 const (
-	SourceBuiltin ToolSource = iota // built-in tool
-	SourceMCP                       // MCP server tool
-	SourcePlugin                    // plugin-provided tool
+	SourceBuiltin  ToolSource = iota // built-in tool
+	SourceMCP                        // MCP server tool
+	SourcePlugin                     // plugin-provided tool
+	SourceWorkflow                   // a workflow published as a tool
 )
 
 // SideEffect 声明工具的副作用类型，供 agent loop 判定是否需要可达性裁决。
@@ -861,11 +862,12 @@ func (r *Registry) Definitions() []provider.Tool {
 type ToolInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	// Source distinguishes built-in tools from MCP / plugin contributions
-	// so the UI can hint where a tool came from. One of:
-	//   "builtin" — compiled into fluctio
-	//   "mcp"     — exposed by a connected MCP server
-	//   "plugin"  — exposed by a JSON-RPC plugin subprocess
+	// Source distinguishes built-in tools from MCP / plugin / workflow
+	// contributions so the UI can hint where a tool came from. One of:
+	//   "builtin"  — compiled into fluctio
+	//   "mcp"      — exposed by a connected MCP server
+	//   "plugin"   — exposed by a JSON-RPC plugin subprocess
+	//   "workflow" — a workflow published as a tool
 	Source string `json:"source"`
 	// Parameters is the tool's OpenAI-style JSON schema (the same object the
 	// model sees). Exposed so the workflow editor can render a parameter form
@@ -881,6 +883,8 @@ func toolSourceName(s ToolSource) string {
 		return "mcp"
 	case SourcePlugin:
 		return "plugin"
+	case SourceWorkflow:
+		return "workflow"
 	default:
 		return "unknown"
 	}
@@ -904,7 +908,7 @@ func (r *Registry) RegisteredTools() []ToolInfo {
 	// Sort: builtin first, then MCP, then plugin; within each group by
 	// name. Puts the commonly-toggled built-ins at the top of the
 	// dashboard list where the operator usually wants them.
-	sortRank := map[string]int{"builtin": 0, "mcp": 1, "plugin": 2}
+	sortRank := map[string]int{"builtin": 0, "mcp": 1, "plugin": 2, "workflow": 3}
 	// Simple insertion sort — tool lists are tiny (<50) so this is fine
 	// and avoids pulling sort.Slice + closure into the path.
 	for i := 1; i < len(out); i++ {

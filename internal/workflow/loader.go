@@ -28,7 +28,10 @@ func Parse(defID string, data []byte) (*Definition, error) {
 //   - empty-map fields collapse to nil so parse→marshal→parse round-trips
 //     cleanly (yaml.v3 omits empty maps on marshal; an explicit `output: {}`
 //     would otherwise re-parse to nil and break DeepEqual — spec decision 8).
-//   - a node with no side_effect defaults to pure (spec decision 2).
+//
+// side_effect is intentionally NOT defaulted here: an empty value behaves as
+// pure at runtime (the runner only special-cases non-idempotent), and writing
+// "pure" into every node cluttered the YAML for no behavioral gain.
 func normalize(d *Definition) {
 	if len(d.Input.Schema) == 0 {
 		d.Input.Schema = nil
@@ -39,9 +42,6 @@ func normalize(d *Definition) {
 		}
 		if len(d.Nodes[i].Output) == 0 {
 			d.Nodes[i].Output = nil
-		}
-		if d.Nodes[i].SideEffect == "" {
-			d.Nodes[i].SideEffect = SideEffectPure
 		}
 	}
 }

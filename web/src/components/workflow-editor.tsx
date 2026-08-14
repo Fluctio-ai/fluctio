@@ -57,7 +57,7 @@ type AnyEdge = {
   [k: string]: unknown;
 };
 
-const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b" };
+const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b", condition: "#ef4444" };
 const LANGS = ["python", "sh"];
 const TYPES = ["string", "number", "integer", "boolean", "object", "array"];
 const OPS = [">", "<", ">=", "<=", "==", "!="];
@@ -191,7 +191,7 @@ export function WorkflowEditor({
     });
   };
 
-  const addNode = (kind: "tool" | "llm" | "code") => {
+  const addNode = (kind: "tool" | "llm" | "code" | "condition") => {
     const name = `${kind}_${Date.now().toString(36).slice(-4)}`;
     mutate((d) => {
       d.nodes!.push({ name, kind });
@@ -318,6 +318,9 @@ export function WorkflowEditor({
         <Button size="sm" variant="outline" onClick={() => addNode("code")}>
           <Plus className="h-3.5 w-3.5" /> {t("workflow.addCode")}
         </Button>
+        <Button size="sm" variant="outline" onClick={() => addNode("condition")}>
+          <Plus className="h-3.5 w-3.5" /> {t("workflow.addCondition")}
+        </Button>
         <Button size="sm" variant="outline" onClick={deleteSelected} disabled={!selNode && selEdge == null}>
           <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
         </Button>
@@ -430,13 +433,14 @@ function FieldRef({ options, value, onChange, placeholder }: {
 // textarea at the cursor (prompt / code bodies where references embed inside
 // larger text).
 function InsertField({ options, onInsert }: { options: RefOption[]; onInsert: (ref: string) => void }) {
+  const t = useT();
   return (
     <select
       className="border rounded px-1 bg-background text-xs"
       value=""
       onChange={(e) => { if (e.target.value) onInsert(e.target.value); }}
     >
-      <option value="">+ 插入字段</option>
+      <option value="">{t("workflow.insertField")}</option>
       {options.map((o) => (
         <option key={o.ref} value={o.ref}>{o.label}</option>
       ))}
@@ -453,6 +457,7 @@ function KVRows({ obj, options, onChange, valueMode = "ref" }: {
   onChange: (v: Record<string, unknown> | undefined) => void;
   valueMode?: "ref" | "type";
 }) {
+  const t = useT();
   const entries = Object.entries(obj);
   const commit = (next: Record<string, unknown>) => {
     const cleaned = Object.fromEntries(Object.entries(next).filter(([k]) => k));
@@ -501,7 +506,7 @@ function KVRows({ obj, options, onChange, valueMode = "ref" }: {
         variant="outline"
         onClick={() => commit({ ...obj, [addKey]: valueMode === "type" ? "string" : "" })}
       >
-        <Plus className="h-3 w-3" /> {valueMode === "type" ? "+ 字段" : "+ 项"}
+        <Plus className="h-3 w-3" /> {valueMode === "type" ? t("workflow.addField") : t("workflow.addItem")}
       </Button>
     </div>
   );
@@ -513,6 +518,7 @@ function InputSchemaEditor({ schema, onChange }: {
   schema: Record<string, unknown> | undefined;
   onChange: (s: Record<string, unknown> | undefined) => void;
 }) {
+  const t = useT();
   const props = (schema?.properties || {}) as Record<string, { type?: string }>;
   const required = new Set((schema?.required || []) as string[]);
   const entries = Object.entries(props);
@@ -571,7 +577,7 @@ function InputSchemaEditor({ schema, onChange }: {
         variant="outline"
         onClick={() => commit({ ...props, [`field_${entries.length + 1}`]: { type: "string" } }, required)}
       >
-        <Plus className="h-3 w-3" /> + 字段
+        <Plus className="h-3 w-3" /> {t("workflow.addField")}
       </Button>
     </div>
   );
@@ -584,6 +590,7 @@ function OutputMapEditor({ output, options, onChange }: {
   options: RefOption[];
   onChange: (o: Record<string, unknown> | undefined) => void;
 }) {
+  const t = useT();
   const entries = Object.entries(output || {});
   const commit = (next: Record<string, unknown>) => {
     const cleaned = Object.fromEntries(Object.entries(next).filter(([k]) => k));
@@ -621,7 +628,7 @@ function OutputMapEditor({ output, options, onChange }: {
         variant="outline"
         onClick={() => commit({ ...output, [`key_${entries.length + 1}`]: "" })}
       >
-        <Plus className="h-3 w-3" /> + 输出项
+        <Plus className="h-3 w-3" /> {t("workflow.addOutput")}
       </Button>
     </div>
   );
@@ -639,6 +646,7 @@ function SessionPicker({ agentId, channel, chatId, account, onChange }: {
   onChange: (channel: string, chatId: string, account: string) => void;
 }) {
   type Sess = { channel?: string; chatId?: string; title?: string; preview?: string; accountId?: string };
+  const t = useT();
   const [sessions, setSessions] = useState<Sess[]>([]);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
@@ -662,7 +670,7 @@ function SessionPicker({ agentId, channel, chatId, account, onChange }: {
     <div className="relative">
       <input
         className="border rounded px-1 bg-background w-full text-xs"
-        placeholder="输入关键词搜会话（标题/预览/chatId）…"
+        placeholder={t("workflow.sessionSearchPh")}
         value={display}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
@@ -670,7 +678,7 @@ function SessionPicker({ agentId, channel, chatId, account, onChange }: {
       />
       {open && (
         <div className="absolute z-10 left-0 right-0 mt-0.5 max-h-48 overflow-auto bg-background border rounded shadow text-xs">
-          {filtered.length === 0 && <p className="px-1 py-1 text-muted-foreground">无匹配会话</p>}
+          {filtered.length === 0 && <p className="px-1 py-1 text-muted-foreground">{t("workflow.noMatch")}</p>}
           {filtered.map((s) => (
             <button
               type="button"
@@ -704,6 +712,7 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
   onChange: (v: string | string[]) => void;
 }) {
   const [srcs, setSrcs] = useState<{ id: string; title?: string }[]>([]);
+  const t = useT();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -719,7 +728,7 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
     ? (Array.isArray(value) ? value : typeof value === "string" && value ? [value] : [])
     : (typeof value === "string" && value ? [value] : []);
   const cur = multiple ? null : srcs.find((s) => s.id === value);
-  const display = q || (multiple ? (selected.length ? `${selected.length} 篇已选` : "") : (cur ? cur.title || cur.id : ""));
+  const display = q || (multiple ? (selected.length ? t("workflow.Nselected", { n: selected.length }) : "") : (cur ? cur.title || cur.id : ""));
   const pick = (id: string) => {
     if (multiple) {
       const next = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
@@ -734,7 +743,7 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
     <div className="relative">
       <input
         className="border rounded px-1 bg-background w-full text-xs"
-        placeholder={multiple ? "搜文章标题，点选切换（可多选）…" : "搜文章标题…"}
+        placeholder={multiple ? t("workflow.articleMultiPh") : t("workflow.articleSearchPh")}
         value={display}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
@@ -755,7 +764,7 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
       )}
       {open && (
         <div className="absolute z-10 left-0 right-0 mt-0.5 max-h-48 overflow-auto bg-background border rounded shadow text-xs">
-          {filtered.length === 0 && <p className="px-1 py-1 text-muted-foreground">无匹配文章</p>}
+          {filtered.length === 0 && <p className="px-1 py-1 text-muted-foreground">{t("workflow.noMatch")}</p>}
           {filtered.map((s) => (
             <button
               type="button"
@@ -915,6 +924,7 @@ function NodeProps({
           <option value="tool">tool</option>
           <option value="llm">llm</option>
           <option value="code">code</option>
+          <option value="condition">condition</option>
         </select>
       </label>
 
@@ -1005,12 +1015,23 @@ function NodeProps({
         </div>
       )}
 
-      <Field
-        label={t("workflow.sideEffect")}
-        value={node.side_effect || ""}
-        placeholder="pure / idempotent / non-idempotent"
-        onChange={(v) => onEdit("side_effect", v)}
-      />
+      {node.kind === "condition" && (
+        <p className="text-muted-foreground italic">{t("workflow.condNodeHint")}</p>
+      )}
+
+      <label className="block">
+        {t("workflow.sideEffect")}
+        <select
+          className="ml-1 border rounded px-1 bg-background w-full text-xs"
+          value={node.side_effect || ""}
+          onChange={(e) => onEdit("side_effect", e.target.value)}
+        >
+          <option value="">{t("workflow.sideEffectDefault")}</option>
+          <option value="pure">{t("workflow.sideEffectPure")}</option>
+          <option value="idempotent">{t("workflow.sideEffectIdempotent")}</option>
+          <option value="non-idempotent">{t("workflow.sideEffectNonIdempotent")}</option>
+        </select>
+      </label>
 
       <details>
         <summary className="text-muted-foreground cursor-pointer">{t("workflow.outputSchema")}</summary>

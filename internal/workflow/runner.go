@@ -378,6 +378,13 @@ func (r *Runner) execNode(ctx context.Context, node Node, sc refScope) (map[stri
 			return nil, fmt.Errorf("code: %w", err)
 		}
 		return parseOutput(raw), nil
+	case KindCondition:
+		// A condition node is a pure routing point: it runs no leaf, so its
+		// outgoing edges' `when` expressions are what actually decide the
+		// branch. Output is empty — downstream references target real nodes,
+		// not the condition. (spec decision 3; condition-node UI groups the
+		// branch edges, but execution is the same edge language.)
+		return map[string]any{}, nil
 	default:
 		return nil, fmt.Errorf("unknown node kind %q", node.Kind)
 	}

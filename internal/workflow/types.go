@@ -20,9 +20,10 @@ const (
 type NodeKind string
 
 const (
-	KindTool NodeKind = "tool"
-	KindLLM  NodeKind = "llm"
-	KindCode NodeKind = "code"
+	KindTool      NodeKind = "tool"
+	KindLLM       NodeKind = "llm"
+	KindCode      NodeKind = "code"
+	KindCondition NodeKind = "condition"
 )
 
 // SideEffect declares a node's side-effect category (spec decision 2, ADR 0002).

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
@@ -108,7 +109,7 @@ func (a *Agent) registerWorkflowTools() {
 			desc = fmt.Sprintf("Run the %q workflow — a fixed, pre-orchestrated multi-step flow.", id)
 		}
 		schema := svc.ToolSchema(def)
-		reg.Register(id, desc, schema, func(ctx context.Context, raw json.RawMessage) (string, error) {
+		reg.RegisterFrom(id, desc, schema, func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var input map[string]any
 			if len(raw) > 0 {
 				if err := json.Unmarshal(raw, &input); err != nil {
@@ -124,6 +125,6 @@ func (a *Agent) registerWorkflowTools() {
 				return fmt.Sprintf("workflow %s ran (status=%s) but its result could not be encoded", id, res.Status), nil
 			}
 			return string(b), nil
-		})
+		}, tools.SourceWorkflow)
 	}
 }
