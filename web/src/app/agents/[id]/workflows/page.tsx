@@ -5,13 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { Play, Trash2 } from "lucide-react";
+import { Play, Plus, Trash2 } from "lucide-react";
 import {
+  deleteWorkflow,
   deleteWorkflowRun,
   getWorkflowRun,
   listWorkflows,
   listWorkflowRuns,
   runWorkflow,
+  saveWorkflow,
   type WorkflowNodeOutput,
   type WorkflowRunRow,
   type WorkflowSummary,
@@ -95,11 +97,34 @@ export default function WorkflowsPage() {
     if (selRun?.run.ID === runId) setSelRun(null);
     refreshRuns();
   };
+  const onDeleteWorkflow = async () => {
+    if (!agentId || !selected) return;
+    if (!confirm(t("workflow.deleteConfirm"))) return;
+    await deleteWorkflow(agentId, selected);
+    const list = await listWorkflows(agentId);
+    setWorkflows(list);
+    setSelected(list[0]?.id ?? null);
+  };
+  const onCreateWorkflow = async () => {
+    if (!agentId) return;
+    const id = prompt(t("workflow.newIdPrompt"));
+    if (!id) return;
+    await saveWorkflow(agentId, id, "version: 1\nnodes: []\n");
+    const list = await listWorkflows(agentId);
+    setWorkflows(list);
+    setSelected(id);
+  };
 
   return (
-    <div className="flex h-full">
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 p-3 border-b shrink-0">
+        <h2 className="font-semibold">{t("workflow.title")}</h2>
+        <Button size="sm" variant="outline" onClick={onCreateWorkflow}>
+          <Plus className="h-3.5 w-3.5" /> {t("workflow.create")}
+        </Button>
+      </div>
+      <div className="flex flex-1 min-h-0">
       <div className="w-60 shrink-0 border-r overflow-y-auto p-3 space-y-1">
-        <h2 className="font-semibold mb-2">{t("workflow.title")}</h2>
         {loading ? (
           <Skeleton className="h-8 w-full" />
         ) : workflows.length === 0 ? (
@@ -134,6 +159,7 @@ export default function WorkflowsPage() {
                 onSaved={() => {
                   if (agentId) listWorkflows(agentId).then(setWorkflows);
                 }}
+                onDelete={onDeleteWorkflow}
               />
             </section>
             <section className="space-y-2">
@@ -216,6 +242,7 @@ export default function WorkflowsPage() {
             )}
           </>
         )}
+      </div>
       </div>
     </div>
   );

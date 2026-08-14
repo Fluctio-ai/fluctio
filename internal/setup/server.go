@@ -282,6 +282,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{agentID}/workflows", auth(s.handleWorkflowList))
 	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}", auth(s.handleWorkflowGet))
 	mux.HandleFunc("PUT /api/agents/{agentID}/workflows/{wfID}", auth(s.handleWorkflowPut))
+	mux.HandleFunc("DELETE /api/agents/{agentID}/workflows/{wfID}", auth(s.handleWorkflowDelete))
 	mux.HandleFunc("POST /api/agents/{agentID}/workflows/{wfID}/run", auth(s.handleWorkflowRun))
 	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}/runs", auth(s.handleWorkflowRunsList))
 	mux.HandleFunc("GET /api/agents/{agentID}/workflows/{wfID}/runs/{runID}", auth(s.handleWorkflowRunGet))

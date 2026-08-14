@@ -70,10 +70,12 @@ export function WorkflowEditor({
   agentId,
   wfID,
   onSaved,
+  onDelete,
 }: {
   agentId: string;
   wfID: string;
   onSaved: () => void;
+  onDelete: () => void;
 }) {
   const t = useT();
   const [def, setDef] = useState<AnyDef | null>(null);
@@ -304,6 +306,9 @@ export function WorkflowEditor({
         <Button size="sm" onClick={save} disabled={saving}>
           <Save className="h-3.5 w-3.5" /> {saving ? t("workflow.saving") : t("workflow.save")}
         </Button>
+        <Button size="sm" variant="outline" onClick={onDelete}>
+          <Trash2 className="h-3.5 w-3.5" /> {t("workflow.delete")}
+        </Button>
         {msg && (
           <span className={msg.ok ? "text-xs text-green-600" : "text-xs text-destructive"}>
             {msg.text}
@@ -312,9 +317,8 @@ export function WorkflowEditor({
       </div>
 
       {tab === "basic" && (
-        <div className="border rounded p-2 text-xs">
-          <div className="font-semibold mb-2">{t("workflow.flowProps")}</div>
-          <div className="space-y-2">
+        <div className="text-xs space-y-2">
+          <div className="font-semibold">{t("workflow.flowProps")}</div>
             <Field
               label={t("workflow.workflowTitle")}
               value={def.title || ""}
@@ -352,7 +356,6 @@ export function WorkflowEditor({
                 onChange={(o) => mutate((d) => { if (o) d.output = o; else delete d.output; })}
               />
             </div>
-          </div>
         </div>
       )}
 
@@ -575,50 +578,48 @@ function InputSchemaEditor({ schema, onChange }: {
   return (
     <div className="space-y-1 mt-1">
       {entries.map(([name, p], i) => (
-        <div key={i} className="space-y-1">
-          <div className="flex gap-1 items-center">
-            <input
-              className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
-              value={name}
-              onChange={(e) => {
-                const nn = e.target.value;
-                const next: Record<string, Prop> = { ...props };
-                const v = next[name];
-                delete next[name];
-                next[nn] = v;
-                const nr = new Set(required);
-                if (nr.has(name)) { nr.delete(name); nr.add(nn); }
-                commit(next, nr);
-              }}
-            />
-            <select
-              className="border rounded px-1 bg-background text-xs"
-              value={p?.type || "string"}
-              onChange={(e) => commit({ ...props, [name]: { ...p, type: e.target.value } }, required)}
-            >
-              {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
-            </select>
-            <input
-              type="checkbox"
-              checked={required.has(name)}
-              title="required"
-              onChange={(e) => {
-                const nr = new Set(required);
-                if (e.target.checked) nr.add(name); else nr.delete(name);
-                commit(props, nr);
-              }}
-            />
-            <button
-              className="text-destructive text-xs px-1"
-              onClick={() => { const next = { ...props }; delete next[name]; const nr = new Set(required); nr.delete(name); commit(next, nr); }}
-            >✕</button>
-          </div>
+        <div key={i} className="flex gap-1 items-center">
           <input
-            className="border rounded px-1 bg-background text-xs w-full"
+            className="border rounded px-1 bg-background text-xs w-20 shrink-0"
+            value={name}
+            onChange={(e) => {
+              const nn = e.target.value;
+              const next: Record<string, Prop> = { ...props };
+              const v = next[name];
+              delete next[name];
+              next[nn] = v;
+              const nr = new Set(required);
+              if (nr.has(name)) { nr.delete(name); nr.add(nn); }
+              commit(next, nr);
+            }}
+          />
+          <select
+            className="border rounded px-1 bg-background text-xs shrink-0"
+            value={p?.type || "string"}
+            onChange={(e) => commit({ ...props, [name]: { ...p, type: e.target.value } }, required)}
+          >
+            {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
+          </select>
+          <input
+            type="checkbox"
+            checked={required.has(name)}
+            title="required"
+            onChange={(e) => {
+              const nr = new Set(required);
+              if (e.target.checked) nr.add(name); else nr.delete(name);
+              commit(props, nr);
+            }}
+          />
+          <input
+            className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
             value={p?.description || ""}
             placeholder={t("workflow.fieldDescPh")}
             onChange={(e) => commit({ ...props, [name]: { ...p, description: e.target.value } }, required)}
           />
+          <button
+            className="text-destructive text-xs px-1"
+            onClick={() => { const next = { ...props }; delete next[name]; const nr = new Set(required); nr.delete(name); commit(next, nr); }}
+          >✕</button>
         </div>
       ))}
       <Button

@@ -212,6 +212,26 @@ func (s *Server) handleWorkflowRunGet(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "run": run, "nodes": nodes})
 }
 
+// handleWorkflowDelete — DELETE /api/agents/{agentID}/workflows/{wfID}
+//
+// Removes the workflow definition file and reloads the agent's service so the
+// tool it was registered as disappears. Run history is retained (separate
+// table, kept for audit) — only the definition is deleted.
+func (s *Server) handleWorkflowDelete(w http.ResponseWriter, r *http.Request) {
+	ag := s.resolveAgent(r, r.PathValue("agentID"))
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
+		return
+	}
+	path := filepath.Join(ag.WorkflowsDir(), r.PathValue("wfID")+".yaml")
+	if err := os.Remove(path); err != nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "workflow not found"})
+		return
+	}
+	ag.ReloadWorkflows()
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // handleWorkflowPut — PUT /api/agents/{agentID}/workflows/{wfID}
 //
 // Publishes a new version of a workflow: parse + validate the posted YAML, bump

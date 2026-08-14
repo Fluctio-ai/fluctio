@@ -3177,6 +3177,13 @@ export async function saveWorkflow(
   );
   return res.json();
 }
+export async function deleteWorkflow(agentId: string, wfId: string): Promise<boolean> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}`,
+    { method: "DELETE" },
+  );
+  return res.ok;
+}
 export async function runWorkflow(
   agentId: string,
   wfId: string,
