@@ -83,6 +83,7 @@ const zhCN: Record<string, string> = {
   "workflow.addCondition": "判断节点",
   "workflow.condNodeHint": "判断节点：在其出边（when）上配置条件分支",
   "workflow.addForm": "表单节点",
+  "workflow.importSchema": "导入为输出 schema",
   "workflow.formSchemaHint": "表单 schema（JSON）：properties 定义字段、required 声明必填；运行到此节点会暂停等待填写",
   "workflow.formSchemaObject": "schema 必须是一个 JSON 对象",
   "workflow.formWaiting": "等待填写表单",

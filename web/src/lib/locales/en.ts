@@ -83,6 +83,7 @@ const en: Record<string, string> = {
   "workflow.addCondition": "Condition node",
   "workflow.condNodeHint": "Condition node: set branch conditions on its outgoing edges (when)",
   "workflow.addForm": "Form node",
+  "workflow.importSchema": "Import as output schema",
   "workflow.formSchemaHint": "Form schema (JSON): properties define fields, required marks mandatory; the run pauses here waiting for input",
   "workflow.formSchemaObject": "schema must be a JSON object",
   "workflow.formWaiting": "Waiting for form input",

@@ -71,11 +71,16 @@ export function WorkflowEditor({
   wfID,
   onSaved,
   onDelete,
+  injectOutput,
 }: {
   agentId: string;
   wfID: string;
   onSaved: () => void;
   onDelete: () => void;
+  /** One-shot command from the run page: write this inferred {field:{type}}
+   * map onto the named node's output declaration, so FieldRef offers
+   * field-level picks downstream. nonce guards duplicate consumption. */
+  injectOutput?: { node: string; schema: Record<string, unknown>; nonce: number } | null;
 }) {
   const t = useT();
   const [def, setDef] = useState<AnyDef | null>(null);
@@ -206,6 +211,22 @@ export function WorkflowEditor({
       return next;
     });
   };
+
+  // Consume the page-level "import this run's output as schema" command
+  // (nonce-guarded): write the inferred {field:{type}} map onto the node's
+  // output declaration. The editor state + YAML update together via mutate;
+  // the user still saves explicitly.
+  const lastInject = useRef(0);
+  useEffect(() => {
+    if (!injectOutput || injectOutput.nonce === lastInject.current) return;
+    lastInject.current = injectOutput.nonce;
+    const { node, schema } = injectOutput;
+    mutate((d) => {
+      const n = d.nodes!.find((x) => x.name === node);
+      if (n) (n as Record<string, unknown>).output = schema;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [injectOutput]);
 
   const addNode = (kind: "tool" | "llm" | "code" | "reply" | "question_rewrite" | "http" | "kb_search" | "set" | "condition" | "form") => {
     const name = `${kind}_${Date.now().toString(36).slice(-4)}`;
@@ -382,6 +403,11 @@ export function WorkflowEditor({
 
       <div style={{ display: tab === "visual" ? undefined : "none" }} className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Node palette is deliberately four kinds (the user-confirmed
+                core): tool / llm / code / form. The domain kinds (reply,
+                question_rewrite, http, kb_search, set, condition) stay valid
+                in existing YAML — they're just no longer offered as new-node
+                entry points. */}
             <Button size="sm" variant="outline" onClick={() => addNode("tool")}>
               <Plus className="h-3.5 w-3.5" /> {t("workflow.addTool")}
             </Button>
@@ -390,24 +416,6 @@ export function WorkflowEditor({
             </Button>
             <Button size="sm" variant="outline" onClick={() => addNode("code")}>
               <Plus className="h-3.5 w-3.5" /> {t("workflow.addCode")}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addNode("reply")}>
-              <Plus className="h-3.5 w-3.5" /> {t("workflow.addReply")}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addNode("question_rewrite")}>
-              <Plus className="h-3.5 w-3.5" /> {t("workflow.addRewrite")}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addNode("http")}>
-              <Plus className="h-3.5 w-3.5" /> {t("workflow.addHTTP")}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addNode("kb_search")}>
-              <Plus className="h-3.5 w-3.5" /> {t("workflow.addKBSearch")}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addNode("set")}>
-              <Plus className="h-3.5 w-3.5" /> {t("workflow.addSet")}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addNode("condition")}>
-              <Plus className="h-3.5 w-3.5" /> {t("workflow.addCondition")}
             </Button>
             <Button size="sm" variant="outline" onClick={() => addNode("form")}>
               <Plus className="h-3.5 w-3.5" /> {t("workflow.addForm")}

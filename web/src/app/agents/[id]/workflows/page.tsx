@@ -46,6 +46,23 @@ export default function WorkflowsPage() {
   const [waitingForm, setWaitingForm] = useState<{ runID: string; node: string; schema: Record<string, unknown> } | null>(null);
   const [formValues, setFormValues] = useState<Record<string, unknown>>({});
   const [resuming, setResuming] = useState(false);
+  // One-shot command to the editor: import a node's actual run output as its
+  // output schema (nonce makes each click a fresh command even for same node).
+  const [schemaInject, setSchemaInject] = useState<{ node: string; schema: Record<string, unknown>; nonce: number } | null>(null);
+
+  // inferOutputSchema turns an actual node output object into the {field:{type}}
+  // declaration the editor's output schema (and downstream FieldRef) expects.
+  const inferOutputSchema = (out: Record<string, unknown> | null | undefined): Record<string, unknown> => {
+    const s: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(out || {})) {
+      if (typeof v === "string") s[k] = { type: "string" };
+      else if (typeof v === "boolean") s[k] = { type: "boolean" };
+      else if (typeof v === "number") s[k] = { type: Number.isInteger(v) ? "integer" : "number" };
+      else if (Array.isArray(v)) s[k] = { type: "array" };
+      else if (v !== null && typeof v === "object") s[k] = { type: "object" };
+    }
+    return s;
+  };
 
   useEffect(() => {
     if (!agentId) return;
@@ -241,6 +258,7 @@ export default function WorkflowsPage() {
               <WorkflowEditor
                 agentId={agentId ?? ""}
                 wfID={selected}
+                injectOutput={schemaInject}
                 onSaved={() => {
                   if (agentId) listWorkflows(agentId).then(setWorkflows);
                 }}
@@ -345,9 +363,23 @@ export default function WorkflowsPage() {
                         <p className="text-destructive mt-1 whitespace-pre-wrap">{n.Error}</p>
                       )}
                       {n.Output && (
-                        <pre className="mt-1 bg-muted p-1 rounded whitespace-pre-wrap">
-                          {JSON.stringify(n.Output, null, 2)}
-                        </pre>
+                        <>
+                          <pre className="mt-1 bg-muted p-1 rounded whitespace-pre-wrap">
+                            {JSON.stringify(n.Output, null, 2)}
+                          </pre>
+                          {n.Status === "succeeded" && Object.keys(n.Output).length > 0 && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 px-2 text-xs"
+                              onClick={() =>
+                                setSchemaInject({ node: n.NodeID, schema: inferOutputSchema(n.Output as Record<string, unknown>), nonce: Date.now() })
+                              }
+                            >
+                              {t("workflow.importSchema")}
+                            </Button>
+                          )}
+                        </>
                       )}
                     </div>
                   ))}
