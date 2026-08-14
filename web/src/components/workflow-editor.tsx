@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Trash2, Save } from "lucide-react";
 import {
+  getChatSessions,
   getWorkflowYAML,
   listAgentRegisteredTools,
   saveWorkflow,
@@ -340,6 +341,7 @@ export function WorkflowEditor({
               tools={tools}
               selTool={selTool}
               refOptions={refOptions}
+              agentId={agentId}
               onEdit={editNode}
               onAddEdge={addEdge}
               t={t}
@@ -624,6 +626,71 @@ function OutputMapEditor({ output, options, onChange }: {
   );
 }
 
+// SessionPicker — a combobox for the message tool's channel + chat_id: type a
+// keyword and matching chat sessions (title / preview / chatId) drop down live,
+// so picking "AI 新闻" fills BOTH fields. A flat <select> doesn't scale as chats
+// accumulate, so this filters as you type.
+function SessionPicker({ agentId, channel, chatId, onChange }: {
+  agentId: string;
+  channel: string;
+  chatId: string;
+  onChange: (channel: string, chatId: string) => void;
+}) {
+  type Sess = { channel?: string; chatId?: string; title?: string; preview?: string };
+  const [sessions, setSessions] = useState<Sess[]>([]);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let off = false;
+    getChatSessions(agentId)
+      .then((s) => { if (!off) setSessions(s as Sess[]); })
+      .catch(() => {});
+    return () => { off = true; };
+  }, [agentId]);
+  const ql = q.trim().toLowerCase();
+  const filtered = sessions.filter((s) =>
+    !ql ||
+    (s.title || "").toLowerCase().includes(ql) ||
+    (s.preview || "").toLowerCase().includes(ql) ||
+    (s.chatId || "").toLowerCase().includes(ql)
+  );
+  const cur = sessions.find((s) => s.chatId === chatId && s.channel === channel);
+  const display = q || (cur ? `${cur.title || cur.preview || cur.chatId} · ${cur.channel}` : "");
+  return (
+    <div className="relative">
+      <input
+        className="border rounded px-1 bg-background w-full text-xs"
+        placeholder="输入关键词搜会话（标题/预览/chatId）…"
+        value={display}
+        onChange={(e) => { setQ(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && (
+        <div className="absolute z-10 left-0 right-0 mt-0.5 max-h-48 overflow-auto bg-background border rounded shadow text-xs">
+          {filtered.length === 0 && <p className="px-1 py-1 text-muted-foreground">无匹配会话</p>}
+          {filtered.map((s) => (
+            <button
+              type="button"
+              key={s.chatId}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(s.channel || "", s.chatId || "");
+                setQ("");
+                setOpen(false);
+              }}
+              className="block w-full text-left px-1 py-0.5 hover:bg-muted"
+            >
+              <div>{s.title || s.preview || s.chatId}</div>
+              <div className="text-muted-foreground text-[10px]">{s.channel} · {(s.chatId || "").slice(0, 16)}</div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // SchemaForm renders a typed field per property of an OpenAI-style JSON schema.
 // It's the standard surface every tool exposes itself through (registry
 // ToolInfo.Parameters), so the editor needs no tool-specific code: a builtin
@@ -632,21 +699,27 @@ function SchemaForm({
   schema,
   values,
   onChange,
+  agentId,
 }: {
   schema?: Record<string, unknown> | null;
   values: Record<string, unknown>;
   onChange: (v: Record<string, unknown>) => void;
+  agentId?: string;
 }) {
   const props = (schema?.properties || {}) as Record<string, { type?: string; description?: string; enum?: string[] }>;
   const required = new Set((schema?.required || []) as string[]);
   const keys = Object.keys(props);
   if (keys.length === 0) return null;
+  // message-style channel + chat_id pair: one SessionPicker fills both (search
+  // by session title/preview) instead of pasting opaque IDs by hand.
+  const hasChannelChat = keys.includes("channel") && keys.includes("chat_id") && !!agentId;
   return (
     <div className="space-y-1.5">
       <span className="text-muted-foreground font-medium">
         {`参数（可用 \${input.x} / \${node.y} 引用）`}
       </span>
       {keys.map((k) => {
+        if (hasChannelChat && k === "channel") return null; // filled by the chat_id picker below
         const p = props[k];
         const v = values[k];
         const isComplex = p.type === "object" || p.type === "array";
@@ -656,7 +729,14 @@ function SchemaForm({
               {k}
               {required.has(k) ? "*" : ""} <span className="opacity-60">({p.type})</span>
             </span>
-            {p.enum ? (
+            {hasChannelChat && k === "chat_id" ? (
+              <SessionPicker
+                agentId={agentId!}
+                channel={String(values.channel || "")}
+                chatId={String(values.chat_id || "")}
+                onChange={(c, cid) => onChange({ ...values, channel: c, chat_id: cid })}
+              />
+            ) : p.enum ? (
               <select
                 className="border rounded px-1 bg-background w-full text-xs"
                 value={typeof v === "string" ? v : ""}
@@ -696,6 +776,7 @@ function NodeProps({
   tools,
   selTool,
   refOptions,
+  agentId,
   onEdit,
   onAddEdge,
   t,
@@ -705,6 +786,7 @@ function NodeProps({
   tools: AgentRegisteredTool[];
   selTool: AgentRegisteredTool | undefined;
   refOptions: RefOption[];
+  agentId: string;
   onEdit: (p: string, v: unknown) => void;
   onAddEdge: (target: string) => void;
   t: (k: string, vars?: Record<string, string | number>) => string;
@@ -765,6 +847,7 @@ function NodeProps({
               schema={selTool.parameters}
               values={(node.input || {}) as Record<string, unknown>}
               onChange={(v) => onEdit("input", v)}
+              agentId={agentId}
             />
           ) : (
             <div>
