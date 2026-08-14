@@ -1354,7 +1354,7 @@ function NodeProps({
           </label>
           {node.tool && selTool && (
             <p className="text-muted-foreground italic">
-              {locale === "zh-CN" && selTool.source === "builtin" && BUILTIN_TOOL_ZH[selTool.name]
+              {locale === "zh-CN" && (selTool.source === "builtin" || selTool.source === "workflow_sys") && BUILTIN_TOOL_ZH[selTool.name]
                 ? BUILTIN_TOOL_ZH[selTool.name]
                 : selTool.description}
             </p>

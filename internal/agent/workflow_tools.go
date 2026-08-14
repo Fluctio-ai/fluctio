@@ -198,7 +198,7 @@ func (a *Agent) registerWorkflowTools() {
 				return fmt.Sprintf("workflow %s resumed (status=%s) but its result could not be encoded", row.DefID, res.Status), nil
 			}
 			return string(b), nil
-		}, tools.SourceWorkflow)
+		}, tools.SourceWorkflowSys)
 
 	// Workflow authoring tools: let the loop's LLM create / read / update the
 	// agent's workflow YAMLs from conversation, so a workflow can be written
@@ -224,7 +224,7 @@ func (a *Agent) registerWorkflowTools() {
 			}
 			b, _ := json.Marshal(rows)
 			return string(b), nil
-		}, tools.SourceWorkflow)
+		}, tools.SourceWorkflowSys)
 
 	reg.RegisterFrom("workflow_get",
 		"Read a workflow's full YAML by id. Always read before editing so you preserve existing nodes/edges — never rewrite a workflow from memory.",
@@ -247,7 +247,7 @@ func (a *Agent) registerWorkflowTools() {
 				return "", fmt.Errorf("workflow_get: %w", err)
 			}
 			return string(b), nil
-		}, tools.SourceWorkflow)
+		}, tools.SourceWorkflowSys)
 
 	reg.RegisterFrom("workflow_save",
 		"Create or update a workflow (upsert). id is the filename key; yaml is the full workflow definition. A new id creates, an existing id edits and bumps the version; the change applies immediately. YAML shape: nodes are kind tool/llm/code/form; references use ${input.x} (run input) or ${node.field} (a node's output); edges connect nodes as {from, to, when?}. Invalid YAML (unknown node refs, missing entry, bad kind) is rejected with a message — fix and retry.",
@@ -292,5 +292,5 @@ func (a *Agent) registerWorkflowTools() {
 			}
 			a.ReloadWorkflows()
 			return fmt.Sprintf("workflow %s saved (version %d); now available", req.ID, version), nil
-		}, tools.SourceWorkflow)
+		}, tools.SourceWorkflowSys)
 }
