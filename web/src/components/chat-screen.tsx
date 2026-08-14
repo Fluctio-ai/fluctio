@@ -244,10 +244,18 @@ function parseWrittenSize(result: string): number | undefined {
 // files by mtime and every file piled onto the latest bubble after a
 // redeploy (all mtimes reset to the copy moment).
 //
-// scopePrefix mirrors the prefix listAgentFiles returns ("sessions/<sid>/"
-// or "projects/<pid>/") so callers can match against the live file set.
-// Real-time streaming and history reload both call this so a refresh shows
-// the same files under the same bubbles.
+// scopePrefixes mirrors the prefixes listAgentFiles can return, ordered
+// most-specific first. Project chats have TWO possible layouts: ordinary
+// agents write into the per-chat subdir projects/<pid>/<sid>/ (registry.
+// scopeSessionID keeps the session segment), while coding-root agents
+// write straight to the project root projects/<pid>/. The store path a
+// write_file landed at isn't knowable from the tool record alone, so we
+// try candidates in order — with an `exists` oracle (the live file list)
+// the first candidate that actually exists wins; without one (live
+// streaming, listing not fetched yet) the first candidate is the best
+// guess and the turn-end reconcile against listAgentFiles fixes any
+// coding-root miss. Real-time streaming and history reload both call
+// this so a refresh shows the same files under the same bubbles.
 //
 // Files NOT produced through a tool call (exec scripts writing PDFs, etc.)
 // are intentionally excluded — they have no reliable per-turn anchor and
@@ -255,7 +263,8 @@ function parseWrittenSize(result: string): number | undefined {
 // the full listAgentFiles set independently of bubble attribution.
 function extractProducedFiles(
   calls: { name: string; arguments: string; result?: string }[],
-  scopePrefix: string,
+  scopePrefixes: string[],
+  exists?: (p: string) => boolean,
 ): ProducedFile[] {
   const out: ProducedFile[] = [];
   const seen = new Set<string>();
@@ -265,7 +274,15 @@ function extractProducedFiles(
     // check before prefixing — a prefixed "sessions/x/todo.md" contains "/"
     // and would slip past it.
     if (!rawRel || rawRel.startsWith("/") || isSystemFile(rawRel)) return;
-    const full = scopePrefix + rawRel;
+    let full = "";
+    for (const p of scopePrefixes) {
+      const cand = p + rawRel;
+      if (!exists || exists(cand)) {
+        full = cand;
+        break;
+      }
+    }
+    if (full === "") full = scopePrefixes[0] + rawRel;
     if (seen.has(full)) return;
     seen.add(full);
     out.push(size !== undefined ? { path: full, size } : { path: full });
@@ -1423,11 +1440,17 @@ export function ChatScreen() {
           // lists listAgentFiles independently of bubble attribution.
           const listed = await listAgentFiles(selectedAgent, sessionId);
           const sizeByPath = new Map(listed.map((f) => [f.path, f.size]));
-          const scopePrefix = urlProjectId ? `projects/${urlProjectId}/` : `sessions/${sessionId}/`;
+          // Ordinary agents scope project-chat writes to projects/<pid>/<sid>/
+          // while coding-root agents land at the project root — try the
+          // per-chat subdir first, fall back to the root (see
+          // extractProducedFiles). Loose chats have a single layout.
+          const scopePrefixes = urlProjectId
+            ? [`projects/${urlProjectId}/${sessionId}/`, `projects/${urlProjectId}/`]
+            : [`sessions/${sessionId}/`];
           for (let idx = 0; idx < built.length; idx++) {
             const m = built[idx];
             if (m.role !== "tool-group" || !m.toolCalls || m.toolCalls.length === 0) continue;
-            const produced = extractProducedFiles(m.toolCalls, scopePrefix)
+            const produced = extractProducedFiles(m.toolCalls, scopePrefixes, (p) => sizeByPath.has(p))
               .filter((f) => sizeByPath.has(f.path))
               .map((f) => ({ path: f.path, size: sizeByPath.get(f.path) ?? f.size }));
             if (produced.length > 0) built[idx] = { ...m, files: produced };
@@ -1945,8 +1968,14 @@ export function ChatScreen() {
             // bubbles (diffFiles below) and surfaces only in the workspace
             // browser.
             if (tc) {
-              const prefix = projectIdHint ? `projects/${projectIdHint}/` : `sessions/${sessionId}/`;
-              for (const f of extractProducedFiles([tc], prefix)) {
+              // Same two-layout candidates as the history-reload path; no
+              // listing oracle mid-stream, so the first (per-chat subdir)
+              // wins and the turn-end reconcile below corrects coding-root
+              // agents whose files land at the project root instead.
+              const prefixes = projectIdHint
+                ? [`projects/${projectIdHint}/${sessionId}/`, `projects/${projectIdHint}/`]
+                : [`sessions/${sessionId}/`];
+              for (const f of extractProducedFiles([tc], prefixes)) {
                 if (!seenPaths.has(f.path)) {
                   seenPaths.add(f.path);
                   turnFiles.push(f);
@@ -2091,7 +2120,47 @@ export function ChatScreen() {
       }
       // Bubbles carry only tool-produced files (turnFiles). exec output
       // (diffFiles) intentionally stays out — see comment above.
-      const allFiles = [...turnFiles];
+      // Reconcile chip paths against the authoritative listing first: the
+      // live prefix guess can't know the store layout (per-chat subdir
+      // projects/<pid>/<sid>/ vs coding-root projects/<pid>/), and the URL
+      // project hint is only present on a project chat's first send — so a
+      // chip built mid-stream can point at a path that doesn't exist (its
+      // download/preview 404s). Rewrite each chip to the listed path that
+      // carries the same relative tail under this chat's scope.
+      const listedByPath = new Map(postTurnFiles.map((f) => [f.path, f]));
+      const reconcileChipPath = (p: string): string => {
+        if (listedByPath.has(p)) return p;
+        // Strip the scope prefix the chip was built with to recover rel.
+        let rel = "";
+        const sessPrefix = `sessions/${sessionId}/`;
+        const projChat = projectIdHint ? `projects/${projectIdHint}/${sessionId}/` : "";
+        const projRoot = projectIdHint ? `projects/${projectIdHint}/` : "";
+        if (projChat && p.startsWith(projChat)) rel = p.slice(projChat.length);
+        else if (projRoot && p.startsWith(projRoot)) rel = p.slice(projRoot.length);
+        else if (p.startsWith(sessPrefix)) rel = p.slice(sessPrefix.length);
+        if (!rel) return p;
+        // Candidates across every layout this chat could write to: the
+        // loose-chat session dir, this chat's subdir under any project
+        // (listing is agent-wide, so the pid comes from the match itself),
+        // and the hinted project's root (coding-root agents).
+        const cands = [sessPrefix + rel];
+        for (const lp of listedByPath.keys()) {
+          const i = lp.indexOf(`/${sessionId}/`);
+          if (i >= 0 && lp.slice(i + 1 + sessionId.length + 1) === rel) cands.push(lp);
+        }
+        if (projRoot) cands.push(projRoot + rel);
+        for (const c of cands) if (listedByPath.has(c)) return c;
+        return p;
+      };
+      const allFiles: ProducedFile[] = [];
+      const chipSeen = new Set<string>();
+      for (const f of turnFiles) {
+        const p = reconcileChipPath(f.path);
+        if (chipSeen.has(p)) continue;
+        chipSeen.add(p);
+        const listed = listedByPath.get(p);
+        allFiles.push(listed ? { path: p, size: listed.size } : f);
+      }
       // Diagnostic: when sandbox-exec produces a file but the Files
       // panel doesn't show, we need to know whether the API returned
       // the file at all and where the diff dropped it. Cheap to keep.
