@@ -801,15 +801,19 @@ function SchemaForm({
   const keys = Object.keys(props);
   if (keys.length === 0) return null;
   // message-style channel + chat_id pair: one SessionPicker fills both (search
-  // by session title/preview) instead of pasting opaque IDs by hand.
-  const hasChannelChat = keys.includes("channel") && keys.includes("chat_id") && !!agentId;
+  // by session title/preview) instead of pasting opaque IDs by hand. Covers
+  // both naming conventions: chat_id/chatId (message vs create_cron_job),
+  // account/accountId.
+  const chatIdKey = keys.includes("chat_id") ? "chat_id" : keys.includes("chatId") ? "chatId" : null;
+  const accountKey = keys.includes("account") ? "account" : keys.includes("accountId") ? "accountId" : null;
+  const hasChannelChat = !!chatIdKey && keys.includes("channel") && !!agentId;
   return (
     <div className="space-y-1.5">
       <span className="text-muted-foreground font-medium">
         {`参数（可用 \${input.x} / \${node.y} 引用）`}
       </span>
       {keys.map((k) => {
-        if (hasChannelChat && (k === "channel" || k === "account")) return null; // filled by the chat_id picker
+        if (hasChannelChat && (k === "channel" || (accountKey !== null && k === accountKey))) return null; // filled by the session picker
         const p = props[k];
         const v = values[k];
         const isComplex = p.type === "object" || p.type === "array";
@@ -819,15 +823,15 @@ function SchemaForm({
               {k}
               {required.has(k) ? "*" : ""} <span className="opacity-60">({p.type})</span>
             </span>
-            {hasChannelChat && k === "chat_id" ? (
+            {hasChannelChat && k === chatIdKey ? (
               <SessionPicker
                 agentId={agentId!}
                 channel={String(values.channel || "")}
-                chatId={String(values.chat_id || "")}
-                account={keys.includes("account") ? String(values.account || "") : undefined}
+                chatId={String(values[chatIdKey!] || "")}
+                account={accountKey ? String(values[accountKey] || "") : undefined}
                 onChange={(c, cid, acc) => {
-                  const next: Record<string, unknown> = { ...values, channel: c, chat_id: cid };
-                  if (keys.includes("account")) next.account = acc;
+                  const next: Record<string, unknown> = { ...values, channel: c, [chatIdKey!]: cid };
+                  if (accountKey) next[accountKey] = acc;
                   onChange(next);
                 }}
               />
