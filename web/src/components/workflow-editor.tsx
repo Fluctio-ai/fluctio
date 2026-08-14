@@ -64,7 +64,7 @@ const TYPES = ["string", "number", "integer", "boolean", "object", "array"];
 const OPS = [">", "<", ">=", "<=", "==", "!=", "contain", "not_contain"];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyNetwork = { destroy: () => void; on: (e: string, cb: (p: any) => void) => void; redraw?: () => void };
+type AnyNetwork = { destroy: () => void; on: (e: string, cb: (p: any) => void) => void; redraw?: () => void; fit?: () => void };
 
 export function WorkflowEditor({
   agentId,
@@ -169,6 +169,9 @@ export function WorkflowEditor({
             setSelNode(name);
           }
         });
+        // Center the graph in the viewport instead of leaving it stuck in the
+        // top-left corner on first render.
+        network.fit?.();
         networkRef.current = network;
       },
     );
@@ -317,12 +320,12 @@ export function WorkflowEditor({
       </div>
 
       {tab === "basic" && (
-        <div className="text-xs space-y-2">
-          <div className="font-semibold">{t("workflow.flowProps")}</div>
+        <div className="space-y-3">
+          <h3 className="font-semibold">{t("workflow.flowProps")}</h3>
             <Field
               label={t("workflow.workflowTitle")}
-              value={def.title || ""}
-              onChange={(v) => mutate((d) => { if (v) d.title = v; else delete d.title; })}
+              value={def.title || wfID}
+              onChange={(v) => mutate((d) => { if (v && v !== wfID) d.title = v; else delete d.title; })}
             />
             <Field
               label={t("workflow.description")}
@@ -451,19 +454,19 @@ function FieldRef({ options, value, onChange, placeholder }: {
   return (
     <div className="flex gap-1">
       <input
-        className="border rounded px-1 bg-background flex-1 font-mono text-xs min-w-0"
+        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent flex-1 font-mono text-sm min-w-0"
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
       />
       <select
-        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm shrink-0"
+        className="border rounded-lg px-2.5 py-1 h-9 bg-background text-sm shrink-0"
         value=""
         onChange={(e) => { if (e.target.value) onChange(e.target.value); }}
       >
-        <option value="">${"{}"}</option>
+        <option value="" className="bg-background text-foreground">${"{}"}</option>
         {options.map((o) => (
-          <option key={o.ref} value={o.ref}>{o.label}</option>
+          <option key={o.ref} value={o.ref} className="bg-background text-foreground">{o.label}</option>
         ))}
       </select>
     </div>

@@ -19,6 +19,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Native <option> dropdowns default to a white box in dark mode, making the
+   (light) option text invisible. Force every option to the theme background
+   so dropdowns stay readable in both themes — one rule covers all selects. */
+select option {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
