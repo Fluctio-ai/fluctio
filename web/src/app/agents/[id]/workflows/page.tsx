@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { Play, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Play, Plus, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   deleteWorkflow,
   deleteWorkflowRun,
@@ -94,7 +95,11 @@ export default function WorkflowsPage() {
       if (aborted) return;
       setWorkflows(list);
       setLoading(false);
-      setSelected((cur) => cur ?? list[0]?.id ?? null);
+      // Desktop keeps auto-selecting the first workflow; mobile lands on
+      // the list first (master-detail) instead of jumping into the detail.
+      setSelected(
+        (cur) => cur ?? (window.matchMedia("(min-width: 768px)").matches ? list[0]?.id ?? null : null),
+      );
     });
     return () => {
       aborted = true;
@@ -248,7 +253,13 @@ export default function WorkflowsPage() {
   );
   return (
     <div className="flex h-full">
-      <div className="shrink-0 border-r bg-muted/30 overflow-y-auto p-3 space-y-1" style={{ width: listW }}>
+      <div
+        style={{ "--pane-lw": `${listW}px` } as any}
+        className={cn(
+          "border-r bg-muted/30 flex-col w-full md:w-[var(--pane-lw)] md:shrink-0 overflow-y-auto p-3 space-y-1",
+          selected ? "hidden md:flex" : "flex",
+        )}
+      >
         {loading ? (
           <Skeleton className="h-8 w-full" />
         ) : workflows.length === 0 ? (
@@ -270,19 +281,30 @@ export default function WorkflowsPage() {
         )}
       </div>
       {/* Drag handle: widen/narrow the workflow list pane (220–520px),
-          styled to match the knowledge-base source list divider. */}
+          styled to match the knowledge-base source list divider. Hidden on
+          mobile where the list/detail panes swap instead of sitting side by side. */}
       <div
-        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+        className="hidden md:block w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
         onPointerDown={startListDrag}
       />
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+      <div className={cn("flex-1 min-w-0 overflow-y-auto p-4 space-y-6", selected ? "block" : "hidden md:block")}>
         {!selected ? (
           <p className="text-muted-foreground">{t("workflow.selectHint")}</p>
         ) : (
           <>
             <section className="space-y-2">
-              <h3 className="font-semibold">{t("workflow.editor")}</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelected(null)}
+                  className="md:hidden -ml-1 shrink-0 text-muted-foreground hover:text-foreground"
+                  aria-label={t("common.back")}
+                >
+                  <ArrowLeft className="h-5 w-5" />
+                </button>
+                <h3 className="font-semibold">{t("workflow.editor")}</h3>
+              </div>
               <WorkflowEditor
                 agentId={agentId ?? ""}
                 wfID={selected}

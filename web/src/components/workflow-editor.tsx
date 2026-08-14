@@ -359,32 +359,34 @@ export function WorkflowEditor({
 
   return (
     <section className="space-y-3">
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex gap-1 border-b text-xs">
+      <div className="flex items-center gap-2">
+        {/* Tabs scroll horizontally on narrow screens (KB detail-tabs
+            pattern) so they never squeeze the save/delete buttons. */}
+        <div className="flex gap-1 border-b text-xs overflow-x-auto min-w-0">
           {([["basic", "workflow.tabBasic"], ["visual", "workflow.tabVisual"], ["yaml", "workflow.tabYaml"]] as const).map(([k, key]) => (
             <button
               key={k}
               type="button"
               onClick={() => setTab(k)}
-              className={"px-2 py-1 border-b-2 " + (tab === k ? "border-primary font-semibold" : "border-transparent text-muted-foreground")}
+              className={"px-2 py-1 border-b-2 whitespace-nowrap shrink-0 " + (tab === k ? "border-primary font-semibold" : "border-transparent text-muted-foreground")}
             >
               {t(key)}
             </button>
           ))}
         </div>
         <div className="flex-1" />
-        <Button size="sm" onClick={save} disabled={saving}>
-          <Save className="h-3.5 w-3.5" /> {saving ? t("workflow.saving") : t("workflow.save")}
+        <Button size="sm" className="shrink-0" onClick={save} disabled={saving} title={saving ? t("workflow.saving") : t("workflow.save")}>
+          <Save className="h-3.5 w-3.5" /> <span className="hidden md:inline">{saving ? t("workflow.saving") : t("workflow.save")}</span>
         </Button>
-        <Button size="sm" variant="outline" onClick={onDelete}>
-          <Trash2 className="h-3.5 w-3.5" /> {t("workflow.delete")}
+        <Button size="sm" variant="outline" className="shrink-0" onClick={onDelete} title={t("workflow.delete")}>
+          <Trash2 className="h-3.5 w-3.5" /> <span className="hidden md:inline">{t("workflow.delete")}</span>
         </Button>
-        {msg && (
-          <span className={msg.ok ? "text-xs text-green-600" : "text-xs text-destructive"}>
-            {msg.text}
-          </span>
-        )}
       </div>
+      {msg && (
+        <p className={msg.ok ? "text-xs text-green-600" : "text-xs text-destructive"}>
+          {msg.text}
+        </p>
+      )}
 
       {tab === "basic" && (
         <div className="space-y-3">
@@ -452,17 +454,17 @@ export function WorkflowEditor({
               <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
             </Button>
           </div>
-          <div className="flex">
-            <div ref={containerRef} className="h-[480px] flex-1 rounded border bg-muted/30" />
+          <div style={{ "--pane-pw": `${propsW}px` } as any} className="flex flex-col md:flex-row">
+            <div ref={containerRef} className="h-[480px] w-full md:flex-1 rounded border bg-muted/30" />
             {/* Resizable props panel: same transparent drag handle as the
-                workflow-list / knowledge-base dividers. */}
+                workflow-list / knowledge-base dividers. Mobile stacks the
+                panel under the canvas instead of squeezing it beside. */}
             <div
-              className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+              className="hidden md:block w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
               onPointerDown={startPropsDrag}
             />
             <div
-              className="shrink-0 border-l bg-muted/30 overflow-y-auto max-h-[480px] space-y-2 text-xs"
-              style={{ width: propsW }}
+              className="shrink-0 border-t md:border-t-0 md:border-l bg-muted/30 overflow-y-auto md:max-h-[480px] space-y-2 text-xs w-full md:w-[var(--pane-pw)]"
             >
               <h4 className="font-semibold">{t("workflow.props")}</h4>
               {selNodeObj ? (
