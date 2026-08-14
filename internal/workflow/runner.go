@@ -378,13 +378,6 @@ func (r *Runner) execNode(ctx context.Context, node Node, sc refScope) (map[stri
 			return nil, fmt.Errorf("code: %w", err)
 		}
 		return parseOutput(raw), nil
-	case KindCondition:
-		// A condition node is a pure routing point: it runs no leaf, so its
-		// outgoing edges' `when` expressions are what actually decide the
-		// branch. Output is empty — downstream references target real nodes,
-		// not the condition. (spec decision 3; condition-node UI groups the
-		// branch edges, but execution is the same edge language.)
-		return map[string]any{}, nil
 	default:
 		return nil, fmt.Errorf("unknown node kind %q", node.Kind)
 	}
@@ -644,7 +637,7 @@ func (r *Runner) llmRoute(ctx context.Context, candidates []Edge) (string, bool)
 }
 
 // evalExpr evaluates a deterministic when expression "${ref} OP literal".
-var exprPattern = regexp.MustCompile(`^\$\{([^}]+)\}\s*(>=|<=|==|!=|>|<)\s*(.+)$`)
+var exprPattern = regexp.MustCompile(`^\$\{([^}]+)\}\s*(>=|<=|==|!=|>|<|contain|not_contain)\s*(.+)$`)
 
 func evalExpr(expr string, sc refScope) (bool, error) {
 	expr = strings.TrimSpace(expr)
@@ -704,6 +697,12 @@ func splitTop(expr, op string) []string {
 // compare applies op to val and a literal. Numbers compare numerically; == / !=
 // also work on strings.
 func compare(val any, op, literal string) (bool, error) {
+	switch op {
+	case "contain":
+		return containsVal(val, literal), nil
+	case "not_contain":
+		return !containsVal(val, literal), nil
+	}
 	vf, verr := toFloat(val)
 	lf, lerr := toFloat(literal)
 	if verr == nil && lerr == nil {
@@ -746,4 +745,23 @@ func toFloat(v any) (float64, error) {
 		return strconv.ParseFloat(x, 64)
 	}
 	return 0, fmt.Errorf("not a number: %T", v)
+}
+
+// containsVal reports whether val contains literal: substring match for a
+// string, element match (stringified) for an array, else substring of val's
+// string form. Backs the `contain` / `not_contain` edge operators (arrays from
+// upstream list outputs, substrings from text).
+func containsVal(val any, literal string) bool {
+	switch x := val.(type) {
+	case string:
+		return strings.Contains(x, literal)
+	case []any:
+		for _, v := range x {
+			if fmt.Sprint(v) == literal {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.Contains(fmt.Sprint(val), literal)
 }

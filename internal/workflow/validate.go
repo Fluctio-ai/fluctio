@@ -118,9 +118,8 @@ func exactlyOneEntry(def *Definition) error {
 func validateNodeKinds(def *Definition) error {
 	for _, n := range def.Nodes {
 		switch n.Kind {
-		case KindTool, KindLLM, KindCondition:
-			// not enforced — see the doc note above. condition is a pure
-			// routing point (no body); its branches live on outgoing edges.
+		case KindTool, KindLLM:
+			// not enforced — see the doc note above.
 		case KindCode:
 			if n.Code == "" {
 				return &ValidationError{Node: n.Name, Field: "code", Message: "code node requires a code body"}

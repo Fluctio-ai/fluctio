@@ -58,13 +58,13 @@ type AnyEdge = {
   [k: string]: unknown;
 };
 
-const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b", condition: "#ef4444" };
+const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b" };
 const LANGS = ["python", "sh"];
 const TYPES = ["string", "number", "integer", "boolean", "object", "array"];
-const OPS = [">", "<", ">=", "<=", "==", "!="];
+const OPS = [">", "<", ">=", "<=", "==", "!=", "contain", "not_contain"];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyNetwork = { destroy: () => void; on: (e: string, cb: (p: any) => void) => void };
+type AnyNetwork = { destroy: () => void; on: (e: string, cb: (p: any) => void) => void; redraw?: () => void };
 
 export function WorkflowEditor({
   agentId,
@@ -176,6 +176,15 @@ export function WorkflowEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [def]);
 
+  // Switching back to the visual tab: the canvas container was display:none on
+  // the other tabs, so vis-network drew it at size 0. Redraw now that it's
+  // visible so it picks up the real size.
+  useEffect(() => {
+    if (tab === "visual" && networkRef.current) {
+      networkRef.current.redraw?.();
+    }
+  }, [tab]);
+
   const dump = (d: AnyDef) => {
     try {
       return yDump(d, { lineWidth: -1, noRefs: true });
@@ -193,7 +202,7 @@ export function WorkflowEditor({
     });
   };
 
-  const addNode = (kind: "tool" | "llm" | "code" | "condition") => {
+  const addNode = (kind: "tool" | "llm" | "code") => {
     const name = `${kind}_${Date.now().toString(36).slice(-4)}`;
     mutate((d) => {
       d.nodes!.push({ name, kind });
@@ -222,20 +231,6 @@ export function WorkflowEditor({
     mutate((d) => {
       d.edges!.push({ from: selNode, to: target });
     });
-  };
-  // editEdgeAt mutates a specific edge by index (used by the condition node's
-  // branch editor, which edits several edges without selecting each).
-  const editEdgeAt = (i: number, prop: string, value: string) => {
-    mutate((d) => {
-      const e = d.edges![i];
-      if (!e) return;
-      if (value === "") delete (e as Record<string, unknown>)[prop];
-      else (e as Record<string, unknown>)[prop] = value;
-    });
-  };
-  const addBranchEdge = (from: string, target: string) => {
-    if (!from || from === target) return;
-    mutate((d) => { d.edges!.push({ from, to: target, when: "" }); });
   };
   const editNode = (prop: string, value: unknown) => {
     if (!selNode) return;
@@ -317,9 +312,9 @@ export function WorkflowEditor({
       </div>
 
       {tab === "basic" && (
-        <details className="border rounded p-2 text-xs" open>
-          <summary className="font-semibold cursor-pointer">{t("workflow.flowProps")}</summary>
-          <div className="mt-2 space-y-2">
+        <div className="border rounded p-2 text-xs">
+          <div className="font-semibold mb-2">{t("workflow.flowProps")}</div>
+          <div className="space-y-2">
             <Field
               label={t("workflow.workflowTitle")}
               value={def.title || ""}
@@ -358,11 +353,10 @@ export function WorkflowEditor({
               />
             </div>
           </div>
-        </details>
+        </div>
       )}
 
-      {tab === "visual" && (
-        <>
+      <div style={{ display: tab === "visual" ? undefined : "none" }} className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
             <Button size="sm" variant="outline" onClick={() => addNode("tool")}>
               <Plus className="h-3.5 w-3.5" /> {t("workflow.addTool")}
@@ -372,9 +366,6 @@ export function WorkflowEditor({
             </Button>
             <Button size="sm" variant="outline" onClick={() => addNode("code")}>
               <Plus className="h-3.5 w-3.5" /> {t("workflow.addCode")}
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => addNode("condition")}>
-              <Plus className="h-3.5 w-3.5" /> {t("workflow.addCondition")}
             </Button>
             <Button size="sm" variant="outline" onClick={deleteSelected} disabled={!selNode && selEdge == null}>
               <Trash2 className="h-3.5 w-3.5" /> {t("workflow.deleteSel")}
@@ -392,11 +383,8 @@ export function WorkflowEditor({
                   selTool={selTool}
                   refOptions={refOptions}
                   agentId={agentId}
-                  edges={def.edges!}
                   onEdit={editNode}
-                  onEditEdgeAt={editEdgeAt}
                   onAddEdge={addEdge}
-                  onAddBranchEdge={addBranchEdge}
                   t={t}
                 />
               ) : selEdgeObj ? (
@@ -406,11 +394,9 @@ export function WorkflowEditor({
               )}
             </div>
           </div>
-        </>
-      )}
+        </div>
 
-      {tab === "yaml" && (
-        <div className="space-y-1">
+      <div style={{ display: tab === "yaml" ? undefined : "none" }}>
           <h4 className="text-xs font-semibold">YAML</h4>
           <Textarea
             value={yamlText}
@@ -419,7 +405,6 @@ export function WorkflowEditor({
             className="font-mono text-xs"
           />
         </div>
-      )}
     </section>
   );
 }
@@ -566,16 +551,19 @@ function KVRows({ obj, options, onChange, valueMode = "ref" }: {
 }
 
 // InputSchemaEditor — structured editor for the workflow entry input schema
-// (field name + type + required checkbox), replacing the raw JSON textarea.
+// (field name + type + required + description), replacing the raw JSON
+// textarea. The description flows into the tool schema the LLM sees when the
+// workflow is registered as a tool, so the model knows what each field is for.
 function InputSchemaEditor({ schema, onChange }: {
   schema: Record<string, unknown> | undefined;
   onChange: (s: Record<string, unknown> | undefined) => void;
 }) {
   const t = useT();
-  const props = (schema?.properties || {}) as Record<string, { type?: string }>;
+  type Prop = { type?: string; description?: string };
+  const props = (schema?.properties || {}) as Record<string, Prop>;
   const required = new Set((schema?.required || []) as string[]);
   const entries = Object.entries(props);
-  const commit = (nextProps: Record<string, { type?: string }>, nextReq: Set<string>) => {
+  const commit = (nextProps: Record<string, Prop>, nextReq: Set<string>) => {
     const np = Object.fromEntries(Object.entries(nextProps).filter(([, v]) => v));
     if (Object.keys(np).length === 0) { onChange(undefined); return; }
     onChange({
@@ -587,42 +575,50 @@ function InputSchemaEditor({ schema, onChange }: {
   return (
     <div className="space-y-1 mt-1">
       {entries.map(([name, p], i) => (
-        <div key={i} className="flex gap-1 items-center">
+        <div key={i} className="space-y-1">
+          <div className="flex gap-1 items-center">
+            <input
+              className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
+              value={name}
+              onChange={(e) => {
+                const nn = e.target.value;
+                const next: Record<string, Prop> = { ...props };
+                const v = next[name];
+                delete next[name];
+                next[nn] = v;
+                const nr = new Set(required);
+                if (nr.has(name)) { nr.delete(name); nr.add(nn); }
+                commit(next, nr);
+              }}
+            />
+            <select
+              className="border rounded px-1 bg-background text-xs"
+              value={p?.type || "string"}
+              onChange={(e) => commit({ ...props, [name]: { ...p, type: e.target.value } }, required)}
+            >
+              {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
+            </select>
+            <input
+              type="checkbox"
+              checked={required.has(name)}
+              title="required"
+              onChange={(e) => {
+                const nr = new Set(required);
+                if (e.target.checked) nr.add(name); else nr.delete(name);
+                commit(props, nr);
+              }}
+            />
+            <button
+              className="text-destructive text-xs px-1"
+              onClick={() => { const next = { ...props }; delete next[name]; const nr = new Set(required); nr.delete(name); commit(next, nr); }}
+            >✕</button>
+          </div>
           <input
-            className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
-            value={name}
-            onChange={(e) => {
-              const nn = e.target.value;
-              const next: Record<string, { type?: string }> = { ...props };
-              const v = next[name];
-              delete next[name];
-              next[nn] = v;
-              const nr = new Set(required);
-              if (nr.has(name)) { nr.delete(name); nr.add(nn); }
-              commit(next, nr);
-            }}
+            className="border rounded px-1 bg-background text-xs w-full"
+            value={p?.description || ""}
+            placeholder={t("workflow.fieldDescPh")}
+            onChange={(e) => commit({ ...props, [name]: { ...p, description: e.target.value } }, required)}
           />
-          <select
-            className="border rounded px-1 bg-background text-xs"
-            value={p?.type || "string"}
-            onChange={(e) => commit({ ...props, [name]: { ...p, type: e.target.value } }, required)}
-          >
-            {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
-          </select>
-          <input
-            type="checkbox"
-            checked={required.has(name)}
-            title="required"
-            onChange={(e) => {
-              const nr = new Set(required);
-              if (e.target.checked) nr.add(name); else nr.delete(name);
-              commit(props, nr);
-            }}
-          />
-          <button
-            className="text-destructive text-xs px-1"
-            onClick={() => { const next = { ...props }; delete next[name]; const nr = new Set(required); nr.delete(name); commit(next, nr); }}
-          >✕</button>
         </div>
       ))}
       <Button
@@ -834,6 +830,48 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
   );
 }
 
+// ValuePicker — the right-hand side of a comparison: pick "变量" to choose a
+// ${node.field} from a dropdown, or "值" to type a literal (0.8 / "en" / ...).
+// One consistent choose-style for the value slot, whether it's a var or not.
+function ValuePicker({ options, value, onChange, t }: {
+  options: RefOption[];
+  value: string;
+  onChange: (v: string) => void;
+  t: (k: string, vars?: Record<string, string | number>) => string;
+}) {
+  const isVar = /^\$\{[^}]+\}$/.test(value);
+  const [mode, setMode] = React.useState<"var" | "literal">(isVar ? "var" : "literal");
+  return (
+    <div className="flex gap-1">
+      <select
+        className="border rounded px-1 bg-background text-xs shrink-0"
+        value={mode}
+        onChange={(e) => { setMode(e.target.value as "var" | "literal"); onChange(""); }}
+      >
+        <option value="var">{t("workflow.valueVar")}</option>
+        <option value="literal">{t("workflow.valueLiteral")}</option>
+      </select>
+      {mode === "var" ? (
+        <select
+          className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="">—</option>
+          {options.map((o) => <option key={o.ref} value={o.ref}>{o.label}</option>)}
+        </select>
+      ) : (
+        <input
+          className="border rounded px-1 bg-background text-xs flex-1 min-w-0"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="0.8 / en / …"
+        />
+      )}
+    </div>
+  );
+}
+
 // ConditionRows edits one edge's `when` as structured rows (field + operator +
 // value, AND/OR combine). Falls back to a raw input when the expression can't
 // be structurally parsed. Shared by EdgeProps and the condition node's branches.
@@ -898,7 +936,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
                     <button type="button" className="text-destructive text-xs px-1" disabled={rows.length <= 1}
                       onClick={() => update(combine, rows.filter((_, j) => j !== i))}>✕</button>
                   </div>
-                  <FieldRef options={refOptions} value={r.value} placeholder="值或 ${变量}"
+                  <ValuePicker options={refOptions} value={r.value} t={t}
                     onChange={(val) => update(combine, rows.map((x, j) => j === i ? { ...x, value: val } : x))} />
                 </div>
               ))}
@@ -912,42 +950,6 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-// ConditionBranches — the condition node's branch editor: lists the node's
-// outgoing edges, each rendered as a branch with its own ConditionRows (field +
-// operator + value). Add a branch by picking a target node (creates an edge).
-function ConditionBranches({ node, edges, others, refOptions, onEdgeWhen, onAddBranch, t }: {
-  node: AnyNode;
-  edges: AnyEdge[];
-  others: AnyNode[];
-  refOptions: RefOption[];
-  onEdgeWhen: (edgeIndex: number, when: string) => void;
-  onAddBranch: (target: string) => void;
-  t: (k: string, vars?: Record<string, string | number>) => string;
-}) {
-  const branchIdxs = edges.map((e, i) => ({ e, i })).filter(({ e }) => e.from === node.name);
-  const [newTarget, setNewTarget] = React.useState("");
-  return (
-    <div className="space-y-2">
-      <span className="text-muted-foreground">{t("workflow.condBranchesHint")}</span>
-      {branchIdxs.map(({ e, i }) => (
-        <div key={i} className="border rounded p-1.5 space-y-1 bg-muted/20">
-          <div className="font-medium text-xs">→ {e.to}</div>
-          <ConditionRows when={e.when || ""} refOptions={refOptions} onChange={(w) => onEdgeWhen(i, w)} t={t} defaultExpr />
-        </div>
-      ))}
-      <div className="flex gap-1">
-        <select className="border rounded px-1 bg-background text-xs flex-1" value={newTarget} onChange={(e) => setNewTarget(e.target.value)}>
-          <option value="">{t("workflow.condAddBranchTo")}</option>
-          {others.filter((o) => o.name !== node.name).map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
-        </select>
-        <Button size="sm" variant="outline" disabled={!newTarget} onClick={() => { onAddBranch(newTarget); setNewTarget(""); }}>
-          <Plus className="h-3 w-3" /> {t("workflow.condAddBranch")}
-        </Button>
-      </div>
     </div>
   );
 }
@@ -1061,11 +1063,8 @@ function NodeProps({
   selTool,
   refOptions,
   agentId,
-  edges,
   onEdit,
-  onEditEdgeAt,
   onAddEdge,
-  onAddBranchEdge,
   t,
 }: {
   node: AnyNode;
@@ -1074,11 +1073,8 @@ function NodeProps({
   selTool: AgentRegisteredTool | undefined;
   refOptions: RefOption[];
   agentId: string;
-  edges: AnyEdge[];
   onEdit: (p: string, v: unknown) => void;
-  onEditEdgeAt: (i: number, prop: string, value: string) => void;
   onAddEdge: (target: string) => void;
-  onAddBranchEdge: (from: string, target: string) => void;
   t: (k: string, vars?: Record<string, string | number>) => string;
 }) {
   const [target, setTarget] = React.useState("");
@@ -1105,7 +1101,6 @@ function NodeProps({
           <option value="tool">tool</option>
           <option value="llm">llm</option>
           <option value="code">code</option>
-          <option value="condition">condition</option>
         </select>
       </label>
 
@@ -1194,18 +1189,6 @@ function NodeProps({
             placeholder="# python/sh 代码；print 结果到 stdout；可用 ${input.x} / ${node.y}"
           />
         </div>
-      )}
-
-      {node.kind === "condition" && (
-        <ConditionBranches
-          node={node}
-          edges={edges}
-          others={others}
-          refOptions={refOptions}
-          onEdgeWhen={(i, w) => onEditEdgeAt(i, "when", w)}
-          onAddBranch={(target) => onAddBranchEdge(node.name, target)}
-          t={t}
-        />
       )}
 
       <label className="block">
