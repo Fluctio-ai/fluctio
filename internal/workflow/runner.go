@@ -384,13 +384,17 @@ func (r *Runner) executeStep(ctx context.Context, name string, sc refScope, cfg 
 // ExecutionResult. With answers (a resume supplying WithFormValues for this
 // node) the values are validated against the node's schema and become the
 // node's output — downstream nodes read them via ${name.field}, the same data
-// flow as any node output. Only an interactive run may wait: cron runs
-// (owner="system") and LLM-triggered runs (session != "") have no form UI, so
-// a form node there fails the run with a clear message instead.
+// flow as any node output.
+//
+// Who may wait: interactive runs with an owner — manual/web triggers, and
+// LLM-triggered runs inside a conversation (the loop's LLM relays the form as
+// natural-language Q&A and calls the workflow_resume tool with the user's
+// answers; the tool result carries the schema). Only ownerless/system runs
+// (cron) have nobody to ask and fail the run instead.
 func (r *Runner) execFormNode(node Node, attempt int, cfg runConfig, runID string) (map[string]any, Status, string, error) {
 	if cfg.formValues == nil || cfg.formNode != node.Name {
-		if cfg.owner == "" || cfg.owner == "system" || cfg.session != "" {
-			msg := "form node requires a manual (web) trigger; cron- and LLM-triggered runs cannot wait on a form"
+		if cfg.owner == "" || cfg.owner == "system" {
+			msg := "form node requires an interactive trigger; cron-triggered runs cannot wait on a form"
 			if perr := r.store.AppendWorkflowNodeOutput(context.Background(), runID, node.Name, attempt, string(StatusFailed), nil, msg); perr != nil {
 				return nil, "", "", perr
 			}

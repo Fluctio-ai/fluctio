@@ -167,9 +167,10 @@ func TestRunner_FormResume_MissingRequired(t *testing.T) {
 	}
 }
 
-// M6 AC — trigger-source gate: a cron-style run (owner="system") and an
-// LLM-triggered run (session != "") cannot wait on a form — the run fails
-// with a clear message instead of parking.
+// M6 AC — trigger-source gate: a cron-style run (owner="system") cannot wait
+// on a form (nobody to ask) and fails with a clear message; an LLM-triggered
+// run (session != "") DOES wait — the conversation's LLM relays the form as
+// Q&A and resumes it via the workflow_resume tool.
 func TestRunner_FormTriggerGate(t *testing.T) {
 	def := mustParse(t, formYAML)
 	tools := &fakeTools{out: map[string]string{"t1": `{"ok":1}`}}
@@ -181,7 +182,7 @@ func TestRunner_FormTriggerGate(t *testing.T) {
 		t.Fatalf("cron run: %v", err)
 	}
 	if res.Status != workflow.StatusFailed || res.Error == nil ||
-		!strings.Contains(res.Error.Message, "manual (web) trigger") {
+		!strings.Contains(res.Error.Message, "interactive trigger") {
 		t.Fatalf("cron run status=%s err=%+v, want failed with trigger message", res.Status, res.Error)
 	}
 
@@ -191,9 +192,8 @@ func TestRunner_FormTriggerGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("llm run: %v", err)
 	}
-	if res2.Status != workflow.StatusFailed || res2.Error == nil ||
-		!strings.Contains(res2.Error.Message, "manual (web) trigger") {
-		t.Fatalf("llm run status=%s err=%+v, want failed with trigger message", res2.Status, res2.Error)
+	if res2.Status != workflow.StatusWaiting || res2.PendingForm == nil || res2.PendingForm.Node != "collect" {
+		t.Fatalf("llm run status=%s pending=%+v, want waiting on collect", res2.Status, res2.PendingForm)
 	}
 }
 

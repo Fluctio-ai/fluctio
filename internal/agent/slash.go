@@ -699,6 +699,12 @@ func formatWorkflowResult(res *workflow.ExecutionResult, lang string) string {
 		b, _ := json.Marshal(res.Result)
 		return slashTf(lang, "workflow.succeeded", string(b))
 	}
+	// M6: a waiting run parks on a form; on IM there is no form UI, so tell the
+	// user to answer in chat — the loop's LLM submits via workflow_resume.
+	if res.Status == workflow.StatusWaiting && res.PendingForm != nil {
+		b, _ := json.Marshal(res.PendingForm.Schema)
+		return slashTf(lang, "workflow.formWaited", res.PendingForm.Node, res.RunID, string(b))
+	}
 	if res.Error != nil {
 		return slashTf(lang, "workflow.errorNode", res.Error.Node, res.Error.Message)
 	}

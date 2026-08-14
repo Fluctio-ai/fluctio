@@ -48,6 +48,10 @@ var slashTexts = map[string]slashEntry{
 		"✅ Workflow done. Result: %s",
 		"✅ 工作流完成。结果：%s",
 	},
+	"workflow.formWaited": {
+		"⏸ Workflow paused on form node %s (run %s). Just tell me your answers in chat (schema: %s) and I'll submit them for you.",
+		"⏸ 工作流已暂停，等待填写表单（节点 %s，run %s）。直接在对话里告诉我你的答案即可（字段：%s），我会代为填写继续。",
+	},
 	"workflow.errorNode": {
 		"❌ Workflow failed at node %s: %s",
 		"❌ 工作流在节点 %s 失败：%s",

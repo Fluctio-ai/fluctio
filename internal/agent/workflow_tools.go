@@ -121,18 +121,19 @@ func usesCodeNode(def *workflow.Definition) bool {
 	return false
 }
 
-// registerWorkflowTools adds one tool per workflow definition. The closure
-// reads the in-flight turn's identity (owner / session) off the registry at
-// call time, then delegates to RunWorkflow — so the loop-driven path and the
-// manual-trigger path run the exact same engine. The ExecutionResult is
-// returned to the loop as JSON.
+// registerWorkflowTools adds one tool per workflow definition, plus the shared
+// workflow_resume tool (M6): a run that parks on a form node returns
+// status=waiting with the pending form's schema, and the loop's LLM relays
+// that form to the user in natural language, then submits their answers
+// through workflow_resume to continue the run — the conversation itself is
+// the form UI on IM.
 func (a *Agent) registerWorkflowTools() {
 	svc := a.workflowSvc
 	reg := a.registry
 	for id, def := range svc.Definitions() {
 		desc := def.Description
 		if desc == "" {
-			desc = fmt.Sprintf("Run the %q workflow — a fixed, pre-orchestrated multi-step flow.", id)
+			desc = fmt.Sprintf("Run the %q workflow — a fixed, pre-orchestrated multi-step flow. A result with status=waiting carries pending_form: relay its fields to the user, collect answers, submit them via workflow_resume.", id)
 		}
 		schema := svc.ToolSchema(def)
 		reg.RegisterFrom(id, desc, schema, func(ctx context.Context, raw json.RawMessage) (string, error) {
@@ -153,4 +154,48 @@ func (a *Agent) registerWorkflowTools() {
 			return string(b), nil
 		}, tools.SourceWorkflow)
 	}
+	reg.RegisterFrom("workflow_resume",
+		"Resume a workflow run that is paused on a form node (status=waiting with pending_form). Relay the form's fields to the user in natural language, then call this tool with their answers: run_id from the waiting result, form = {field: value} for exactly the fields the user answered (omit the rest). Do NOT invent answers. The resumed result is terminal or waiting on the next form.",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"run_id": map[string]any{"type": "string", "description": "run_id of the waiting run (from the workflow tool's waiting result)"},
+				"form":   map[string]any{"type": "object", "description": "answers keyed by the pending form's field names"},
+			},
+			"required": []any{"run_id", "form"},
+		},
+		func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var req struct {
+				RunID string         `json:"run_id"`
+				Form  map[string]any `json:"form"`
+			}
+			if len(raw) > 0 {
+				if err := json.Unmarshal(raw, &req); err != nil || req.RunID == "" {
+					return "", fmt.Errorf("workflow_resume: bad args (want run_id + form)")
+				}
+			}
+			dbs, ok := a.dataStore.(*store.DBStore)
+			if !ok || dbs == nil {
+				return "", fmt.Errorf("workflow_resume: store unavailable")
+			}
+			row, err := dbs.GetWorkflowRunRow(ctx, req.RunID)
+			if err != nil {
+				return "", fmt.Errorf("workflow_resume: run %s not found", req.RunID)
+			}
+			if row.Status != string(workflow.StatusWaiting) {
+				return "", fmt.Errorf("workflow_resume: run %s is %s, not waiting on a form", req.RunID, row.Status)
+			}
+			if req.Form == nil {
+				req.Form = map[string]any{}
+			}
+			res, rerr := a.ResumeWorkflowStream(ctx, row.DefID, row.ID, row.PendingFormNode, req.Form, reg.EffectiveUserID(), row.SessionID, nil)
+			if rerr != nil {
+				return "", fmt.Errorf("workflow_resume: %w", rerr)
+			}
+			b, mErr := json.Marshal(res)
+			if mErr != nil {
+				return fmt.Sprintf("workflow %s resumed (status=%s) but its result could not be encoded", row.DefID, res.Status), nil
+			}
+			return string(b), nil
+		}, tools.SourceWorkflow)
 }
