@@ -837,14 +837,18 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
 // ConditionRows edits one edge's `when` as structured rows (field + operator +
 // value, AND/OR combine). Falls back to a raw input when the expression can't
 // be structurally parsed. Shared by EdgeProps and the condition node's branches.
-function ConditionRows({ when, refOptions, onChange, t }: {
+function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
   when: string;
   refOptions: RefOption[];
   onChange: (when: string) => void;
   t: (k: string, vars?: Record<string, string | number>) => string;
+  defaultExpr?: boolean;
 }) {
-  const isExpr = when !== "" && when !== "default" && when !== "llm_route";
-  const parsed = isExpr ? parseWhen(when) : null;
+  // condition-node branches default straight into the condition editor (field
+  // op value) without first picking the "条件" mode; an edge `when` still
+  // defaults to plain.
+  const isExpr = (when !== "" || defaultExpr) && when !== "default" && when !== "llm_route";
+  const parsed = isExpr ? (when === "" ? { combine: "&&" as const, rows: [{ field: "", op: "==", value: "" }] } : parseWhen(when)) : null;
   const [combine, setCombine] = React.useState<"&&" | "||">(parsed?.combine || "&&");
   const [rows, setRows] = React.useState<CondRow[]>(parsed?.rows || [{ field: "", op: "==", value: "" }]);
   const update = (c: "&&" | "||", rs: CondRow[]) => {
@@ -894,8 +898,8 @@ function ConditionRows({ when, refOptions, onChange, t }: {
                     <button type="button" className="text-destructive text-xs px-1" disabled={rows.length <= 1}
                       onClick={() => update(combine, rows.filter((_, j) => j !== i))}>✕</button>
                   </div>
-                  <input className="border rounded px-1 bg-background text-xs w-full" value={r.value} placeholder="值（数字或字符串）"
-                    onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, value: e.target.value } : x))} />
+                  <FieldRef options={refOptions} value={r.value} placeholder="值或 ${变量}"
+                    onChange={(val) => update(combine, rows.map((x, j) => j === i ? { ...x, value: val } : x))} />
                 </div>
               ))}
               <Button size="sm" variant="outline" className="w-full" onClick={() => update(combine, [...rows, { field: "", op: "==", value: "" }])}>
@@ -932,7 +936,7 @@ function ConditionBranches({ node, edges, others, refOptions, onEdgeWhen, onAddB
       {branchIdxs.map(({ e, i }) => (
         <div key={i} className="border rounded p-1.5 space-y-1 bg-muted/20">
           <div className="font-medium text-xs">→ {e.to}</div>
-          <ConditionRows when={e.when || ""} refOptions={refOptions} onChange={(w) => onEdgeWhen(i, w)} t={t} />
+          <ConditionRows when={e.when || ""} refOptions={refOptions} onChange={(w) => onEdgeWhen(i, w)} t={t} defaultExpr />
         </div>
       ))}
       <div className="flex gap-1">
