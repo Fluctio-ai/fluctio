@@ -20,6 +20,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
+import { usePageHeader } from "@/components/sidebar";
 import { WorkflowEditor } from "@/components/workflow-editor";
 
 // Workflows page (ticket 08): list this agent's workflows, manually trigger one
@@ -115,15 +116,17 @@ export default function WorkflowsPage() {
     setSelected(id);
   };
 
+  usePageHeader(
+    <div className="flex items-center gap-2">
+      <h1 className="text-sm font-semibold">{t("workflow.title")}</h1>
+      <Button size="sm" variant="outline" onClick={onCreateWorkflow}>
+        <Plus className="h-3.5 w-3.5" /> {t("workflow.create")}
+      </Button>
+    </div>,
+    [t("workflow.create")],
+  );
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 p-3 border-b shrink-0">
-        <h2 className="font-semibold">{t("workflow.title")}</h2>
-        <Button size="sm" variant="outline" onClick={onCreateWorkflow}>
-          <Plus className="h-3.5 w-3.5" /> {t("workflow.create")}
-        </Button>
-      </div>
-      <div className="flex flex-1 min-h-0">
+    <div className="flex h-full">
       <div className="w-60 shrink-0 border-r overflow-y-auto p-3 space-y-1">
         {loading ? (
           <Skeleton className="h-8 w-full" />
@@ -242,7 +245,6 @@ export default function WorkflowsPage() {
             )}
           </>
         )}
-      </div>
       </div>
     </div>
   );
