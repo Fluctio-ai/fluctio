@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
@@ -197,5 +198,99 @@ func (a *Agent) registerWorkflowTools() {
 				return fmt.Sprintf("workflow %s resumed (status=%s) but its result could not be encoded", row.DefID, res.Status), nil
 			}
 			return string(b), nil
+		}, tools.SourceWorkflow)
+
+	// Workflow authoring tools: let the loop's LLM create / read / update the
+	// agent's workflow YAMLs from conversation, so a workflow can be written
+	// and iterated without touching the editor. save is an upsert — a new id
+	// creates, an existing id edits and bumps the version, and the change takes
+	// effect immediately (ReloadWorkflows). get must be called before editing
+	// so existing nodes/edges are preserved, never regenerated from memory.
+	reg.RegisterFrom("workflow_list",
+		"List this agent's workflows (id + version + description). Call before workflow_get / workflow_save to see what exists.",
+		map[string]any{"type": "object", "properties": map[string]any{}},
+		func(ctx context.Context, _ json.RawMessage) (string, error) {
+			if a.workflowSvc == nil {
+				return "", fmt.Errorf("workflow_list: agent has no workflows")
+			}
+			type row struct {
+				ID          string `json:"id"`
+				Version     int    `json:"version"`
+				Description string `json:"description"`
+			}
+			rows := make([]row, 0, len(a.workflowSvc.Definitions()))
+			for id, def := range a.workflowSvc.Definitions() {
+				rows = append(rows, row{ID: id, Version: def.Version, Description: def.Description})
+			}
+			b, _ := json.Marshal(rows)
+			return string(b), nil
+		}, tools.SourceWorkflow)
+
+	reg.RegisterFrom("workflow_get",
+		"Read a workflow's full YAML by id. Always read before editing so you preserve existing nodes/edges — never rewrite a workflow from memory.",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string", "description": "workflow id (the YAML filename key)"},
+			},
+			"required": []any{"id"},
+		},
+		func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var req struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &req); err != nil || req.ID == "" {
+				return "", fmt.Errorf("workflow_get: bad args (want id)")
+			}
+			b, err := os.ReadFile(filepath.Join(a.WorkflowsDir(), req.ID+".yaml"))
+			if err != nil {
+				return "", fmt.Errorf("workflow_get: %w", err)
+			}
+			return string(b), nil
+		}, tools.SourceWorkflow)
+
+	reg.RegisterFrom("workflow_save",
+		"Create or update a workflow (upsert). id is the filename key; yaml is the full workflow definition. A new id creates, an existing id edits and bumps the version; the change applies immediately. YAML shape: nodes are kind tool/llm/code/form; references use ${input.x} (run input) or ${node.field} (a node's output); edges connect nodes as {from, to, when?}. Invalid YAML (unknown node refs, missing entry, bad kind) is rejected with a message — fix and retry.",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":   map[string]any{"type": "string", "description": "workflow id; becomes the YAML filename"},
+				"yaml": map[string]any{"type": "string", "description": "complete workflow definition (version, nodes, edges, input?, output?)"},
+			},
+			"required": []any{"id", "yaml"},
+		},
+		func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var req struct {
+				ID   string `json:"id"`
+				YAML string `json:"yaml"`
+			}
+			if err := json.Unmarshal(raw, &req); err != nil || req.ID == "" || req.YAML == "" {
+				return "", fmt.Errorf("workflow_save: bad args (want id + yaml)")
+			}
+			def, err := workflow.Parse(req.ID, []byte(req.YAML))
+			if err != nil {
+				return "", fmt.Errorf("workflow_save: parse: %w", err)
+			}
+			path := filepath.Join(a.WorkflowsDir(), req.ID+".yaml")
+			version := 1
+			if old, err := workflow.LoadFile(path); err == nil {
+				version = old.Version + 1
+			}
+			def.Version = version
+			if err := workflow.Validate(def, nil); err != nil {
+				return "", fmt.Errorf("workflow_save: validation: %w", err)
+			}
+			out, err := workflow.Marshal(def)
+			if err != nil {
+				return "", fmt.Errorf("workflow_save: marshal: %w", err)
+			}
+			if err := os.MkdirAll(a.WorkflowsDir(), 0o755); err != nil {
+				return "", fmt.Errorf("workflow_save: %w", err)
+			}
+			if err := os.WriteFile(path, out, 0o644); err != nil {
+				return "", fmt.Errorf("workflow_save: %w", err)
+			}
+			a.ReloadWorkflows()
+			return fmt.Sprintf("workflow %s saved (version %d); now available", req.ID, version), nil
 		}, tools.SourceWorkflow)
 }

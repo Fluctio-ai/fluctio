@@ -5,6 +5,9 @@
 export const BUILTIN_TOOL_ZH: Record<string, string> = {
   get_time: "获取当前时间",
   workflow_resume: "提交 waiting 工作流暂停节点的表单答案，继续运行",
+  workflow_list: "列出该 agent 的工作流（id / 版本 / 描述）",
+  workflow_get: "读取某个工作流的完整 YAML（编辑前先读，保留现有节点）",
+  workflow_save: "创建或更新工作流（upsert：新 id 创建、已有 id 编辑并版本+1，保存即生效）",
   web_search: "搜索网络，返回标题 / URL / 摘要（provider 链 + 自动降级）",
   web_fetch: "抓取网页内容（provider 链：直连 / jina / firecrawl）",
   memory_search: "搜索记忆 / 知识库（向量 + FTS）",
