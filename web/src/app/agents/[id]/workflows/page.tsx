@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -49,27 +49,28 @@ export default function WorkflowsPage() {
   // One-shot command to the editor: import a node's actual run output as its
   // output schema (nonce makes each click a fresh command even for same node).
   const [schemaInject, setSchemaInject] = useState<{ node: string; schema: Record<string, unknown>; nonce: number } | null>(null);
-  // Draggable width of the workflow list pane (default 240px = w-60).
-  const [listW, setListW] = useState(240);
-  const dragRef = useRef<{ x: number; w: number } | null>(null);
-  useEffect(() => {
-    const move = (e: MouseEvent) => {
-      if (!dragRef.current) return;
-      const next = dragRef.current.w + (e.clientX - dragRef.current.x);
-      setListW(Math.min(480, Math.max(160, next)));
+  // Draggable width of the workflow list pane — same pattern as the
+  // knowledge-base source list (pointer events on the document, 220–520px).
+  const [listW, setListW] = useState(320);
+  const startListDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = listW;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      setListW(Math.min(520, Math.max(220, startW + dx)));
     };
     const up = () => {
-      if (!dragRef.current) return;
-      dragRef.current = null;
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-    return () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-    };
-  }, []);
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
 
   // inferOutputSchema turns an actual node output object into the {field:{type}}
   // declaration the editor's output schema (and downstream FieldRef) expects.
@@ -247,7 +248,7 @@ export default function WorkflowsPage() {
   );
   return (
     <div className="flex h-full">
-      <div className="shrink-0 overflow-y-auto p-3 space-y-1" style={{ width: listW }}>
+      <div className="shrink-0 border-r bg-muted/30 overflow-y-auto p-3 space-y-1" style={{ width: listW }}>
         {loading ? (
           <Skeleton className="h-8 w-full" />
         ) : workflows.length === 0 ? (
@@ -268,13 +269,11 @@ export default function WorkflowsPage() {
           ))
         )}
       </div>
-      {/* Drag handle: widen/narrow the workflow list pane (160–480px). */}
+      {/* Drag handle: widen/narrow the workflow list pane (220–520px),
+          styled to match the knowledge-base source list divider. */}
       <div
-        className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/60 transition-colors"
-        onMouseDown={(e) => {
-          dragRef.current = { x: e.clientX, w: listW };
-          document.body.style.userSelect = "none";
-        }}
+        className="w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
+        onPointerDown={startListDrag}
       />
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
