@@ -335,7 +335,7 @@ export function WorkflowEditor({
             <label className="block">
               {t("workflow.concurrency")}
               <select
-                className="ml-1 border rounded px-1 bg-background w-full text-xs"
+                className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
                 value={def.concurrency || ""}
                 onChange={(e) => mutate((d) => { if (e.target.value) d.concurrency = e.target.value; else delete d.concurrency; })}
               >
@@ -722,7 +722,7 @@ function SessionPicker({ agentId, channel, chatId, account, onChange }: {
   return (
     <div className="relative">
       <input
-        className="border rounded px-1 bg-background w-full text-xs"
+        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
         placeholder={t("workflow.sessionSearchPh")}
         value={display}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
@@ -795,7 +795,7 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
   return (
     <div className="relative">
       <input
-        className="border rounded px-1 bg-background w-full text-xs"
+        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
         placeholder={multiple ? t("workflow.articleMultiPh") : t("workflow.articleSearchPh")}
         value={display}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
@@ -1021,7 +1021,7 @@ function SchemaForm({
               />
             ) : p.enum ? (
               <select
-                className="border rounded px-1 bg-background w-full text-xs"
+                className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
                 value={typeof v === "string" ? v : ""}
                 onChange={(e) => onChange({ ...values, [k]: e.target.value })}
               >
@@ -1091,7 +1091,7 @@ function NodeProps({
       <label className="block">
         {t("workflow.nodeKind")}
         <select
-          className="ml-1 border rounded px-1 bg-background"
+          className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-background text-sm"
           value={node.kind}
           onChange={(e) => onEdit("kind", e.target.value)}
         >
@@ -1106,7 +1106,7 @@ function NodeProps({
           <label className="block">
             {t("workflow.tool")}
             <select
-              className="border rounded px-1 bg-background w-full"
+              className="border rounded-lg px-2.5 py-1 h-9 bg-background text-sm w-full"
               value={node.tool || ""}
               onChange={(e) => onEdit("tool", e.target.value)}
             >
@@ -1166,7 +1166,7 @@ function NodeProps({
           <label className="block">
             {t("workflow.codeLang")}
             <select
-              className="ml-1 border rounded px-1 bg-background"
+              className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-background text-sm"
               value={node.lang || "python"}
               onChange={(e) => onEdit("lang", e.target.value)}
             >
@@ -1191,7 +1191,7 @@ function NodeProps({
       <label className="block">
         {t("workflow.sideEffect")}
         <select
-          className="ml-1 border rounded px-1 bg-background w-full text-xs"
+          className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
           value={node.side_effect || ""}
           onChange={(e) => onEdit("side_effect", e.target.value)}
         >
@@ -1214,7 +1214,7 @@ function NodeProps({
       <div>
         <label className="block">{t("workflow.addEdge")}</label>
         <select
-          className="border rounded px-1 bg-background w-full"
+          className="border rounded-lg px-2.5 py-1 h-9 bg-background text-sm w-full"
           value={target}
           onChange={(e) => setTarget(e.target.value)}
         >
