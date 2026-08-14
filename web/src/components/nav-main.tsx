@@ -56,6 +56,20 @@ export function NavMain({
     });
   }, [items, router]);
 
+  // navTimerRef tracks the 2s hard-nav fallback below. It is cleared on every
+  // pathname change (soft nav succeeded → fallback no longer needed) and on
+  // every new click, so only the latest click's timer can fire. Without this,
+  // rapid back-and-forth between two links lets a stale timer see an old
+  // pathname snapshot, falsely conclude "nav didn't happen", and force a full
+  // page reload (the rapid-click reload bug — same root cause as nav-knowledge).
+  const navTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => {
+    if (navTimerRef.current) {
+      clearTimeout(navTimerRef.current);
+      navTimerRef.current = null;
+    }
+  }, [pathname]);
+
   // The Base UI SidebarMenuButton `render` prop merges through
   // React.cloneElement, which intermittently dropped Next <Link>'s
   // internal click handler (every click became a full page reload →
@@ -72,6 +86,7 @@ export function NavMain({
             ? item.onClick
             : item.url
               ? () => {
+                  if (navTimerRef.current) clearTimeout(navTimerRef.current);
                   const before = window.location.pathname;
                   router.push(item.url!);
                   // Static export occasionally drops client-side nav
@@ -85,8 +100,11 @@ export function NavMain({
                   // every click got downgraded to a full reload (the
                   // "click any link → ~2s spinner" bug). 2s covers the
                   // slowest normal nav while still catching genuine
-                  // /admin/* stalls.
-                  setTimeout(() => {
+                  // /admin/* stalls. navTimerRef + the pathname effect
+                  // above cancel a stale timer so rapid clicks don't
+                  // misfire this fallback.
+                  navTimerRef.current = setTimeout(() => {
+                    navTimerRef.current = null;
                     if (window.location.pathname === before) {
                       window.location.href = item.url!;
                     }
