@@ -1,15 +1,15 @@
 "use client";
 
 import {
+  Suspense,
   useMemo,
+  use,
   type ComponentProps,
   type MouseEvent as ReactMouseEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { Streamdown, defaultUrlTransform, type Components, type UrlTransform } from "streamdown";
 import { createCodePlugin } from "@streamdown/code";
-import { mermaid } from "@streamdown/mermaid";
-import { math } from "@streamdown/math";
 import { cjk } from "@streamdown/cjk";
 import remarkBreaks from "remark-breaks";
 import { fileUrl, type KnowledgeSource } from "@/lib/api";
@@ -30,7 +30,29 @@ const code = createCodePlugin({ themes: ["github-light", "github-dark"] });
 // plugin's `remarkPluginsAfter` slot, which runs post-gfm. (Verified end-to-end:
 // via the prop → no <table>; via remarkPluginsAfter → <table> + <br> both render.)
 const cjkWithBreaks = { ...cjk, remarkPluginsAfter: [...cjk.remarkPluginsAfter, remarkBreaks] };
-const streamdownPlugins = { code, mermaid, math, cjk: cjkWithBreaks };
+
+// Math and Mermaid are deferred behind content detection: their libs are
+// ~700 KB of eager payload on the chat route (the app's landing page), yet
+// most messages carry neither math nor a ```mermaid fence. The delimiters
+// mirror what remark-math actually recognizes — the plugin defaults to
+// singleDollarTextMath:false, so lone $…$ (currency, prices) must NOT
+// trigger a load. Only $$…$$, \(…\), and \[…\] count.
+//
+// Loading is via React `use()` + a module-level cached promise: this
+// Streamdown version does not re-parse blocks when plugins change after
+// mount, so a message that needs math suspends the Streamdown subtree
+// until the plugin resolves — the FIRST parse already includes it. The
+// module-level activation flags are sticky for the session, so once any
+// message used math every later instance includes it from its first
+// render and never suspends again (the import promise stays resolved).
+const MATH_RE = /\$\$[\s\S]+?\$\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\]/;
+const MERMAID_RE = /```mermaid\b/i;
+let mathModule: Promise<typeof import("@streamdown/math")> | null = null;
+let mermaidModule: Promise<typeof import("@streamdown/mermaid")> | null = null;
+let mathActive = false;
+let mermaidActive = false;
+
+type StreamdownPlugins = NonNullable<ComponentProps<typeof Streamdown>["plugins"]>;
 
 // knowledgeSourceLabel renders the tooltip for a [K#] citation badge: the
 // origin ("Wiki"/"知识库"), the wiki page type when applicable (来源/概念/实体/总览),
@@ -204,10 +226,24 @@ export function ChatMarkdown({
     },
   }), [knowledgeByID, onKnowledgeCitationClick]);
 
+  // Deferred math/mermaid plugins (see MATH_RE above). `use()` may be
+  // called conditionally (React 19); each branch only ever runs after the
+  // first content match, and the sticky module flags keep every later
+  // instance on the activated path.
+  if (MATH_RE.test(renderedText)) mathActive = true;
+  if (MERMAID_RE.test(renderedText)) mermaidActive = true;
+  const mathMod = mathActive ? use((mathModule ??= import("@streamdown/math"))) : undefined;
+  const mermaidMod = mermaidActive ? use((mermaidModule ??= import("@streamdown/mermaid"))) : undefined;
+  const plugins = useMemo(() => {
+    const p: StreamdownPlugins = { code, cjk: cjkWithBreaks };
+    if (mathMod) p.math = mathMod.math;
+    if (mermaidMod) p.mermaid = mermaidMod.mermaid;
+    return p;
+  }, [mathMod, mermaidMod]);
+
   // Click anywhere on a mermaid diagram → fullscreen. Streamdown renders a
   // hidden fullscreen toggle inside the block; we delegate the click to it.
-  function onMermaidClick(e: ReactMouseEvent<HTMLDivElement>) {
-    const target = e.target as HTMLElement;
+  function onMermaidClick(e: ReactMouseEvent<HTMLDivElement>) {    const target = e.target as HTMLElement;
     if (target.closest("button, a")) return;
     target
       .closest<HTMLElement>("[data-streamdown=mermaid-block]")
@@ -226,22 +262,27 @@ export function ChatMarkdown({
 
   return (
     <div className={bareCode ? PROSE_CLASS + " chat-md-bare" : PROSE_CLASS} onClick={onMermaidClick} onWheelCapture={onWheelCapture}>
-      <Streamdown
-        parseIncompleteMarkdown
-        plugins={streamdownPlugins}
-        urlTransform={urlTransform}
-        components={components}
-        controls={{
-          table: true,
-          code: true,
-          // Minimal inline mermaid: no pan/zoom (intercepts wheel, blocks chat
-          // scroll), no copy/download clutter. Keep fullscreen — clicking the
-          // block triggers it (onMermaidClick); the modal re-enables pan/zoom.
-          mermaid: { panZoom: false, copy: false, download: false, fullscreen: true },
-        }}
-      >
-        {renderedText}
-      </Streamdown>
+      {/* Suspense absorbs the one-time plugin chunk load for math/mermaid
+          content: the bubble chrome stays on screen, the body follows once
+          the module resolves (cached for the session afterwards). */}
+      <Suspense fallback={null}>
+        <Streamdown
+          parseIncompleteMarkdown
+          plugins={plugins}
+          urlTransform={urlTransform}
+          components={components}
+          controls={{
+            table: true,
+            code: true,
+            // Minimal inline mermaid: no pan/zoom (intercepts wheel, blocks chat
+            // scroll), no copy/download clutter. Keep fullscreen — clicking the
+            // block triggers it (onMermaidClick); the modal re-enables pan/zoom.
+            mermaid: { panZoom: false, copy: false, download: false, fullscreen: true },
+          }}
+        >
+          {renderedText}
+        </Streamdown>
+      </Suspense>
     </div>
   );
 }
