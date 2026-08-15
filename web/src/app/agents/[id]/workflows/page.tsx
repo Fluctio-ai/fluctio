@@ -456,14 +456,25 @@ export default function WorkflowsPage() {
   );
 }
 
+// Status semantics ride the dedicated semantic tokens (globals.css single
+// source of truth). Attention is allocated by rarity: succeeded is the
+// common case and stays a quiet tint — it used to take the filled brand
+// blue and drowned the failed/waiting rows it should defer to. Failed
+// keeps the loudest treatment; waiting carries the warning axis.
 function StatusBadge({ status }: { status: string }) {
-  const variant =
-    status === "succeeded"
-      ? "default"
-      : status === "failed" || status === "needs_intervention"
-        ? "destructive"
-        : status === "waiting"
-          ? "outline"
-          : "secondary";
-  return <Badge variant={variant as "default" | "destructive" | "secondary" | "outline"}>{status}</Badge>;
+  if (status === "succeeded")
+    return (
+      <Badge variant="outline" className="border-success/40 bg-success/10 text-success">
+        {status}
+      </Badge>
+    );
+  if (status === "failed" || status === "needs_intervention")
+    return <Badge variant="destructive">{status}</Badge>;
+  if (status === "waiting")
+    return (
+      <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">
+        {status}
+      </Badge>
+    );
+  return <Badge variant="secondary">{status}</Badge>;
 }

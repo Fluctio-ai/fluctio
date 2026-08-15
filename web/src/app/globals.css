@@ -137,12 +137,17 @@ select option {
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: #1890ff;  /* wave blue */
 
-  /* Semantic status tokens — replaces scattered emerald/amber/blue/cyan */
-  --success: oklch(0.62 0.17 150);         /* green */
+  /* Semantic status tokens — replaces scattered emerald/amber/blue/cyan.
+     Light-theme steps sit deeper than the dark ones on purpose: they are
+     used as small text on /10 tints (status chips, knowledge pills,
+     warning callouts), where AA needs ≥4.5:1 — the original L .62/.75
+     steps read 3.5:1 / 1.9:1 on white. Info stays on the wave-blue axis,
+     one step deeper than the #1890ff brand primary. */
+  --success: oklch(0.52 0.15 150);         /* green — deep step for text */
   --success-foreground: oklch(0.985 0 0);
-  --warning: oklch(0.75 0.15 75);          /* amber */
+  --warning: oklch(0.55 0.14 75);          /* amber — deep step for text */
   --warning-foreground: oklch(0.205 0 0);
-  --info: #1890ff;            /* blue */
+  --info: #0958d9;            /* wave blue, deep step for text */
   --info-foreground: oklch(0.985 0 0);
 }
 

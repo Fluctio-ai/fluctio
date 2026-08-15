@@ -60,7 +60,27 @@ type AnyEdge = {
   [k: string]: unknown;
 };
 
-const NODE_COLORS: Record<string, string> = { llm: "#6366f1", tool: "#10b981", code: "#f59e0b", reply: "#06b6d4", question_rewrite: "#a855f7", http: "#f97316", kb_search: "#14b8a6", set: "#64748b", condition: "#ef4444" };
+// Categorical node-kind colors for the canvas. Derived from the committed
+// Geist families (docs/design.md 700–900 steps) so every chip carries its
+// 13px label at ≥4.5:1 on BOTH the light and dark canvas — vis-network
+// paints to <canvas>, so CSS vars can't reach it and the pairs must be
+// literal. The four core kinds take the primary slots (llm rides the
+// wave-blue axis); form was missing entirely and fell through to the gray
+// fallback. Legacy kinds keep distinct hues, deepened where white text
+// wouldn't pass.
+const NODE_COLORS: Record<string, { bg: string; fg: string }> = {
+  llm: { bg: "#0059ec", fg: "#ffffff" },               // blue-800 — brand axis
+  tool: { bg: "#107d32", fg: "#ffffff" },              // green-900
+  code: { bg: "#aa4d00", fg: "#ffffff" },              // amber-900
+  form: { bg: "#8500d1", fg: "#ffffff" },              // purple-800
+  reply: { bg: "#06b6d4", fg: "#171717" },             // cyan — light chip, dark label
+  question_rewrite: { bg: "#7e22ce", fg: "#ffffff" },  // violet-700
+  http: { bg: "#f97316", fg: "#171717" },              // orange — light chip, dark label
+  kb_search: { bg: "#14b8a6", fg: "#171717" },         // teal — light chip, dark label
+  set: { bg: "#4d4d4d", fg: "#ffffff" },               // Geist gray-900
+  condition: { bg: "#b91c1c", fg: "#ffffff" },         // red-700
+};
+const NODE_FALLBACK_COLOR = { bg: "#6b7280", fg: "#ffffff" };
 const LANGS = ["python", "sh"];
 const TYPES = ["string", "number", "integer", "boolean", "object", "array"];
 const OPS = [">", "<", ">=", "<=", "==", "!=", "contain", "not_contain"];
@@ -160,11 +180,17 @@ export function WorkflowEditor({
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const Network = (nw as any).Network;
         const nodes = new DataSet(
-          def.nodes!.map((n) => ({
-            id: n.name,
-            label: `${n.name}\n(${n.kind})`,
-            color: { background: NODE_COLORS[n.kind] || "#6b7280", border: "#374151" },
-          })),
+          def.nodes!.map((n) => {
+            const c = NODE_COLORS[n.kind] || NODE_FALLBACK_COLOR;
+            return {
+              id: n.name,
+              label: `${n.name}\n(${n.kind})`,
+              color: { background: c.bg, border: "#374151" },
+              // Label color must be explicit: vis defaults to dark gray,
+              // which fails on the darker chips and in dark mode.
+              font: { size: 13, color: c.fg },
+            };
+          }),
         );
         const edges = new DataSet(
           def.edges!.map((e, i) => ({ id: i, from: e.from, to: e.to, label: e.when || "" })),
