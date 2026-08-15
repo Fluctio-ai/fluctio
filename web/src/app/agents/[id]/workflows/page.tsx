@@ -49,6 +49,9 @@ export default function WorkflowsPage() {
   const [runs, setRuns] = useState<WorkflowRunRow[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
   const [input, setInput] = useState("{}");
+  // JSON validation error for the manual-trigger input — surfaced inline
+  // next to the textarea instead of a raw V8 parse dump in the result pane.
+  const [inputError, setInputError] = useState("");
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<string>("");
   const [liveEvents, setLiveEvents] = useState<WorkflowRunEvent[]>([]);
@@ -139,6 +142,17 @@ export default function WorkflowsPage() {
 
   const onRun = async () => {
     if (!agentId || !selected) return;
+    // Validate before starting the run: an invalid payload would otherwise
+    // surface as an English V8 "Unexpected token" dump in the result pane,
+    // with the textarea still looking fine.
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(input || "{}");
+    } catch (e) {
+      setInputError(t("workflow.inputInvalid", { err: e instanceof Error ? e.message : String(e) }));
+      return;
+    }
+    setInputError("");
     setRunning(true);
     setLastResult("");
     setLiveEvents([]);
@@ -333,10 +347,16 @@ export default function WorkflowsPage() {
               <p className="text-xs text-muted-foreground">{t("workflow.inputHint")}</p>
               <Textarea
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  if (inputError) setInputError("");
+                }}
                 rows={3}
                 className="font-mono text-xs"
               />
+              {inputError && (
+                <p className="text-xs text-destructive">{inputError}</p>
+              )}
               <Button onClick={onRun} disabled={running}>
                 <Play className="h-4 w-4" />
                 {running ? t("workflow.running") : t("workflow.run")}

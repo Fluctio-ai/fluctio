@@ -126,6 +126,7 @@ const zhCN: Record<string, string> = {
   "workflow.status.running": "运行中",
   "workflow.status.pending": "排队中",
   "workflow.status.cancelled": "已取消",
+  "workflow.inputInvalid": "入口输入不是有效的 JSON：{err}",
   "workflow.tabVisual": "可视化编辑",
   "workflow.tabYaml": "YAML 编辑",
   "workflow.deleteSel": "删除选中",

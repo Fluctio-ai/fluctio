@@ -270,6 +270,14 @@ export function getAuthToken(): string {
 // (e.g. /agents/<id>/chat/<sid>/?actAs=<uid> reached from the admin Chats
 // page) actually reads/writes against that user's scope. The middleware-
 // level actAs lock makes these requests read-only.
+// Mid-session 401: AuthGuard only checks auth on mount, so an expired
+// session would otherwise leave every subsequent call silently failing
+// with a UI that looks frozen. Bounce (once) to the bare root so the
+// guard re-runs and shows the login screen instead. Only 401 — a 403 is
+// a real permission answer that pages already handle; the onboard flow
+// and the bare root are excluded so the bounce can never loop.
+let bouncedToLogin = false;
+
 export async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
   const token = getAuthToken();
   const headers: Record<string, string> = {
@@ -284,7 +292,18 @@ export async function apiFetch(url: string, init?: RequestInit): Promise<Respons
       url += (url.includes("?") ? "&" : "?") + "actAs=" + encodeURIComponent(pageActAs);
     }
   }
-  return fetch(url, { credentials: "same-origin", ...init, headers });
+  const res = await fetch(url, { credentials: "same-origin", ...init, headers });
+  if (
+    res.status === 401 &&
+    !bouncedToLogin &&
+    typeof window !== "undefined" &&
+    window.location.pathname !== "/" &&
+    !window.location.pathname.startsWith("/onboard")
+  ) {
+    bouncedToLogin = true;
+    window.location.href = "/";
+  }
+  return res;
 }
 
 // In-flight dedup for shared GETs. When the sidebar's status poll, a page's

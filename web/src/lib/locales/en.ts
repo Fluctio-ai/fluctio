@@ -126,6 +126,7 @@ const en: Record<string, string> = {
   "workflow.status.running": "Running",
   "workflow.status.pending": "Pending",
   "workflow.status.cancelled": "Cancelled",
+  "workflow.inputInvalid": "Input is not valid JSON: {err}",
   "workflow.tabVisual": "Visual editor",
   "workflow.tabYaml": "YAML editor",
   "workflow.deleteSel": "Delete selected",
