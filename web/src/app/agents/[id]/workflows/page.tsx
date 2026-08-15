@@ -460,21 +460,34 @@ export default function WorkflowsPage() {
 // source of truth). Attention is allocated by rarity: succeeded is the
 // common case and stays a quiet tint — it used to take the filled brand
 // blue and drowned the failed/waiting rows it should defer to. Failed
-// keeps the loudest treatment; waiting carries the warning axis.
+// keeps the loudest treatment; waiting carries the warning axis. Labels
+// localize the backend status strings; unknown statuses fall through
+// to the raw value rather than a wrong guess.
+const STATUS_LABELS: Record<string, string> = {
+  succeeded: "workflow.status.succeeded",
+  failed: "workflow.status.failed",
+  needs_intervention: "workflow.status.needsIntervention",
+  waiting: "workflow.status.waiting",
+  running: "workflow.status.running",
+  pending: "workflow.status.pending",
+  cancelled: "workflow.status.cancelled",
+};
 function StatusBadge({ status }: { status: string }) {
+  const t = useT();
+  const label = STATUS_LABELS[status] ? t(STATUS_LABELS[status]) : status;
   if (status === "succeeded")
     return (
       <Badge variant="outline" className="border-success/40 bg-success/10 text-success">
-        {status}
+        {label}
       </Badge>
     );
   if (status === "failed" || status === "needs_intervention")
-    return <Badge variant="destructive">{status}</Badge>;
+    return <Badge variant="destructive">{label}</Badge>;
   if (status === "waiting")
     return (
       <Badge variant="outline" className="border-warning/40 bg-warning/10 text-warning">
-        {status}
+        {label}
       </Badge>
     );
-  return <Badge variant="secondary">{status}</Badge>;
+  return <Badge variant="secondary">{label}</Badge>;
 }

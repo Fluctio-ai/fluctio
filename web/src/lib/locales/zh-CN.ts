@@ -118,6 +118,14 @@ const zhCN: Record<string, string> = {
   "workflow.condAddBranch": "添加分支",
   "workflow.workflowTitle": "标题",
   "workflow.tabBasic": "基本信息",
+  // Run status labels (unknown statuses fall through to the raw value)
+  "workflow.status.succeeded": "已成功",
+  "workflow.status.failed": "失败",
+  "workflow.status.needsIntervention": "需介入",
+  "workflow.status.waiting": "等待输入",
+  "workflow.status.running": "运行中",
+  "workflow.status.pending": "排队中",
+  "workflow.status.cancelled": "已取消",
   "workflow.tabVisual": "可视化编辑",
   "workflow.tabYaml": "YAML 编辑",
   "workflow.deleteSel": "删除选中",
@@ -1344,6 +1352,15 @@ const zhCN: Record<string, string> = {
   // Day-divider pill between messages from different calendar days
   "chatScreen.today": "今天",
   "chatScreen.yesterday": "昨天",
+  // Pending-plan authorization bar
+  "chatScreen.runPlan": "执行计划",
+  "chatScreen.editPlan": "修改",
+  "chatScreen.planHint": "「执行计划」授权智能体完整执行；选「修改」可在下方调整后再确认。",
+  "chatScreen.actAsReadonly": "只读——正在查看他人的对话，此处发送已被禁用。",
+  // Files panel / tab empty states
+  "chatScreen.filesEmptyChanged": "尚无变更——智能体还没有编辑任何文件。",
+  "chatScreen.filesEmptyProject": "此项目还没有产出文件。",
+  "chatScreen.filesEmptySession": "此会话还没有产出文件。",
   "chatScreen.cmd.new": "清空会话历史",
   "chatScreen.cmd.reset": "清空会话历史",
   "chatScreen.cmd.retry": "重跑上一条消息",

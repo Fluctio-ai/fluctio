@@ -2852,7 +2852,7 @@ export function ChatScreen() {
                             className="h-8 gap-1.5"
                           >
                             <Check className="h-3.5 w-3.5" />
-                            Run plan
+                            {t("chatScreen.runPlan")}
                           </Button>
                           <Button
                             size="sm"
@@ -2870,10 +2870,10 @@ export function ChatScreen() {
                             className="h-8 gap-1.5"
                           >
                             <X className="h-3.5 w-3.5" />
-                            Edit
+                            {t("chatScreen.editPlan")}
                           </Button>
                           <span className="text-xs text-muted-foreground">
-                            Run plan to authorize the agent end-to-end, or Edit to revise below.
+                            {t("chatScreen.planHint")}
                           </span>
                         </div>
                       )}
@@ -3019,8 +3019,7 @@ export function ChatScreen() {
               // read-only for the whole request, so any send would 403
               // — disable the composer and surface why.
               <div className="mb-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning dark:text-warning">
-                Read-only — you&apos;re viewing another user&apos;s chat.
-                Sending messages here is disabled.
+                {t("chatScreen.actAsReadonly")}
               </div>
             )}
             {slashOpen && filteredItems.length > 0 && (
@@ -4471,10 +4470,10 @@ function WorkspacePanel({
                     return (
                       <p className="px-3 py-8 text-center text-sm text-muted-foreground">
                         {showChanged
-                          ? "No changes yet — the agent hasn't edited any files."
+                          ? t("chatScreen.filesEmptyChanged")
                           : projectId
-                            ? "No files in this project yet."
-                            : "No files in this session yet."}
+                            ? t("chatScreen.filesEmptyProject")
+                            : t("chatScreen.filesEmptySession")}
                       </p>
                     );
                   }
@@ -4609,10 +4608,10 @@ function WorkspacePanel({
                 return (
                   <p className="px-3 py-8 text-center text-sm text-muted-foreground">
                     {showChanged
-                      ? "No changes yet — the agent hasn't edited any files."
+                      ? t("chatScreen.filesEmptyChanged")
                       : projectId
-                        ? "No files in this project yet."
-                        : "No files in this session yet."}
+                        ? t("chatScreen.filesEmptyProject")
+                        : t("chatScreen.filesEmptySession")}
                   </p>
                 );
               }

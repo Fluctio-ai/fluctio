@@ -118,6 +118,14 @@ const en: Record<string, string> = {
   "workflow.condAddBranch": "add branch",
   "workflow.workflowTitle": "Title",
   "workflow.tabBasic": "Basics",
+  // Run status labels (unknown statuses fall through to the raw value)
+  "workflow.status.succeeded": "Succeeded",
+  "workflow.status.failed": "Failed",
+  "workflow.status.needsIntervention": "Needs intervention",
+  "workflow.status.waiting": "Waiting for input",
+  "workflow.status.running": "Running",
+  "workflow.status.pending": "Pending",
+  "workflow.status.cancelled": "Cancelled",
   "workflow.tabVisual": "Visual editor",
   "workflow.tabYaml": "YAML editor",
   "workflow.deleteSel": "Delete selected",
@@ -1344,6 +1352,15 @@ const en: Record<string, string> = {
   // Day-divider pill between messages from different calendar days
   "chatScreen.today": "Today",
   "chatScreen.yesterday": "Yesterday",
+  // Pending-plan authorization bar
+  "chatScreen.runPlan": "Run plan",
+  "chatScreen.editPlan": "Edit",
+  "chatScreen.planHint": "Run plan to authorize the agent end-to-end, or Edit to revise below.",
+  "chatScreen.actAsReadonly": "Read-only — you're viewing another user's chat. Sending messages here is disabled.",
+  // Files panel / tab empty states
+  "chatScreen.filesEmptyChanged": "No changes yet — the agent hasn't edited any files.",
+  "chatScreen.filesEmptyProject": "No files in this project yet.",
+  "chatScreen.filesEmptySession": "No files in this session yet.",
   "chatScreen.cmd.new": "Clear session history",
   "chatScreen.cmd.reset": "Clear session history",
   "chatScreen.cmd.retry": "Re-run last message",
