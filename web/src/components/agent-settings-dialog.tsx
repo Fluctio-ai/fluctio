@@ -75,31 +75,64 @@ export type AgentSettingsTab =
   | "diag";
 
 type TabIcon = React.ComponentType<{ className?: string }>;
+type AgentTab = { id: AgentSettingsTab; label: string; icon: TabIcon };
 
-const AGENT_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> = [
-  { id: "profile", label: "settings.profile", icon: IdCardIcon },
-  { id: "customize", label: "settings.customize", icon: Wand2Icon },
-  { id: "models", label: "settings.models", icon: BrainIcon },
-  { id: "context", label: "settings.context", icon: LayersIcon },
-  { id: "skills", label: "settings.skills", icon: SparklesIcon },
-  { id: "mcp", label: "settings.mcp", icon: ServerIcon },
-  { id: "plugins", label: "settings.plugins", icon: Plug },
-  { id: "channels", label: "settings.channels", icon: RadioIcon },
-  { id: "scheduler", label: "settings.scheduler", icon: ClockIcon },
-  { id: "regex-hooks", label: "settings.regexHooks", icon: Regex },
-  { id: "knowledge", label: "settings.knowledge", icon: BookOpenIcon },
-  { id: "vectorization", label: "settings.memory", icon: DatabaseIcon },
-  { id: "privacy", label: "settings.privacy", icon: ShieldCheck },
-  { id: "recall-tuning", label: "settings.recallTuning", icon: SlidersHorizontal },
-  { id: "usage", label: "settings.usage", icon: CoinsIcon },
+// The 15 agent tabs are grouped by domain so the rail scans in chunks
+// instead of one flat list — later-added tabs (MCP, plugins, regex hooks,
+// vectorization, recall tuning, privacy, usage) used to land wherever
+// there was room, which read as noise. Group order = the order a new
+// agent is typically configured in: identity first, governance last.
+const AGENT_TAB_GROUPS: Array<{ section: string; tabs: AgentTab[] }> = [
+  {
+    section: "settings.section.identity",
+    tabs: [
+      { id: "profile", label: "settings.profile", icon: IdCardIcon },
+      { id: "customize", label: "settings.customize", icon: Wand2Icon },
+    ],
+  },
+  {
+    section: "settings.section.capability",
+    tabs: [
+      { id: "models", label: "settings.models", icon: BrainIcon },
+      { id: "context", label: "settings.context", icon: LayersIcon },
+      { id: "skills", label: "settings.skills", icon: SparklesIcon },
+      { id: "mcp", label: "settings.mcp", icon: ServerIcon },
+      { id: "plugins", label: "settings.plugins", icon: Plug },
+    ],
+  },
+  {
+    section: "settings.section.integration",
+    tabs: [
+      { id: "channels", label: "settings.channels", icon: RadioIcon },
+      { id: "scheduler", label: "settings.scheduler", icon: ClockIcon },
+      { id: "regex-hooks", label: "settings.regexHooks", icon: Regex },
+    ],
+  },
+  {
+    section: "settings.section.knowledge",
+    tabs: [
+      { id: "knowledge", label: "settings.knowledge", icon: BookOpenIcon },
+      { id: "vectorization", label: "settings.memory", icon: DatabaseIcon },
+      { id: "recall-tuning", label: "settings.recallTuning", icon: SlidersHorizontal },
+    ],
+  },
+  {
+    section: "settings.section.governance",
+    tabs: [
+      { id: "privacy", label: "settings.privacy", icon: ShieldCheck },
+      { id: "usage", label: "settings.usage", icon: CoinsIcon },
+    ],
+  },
 ];
 
 // Runtime intentionally lives only on the standalone /settings/runtime
 // page (super_admin-gated) — it's a deployment-wide knob, not the kind
 // of thing the average chatter wants in their per-agent dialog.
+// Order mirrors the landing tab: the dialog opens on General, so General
+// leads; About (version/upgrade) trails.
 const USER_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> = [
-  { id: "account", label: "settings.account", icon: UserCog },
   { id: "general", label: "settings.general", icon: Palette },
+  { id: "account", label: "settings.account", icon: UserCog },
   { id: "backup", label: "settings.backup", icon: HardDrive },
   { id: "diag", label: "settings.diag", icon: Bug },
   // About surfaces the gateway version + upgrade hint — only useful
@@ -143,11 +176,14 @@ export function AgentSettingsDialog({
   isAdmin?: boolean;
 }) {
   const tt = useT();
-  const agentTabs = userOnly
+  const agentTabGroups = userOnly
     ? []
     : role === "viewer"
-      ? AGENT_TABS.filter((t) => t.id === "models" || t.id === "channels")
-      : AGENT_TABS;
+      ? AGENT_TAB_GROUPS.map((g) => ({
+          ...g,
+          tabs: g.tabs.filter((t) => t.id === "models" || t.id === "channels"),
+        })).filter((g) => g.tabs.length > 0)
+      : AGENT_TAB_GROUPS;
   // User tabs (Account / General / About) live ONLY on the platform sidebar's
   // Settings (userOnly) — the per-agent dialog drops them to avoid duplicating
   // what's already reachable from the post-login global settings.
@@ -195,12 +231,12 @@ export function AgentSettingsDialog({
             "sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:border-r sm:border-b-0 sm:p-3 sm:pr-3",
           )}
         >
-          {agentTabs.length > 0 && (
-            <>
+          {agentTabGroups.map((g) => (
+            <React.Fragment key={g.section}>
               <SectionLabel className="hidden sm:block">
-                {tt("dialog.agentSection")}
+                {tt(g.section)}
               </SectionLabel>
-              {agentTabs.map((t) => (
+              {g.tabs.map((t) => (
                 <TabButton
                   key={t.id}
                   tab={t}
@@ -208,9 +244,9 @@ export function AgentSettingsDialog({
                   onSelect={setTab}
                 />
               ))}
-            </>
-          )}
-          {userTabs.length > 0 && agentTabs.length > 0 && (
+            </React.Fragment>
+          ))}
+          {userTabs.length > 0 && agentTabGroups.length > 0 && (
             <div
               aria-hidden
               className="mx-1 w-px self-stretch shrink-0 bg-border sm:hidden"
@@ -218,7 +254,7 @@ export function AgentSettingsDialog({
           )}
           {userTabs.length > 0 && (
             <SectionLabel
-              className={cn("hidden sm:block", agentTabs.length > 0 && "sm:mt-3")}
+              className={cn("hidden sm:block", agentTabGroups.length > 0 && "sm:mt-3")}
             >
               {tt("dialog.userSection")}
             </SectionLabel>
@@ -300,7 +336,9 @@ function SectionLabel({
   return (
     <div
       className={cn(
-        "px-2 pt-1 pb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground",
+        // py-1 (not pt-1 pb-2): with five group labels the rail must fit
+        // 15 tabs inside 85vh — the tighter label keeps it scroll-free.
+        "px-2 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground",
         className,
       )}
     >

@@ -154,6 +154,19 @@ export function KnowledgePage({
 
 // ── Articles: chunked sources (original two-pane browser) ──
 
+// The first chunk of an ingested article usually opens with a markdown
+// heading repeating the source title — the detail header above already
+// shows it, so a matching heading renders the title twice back-to-back.
+// Strip the leading heading only when its text matches the title after
+// whitespace/emphasis normalization; anything else passes untouched.
+function stripLeadingTitle(content: string, title: string): string {
+  const m = content.match(/^#{1,6}\s+(.+)\r?\n?/);
+  if (!m) return content;
+  const norm = (s: string) => s.replace(/[\s*_~`#]/g, "");
+  if (!norm(m[1]) || norm(m[1]) !== norm(title)) return content;
+  return content.slice(m[0].length);
+}
+
 export function ArticleView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
   const agentId = useAgentIdFromURL();
@@ -515,7 +528,7 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
                           </span>
                           <div className="prose prose-sm dark:prose-invert max-w-none break-words">
                             <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                              {entry.content}
+                              {i === 0 ? stripLeadingTitle(entry.content, selectedSource.title) : entry.content}
                             </ReactMarkdown>
                           </div>
                           {i < entries.length - 1 && (

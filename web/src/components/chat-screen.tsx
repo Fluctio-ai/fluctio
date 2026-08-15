@@ -2485,6 +2485,17 @@ export function ChatScreen() {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
+  // Day-divider label: relative word for today/yesterday, else a localized
+  // long date ("8月12日 周三" / "Aug 12, Wed") for sessions spanning days.
+  const formatDayDivider = (ts: number) => {
+    const d = new Date(ts);
+    const today = new Date();
+    if (d.toDateString() === today.toDateString()) return t("chatScreen.today");
+    if (d.toDateString() === new Date(today.getTime() - 86400_000).toDateString())
+      return t("chatScreen.yesterday");
+    return d.toLocaleDateString([], { month: "long", day: "numeric", weekday: "short" });
+  };
+
   // Empty new-chat state: collapse the messages scroll out of the
   // flex-1 lane and center title + composer vertically, Manus-style.
   // Once any message exists the layout swings back to the standard
@@ -2572,6 +2583,10 @@ export function ChatScreen() {
               // them in its reply, instead of being forwarded unprocessed.
               const attachedImages = new Map<string, Array<{ alt: string; src: string }>>();
               const surfacedSrcs = new Set<string>();
+              // Calendar day of the last rendered regular message — drives
+              // the day divider so long-lived (IM-synced) sessions don't
+              // read as one undifferentiated stream.
+              let lastDay: string | null = null;
               // Walk messages once so we can bundle consecutive
               // tool-group rounds into a single collapsible. Without
               // this, a long ReAct turn with seven sequential rounds
@@ -2643,6 +2658,22 @@ export function ChatScreen() {
                     );
                   }
                   continue;
+                }
+                // Day divider before regular bubbles that start a new
+                // calendar day (transitions only — notices and tool
+                // groups don't own a conversation timestamp).
+                if (msg.role === "user" || msg.role === "agent") {
+                  const day = new Date(msg.timestamp).toDateString();
+                  if (lastDay && day !== lastDay) {
+                    elements.push(
+                      <div key={`day-${msg.id}`} className="flex justify-center my-3">
+                        <span className="text-xs text-muted-foreground bg-muted/40 rounded-full px-3 py-1">
+                          {formatDayDivider(msg.timestamp)}
+                        </span>
+                      </div>,
+                    );
+                  }
+                  lastDay = day;
                 }
                 // Agent bubbles may carry the `<|split|>` marker the
                 // LLM emits for multi-bubble output (mirrors IM channel

@@ -175,6 +175,21 @@ export function KBSettingsCard() {
             </div>
           </div>
 
+          {/* Keywords input lives right under the trigger mode that
+              enables it — it used to render at the card tail, far from
+              the Wiki 触发模式 select that shows it. */}
+          {autoMode === "keyword" && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">{t("knowledge.keywords")}</Label>
+              <Input
+                value={keywords}
+                onChange={(e) => setKeywords(e.target.value)}
+                placeholder={t("knowledge.keywordsPlaceholder")}
+                className="h-8 text-xs"
+              />
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <Label className="text-xs">{t("knowledge.wikiRatio")}</Label>
@@ -312,63 +327,60 @@ export function KBSettingsCard() {
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t("knowledge.reminderChannel")}</Label>
-            <Select value={reminderChannel} onValueChange={(v) => v && setReminderChannel(v)}>
-              <SelectTrigger className="h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="wechat">微信</SelectItem>
-                <SelectItem value="qq">QQ</SelectItem>
-                <SelectItem value="telegram">Telegram</SelectItem>
-                <SelectItem value="discord">Discord</SelectItem>
-                <SelectItem value="slack">Slack</SelectItem>
-                <SelectItem value="feishu">飞书</SelectItem>
-                <SelectItem value="line">LINE</SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-[11px] text-muted-foreground">
-              {t("knowledge.reminderChannelDesc")}
-            </p>
+          {/* Search behavior + todo reminders each get their own labeled
+              group — they used to float unlabeled after the dedup block
+              and read as dedup sub-fields. */}
+          <div className="space-y-2 pt-2 border-t border-border mt-1">
+            <Label className="text-xs font-medium">{t("knowledge.searchBehavior")}</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("knowledge.searchMode")}</Label>
+                <Select value={searchMode} onValueChange={(v) => v && setSearchMode(v)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="augment">{t("knowledge.searchAugment")}</SelectItem>
+                    <SelectItem value="strict">{t("knowledge.searchStrict")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">{t("knowledge.noResultAction")}</Label>
+                <Select value={emptyAction} onValueChange={(v) => v && setEmptyAction(v)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="llm">{t("knowledge.actionLLM")}</SelectItem>
+                    <SelectItem value="stop">{t("knowledge.actionStop")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </div>
 
-          {autoMode === "keyword" && (
+          <div className="space-y-2 pt-2 border-t border-border mt-1">
+            <Label className="text-xs font-medium">{t("knowledge.todoReminders")}</Label>
             <div className="space-y-1.5">
-              <Label className="text-xs">{t("knowledge.keywords")}</Label>
-              <Input
-                value={keywords}
-                onChange={(e) => setKeywords(e.target.value)}
-                placeholder={t("knowledge.keywordsPlaceholder")}
-                className="h-8 text-xs"
-              />
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("knowledge.searchMode")}</Label>
-              <Select value={searchMode} onValueChange={(v) => v && setSearchMode(v)}>
+              <Label className="text-xs">{t("knowledge.reminderChannel")}</Label>
+              <Select value={reminderChannel} onValueChange={(v) => v && setReminderChannel(v)}>
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="augment">{t("knowledge.searchAugment")}</SelectItem>
-                  <SelectItem value="strict">{t("knowledge.searchStrict")}</SelectItem>
+                  <SelectItem value="wechat">微信</SelectItem>
+                  <SelectItem value="qq">QQ</SelectItem>
+                  <SelectItem value="telegram">Telegram</SelectItem>
+                  <SelectItem value="discord">Discord</SelectItem>
+                  <SelectItem value="slack">Slack</SelectItem>
+                  <SelectItem value="feishu">飞书</SelectItem>
+                  <SelectItem value="line">LINE</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("knowledge.noResultAction")}</Label>
-              <Select value={emptyAction} onValueChange={(v) => v && setEmptyAction(v)}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="llm">{t("knowledge.actionLLM")}</SelectItem>
-                  <SelectItem value="stop">{t("knowledge.actionStop")}</SelectItem>
-                </SelectContent>
-              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                {t("knowledge.reminderChannelDesc")}
+              </p>
             </div>
           </div>
         </div>

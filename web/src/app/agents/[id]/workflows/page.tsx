@@ -29,6 +29,17 @@ import { SchemaForm, WorkflowEditor } from "@/components/workflow-editor";
 // Workflows page (ticket 08): list this agent's workflows, manually trigger one
 // (JSON input), and browse run history with per-node output + the failing
 // node's error. Visibility is ownership — only this agent's workflows show.
+
+// StartedAt arrives as a raw RFC3339 UTC string ("2026-08-14T01:59:29Z");
+// render it in the viewer's local zone as a compact "MM-DD HH:mm" so the
+// history rows stay scannable instead of leaking ISO noise.
+function formatRunTime(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime())
+    ? iso
+    : d.toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 export default function WorkflowsPage() {
   const agentId = useAgentIdFromURL();
   const t = useT();
@@ -275,7 +286,9 @@ export default function WorkflowsPage() {
               }
             >
               <div className="font-medium truncate">{w.id}</div>
-              <div className="text-xs text-muted-foreground truncate">{w.description || "—"}</div>
+              {w.description && (
+                <div className="text-xs text-muted-foreground truncate">{w.description}</div>
+              )}
             </button>
           ))
         )}
@@ -384,7 +397,7 @@ export default function WorkflowsPage() {
                         <StatusBadge status={r.Status} />
                         <span className="font-mono text-xs truncate">{r.ID}</span>
                         <span className="text-xs text-muted-foreground shrink-0">v{r.Version}</span>
-                        <span className="text-xs text-muted-foreground truncate">{r.StartedAt}</span>
+                        <span className="text-xs text-muted-foreground truncate" title={r.StartedAt}>{formatRunTime(r.StartedAt)}</span>
                       </button>
                       <Button size="sm" variant="ghost" onClick={() => onDeleteRun(r.ID)}>
                         <Trash2 className="h-3 w-3" />

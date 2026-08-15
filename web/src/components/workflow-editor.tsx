@@ -455,7 +455,11 @@ export function WorkflowEditor({
             </Button>
           </div>
           <div style={{ "--pane-pw": `${propsW}px` } as any} className="flex flex-col md:flex-row">
-            <div ref={containerRef} className="h-[480px] w-full md:flex-1 rounded border bg-muted/30" />
+            {/* Canvas height breathes with the viewport (vis-network
+                observes container resizes itself) so 手动触发 + 运行历史
+                below stay reachable on shorter desktop screens; 480px
+                stays the ceiling, 320px the floor. */}
+            <div ref={containerRef} className="h-[clamp(320px,48dvh,480px)] w-full md:flex-1 rounded border bg-muted/30" />
             {/* Resizable props panel: same transparent drag handle as the
                 workflow-list / knowledge-base dividers. Mobile stacks the
                 panel under the canvas instead of squeezing it beside. */}
@@ -464,7 +468,7 @@ export function WorkflowEditor({
               onPointerDown={startPropsDrag}
             />
             <div
-              className="shrink-0 border-t md:border-t-0 md:border-l bg-muted/30 overflow-y-auto md:max-h-[480px] space-y-2 text-xs w-full md:w-[var(--pane-pw)]"
+              className="shrink-0 border-t md:border-t-0 md:border-l bg-muted/30 overflow-y-auto md:max-h-[clamp(320px,48dvh,480px)] space-y-2 text-xs w-full md:w-[var(--pane-pw)]"
             >
               <h4 className="font-semibold">{t("workflow.props")}</h4>
               {selNodeObj ? (

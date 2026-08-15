@@ -117,7 +117,7 @@ const zhCN: Record<string, string> = {
   "workflow.condAddBranchTo": "添加分支到…",
   "workflow.condAddBranch": "添加分支",
   "workflow.workflowTitle": "标题",
-  "workflow.tabBasic": "基本信息与运行",
+  "workflow.tabBasic": "基本信息",
   "workflow.tabVisual": "可视化编辑",
   "workflow.tabYaml": "YAML 编辑",
   "workflow.deleteSel": "删除选中",
@@ -181,6 +181,12 @@ const zhCN: Record<string, string> = {
   "settings.scheduler": "调度器",
   "settings.regexHooks": "正则钩子",
   "settings.usage": "Token 用量",
+  // Settings rail section labels — group the agent tabs by domain
+  "settings.section.identity": "身份",
+  "settings.section.capability": "能力",
+  "settings.section.integration": "连接与自动化",
+  "settings.section.knowledge": "知识",
+  "settings.section.governance": "隐私与用量",
   "settings.backup": "自动备份",
   "backup.title": "数据库备份",
   "backup.desc": "定时对 SQLite 数据库做完整快照（VACUUM INTO），每天到点自动备份一次，保留最近若干份，超出自动删除旧的。",
@@ -774,6 +780,10 @@ const zhCN: Record<string, string> = {
   "knowledge.status_cancelled": "已取消",
   "knowledge.reminderChannel": "提醒渠道",
   "knowledge.reminderChannelDesc": "到期待办推送到的 IM 渠道（需已绑定并启用）",
+  // KB card group labels — keep every block labeled so no field floats
+  // without context at the card tail
+  "knowledge.searchBehavior": "搜索行为",
+  "knowledge.todoReminders": "待办提醒",
   "knowledge.chunk": "分块",
   "knowledge.failedAddText": "添加文本失败",
   "knowledge.failedFetchURL": "获取 URL 失败",
@@ -1331,6 +1341,9 @@ const zhCN: Record<string, string> = {
   "chatScreen.showWorkspace": "显示工作空间",
   "chatScreen.toggleWorkspace": "切换工作空间",
   "chatScreen.chatWith": "与 {name} 对话",
+  // Day-divider pill between messages from different calendar days
+  "chatScreen.today": "今天",
+  "chatScreen.yesterday": "昨天",
   "chatScreen.cmd.new": "清空会话历史",
   "chatScreen.cmd.reset": "清空会话历史",
   "chatScreen.cmd.retry": "重跑上一条消息",

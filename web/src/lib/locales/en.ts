@@ -117,7 +117,7 @@ const en: Record<string, string> = {
   "workflow.condAddBranchTo": "add branch to…",
   "workflow.condAddBranch": "add branch",
   "workflow.workflowTitle": "Title",
-  "workflow.tabBasic": "Basic & Runs",
+  "workflow.tabBasic": "Basics",
   "workflow.tabVisual": "Visual editor",
   "workflow.tabYaml": "YAML editor",
   "workflow.deleteSel": "Delete selected",
@@ -181,6 +181,12 @@ const en: Record<string, string> = {
   "settings.scheduler": "Scheduler",
   "settings.regexHooks": "Regex Hooks",
   "settings.usage": "Token Usage",
+  // Settings rail section labels — group the agent tabs by domain
+  "settings.section.identity": "Identity",
+  "settings.section.capability": "Capabilities",
+  "settings.section.integration": "Connections & Automation",
+  "settings.section.knowledge": "Knowledge",
+  "settings.section.governance": "Privacy & Usage",
   "settings.backup": "Auto Backup",
   "backup.title": "Database Backup",
   "backup.desc": "Takes a full snapshot of the SQLite database (VACUUM INTO) on a daily schedule, keeping the most recent few and auto-deleting older ones.",
@@ -774,6 +780,10 @@ const en: Record<string, string> = {
   "knowledge.status_cancelled": "Cancelled",
   "knowledge.reminderChannel": "Reminder channel",
   "knowledge.reminderChannelDesc": "IM channel for due-todo reminders (must be bound and enabled)",
+  // KB card group labels — keep every block labeled so no field floats
+  // without context at the card tail
+  "knowledge.searchBehavior": "Search Behavior",
+  "knowledge.todoReminders": "Todo Reminders",
   "knowledge.chunk": "Chunk",
   "knowledge.failedAddText": "Failed to add text",
   "knowledge.failedFetchURL": "Failed to fetch URL",
@@ -1331,6 +1341,9 @@ const en: Record<string, string> = {
   "chatScreen.showWorkspace": "Show workspace",
   "chatScreen.toggleWorkspace": "Toggle workspace",
   "chatScreen.chatWith": "Chat with {name}",
+  // Day-divider pill between messages from different calendar days
+  "chatScreen.today": "Today",
+  "chatScreen.yesterday": "Yesterday",
   "chatScreen.cmd.new": "Clear session history",
   "chatScreen.cmd.reset": "Clear session history",
   "chatScreen.cmd.retry": "Re-run last message",
