@@ -184,6 +184,11 @@ type Registry struct {
 	// builder still reads them via the separate small-state Store.
 	workspaceStore workspace.Store
 	agentID        string
+	// imagePublicizer, when set, turns a local image path into a
+	// short-lived public http(s) URL — the fallback path for vision
+	// endpoints that reject inline data: URLs. Wired by the gateway when
+	// FLUCTIO_PUBLIC_BASE_URL is configured; nil keeps vision on data URLs.
+	imagePublicizer func(localPath string) (string, error)
 	// msgFetcher is the store handle for fetch_messages.
 	msgFetcher MessageFetcher
 	// summaryDB is the relational store handle used by memory_search to
@@ -364,6 +369,22 @@ func (r *Registry) SetWorkspaceStore(ws workspace.Store, agentID string) {
 // every chat (the host-vs-docker scope mismatch).
 func (r *Registry) SetUserRoot(dir string) {
 	r.userRoot = dir
+}
+
+// SetImagePublicizer installs the bridge that turns a local image path
+// into a short-lived public http(s) URL (the pubimg store). Gateway wires
+// it at agent-assembly time when FLUCTIO_PUBLIC_BASE_URL is set; the
+// vision tool uses it as the fallback when the endpoint rejects data URLs.
+func (r *Registry) SetImagePublicizer(f func(localPath string) (string, error)) {
+	r.imagePublicizer = f
+}
+
+// imagePublicURL publicizes a local path, or explains why it can't.
+func (r *Registry) imagePublicURL(path string) (string, error) {
+	if r.imagePublicizer == nil {
+		return "", fmt.Errorf("no public image bridge configured")
+	}
+	return r.imagePublicizer(path)
 }
 
 // SetSystemFileStore installs a durable store for identity files so the

@@ -17,6 +17,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/pubimg"
 	"github.com/fluctio-ai/fluctio/internal/push"
 	"github.com/fluctio-ai/fluctio/internal/runtime"
 	"github.com/fluctio-ai/fluctio/internal/session"
@@ -262,6 +263,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /healthz", healthz)
 	mux.HandleFunc("GET /livez", healthz)
 	mux.HandleFunc("GET /readyz", healthz)
+
+	// Short-lived anonymous image URLs for vision endpoints that only
+	// accept public http(s) URLs (Agnes etc.). Mounted only when
+	// FLUCTIO_PUBLIC_BASE_URL is configured; tokens are random and expire.
+	pubimg.Mount(mux)
 
 	auth := s.authMiddleware
 	opt := s.optionalAuth

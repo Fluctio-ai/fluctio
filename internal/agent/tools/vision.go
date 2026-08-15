@@ -11,6 +11,7 @@ import (
 	_ "image/gif"
 	_ "image/png"
 	"os"
+	"path/filepath"
 	"strings"
 
 	_ "golang.org/x/image/bmp"
@@ -81,15 +82,35 @@ func RegisterVisionChain(r *Registry, chain *toolproviders.Chain) {
 		if err := json.Unmarshal(rawArgs, &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
-		// If the model gave a file path (not a URL), read + transcode +
-		// downscale ourselves. The model can't handle base64 without
-		// truncating, so we take a path and produce a clean data URL.
+		// The model reports paths as it sees them in the sandbox/host tool
+		// world: logical /workspace/<name>. This process runs on the host and
+		// has no /workspace dir — map the prefix back to UserRoot, same as
+		// deliver_file does.
+		//
+		// Default: inline data URL. Fallback: some vision endpoints (e.g.
+		// Agnes) only accept public http(s) image URLs and reject data:
+		// URLs with a 4xx. When a public image bridge is configured, retry
+		// once with a short-lived URL for the same file before giving up.
 		if img, ok := args["image"].(string); ok && !isImageURL(img) {
+			img = mapWorkspaceImagePath(r, img)
 			dataURL, err := ReadImageAsDataURL(img)
 			if err != nil {
 				return "", err
 			}
 			args["image"] = dataURL
+			resp, err := chain.Execute(ctx, args)
+			if err == nil {
+				return resp.Text, nil
+			}
+			if isHTTP4xx(err) {
+				if pubURL, perr := r.imagePublicURL(img); perr == nil {
+					args["image"] = pubURL
+					if resp, err = chain.Execute(ctx, args); err == nil {
+						return resp.Text, nil
+					}
+				}
+			}
+			return "", err
 		}
 		resp, err := chain.Execute(ctx, args)
 		if err != nil {
@@ -104,6 +125,40 @@ func RegisterVisionChain(r *Registry, chain *toolproviders.Chain) {
 // Anything else is treated as a file path and preprocessed on disk.
 func isImageURL(s string) bool {
 	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "data:")
+}
+
+// mapWorkspaceImagePath rewrites the sandbox's logical /workspace prefix to
+// the host-side user workspace root, mirroring deliver_file: files reported
+// as /workspace/<name> live at UserRoot/<name> on the host (the sandbox
+// mounts UserRoot at /workspace, and host-mode file tools report the same
+// logical path). Paths without the prefix pass through unchanged.
+func mapWorkspaceImagePath(r *Registry, p string) string {
+	root := r.UserRoot()
+	if root == "" {
+		return p
+	}
+	if p == "/workspace" {
+		return root
+	}
+	if strings.HasPrefix(p, "/workspace/") {
+		return filepath.Join(root, strings.TrimPrefix(p, "/workspace"))
+	}
+	return p
+}
+
+// isHTTP4xx reports whether a chain error carries an HTTP 4xx status —
+// provider errors format as "<name> HTTP <code>: <body>" (see
+// toolproviders/vision retriableHTTP). Used to decide whether swapping an
+// inline data URL for a public URL is worth a retry: 4xx means the endpoint
+// understood us but rejected the request (often the image encoding), while
+// 5xx/network errors wouldn't change with a different URL. Deliberately
+// coarse: an unrelated 401/429 also triggers one extra doomed attempt,
+// which costs a single request and returns the original error either way.
+func isHTTP4xx(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "HTTP 4")
 }
 
 // ReadImageAsDataURL reads the file at path, decodes it (any registered

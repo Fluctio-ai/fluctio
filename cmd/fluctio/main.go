@@ -16,6 +16,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/daemon"
 	"github.com/fluctio-ai/fluctio/internal/gateway"
+	"github.com/fluctio-ai/fluctio/internal/pubimg"
 	coderuntime "github.com/fluctio-ai/fluctio/internal/runtime"
 	"github.com/fluctio-ai/fluctio/internal/sandbox"
 	"github.com/fluctio-ai/fluctio/internal/setup"
@@ -146,6 +147,11 @@ func runGateway(port int) error {
 	})))
 
 	env := config.LoadEnv()
+
+	// Short-lived public image URL bridge (vision fallback for endpoints
+	// that only accept http(s) URLs). No-op unless
+	// FLUCTIO_PUBLIC_BASE_URL is set.
+	pubimg.Configure(env.Gateway.PublicBaseURL)
 	if env.Gateway.Port > 0 {
 		port = env.Gateway.Port
 	}

@@ -24,6 +24,12 @@ type EnvConfig struct {
 type EnvGateway struct {
 	Port int    // FLUCTIO_PORT       — default 18953
 	Bind string // FLUCTIO_BIND       — "loopback" (default) or "all"
+	// PublicBaseURL is where this instance is reachable from the public
+	// internet (e.g. https://fluctio.example.com), including scheme, no
+	// trailing slash. Used by the pubimg bridge to mint short-lived
+	// anonymous image URLs for vision endpoints that only accept http(s)
+	// URLs (they can't carry a login session). Empty = disabled.
+	PublicBaseURL string // FLUCTIO_PUBLIC_BASE_URL
 }
 
 type EnvStorage struct {
@@ -74,6 +80,9 @@ func LoadEnv() *EnvConfig {
 	}
 	if v := os.Getenv("FLUCTIO_BIND"); v != "" {
 		cfg.Gateway.Bind = v
+	}
+	if v := os.Getenv("FLUCTIO_PUBLIC_BASE_URL"); v != "" {
+		cfg.Gateway.PublicBaseURL = v
 	}
 
 	if v := os.Getenv("FLUCTIO_STORAGE_TYPE"); v != "" {

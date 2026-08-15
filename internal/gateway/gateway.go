@@ -27,6 +27,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/pubimg"
 	"github.com/fluctio-ai/fluctio/internal/cron"
 	"github.com/fluctio-ai/fluctio/internal/users"
 	"github.com/fluctio-ai/fluctio/internal/plugin"
@@ -94,6 +95,13 @@ func registerAgentToolChains(cfg *config.Config, agents []*agent.Agent) {
 		}
 		if chain := buildToolChainFromResolved(resolved, "vision"); chain != nil {
 			ag.RegisterVisionChain(chain)
+		}
+		// When the pubimg bridge is configured, give every agent's vision
+		// tool the local-path → short-lived-public-URL fallback for
+		// endpoints that reject inline data: URLs. Same wiring point as the
+		// chains above so agent reloads re-apply it.
+		if pubimg.Enabled() {
+			ag.Registry().SetImagePublicizer(pubimg.Publicize)
 		}
 		// web_fetch: chain-first, otherwise the agent keeps the
 		// built-in direct fetcher already registered at construction
