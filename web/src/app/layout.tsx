@@ -40,9 +40,12 @@ export const metadata: Metadata = {
 
 // themeColor drives the <meta name="theme-color"> tag — the install
 // prompt and installed-app window chrome tint off this. Lives in viewport
-// (not metadata) per Next 14+ Metadata API.
+// (not metadata) per Next 14+ Metadata API. viewportFit=cover extends the
+// webview under the notch so the safe-area insets the full-screen dialogs
+// apply (env(safe-area-inset-*)) resolve to real values.
 export const viewport: Viewport = {
   themeColor: "#1890ff",
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

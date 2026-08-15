@@ -53,8 +53,15 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   const setLocale = useCallback((l: Locale) => {
     setLocaleState(l);
     localStorage.setItem(STORAGE_KEY, l);
-    document.documentElement.lang = l === "zh-CN" ? "zh-CN" : "en";
   }, []);
+
+  // Keep <html lang> in sync with the active locale. It used to update
+  // only inside manual switches, leaving the initially detected locale
+  // stuck on the static lang="en" — charset-based font fallback, screen
+  // readers, and translation tools all read the wrong value.
+  useEffect(() => {
+    document.documentElement.lang = locale === "zh-CN" ? "zh-CN" : "en";
+  }, [locale]);
 
   const t = useCallback<TFunction>(
     (key: string, vars?: Record<string, string | number>) => {

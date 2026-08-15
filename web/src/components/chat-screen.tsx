@@ -643,6 +643,14 @@ export function ChatScreen() {
   );
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Timestamp taken after first mount. Bubbles whose msg.timestamp is
+  // newer than this get the .msg-in entrance — history always carries
+  // older timestamps, so only genuinely live arrivals animate. Reset on
+  // remount (session switch), which is exactly the semantics wanted.
+  const liveAfterRef = useRef(0);
+  useEffect(() => {
+    liveAfterRef.current = Date.now();
+  }, []);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   // todo.md state for the current session — agent maintains the file,
@@ -2666,7 +2674,7 @@ export function ChatScreen() {
                   const day = new Date(msg.timestamp).toDateString();
                   if (lastDay && day !== lastDay) {
                     elements.push(
-                      <div key={`day-${msg.id}`} className="flex justify-center my-3">
+                      <div key={`day-${msg.id}`} className={`flex justify-center my-3 ${msg.timestamp > liveAfterRef.current ? "msg-in" : ""}`}>
                         <span className="text-xs text-muted-foreground bg-muted/40 rounded-full px-3 py-1">
                           {formatDayDivider(msg.timestamp)}
                         </span>
@@ -2706,7 +2714,13 @@ export function ChatScreen() {
                 <div
                   key={msg.id}
                   id={msg.seq != null ? `seq-${msg.seq}` : undefined}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} ${
+                    // Rise-in only for messages that arrived after this
+                    // render tree mounted (timestamp gate) — history and
+                    // page-load never animate, live arrivals acknowledge
+                    // themselves. See .msg-in in globals.css.
+                    msg.timestamp > liveAfterRef.current ? "msg-in" : ""
+                  }`}
                 >
                   <div
                     className={`group relative ${
