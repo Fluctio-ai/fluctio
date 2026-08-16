@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/agent"
@@ -119,6 +120,13 @@ type Server struct {
 	// clients across browser tabs. Lazy-init on first use so older
 	// callers that didn't wire it explicitly still work.
 	chatEvents *agent.EventHub
+	// turnCancels holds the cancel func of every in-flight web-chat turn
+	// (handleChatStream / runTeamAgentTurn) so POST /api/chat/stop can
+	// deliberately end one. Disconnects no longer kill turns — stop must
+	// be an explicit call. Keyed agentID|sessionID; guarded by its own
+	// mutex because streams and stop calls race.
+	turnCancels   map[string]*turnCancelEntry
+	turnCancelsMu sync.Mutex
 	usage      usage.Meter
 	startedAt  time.Time
 	// runtimeMgr powers the coding-agent project runtime (live dev server
@@ -313,6 +321,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/chat/stream", auth(s.handleChatStream))
 	mux.HandleFunc("POST /api/chat/team/stream", auth(s.handleTeamChatStream))
 	mux.HandleFunc("POST /api/chat/steer", auth(s.handleChatSteer))
+	mux.HandleFunc("POST /api/chat/stop", auth(s.handleChatStop))
 	mux.HandleFunc("POST /api/chat/recall-feedback", auth(s.handleRecallFeedback))
 	mux.HandleFunc("GET /api/chats", auth(s.handleChats))
 	mux.HandleFunc("GET /api/chat/history", auth(s.handleChatHistory))

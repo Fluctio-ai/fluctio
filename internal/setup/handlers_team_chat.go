@@ -189,6 +189,13 @@ func (s *Server) runTeamAgentTurn(w http.ResponseWriter, flusher http.Flusher, r
 
 	agentCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), agentTurnTimeout)
 	defer cancel()
+	// Same discipline as handleChatStream: register the cancel so
+	// POST /api/chat/stop can end this turn explicitly, and supersede
+	// any lingering turn on the member session from a previous
+	// connection so two loops can't interleave history appends.
+	s.cancelTurn(member.AgentID, member.SessionID)
+	unregister := s.registerTurnCancel(member.AgentID, member.SessionID, cancel)
+	defer unregister()
 	agentCtx = agent.ContextWithStream(agentCtx, nil, s.dataStore, hub, uid, member.AgentID, member.SessionID)
 
 	agentDone := make(chan struct{})
@@ -201,10 +208,22 @@ func (s *Server) runTeamAgentTurn(w http.ResponseWriter, flusher http.Flusher, r
 	defer keepalive.Stop()
 	clientGone := r.Context().Done()
 	turnPending := false
+	disconnected := false
 	for {
 		select {
 		case <-clientGone:
-			return false
+			// Client dropped: let the current member's turn finish on
+			// its detached ctx (events persist; the reloaded UI
+			// backfills), but remember the drop so we DON'T dispatch
+			// the next member afterwards — returning false stops the
+			// outer member loop. Not returning here would fire defer
+			// cancel() and kill the turn mid-tool (the refresh/network
+			// blip "context canceled" outage). Stop is explicit via
+			// POST /api/chat/stop. Nil the channel so this case blocks;
+			// SSE writes below fail silently on a dead connection.
+			disconnected = true
+			clientGone = nil
+			continue
 		case <-agentDone:
 		drain:
 			for {
@@ -218,7 +237,7 @@ func (s *Server) runTeamAgentTurn(w http.ResponseWriter, flusher http.Flusher, r
 						continue
 					}
 					if env.Event.Type == "done" {
-						return true
+						return !disconnected
 					}
 					forwardTeamEvent(w, flusher, member.AgentID, env)
 				default:
@@ -229,7 +248,7 @@ func (s *Server) runTeamAgentTurn(w http.ResponseWriter, flusher http.Flusher, r
 				agentDone = nil
 				continue
 			}
-			return true
+			return !disconnected
 		case <-agentCtx.Done():
 			return false
 		case <-keepalive.C:
@@ -244,7 +263,7 @@ func (s *Server) runTeamAgentTurn(w http.ResponseWriter, flusher http.Flusher, r
 				continue
 			}
 			if env.Event.Type == "done" {
-				return true
+				return !disconnected
 			}
 			forwardTeamEvent(w, flusher, member.AgentID, env)
 		}

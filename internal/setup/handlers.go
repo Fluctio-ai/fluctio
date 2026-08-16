@@ -1133,6 +1133,82 @@ func (s *Server) handleChatSteer(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusConflict, map[string]any{"buffered": false})
 }
 
+// turnCancelEntry boxes the cancel func so unregister can compare map
+// entries by pointer identity (func values aren't comparable in Go).
+type turnCancelEntry struct{ cancel context.CancelFunc }
+
+// registerTurnCancel remembers the cancel func of an in-flight turn so
+// handleChatStop can target it. Returns an unregister func the stream
+// handler defers. If a second turn registers for the same (agent,
+// session) before the first unregisters (overlapping sends on one
+// session), the unregister only deletes its own entry, so the newer
+// cancel survives.
+func (s *Server) registerTurnCancel(agentID, sessionID string, cancel context.CancelFunc) func() {
+	key := agentID + "|" + sessionID
+	entry := &turnCancelEntry{cancel: cancel}
+	s.turnCancelsMu.Lock()
+	if s.turnCancels == nil {
+		s.turnCancels = make(map[string]*turnCancelEntry)
+	}
+	s.turnCancels[key] = entry
+	s.turnCancelsMu.Unlock()
+	return func() {
+		s.turnCancelsMu.Lock()
+		if s.turnCancels[key] == entry {
+			delete(s.turnCancels, key)
+		}
+		s.turnCancelsMu.Unlock()
+	}
+}
+
+// cancelTurn ends the in-flight turn for (agent, session), if any.
+// Returns whether a turn was actually cancelled. Called by
+// handleChatStop and by a fresh send superseding a lingering turn from
+// a previous connection.
+func (s *Server) cancelTurn(agentID, sessionID string) bool {
+	key := agentID + "|" + sessionID
+	s.turnCancelsMu.Lock()
+	entry, ok := s.turnCancels[key]
+	if ok {
+		delete(s.turnCancels, key)
+	}
+	s.turnCancelsMu.Unlock()
+	if ok {
+		entry.cancel()
+	}
+	return ok
+}
+
+// handleChatStop deliberately ends the in-flight turn for (agent,
+// session). Stop used to be "abort the SSE fetch": the dropped
+// connection fired the stream handler's defer cancel() and killed the
+// turn — but a refresh or network blip killed turns the exact same
+// way (mid-tool "context canceled", no retry). Now disconnects let the
+// turn finish server-side (events persist; the UI backfills via
+// /api/chat/subscribe), and stopping is this explicit call. 200
+// {"stopped":true} when a turn was cancelled; 409 when none is running.
+func (s *Server) handleChatStop(w http.ResponseWriter, r *http.Request) {
+	var req chatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	ag := s.resolveAgent(r, req.AgentID)
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "agent not found"})
+		return
+	}
+	if s.effectiveUserID(r) == "" {
+		jsonResponse(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+	if s.cancelTurn(ag.Name(), req.SessionID) {
+		jsonResponse(w, http.StatusOK, map[string]any{"stopped": true})
+		return
+	}
+	jsonResponse(w, http.StatusConflict, map[string]any{"stopped": false})
+}
+
 // agentTurnTimeout is the upper bound on how long an agent goroutine
 // is allowed to run after the client connection drops. Bumped to 45m
 // after fan-out delegate_task work (6 parallel subagents × ~10m each
@@ -1195,7 +1271,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// Detach the agent's ctx from the request: when the browser tab
 	// disconnects (refresh, close, network blip) we want the agent to
 	// keep running so its already-paid-for LLM call finishes and the
-	// reply lands in session_events. The 15-minute cap is the only thing
+	// reply lands in session_events. The 45-minute cap is the only thing
 	// that can kill it.
 	agentCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), agentTurnTimeout)
 	// cancel lives on the handler, not the agent goroutine: when a slash
@@ -1203,6 +1279,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// return, and inner-scope cancel would tear down agentCtx before the
 	// continuation's events can reach this handler's safety-net check.
 	defer cancel()
+	// Supersede any turn still running on this session from a previous
+	// connection (user refreshed instead of stopping). Both turns would
+	// interleave appends on the same session history; cancel the old one
+	// — its events are persisted up to the cancel point.
+	s.cancelTurn(agentID, req.SessionID)
+	unregister := s.registerTurnCancel(agentID, req.SessionID, cancel)
+	defer unregister()
 	agentCtx = agent.ContextWithStream(agentCtx, nil, s.dataStore, hub, uid, agentID, req.SessionID)
 
 	// "Resend a failed message": drop the trailing unanswered user turn
@@ -1245,8 +1328,15 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			// Client dropped; the agent goroutine keeps running on
 			// its detached ctx and persists every event it emits.
 			// User reloading the chat page will pick up the rest via
-			// /api/chat/subscribe?since=N.
-			return
+			// /api/chat/subscribe?since=N. Deliberately NOT returning
+			// here: returning would fire defer cancel() and kill the
+			// in-flight turn mid-tool — the refresh/network-blip
+			// "context canceled, no retry" outage. Stop is now an
+			// explicit POST /api/chat/stop. Nil the channel so this
+			// case blocks; SSE writes below just fail silently on a
+			// dead connection.
+			clientGone = nil
+			continue
 		case <-agentDone:
 			// Race: HandleMessage publishes `turn_pending` to the hub
 			// AND `defer close(agentDone)` fires from the same goroutine.

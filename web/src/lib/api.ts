@@ -1161,6 +1161,32 @@ export async function steerChat(
   return data?.buffered === true;
 }
 
+// stopChat deliberately ends the in-flight turn for the session. Stop is
+// no longer "abort the SSE fetch": a dropped connection now lets the turn
+// finish server-side (events persist; a reloaded UI backfills), so the
+// Stop button must ask the server to cancel explicitly before aborting
+// the local stream read. Resolves true when a turn was cancelled, false
+// when none was running (409). Throws only on unexpected/transport errors.
+export async function stopChat(
+  agentId: string,
+  sessionId: string,
+  projectId?: string,
+): Promise<boolean> {
+  const res = await apiFetch("/api/chat/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      agentId,
+      sessionId,
+      projectId: projectId || undefined,
+    }),
+  });
+  if (res.status === 409) return false;
+  if (!res.ok) throw new Error(`stop failed: ${res.status}`);
+  const data = await res.json().catch(() => ({}));
+  return data?.stopped === true;
+}
+
 // KnowledgeSource is one [K#]-citable KB source the agent attached to an
 // assistant message (metadata.knowledgeSources). The chat renderer turns
 // [K#] markers in the reply into clickable badges.
