@@ -1773,6 +1773,31 @@ export interface KBSource {
 }
 export interface KBStats { source_count: number; entry_count: number; total_chars: number; }
 export interface KBEntry { id: number; source_id: string; chunk_index: number; content: string; }
+// KBNote mirrors the backend kb.KBNote row: a personal note with a
+// markdown body and an optional whiteboard (Excalidraw elements JSON,
+// '' when the note has no board).
+export interface KBNote {
+  id: string;
+  agent_id: string;
+  title: string;
+  content_md: string;
+  whiteboard?: string;
+  created_at: string;
+  updated_at: string;
+}
+// KBNoteAttachment mirrors kb.KBNoteAttachment: one uploaded file bound
+// to a note. Bytes live at file_path under the agent workspace, served
+// via fileUrl(agentId, file_path).
+export interface KBNoteAttachment {
+  id: string;
+  note_id: string;
+  agent_id: string;
+  file_name: string;
+  file_path: string;
+  mime: string;
+  size: number;
+  created_at: string;
+}
 // KBBookmark mirrors the backend kb.KBBookmark row: a saved web link with
 // optional title/summary and the fetched page body (so it survives link rot).
 export interface KBBookmark {
@@ -1888,6 +1913,68 @@ export async function saveBookmark(
 }
 export async function deleteBookmark(agentId: string, bookmarkId: string): Promise<{ status?: string; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/kb/bookmarks/${bookmarkId}`, { method: "DELETE" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+// --- 笔记 ---
+export async function listNotes(agentId: string): Promise<KBNote[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/notes`);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => ({ notes: [] }));
+  return Array.isArray(data?.notes) ? data.notes : [];
+}
+export async function saveNote(
+  agentId: string,
+  note: { id?: string; title: string; content_md: string; whiteboard?: string },
+): Promise<{ id?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/notes`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(note),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function deleteNote(agentId: string, noteId: string): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/notes/${noteId}`, { method: "DELETE" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+// reorderNotes persists the manual list order written by the notes
+// sidebar drag. ids is the full desired top-to-bottom order.
+export async function reorderNotes(agentId: string, ids: string[]): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/notes/reorder`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function listNoteAttachments(agentId: string, noteId: string): Promise<KBNoteAttachment[]> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/notes/${noteId}/attachments`);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => ({ attachments: [] }));
+  return Array.isArray(data?.attachments) ? data.attachments : [];
+}
+export async function uploadNoteAttachments(
+  agentId: string,
+  noteId: string,
+  files: File[],
+): Promise<KBNoteAttachment[]> {
+  const fd = new FormData();
+  for (const f of files) fd.append("file", f, f.name);
+  const res = await apiFetch(`/api/agents/${agentId}/kb/notes/${noteId}/attachments`, {
+    method: "POST", body: fd,
+  });
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => ({ attachments: [] }));
+  return Array.isArray(data?.attachments) ? data.attachments : [];
+}
+export async function deleteNoteAttachment(
+  agentId: string,
+  noteId: string,
+  attId: string,
+): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/notes/${noteId}/attachments/${attId}`, { method: "DELETE" });
   if (!res.ok) return { error: `HTTP ${res.status}` };
   return res.json();
 }

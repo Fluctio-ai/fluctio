@@ -59,6 +59,33 @@ type KBBookmark struct {
 	PromotedTo string    `json:"promoted_to_article_id,omitempty"`
 }
 
+// KBNote is one personal note: markdown body + optional whiteboard
+// (Excalidraw elements JSON) + attachments (tracked separately in
+// kb_note_attachments).
+type KBNote struct {
+	ID         string    `json:"id"`
+	AgentID    string    `json:"agent_id"`
+	Title      string    `json:"title"`
+	ContentMD  string    `json:"content_md"`
+	Whiteboard string    `json:"whiteboard,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// KBNoteAttachment tracks one uploaded file bound to a note. Bytes live
+// in the agent workspace at FilePath (notes/<noteID>/<file>), served via
+// the standard agent-files channel.
+type KBNoteAttachment struct {
+	ID        string    `json:"id"`
+	NoteID    string    `json:"note_id"`
+	AgentID   string    `json:"agent_id"`
+	FileName  string    `json:"file_name"`
+	FilePath  string    `json:"file_path"`
+	Mime      string    `json:"mime"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type KBResult struct {
 	SourceID    string  `json:"source_id"`
 	SourceTitle string  `json:"source_title"`

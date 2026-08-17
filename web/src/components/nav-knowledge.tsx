@@ -17,6 +17,7 @@ import {
   FileTextIcon,
   LightbulbIcon,
   LinkIcon,
+  StickyNoteIcon,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 
@@ -106,9 +107,10 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
   // is gone — each KB view is now its own sidebar entry (plus Wiki), so the
   // user lands on a view directly instead of through a tab switch. Icons are
   // lucide to match the rest of the sidebar (FileText/Lightbulb/CheckSquare/
-  // Calendar/BookMarked).
+  // Calendar/Link/StickyNote/BookMarked).
   const items = [
     { title: t("knowledge.articles"), url: `/agents/${agentId}/knowledge/`, icon: FileTextIcon },
+    { title: t("knowledge.notes"), url: `/agents/${agentId}/knowledge/notes/`, icon: StickyNoteIcon },
     { title: t("knowledge.flashes"), url: `/agents/${agentId}/knowledge/flashes/`, icon: LightbulbIcon },
     { title: t("knowledge.todos"), url: `/agents/${agentId}/knowledge/todos/`, icon: CheckSquareIcon },
     { title: t("knowledge.diary"), url: `/agents/${agentId}/knowledge/diary/`, icon: CalendarIcon },
@@ -131,47 +133,56 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
         {t("nav.group.knowledge")}
       </SidebarGroupLabel>
       {!sectionCollapsed && (
+        // Two tiles per row: the entry list outgrew the one-per-row menu
+        // (7 entries pushed Sessions/Projects off-screen on short viewports),
+        // so entries render as a compact 2-col grid of icon+label tiles.
+        // The dedupe/active navigation logic is identical to the old
+        // SidebarMenuButton rows; only the presentation is denser.
         <SidebarMenu>
-          {items.map((item) => {
-            const norm = (s: string) => s.replace(/\/$/, "");
-            // articles (/knowledge) is the parent route of flashes/todos/
-            // diary, so a prefix match lights it on every KB sub-view —
-            // the bug where selecting 灵感/待办/日记 also highlighted 文章.
-            // Only exact-match a url that is another item's parent; other
-            // items still allow prefix matching (e.g. wiki /wiki/<slug>).
-            const isParentOfSibling = items.some(
-              (o) => o.url !== item.url && norm(o.url).startsWith(norm(item.url) + "/"),
-            );
-            const active =
-              norm(pathname) === norm(item.url) ||
-              (!isParentOfSibling && norm(pathname).startsWith(norm(item.url) + "/"));
-            return (
-              <SidebarMenuItem key={item.url}>
-                <SidebarMenuButton
-                  isActive={active}
-                  tooltip={item.title}
-                  onClick={() => {
-                    if (norm(pathname) === norm(item.url)) {
-                      // Already on this page — clicking the active item
-                      // resets the pane (e.g. deselect the wiki page)
-                      // instead of being a silent no-op.
-                      window.dispatchEvent(
-                        new CustomEvent("fluctio:nav-reselect", {
-                          detail: { url: item.url },
-                        }),
-                      );
-                      return;
-                    }
-                    navigateOnce(item.url);
-                  }}
-                  onMouseEnter={() => router.prefetch(item.url)}
-                >
-                  <item.icon />
-                  <span>{item.title}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            );
-          })}
+          <div className="grid grid-cols-2 gap-1">
+            {items.map((item) => {
+              const norm = (s: string) => s.replace(/\/$/, "");
+              // articles (/knowledge) is the parent route of flashes/todos/
+              // diary/notes, so a prefix match lights it on every KB
+              // sub-view — the bug where selecting 灵感/待办/日记 also
+              // highlighted 文章. Only exact-match a url that is another
+              // item's parent; other items still allow prefix matching
+              // (e.g. wiki /wiki/<slug>).
+              const isParentOfSibling = items.some(
+                (o) => o.url !== item.url && norm(o.url).startsWith(norm(item.url) + "/"),
+              );
+              const active =
+                norm(pathname) === norm(item.url) ||
+                (!isParentOfSibling && norm(pathname).startsWith(norm(item.url) + "/"));
+              return (
+                <SidebarMenuItem key={item.url}>
+                  <SidebarMenuButton
+                    isActive={active}
+                    tooltip={item.title}
+                    className="h-auto min-h-0 justify-start gap-1.5 px-2 py-1.5 [&>span]:truncate"
+                    onClick={() => {
+                      if (norm(pathname) === norm(item.url)) {
+                        // Already on this page — clicking the active item
+                        // resets the pane (e.g. deselect the wiki page)
+                        // instead of being a silent no-op.
+                        window.dispatchEvent(
+                          new CustomEvent("fluctio:nav-reselect", {
+                            detail: { url: item.url },
+                          }),
+                        );
+                        return;
+                      }
+                      navigateOnce(item.url);
+                    }}
+                    onMouseEnter={() => router.prefetch(item.url)}
+                  >
+                    <item.icon className="size-4 shrink-0" />
+                    <span className="text-xs">{item.title}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              );
+            })}
+          </div>
         </SidebarMenu>
       )}
     </SidebarGroup>

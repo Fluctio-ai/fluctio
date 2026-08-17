@@ -1,14 +1,21 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/embedding"
@@ -743,4 +750,285 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// --- 笔记 ---
+
+// sanitizeNoteFileName reduces an upload's original filename to a safe
+// single path component: base name, separators/control chars dropped,
+// capped length. Mirrors agent/attachments.go's sanitizer (unexported
+// there, so a local copy keeps the KB package self-contained).
+func sanitizeNoteFileName(raw string) string {
+	raw = strings.ReplaceAll(raw, `\`, "/")
+	if i := strings.LastIndexByte(raw, '/'); i >= 0 {
+		raw = raw[i+1:]
+	}
+	if raw == "." || raw == ".." {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' || r == ':' || r == 0 {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	out := strings.TrimSpace(b.String())
+	out = strings.TrimLeft(out, ".")
+	if len(out) > 120 {
+		ext := filepath.Ext(out)
+		stem := strings.TrimSuffix(out, ext)
+		keep := 120 - len(ext)
+		for keep > 0 && !utf8.RuneStart(out[keep]) {
+			keep--
+		}
+		if stem[:keep] != "" {
+			out = stem[:keep] + ext
+		}
+	}
+	return out
+}
+
+// handleKBListNotes returns the agent's notes (full body + whiteboard —
+// notes are few, so the editor loads the selected note from the list
+// without a second fetch).
+func (s *Server) handleKBListNotes(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	notes, err := kbStore.ListNotes(r.Context(), agentID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"notes": notes})
+}
+
+// handleKBSaveNote upserts one note. Empty id creates; non-empty id must
+// match an existing note (SaveNote errors otherwise). The web editor
+// autosaves on a debounce, so updates vastly outnumber creates.
+func (s *Server) handleKBSaveNote(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		ID         string `json:"id,omitempty"`
+		Title      string `json:"title"`
+		ContentMD  string `json:"content_md"`
+		Whiteboard string `json:"whiteboard,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Title) == "" && strings.TrimSpace(req.ContentMD) == "" && req.Whiteboard == "" {
+		http.Error(w, "note is empty", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	id, err := kbStore.SaveNote(r.Context(), agentID, req.ID, req.Title, req.ContentMD, req.Whiteboard)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id})
+}
+
+// handleKBReorderNotes persists the manual note list order written by the
+// sidebar drag. Body: {"ids": [...]} in the desired top-to-bottom order.
+func (s *Server) handleKBReorderNotes(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(req.IDs) == 0 {
+		http.Error(w, "ids is required", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := kbStore.ReorderNotes(r.Context(), agentID, req.IDs); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleKBDeleteNote drops a note, its attachment rows, and the attachment
+// bytes from the agent workspace (best-effort file removal).
+func (s *Server) handleKBDeleteNote(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	noteID := r.PathValue("noteId")
+	if agentID == "" || noteID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	paths, err := kbStore.DeleteNote(r.Context(), agentID, noteID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if s.workspaceStore != nil {
+		for _, p := range paths {
+			_ = s.workspaceStore.Delete(r.Context(), agentID, "", "", p)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleKBNoteAttachments lists a note's uploads.
+func (s *Server) handleKBNoteAttachments(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	noteID := r.PathValue("noteId")
+	if agentID == "" || noteID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	atts, err := kbStore.ListNoteAttachments(r.Context(), agentID, noteID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"attachments": atts})
+}
+
+// handleKBNoteUpload accepts multipart uploads for one note. Files land
+// in the agent workspace under notes/<noteID>/<short-uuid>-<name> (the
+// uuid prefix makes re-uploads unique instead of overwriting) and are
+// served/previewed through the standard /api/agents/{id}/files/ channel.
+func (s *Server) handleKBNoteUpload(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	noteID := r.PathValue("noteId")
+	if agentID == "" || noteID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	if !s.requireWritable(w, r) {
+		return
+	}
+	if s.workspaceStore == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "no workspace store"})
+		return
+	}
+	if rec := s.requireAgentOwner(w, r, agentID); rec == nil {
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	if !kbStore.NoteExists(r.Context(), agentID, noteID) {
+		http.Error(w, "note not found", http.StatusNotFound)
+		return
+	}
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	headers := r.MultipartForm.File["file"]
+	if len(headers) == 0 {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "no file"})
+		return
+	}
+	saved := make([]kb.KBNoteAttachment, 0, len(headers))
+	for _, h := range headers {
+		name := sanitizeNoteFileName(h.Filename)
+		if name == "" {
+			continue
+		}
+		fh, err := h.Open()
+		if err != nil {
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		data, err := io.ReadAll(fh)
+		fh.Close()
+		if err != nil {
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		mimeType := h.Header.Get("Content-Type")
+		if mimeType == "" || strings.HasPrefix(mimeType, "application/octet-stream") {
+			if guessed := mime.TypeByExtension(filepath.Ext(name)); guessed != "" {
+				mimeType = guessed
+			}
+		}
+		wsPath := fmt.Sprintf("notes/%s/%s-%s", noteID, uuid.NewString()[:8], name)
+		if err := s.workspaceStore.Put(r.Context(), agentID, "", "", wsPath, bytes.NewReader(data), int64(len(data)), mimeType); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		attID, err := kbStore.AddAttachment(r.Context(), agentID, noteID, name, wsPath, mimeType, int64(len(data)))
+		if err != nil {
+			_ = s.workspaceStore.Delete(r.Context(), agentID, "", "", wsPath)
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		saved = append(saved, kb.KBNoteAttachment{
+			ID: attID, NoteID: noteID, AgentID: agentID,
+			FileName: name, FilePath: wsPath, Mime: mimeType, Size: int64(len(data)),
+			CreatedAt: time.Now(),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"attachments": saved})
+}
+
+// handleKBNoteDeleteAttachment removes one attachment row + its bytes.
+func (s *Server) handleKBNoteDeleteAttachment(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	noteID := r.PathValue("noteId")
+	attID := r.PathValue("attId")
+	if agentID == "" || noteID == "" || attID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	path, err := kbStore.DeleteAttachment(r.Context(), agentID, noteID, attID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if s.workspaceStore != nil {
+		_ = s.workspaceStore.Delete(r.Context(), agentID, "", "", path)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

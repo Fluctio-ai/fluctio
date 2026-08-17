@@ -216,6 +216,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateArticleInsights(ctx); err != nil {
 		return fmt.Errorf("migrate kb article insights table: %w", err)
 	}
+	if err := d.migrateKBNotesSortOrder(ctx); err != nil {
+		return fmt.Errorf("migrate kb_notes.sort_order: %w", err)
+	}
 	if err := d.migrateDailyDiary(ctx); err != nil {
 		return fmt.Errorf("migrate daily diary table: %w", err)
 	}
@@ -539,6 +542,38 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_bookmark_emb_agent ON kb_bookmark_embeddings (agent_id)`,
+		// kb_notes stores personal notes: a markdown body plus an optional
+		// whiteboard canvas. Independent of kb_sources — notes are editor
+		// documents, not chunked recall corpus (no vectorization in v1).
+		// whiteboard holds the Excalidraw elements JSON ('' = no board).
+		`CREATE TABLE IF NOT EXISTS kb_notes (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
+			content_md TEXT NOT NULL DEFAULT '',
+			whiteboard TEXT NOT NULL DEFAULT '',
+			sort_order REAL NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_notes_agent ON kb_notes (agent_id)`,
+		// kb_note_attachments tracks uploaded files (images/documents) bound
+		// to a note. Bytes live in the agent workspace under
+		// notes/<note_id>/<file>; file_path stores that workspace-relative
+		// path so the standard /api/agents/{id}/files/... channel serves
+		// them (preview + download) with no new file plumbing.
+		`CREATE TABLE IF NOT EXISTS kb_note_attachments (
+			id TEXT PRIMARY KEY,
+			note_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			file_name TEXT NOT NULL,
+			file_path TEXT NOT NULL,
+			mime TEXT NOT NULL DEFAULT '',
+			size INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_note_att_agent ON kb_note_attachments (agent_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_note_att_note ON kb_note_attachments (note_id)`,
 	}
 	for _, s := range stmts {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {
@@ -576,6 +611,19 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// migrateKBNotesSortOrder adds kb_notes.sort_order (manual list ordering
+// from the notes sidebar drag). Idempotent via tableHasColumn — same
+// pattern as the kb_sources column loop above; fresh DBs already have the
+// column from migrationSQL.
+func (d *DBStore) migrateKBNotesSortOrder(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "kb_notes", "sort_order")
+	if err != nil || has {
+		return err
+	}
+	_, err = d.db.ExecContext(ctx, `ALTER TABLE kb_notes ADD COLUMN sort_order REAL NOT NULL DEFAULT 0`)
+	return err
 }
 
 // migrateArticleInsights creates kb_article_insights, the 1:1 deep-reading

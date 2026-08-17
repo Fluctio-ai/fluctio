@@ -3216,8 +3216,8 @@ export function ChatScreen() {
                     }
                     disabled={!canUseComposer}
                     rows={1}
-                    className="flex-1 resize-none bg-transparent text-[15px] leading-8 placeholder:text-muted-foreground/50 outline-none disabled:opacity-50"
-                    style={{ maxHeight: 200, minHeight: 32 }}
+                    className="flex-1 resize-none bg-transparent text-[15px] leading-6 placeholder:text-muted-foreground/50 outline-none disabled:opacity-50"
+                    style={{ maxHeight: 200, minHeight: 24 }}
                   />
                   {sending && !input.trim() && attachments.length === 0 ? (
                     <Button
