@@ -499,7 +499,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                   value={draft.title}
                   onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
                   placeholder={t("knowledge.notes.title")}
-                  className="h-9 min-w-0 flex-1 rounded-md border-none bg-transparent px-1 text-xl font-bold tracking-tight shadow-none focus-visible:ring-0"
+                  className="h-7 min-w-0 flex-1 rounded-md px-2.5 text-sm font-medium"
                 />
                 <Button
                   size="sm" variant="outline" className="h-7 shrink-0 text-xs"
@@ -544,7 +544,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                   </Button>
                 )}
               </div>
-              <p className="mt-1 flex items-center gap-2 pl-1 text-xs tabular-nums text-muted-foreground">
+              <p className="mt-1 flex items-center gap-2 text-xs tabular-nums text-muted-foreground">
                 <span>{t("knowledge.notes.words", { n: charCount })}</span>
                 <span>·</span>
                 <span>
