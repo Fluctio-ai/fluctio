@@ -44,7 +44,10 @@ FROM alpine:3.21
 # HOST daemon via /var/run/docker.sock (see deploy/docker/docker-compose.yml).
 # Without docker-cli in the image, sandbox creation fails with
 # `exec: "docker": executable file not found in $PATH`.
-RUN apk add --no-cache ca-certificates tzdata docker-cli
+# nodejs+npm: stdio MCP servers run as gateway subprocesses — without node,
+# `npx`-based servers fail to start and mcp.NewManager silently skips them
+# (only a Warn in the log; no tools appear in chat).
+RUN apk add --no-cache ca-certificates tzdata docker-cli nodejs npm
 COPY --from=go-builder /fluctio /usr/local/bin/fluctio
 
 # Default data directory. Override at runtime with FLUCTIO_HOME, but the
