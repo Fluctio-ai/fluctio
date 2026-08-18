@@ -276,11 +276,18 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   }, [agentId, notify, t, load]);
 
   const now = Date.now();
+  // sourceRoute deep-links the card's origin: diary → that day (the diary
+  // view consumes ?date= on mount), wiki → that page (the wiki view
+  // consumes ?page= on mount — page ids are "type:slug" pairs).
   const sourceRoute = useCallback(
     (c: KBCard) => {
       if (!agentId) return null;
-      if (c.source_type === "diary") return `/agents/${agentId}/knowledge/diary/`;
-      if (c.source_type === "wiki") return `/agents/${agentId}/wiki/`;
+      if (c.source_type === "diary" && c.source_ref) {
+        return `/agents/${agentId}/knowledge/diary/?date=${encodeURIComponent(c.source_ref)}`;
+      }
+      if (c.source_type === "wiki" && c.source_ref) {
+        return `/agents/${agentId}/wiki/?page=${encodeURIComponent(c.source_ref)}`;
+      }
       return null;
     },
     [agentId],

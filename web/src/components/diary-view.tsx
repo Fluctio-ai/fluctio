@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -130,6 +130,22 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
     },
     [agentId],
   );
+
+  // Deep link: /knowledge/diary/?date=YYYY-MM-DD selects that day (and
+  // its month) once on mount — the cards source link lands here. One-shot
+  // via ref so later in-app navigation to the diary page doesn't
+  // re-select; window.location.search (not useSearchParams) keeps the
+  // static-export page out of a suspense boundary.
+  const deeplinkedRef = useRef(false);
+  useEffect(() => {
+    if (!agentId || deeplinkedRef.current) return;
+    const d = new URLSearchParams(window.location.search).get("date");
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      deeplinkedRef.current = true;
+      setMonth(d.slice(0, 7));
+      selectDate(d);
+    }
+  }, [agentId, selectDate]);
 
   const listSorted = useMemo(
     () =>

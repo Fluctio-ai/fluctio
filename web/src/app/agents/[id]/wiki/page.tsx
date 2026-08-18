@@ -149,6 +149,20 @@ export default function WikiPage() {
   );
   handleSelectPageRef.current = handleSelectPage;
 
+  // Deep link: /wiki/?page=<pageId> selects that page once on mount —
+  // the cards source link lands here (page ids are "type:slug" pairs,
+  // URL-encoded by the sender). One-shot via ref; window.location.search
+  // (not useSearchParams) keeps the static-export page out of suspense.
+  const deeplinkedRef = useRef(false);
+  useEffect(() => {
+    if (!agentId || deeplinkedRef.current) return;
+    const p = new URLSearchParams(window.location.search).get("page");
+    if (p) {
+      deeplinkedRef.current = true;
+      handleSelectPage(p);
+    }
+  }, [agentId, handleSelectPage]);
+
   const openDelete = useCallback((page: WikiPage) => {
     setDeleteError(null);
     setDeleteTarget(page);
