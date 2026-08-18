@@ -3,8 +3,8 @@
 // NotesView — 笔记: markdown 正文 + 白板块（```whiteboard fence，弹窗编辑
 // Excalidraw、exportToSvg 内联渲染）+ 附件。布局沿用 ArticleView 的
 // master-detail DNA：bg-muted/30 左列表、可拖宽分隔条（220–520px）、
-// 轻量行式列表、mobile 返回切换。列表行可拖拽排序（sort_order 持久化），
-// 白板块可在预览区拖拽换位。正文 1.2s 防抖自动保存。
+// 轻量行式列表（最新在上，updated_at 排序）、mobile 返回切换。白板块
+// 可在预览区拖拽换位。正文 1.2s 防抖自动保存。
 
 import * as React from "react";
 import {
@@ -27,7 +27,6 @@ import {
   fileUrl,
   listNoteAttachments,
   listNotes,
-  reorderNotes,
   saveNote,
   uploadNoteAttachments,
   type KBNote,
@@ -125,12 +124,8 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   const [boardDialog, setBoardDialog] = React.useState(-1);
   // Resizable left pane — mirrors ArticleView's divider (220–520px).
   const [leftWidth, setLeftWidth] = React.useState(320);
-  // Note-list drag: the dragged note id + the live drop indicator. As
-  // with the board drag, the logic reads a ref + event params, not state
-  // (the drop closure raced dragover's setState on tight drags).
-  const [dragNoteId, setDragNoteId] = React.useState<string | null>(null);
-  const [noteDropAt, setNoteDropAt] = React.useState<{ idx: number; before: boolean } | null>(null);
-  const dragNoteIdRef = React.useRef<string | null>(null);
+  // Note-list ordering is server-side newest-first (updated_at DESC) —
+  // the old drag-to-reorder was removed; sort_order is legacy.
   // Board-card drag: source slot + live drop indicator. The drag LOGIC
   // (which slot moved where) travels through a ref + event params — the
   // React state (dragBoardSlot/boardDropAt) is presentation-only for the
@@ -301,27 +296,6 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
     });
   }, []);
 
-  // Note-list drop: the target row reports its own index + before/after
-  // from the event; the dragged id comes from the ref. Reorders the local
-  // array immediately and persists the full order. Disabled while a
-  // search filter is active (visible order ≠ stored order).
-  const handleNoteDrop = React.useCallback((idx: number, before: boolean) => {
-    const draggedId = dragNoteIdRef.current;
-    const from = draggedId ? notes.findIndex((n) => n.id === draggedId) : -1;
-    dragNoteIdRef.current = null;
-    setNoteDropAt(null);
-    setDragNoteId(null);
-    if (from < 0) return;
-    let insertAt = before ? idx : idx + 1;
-    if (from < insertAt) insertAt--;
-    if (insertAt === from) return;
-    const next = [...notes];
-    const [moved] = next.splice(from, 1);
-    next.splice(insertAt, 0, moved);
-    setNotes(next);
-    if (agentId) reorderNotes(agentId, next.map((n) => n.id)).catch(() => load());
-  }, [notes, agentId, load]);
-
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return notes;
@@ -329,7 +303,6 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
       (n.title + "\n" + n.content_md).toLowerCase().includes(q),
     );
   }, [notes, query]);
-  const searching = query.trim().length > 0;
 
   // Delete flows through ConfirmDeleteDialog: the trash button stages the
   // note, the confirm closes the editor if it held that note.
@@ -403,32 +376,13 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
             ) : filtered.length === 0 ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("knowledge.notes.empty")}</p>
             ) : (
-              filtered.map((n, idx) => {
+              filtered.map((n) => {
                 const hasBoard = splitBody(n.content_md).some((p) => p.kind === "board");
                 return (
                   <div
                     key={n.id}
                     role="button"
                     tabIndex={0}
-                    draggable={!searching}
-                    onDragStart={(e) => {
-                      dragNoteIdRef.current = n.id;
-                      setDragNoteId(n.id);
-                      e.dataTransfer.effectAllowed = "move";
-                      e.dataTransfer.setData("text/plain", n.id);
-                    }}
-                    onDragOver={(e) => {
-                      if (dragNoteIdRef.current === null) return;
-                      e.preventDefault();
-                      const r = e.currentTarget.getBoundingClientRect();
-                      setNoteDropAt({ idx, before: e.clientY < r.top + r.height / 2 });
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const r = e.currentTarget.getBoundingClientRect();
-                      handleNoteDrop(idx, e.clientY < r.top + r.height / 2);
-                    }}
-                    onDragEnd={() => { dragNoteIdRef.current = null; setNoteDropAt(null); setDragNoteId(null); }}
                     onClick={() => select(n)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(n); }
@@ -436,16 +390,8 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                     className={cn(
                       "group relative flex w-full cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-left text-sm hover:bg-accent",
                       n.id === selectedId && "bg-accent",
-                      dragNoteId === n.id && "opacity-40",
-                      // drop indicator: a 2px primary line above/below the row
-                      noteDropAt?.idx === idx && noteDropAt.before && "before:absolute before:inset-x-2 before:top-0 before:h-0.5 before:rounded-full before:bg-primary",
-                      noteDropAt?.idx === idx && !noteDropAt.before && "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary",
                     )}
                   >
-                    <GripVerticalIcon
-                      className="size-3.5 shrink-0 text-muted-foreground/50 opacity-0 group-hover:opacity-100"
-                      aria-hidden
-                    />
                     <div className="min-w-0 flex-1">
                       <p className="truncate">{noteTitle(n, t("knowledge.notes.untitled"))}</p>
                       <p className="text-xs tabular-nums text-muted-foreground">

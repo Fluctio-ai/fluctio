@@ -47,7 +47,7 @@ func scanNote(row noteScanner) (KBNote, bool) {
 // so a second fetch-by-id round trip buys nothing (same call as bookmarks).
 func (s *KBStore) ListNotes(ctx context.Context, agentID string) ([]KBNote, error) {
 	rows, err := s.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT %s FROM kb_notes WHERE agent_id = %s ORDER BY sort_order ASC, updated_at DESC`,
+		fmt.Sprintf(`SELECT %s FROM kb_notes WHERE agent_id = %s ORDER BY updated_at DESC`,
 			noteColumns, s.ph(1)),
 		agentID)
 	if err != nil {
