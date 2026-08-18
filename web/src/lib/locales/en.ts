@@ -854,7 +854,7 @@ const en: Record<string, string> = {
   "cards.source.diary": "Diary",
   "cards.source.wiki": "Wiki",
   "cards.source.manual": "Manual",
-  "cards.genNow": "Generate now (yesterday's diary + wiki)",
+  "cards.genNow": "Generate now (yesterday's diary + unprocessed wiki)",
   "cards.genDone": "{n} cards generated",
   "cards.empty": "No cards yet. Enable auto-generation (Settings → Knowledge) or add one above.",
   "cards.loadMore": "Load more",

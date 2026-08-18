@@ -173,6 +173,55 @@ func (s *WikiStore) ListPages(ctx context.Context, agentID, pageType string, lim
 	return pages, total, nil
 }
 
+// ListUncardedPages returns wiki pages never yet fed to a cardsgen pass
+// (carded_at IS NULL), newest-updated first. The cardsgen material picker:
+// the backlog drains newest-first across successive runs instead of only
+// catching pages touched on one specific day.
+func (s *WikiStore) ListUncardedPages(ctx context.Context, agentID string, limit int) ([]WikiPage, error) {
+	q := `SELECT id, agent_id, page_type, slug, title, summary, source_ids, tags, created_at, updated_at, revision
+		FROM wiki_pages WHERE agent_id = ` + s.ph(1) + ` AND carded_at IS NULL
+		ORDER BY updated_at DESC LIMIT ` + s.ph(2)
+
+	rows, err := s.db.QueryContext(ctx, q, agentID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	pages := make([]WikiPage, 0)
+	for rows.Next() {
+		var p WikiPage
+		var srcJSON, tagsJSON string
+		if err := rows.Scan(&p.ID, &p.AgentID, &p.PageType, &p.Slug, &p.Title, &p.Summary,
+			&srcJSON, &tagsJSON, &p.CreatedAt, &p.UpdatedAt, &p.Revision); err != nil {
+			return nil, err
+		}
+		json.Unmarshal([]byte(srcJSON), &p.SourceIDs)
+		json.Unmarshal([]byte(tagsJSON), &p.Tags)
+		pages = append(pages, p)
+	}
+	return pages, rows.Err()
+}
+
+// MarkPagesCarded stamps carded_at on the given pages so later cardsgen
+// passes skip them. No-op on an empty id list.
+func (s *WikiStore) MarkPagesCarded(ctx context.Context, agentID string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	phs := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, agentID)
+	for i, id := range ids {
+		phs[i] = s.ph(i + 2)
+		args = append(args, id)
+	}
+	q := `UPDATE wiki_pages SET carded_at = CURRENT_TIMESTAMP
+		WHERE agent_id = ` + s.ph(1) + ` AND id IN (` + strings.Join(phs, ",") + `)`
+	_, err := s.db.ExecContext(ctx, q, args...)
+	return err
+}
+
 // --- Graph ---
 
 func (s *WikiStore) GetGraph(ctx context.Context, agentID string) (*WikiGraph, error) {

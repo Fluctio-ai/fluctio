@@ -854,7 +854,7 @@ const zhCN: Record<string, string> = {
   "cards.source.diary": "日记",
   "cards.source.wiki": "Wiki",
   "cards.source.manual": "手动",
-  "cards.genNow": "立即生成（昨日日记 + Wiki）",
+  "cards.genNow": "立即生成（昨日日记 + 未出卡 Wiki）",
   "cards.genDone": "已生成 {n} 张卡片",
   "cards.empty": "还没有卡片。开启自动生成（设置 → 知识库），或点上方「卡片」手动新增。",
   "cards.loadMore": "加载更多",

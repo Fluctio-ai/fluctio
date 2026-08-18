@@ -1,6 +1,6 @@
 // Package cardsgen generates spaced-repetition Q&A cards from one day's
-// knowledge input: the agent's daily diary plus the wiki pages touched
-// that day. One LLM pass (no-thinking + JSON mode, per the background-call
+// knowledge input: the agent's daily diary plus the wiki pages not yet
+// distilled into cards. One LLM pass (no-thinking + JSON mode, per the background-call
 // convention) distills the material into question/answer pairs, each
 // pinned back to its source (diary date or wiki page id) via a
 // source_index map so the card can deep-link its origin. Candidates are
@@ -55,7 +55,10 @@ type llmCard struct {
 }
 
 // Run generates cards for one agent and one date. Material = the day's
-// diary entry plus wiki pages whose updated_at falls in [day, day+1).
+// diary entry plus up to maxWikiPagesPerRun wiki pages never yet
+// distilled (carded_at IS NULL, newest-updated first) — the page leg is
+// consumption-tracked, not day-windowed, so sporadic wiki autogen runs
+// and the pre-enablement backlog both drain over successive passes.
 // Returns the number of cards created (0 with nil error when the day had
 // no material or everything deduped out). The run is stamped into
 // kb_card_gen_runs — the nightly sweep's idempotency marker; a manual
@@ -73,14 +76,11 @@ func Run(
 	if dailyLimit <= 0 {
 		dailyLimit = DefaultDailyLimit
 	}
-	day, err := time.ParseInLocation("2006-01-02", date, cst)
-	if err != nil {
+	if _, err := time.ParseInLocation("2006-01-02", date, cst); err != nil {
 		return 0, fmt.Errorf("cardsgen: parse date %q: %w", date, err)
 	}
-	from := day
-	to := day.AddDate(0, 0, 1)
 
-	sources, err := collectMaterial(ctx, dbs, ws, agentID, date, from, to)
+	sources, err := collectMaterial(ctx, dbs, ws, agentID, date)
 	if err != nil {
 		return 0, err
 	}
@@ -92,6 +92,20 @@ func Run(
 	cards, err := callLLM(ctx, prov, model, sources, dailyLimit)
 	if err != nil {
 		return 0, fmt.Errorf("cardsgen: llm pass: %w", err)
+	}
+
+	// Consume the fed wiki pages on a successful LLM pass — even when the
+	// output dedups to zero or the daily cap truncates it, re-feeding the
+	// same pages nightly would only burn tokens. A failed pass leaves them
+	// uncarded for the next run to retry.
+	wikiIDs := make([]string, 0, len(sources))
+	for _, s := range sources {
+		if s.kind == "wiki" {
+			wikiIDs = append(wikiIDs, s.ref)
+		}
+	}
+	if err := ws.MarkPagesCarded(ctx, agentID, wikiIDs); err != nil {
+		slog.Warn("cardsgen: mark wiki pages carded failed", "agent", agentID, "error", err)
 	}
 
 	created, skipped := 0, 0
@@ -127,10 +141,10 @@ func Run(
 	return created, nil
 }
 
-// collectMaterial assembles the addressable source blocks: yesterday's
-// diary (themes + blindspots) then the wiki pages touched in the window,
+// collectMaterial assembles the addressable source blocks: the day's
+// diary (themes + blindspots) then the wiki pages never yet distilled,
 // newest-updated first, capped at maxWikiPagesPerRun.
-func collectMaterial(ctx context.Context, dbs *store.DBStore, ws *wiki.WikiStore, agentID, date string, from, to time.Time) ([]cardSource, error) {
+func collectMaterial(ctx context.Context, dbs *store.DBStore, ws *wiki.WikiStore, agentID, date string) ([]cardSource, error) {
 	var sources []cardSource
 	if dia, _ := dbs.GetDailyDiary(ctx, agentID, date); dia != nil {
 		var b strings.Builder
@@ -150,24 +164,16 @@ func collectMaterial(ctx context.Context, dbs *store.DBStore, ws *wiki.WikiStore
 			sources = append(sources, cardSource{kind: "diary", ref: date, text: clip(text, maxMaterialChars)})
 		}
 	}
-	pages, _, err := ws.ListPages(ctx, agentID, "", 500, 0)
+	pages, err := ws.ListUncardedPages(ctx, agentID, maxWikiPagesPerRun)
 	if err != nil {
-		return sources, fmt.Errorf("cardsgen: list wiki pages: %w", err)
+		return sources, fmt.Errorf("cardsgen: list uncarded wiki pages: %w", err)
 	}
-	n := 0
-	for _, p := range pages { // newest-updated first (ListPages order)
-		if p.UpdatedAt.Before(from) || !p.UpdatedAt.Before(to) {
-			continue
-		}
+	for _, p := range pages { // newest-updated first (ListUncardedPages order)
 		text := strings.TrimSpace(p.Title + "\n" + p.Summary)
 		if text == "" {
 			continue
 		}
 		sources = append(sources, cardSource{kind: "wiki", ref: p.ID, text: clip(text, maxMaterialChars)})
-		n++
-		if n >= maxWikiPagesPerRun {
-			break
-		}
 	}
 	return sources, nil
 }
@@ -199,7 +205,7 @@ func callLLM(ctx context.Context, prov provider.Provider, model string, sources 
 		}
 		fmt.Fprintf(&mat, "=== [idx=%d 来源=%s] ===\n%s\n\n", i, origin, s.text)
 	}
-	prompt := fmt.Sprintf(`你是知识卡片整理助手。下面是某用户一天的知识输入材料（日记与 Wiki 页面），每块带 idx 编号。请从中筛选"值得长期记住的有价值知识点"，生成问答复习卡片。
+	prompt := fmt.Sprintf(`你是知识卡片整理助手。下面是某用户的知识输入材料（日记与 Wiki 页面，Wiki 可能包含更早积累的内容），每块带 idx 编号。请从中提炼"值得长期复习的知识点"，生成问答复习卡片。
 
 材料:
 %s
@@ -208,11 +214,12 @@ func callLLM(ctx context.Context, prov provider.Provider, model string, sources 
 {"cards":[{"question":"问题（卡片正面，一句话提问）","answer":"答案（释义/知识点/用法，1-3 句）","source_index":0,"excerpt":"原文中最关键的一句话（不超过 50 字）"}]}
 
 要求:
-- 只挑值得记住的：概念定义、方法与用法、重要决策、容易遗忘的细节
-- 排除：琐事、闲聊、情绪、系统运维等无长期价值的内容
+- 只出知识点卡：概念与定义、原理与规律、方法与步骤、重要结论、关键数据或事实。判断标准：三个月后复习它仍然有收获
+- 一律排除：当天做了什么的流水账、日程与计划、情绪与闲聊、临时性或一次性的信息、人人皆知的常识、系统运维细节
+- 宁缺毋滥：拿不准就不出；整批材料没有合格知识点时返回空数组
 - question 必须自包含：不看材料也能明白在问什么
 - answer 简明准确，必须基于材料真实内容，不要臆造
-- 最多 %d 张，按记忆价值排序；若没有值得出卡的内容返回空数组`, mat.String(), limit)
+- 最多 %d 张，按记忆价值排序`, mat.String(), limit)
 
 	c, cancel := context.WithTimeout(ctx, 180*time.Second)
 	defer cancel()

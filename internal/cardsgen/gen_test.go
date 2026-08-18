@@ -3,6 +3,7 @@ package cardsgen
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,8 +56,8 @@ func seedDay(t *testing.T, dbs *store.DBStore) {
 	if err != nil {
 		t.Fatalf("seed diary: %v", err)
 	}
-	// Seed one wiki page updated mid-window (raw SQL: UpsertPage stamps
-	// updated_at=now, which would fall outside yesterday's window).
+	// Seed one wiki page (carded_at NULL ⇒ eligible; raw SQL keeps
+	// updated_at stable at a fixed past moment).
 	if _, err := dbs.DB().ExecContext(ctx,
 		`INSERT INTO wiki_pages (id, agent_id, page_type, slug, title, body, summary, source_ids, tags, created_at, updated_at, revision)
 		 VALUES ('entity:prefix-cache','agt_gen','entity','prefix-cache','前缀缓存','body','KV 缓存复用降低首字延迟','[]','[]',?,?,1)`,
@@ -152,5 +153,50 @@ func TestRunLimitAndEmptyMaterial(t *testing.T) {
 	}
 	if created != 2 {
 		t.Fatalf("limit: created=%d want 2", created)
+	}
+}
+
+// TestRunBacklogWikiAndCardedStamp covers the 2026-08-18 regression: the
+// old [day, day+1) updated_at window silently skipped wiki pages touched
+// before the run date, so a wiki that only autogen rewrites sporadically
+// (or that predates enabling cards) never produced a single card. Now a
+// stale page still feeds the pass, and a successful pass stamps carded_at
+// so the page isn't re-fed.
+func TestRunBacklogWikiAndCardedStamp(t *testing.T) {
+	dbs := openStore(t)
+	defer dbs.Close()
+	ctx := context.Background()
+	ks := kb.NewKBStore(dbs.DB(), dbs.Dialect())
+	ws := wiki.NewWikiStore(dbs.DB(), dbs.Dialect())
+
+	old := time.Now().UTC().AddDate(0, 0, -10)
+	if _, err := dbs.DB().ExecContext(ctx,
+		`INSERT INTO wiki_pages (id, agent_id, page_type, slug, title, body, summary, source_ids, tags, created_at, updated_at, revision)
+		 VALUES ('concept:backlog','agt_gen','concept','backlog','存量页','body','十天前更新的页面','[]','[]',?,?,1)`,
+		old, old); err != nil {
+		t.Fatalf("seed wiki page: %v", err)
+	}
+
+	prov := &stubProvider{resp: `{"cards":[
+		{"question":"存量页讲的是什么？","answer":"十天前更新的页面。","source_index":0,"excerpt":""}
+	]}`}
+	created, err := Run(ctx, dbs, ks, ws, "agt_gen", genDate, prov, "m", 10)
+	if err != nil || created != 1 {
+		t.Fatalf("backlog run: created=%d err=%v", created, err)
+	}
+	var carded string
+	if err := dbs.DB().QueryRowContext(ctx,
+		`SELECT carded_at FROM wiki_pages WHERE id = 'concept:backlog'`).Scan(&carded); err != nil {
+		t.Fatalf("query carded_at: %v", err)
+	}
+	if strings.TrimSpace(carded) == "" {
+		t.Fatalf("carded_at not stamped after run: %q", carded)
+	}
+
+	// Second pass: page is carded and no diary exists → no material at
+	// all, run stamps 0 without consuming an LLM call.
+	created, err = Run(ctx, dbs, ks, ws, "agt_gen", genDate, prov, "m", 10)
+	if err != nil || created != 0 {
+		t.Fatalf("second run: created=%d err=%v", created, err)
 	}
 }

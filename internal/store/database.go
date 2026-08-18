@@ -216,6 +216,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateWikiAutoGenLastRun(ctx); err != nil {
 		return fmt.Errorf("migrate wiki autogen last-run table: %w", err)
 	}
+	if err := d.migrateWikiPagesCardedAt(ctx); err != nil {
+		return fmt.Errorf("migrate wiki_pages.carded_at: %w", err)
+	}
 	if err := d.migrateArticleInsights(ctx); err != nil {
 		return fmt.Errorf("migrate kb article insights table: %w", err)
 	}
@@ -344,6 +347,21 @@ func (d *DBStore) migrateWikiAutoGenLastRun(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// migrateWikiPagesCardedAt adds wiki_pages.carded_at — the cardsgen
+// consumption marker (a page fed to a card pass is stamped and skipped by
+// later passes; NULL = never distilled). Existing rows stay NULL so the
+// whole wiki backfills through successive runs. Fresh DBs already have the
+// column from migrateKBWiki; idempotent via tableHasColumn, same pattern
+// as migrateKBNotesSortOrder.
+func (d *DBStore) migrateWikiPagesCardedAt(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "wiki_pages", "carded_at")
+	if err != nil || has {
+		return err
+	}
+	_, err = d.db.ExecContext(ctx, `ALTER TABLE wiki_pages ADD COLUMN carded_at TIMESTAMP`)
+	return err
 }
 
 // GetWikiAutoGenLastRun returns the agent's last background wiki-generation
@@ -485,7 +503,8 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 			tags TEXT NOT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			revision INTEGER NOT NULL DEFAULT 1
+			revision INTEGER NOT NULL DEFAULT 1,
+			carded_at TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_wiki_pages_agent ON wiki_pages (agent_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_wiki_pages_type ON wiki_pages (agent_id, page_type)`,
