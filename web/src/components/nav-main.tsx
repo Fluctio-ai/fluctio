@@ -36,12 +36,18 @@ function isActive(pathname: string, href: string) {
 // label is optional — when omitted the SidebarGroupLabel row is skipped
 // so the section blends in as an unlabeled cluster (used for the standalone
 // Overview link and the footer Settings entry).
+//
+// tiles switches the section to the compact 2-per-row icon+label grid
+// NavKnowledge uses — for short pairs (智能体: 新对话 + 工作流) so they
+// share one row instead of stacking full-width.
 export function NavMain({
   label,
   items,
+  tiles,
 }: {
   label?: string;
   items: NavItem[];
+  tiles?: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -79,6 +85,7 @@ export function NavMain({
     <SidebarGroup>
       {label && <SidebarGroupLabel>{label}</SidebarGroupLabel>}
       <SidebarMenu>
+        <TilesWrap tiles={!!tiles}>
         {items.map((item) => {
           const active =
             item.active ?? (item.url ? isActive(pathname, item.url) : false);
@@ -120,16 +127,30 @@ export function NavMain({
                 onMouseEnter={() => {
                   if (item.url) router.prefetch(item.url);
                 }}
+                className={
+                  tiles
+                    ? "h-auto min-h-0 justify-start gap-1.5 px-2 py-1.5 [&>span]:truncate"
+                    : undefined
+                }
               >
-                <item.icon />
-                <span>{item.title}</span>
+                <item.icon className={tiles ? "size-4 shrink-0" : undefined} />
+                <span className={tiles ? "text-xs" : undefined}>{item.title}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           );
         })}
+        </TilesWrap>
       </SidebarMenu>
     </SidebarGroup>
   );
+}
+
+// TilesWrap renders children as-is, or inside the 2-col tile grid when
+// tiles is set (fragment <div> pairs can't express the conditional wrap
+// inline without ternary-duplicating the map).
+function TilesWrap({ tiles, children }: { tiles: boolean; children: React.ReactNode }) {
+  if (!tiles) return <>{children}</>;
+  return <div className="grid grid-cols-2 gap-1">{children}</div>;
 }
 
 // Exported for pages that want a real anchor with Next client-nav

@@ -900,7 +900,7 @@ const zhCN: Record<string, string> = {
   "cards.settings.pushTime": "推送时间",
   "cards.settings.pushTimeDesc": "每天此时间 (UTC+8) 把到期卡片汇总推送到 IM",
   "cards.settings.pushChannel": "推送渠道",
-  "cards.notes": "笔记",
+  "knowledge.notes": "笔记",
   "knowledge.notes.count": "{n} 篇",
   "knowledge.notes.words": "{n} 字",
   "knowledge.notes.search": "搜索笔记…",

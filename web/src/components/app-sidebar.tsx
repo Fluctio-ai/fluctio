@@ -276,6 +276,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
             <NavMain
               label={t("nav.group.agent")}
               items={AGENT_NAV(activeAgentId, pathname, hasOpenSession, t)}
+              tiles
             />
           </>
         ) : (
