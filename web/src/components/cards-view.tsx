@@ -308,7 +308,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
           </Button>
         ) : (
           <div className="flex items-center gap-2">
-            <span className="text-xs text-emerald-600 dark:text-emerald-400">{t("cards.dueNone")}</span>
+            <span className="text-xs text-primary">{t("cards.dueNone")}</span>
             {stats && stats.active > 0 && (
               <Button variant="outline" size="sm" className="h-8 text-xs" onClick={startPractice}>
                 <RotateCcwIcon className="mr-1 size-3.5" />
