@@ -28,6 +28,7 @@ import {
   PencilIcon,
   PlusIcon,
   QuoteIcon,
+  SearchIcon,
   SparklesIcon,
   SproutIcon,
   TrashIcon,
@@ -65,6 +66,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -203,6 +205,10 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
   // Resizable left pane (mirrors the wiki page's drag divider). Width in px,
   // clamped to 220–520 so the source list can't collapse off-screen.
   const [leftWidth, setLeftWidth] = useState(320);
+  // Delete flows through ConfirmDeleteDialog: the trash button only stages
+  // the target, confirmDeleteSource performs the API call.
+  const [deleteTarget, setDeleteTarget] = useState<KBSource | null>(null);
+  const [query, setQuery] = useState("");
 
   const loadData = useCallback(async () => {
     if (!agentId) return;
@@ -227,6 +233,12 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
   }, [agentId, loadData]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Local title filter for the source list (mirrors flash/bookmark search).
+  const visibleSources = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? sources.filter((s) => s.title.toLowerCase().includes(q)) : sources;
+  }, [sources, query]);
 
   const handleSelectSource = useCallback(async (src: KBSource) => {
     if (!agentId) return;
@@ -332,6 +344,12 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
     } catch {}
   }, [agentId, loadData, selectedSource]);
 
+  const confirmDeleteSource = useCallback(async () => {
+    if (!deleteTarget) return;
+    await handleDeleteSource(deleteTarget.id);
+    setDeleteTarget(null);
+  }, [deleteTarget, handleDeleteSource]);
+
   return (
     <div className="flex h-full flex-col">
       {pending.length > 0 && (
@@ -381,12 +399,14 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
         )}
       >
         <div className="p-3 border-b space-y-2">
-          <div>
-            {stats && (
-              <p className="text-xs tabular-nums text-muted-foreground mt-0.5">
-                {stats.source_count} {t("knowledge.sources")} · {stats.entry_count} {t("knowledge.entries")} · {(stats.total_chars / 1024).toFixed(1)} KB
-              </p>
-            )}
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("knowledge.searchArticles")}
+              className="h-7 w-full rounded-md pl-8 text-xs"
+            />
           </div>
           <div className="flex gap-1.5">
             <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setTextDialogOpen(true)}>
@@ -396,6 +416,11 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
               <GlobeIcon className="h-3 w-3 mr-1" /> {t("knowledge.url")}
             </Button>
           </div>
+          {stats && (
+            <p className="text-xs tabular-nums text-muted-foreground">
+              {stats.source_count} {t("knowledge.sources")} · {stats.entry_count} {t("knowledge.entries")} · {(stats.total_chars / 1024).toFixed(1)} KB
+            </p>
+          )}
         </div>
         <ScrollArea className="flex-1">
           <div className="p-2">
@@ -403,8 +428,10 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
               <p className="text-xs text-muted-foreground px-2 py-1.5">{t("common.loading")}</p>
             ) : sources.length === 0 ? (
               <p className="text-xs text-muted-foreground px-2 py-1.5">{t("knowledge.noSources")}</p>
+            ) : visibleSources.length === 0 ? (
+              <p className="text-xs text-muted-foreground px-2 py-1.5">{t("knowledge.noSearchResult")}</p>
             ) : (
-              sources.map((src) => (
+              visibleSources.map((src) => (
                 <div
                   key={src.id}
                   role="button"
@@ -437,7 +464,7 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
                   <button
                     type="button"
                     className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive shrink-0 relative after:absolute after:-inset-2"
-                    onClick={(e) => { e.stopPropagation(); handleDeleteSource(src.id); }}
+                    onClick={(e) => { e.stopPropagation(); setDeleteTarget(src); }}
                     aria-label={t("common.delete")}
                   >
                     <TrashIcon className="h-3.5 w-3.5" />
@@ -579,6 +606,13 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        name={deleteTarget?.title ?? ""}
+        onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}
+        onConfirm={confirmDeleteSource}
+      />
 
       <Dialog open={urlDialogOpen} onOpenChange={setUrlDialogOpen}>
         <DialogContent>
@@ -781,6 +815,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
   const [sortNew, setSortNew] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<FlashItem | null>(null);
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -833,7 +868,10 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchFlashes")} className="h-7 text-xs flex-1 rounded-md" />
+        <div className="relative min-w-0 flex-1">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchFlashes")} className="h-7 w-full rounded-md pl-8 text-xs" />
+        </div>
         <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setSortNew((v) => !v)}>
           {sortNew ? t("knowledge.sortNewest") : t("knowledge.sortOldest")}
         </Button>
@@ -867,7 +905,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
                     <button
                       type="button"
                       className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive relative after:absolute after:-inset-2"
-                      onClick={() => handleDelete(src.id)}
+                      onClick={() => setDeleteTarget({ src, content })}
                       aria-label={t("common.delete")}
                     >
                       <TrashIcon className="h-3 w-3" />
@@ -900,6 +938,17 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        name={deleteTarget?.content ?? ""}
+        onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          await handleDelete(deleteTarget.src.id);
+          setDeleteTarget(null);
+        }}
+      />
     </div>
   );
 }
@@ -926,6 +975,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
   const [editTitle, setEditTitle] = useState("");
   const [editSummary, setEditSummary] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<KBBookmark | null>(null);
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -998,7 +1048,10 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchBookmarks")} className="h-7 text-xs flex-1 rounded-md" />
+        <div className="relative min-w-0 flex-1">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchBookmarks")} className="h-7 w-full rounded-md pl-8 text-xs" />
+        </div>
         <Button size="sm" className="h-7 shrink-0" onClick={() => setAddOpen(true)}>
           <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.addBookmark")}
         </Button>
@@ -1035,7 +1088,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                     <button
                       type="button"
                       className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
-                      onClick={() => handleDelete(b.id)}
+                      onClick={() => setDeleteTarget(b)}
                       aria-label={t("common.delete")}
                     >
                       <TrashIcon className="h-3.5 w-3.5" />
@@ -1129,6 +1182,17 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        name={deleteTarget ? (deleteTarget.title || deleteTarget.url) : ""}
+        onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          await handleDelete(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+      />
     </div>
   );
 }
@@ -1148,6 +1212,8 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
   const [newEnd, setNewEnd] = useState("");
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<"board" | "list">("board");
+  const [deleteTarget, setDeleteTarget] = useState<FlashItem | null>(null);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -1194,14 +1260,26 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
     load();
   }, [agentId, load]);
 
+  // TodoCard reports only the id; look the item up so the confirm dialog can
+  // quote its content, then delete on confirm.
+  const askDelete = useCallback((id: string) => {
+    setDeleteTarget(todos.find((it) => it.src.id === id) ?? null);
+  }, [todos]);
+
   const byStatus = useMemo(() => {
+    // Content filter applied before grouping so the board, the list view and
+    // the overdue/today summary all respect the search box.
+    const q = query.trim().toLowerCase();
+    const visibleTodos = q
+      ? todos.filter((it) => it.content.toLowerCase().includes(q))
+      : todos;
     const m: Record<TodoStatus, FlashItem[]> = { pending: [], in_progress: [], done: [], cancelled: [] };
-    for (const it of todos) {
+    for (const it of visibleTodos) {
       const s = (it.src.status || "pending") as TodoStatus;
       if (m[s]) m[s].push(it);
     }
     return m;
-  }, [todos]);
+  }, [todos, query]);
 
   // dueSoon: active todos with a due date, split into overdue vs. due-today
   // for the urgency summary above the board.
@@ -1210,7 +1288,8 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
     const eod = new Date(); eod.setHours(23, 59, 59, 999);
     const overdue: FlashItem[] = [];
     const today: FlashItem[] = [];
-    for (const it of todos) {
+    const q = query.trim().toLowerCase();
+    for (const it of q ? todos.filter((x) => x.content.toLowerCase().includes(q)) : todos) {
       if (it.src.status !== "pending" && it.src.status !== "in_progress") continue;
       if (!it.src.end_at) continue;
       const due = new Date(it.src.end_at).getTime();
@@ -1218,12 +1297,16 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
       else if (due <= eod.getTime()) today.push(it);
     }
     return { overdue, today };
-  }, [todos]);
+  }, [todos, query]);
 
   // listSorted: flat urgency-ordered list for the list view — active first,
   // then ascending due date (undated last).
   const listSorted = useMemo(() => {
-    return [...todos].sort((a, b) => {
+    const q = query.trim().toLowerCase();
+    const visibleTodos = q
+      ? todos.filter((it) => it.content.toLowerCase().includes(q))
+      : todos;
+    return [...visibleTodos].sort((a, b) => {
       const aa = a.src.status === "pending" || a.src.status === "in_progress";
       const bb = b.src.status === "pending" || b.src.status === "in_progress";
       if (aa !== bb) return aa ? -1 : 1;
@@ -1231,21 +1314,22 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
       const eb = b.src.end_at ? new Date(b.src.end_at).getTime() : Infinity;
       return ea - eb;
     });
-  }, [todos]);
+  }, [todos, query]);
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b p-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{t("knowledge.todoBoard")}</h3>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center rounded-md border p-0.5">
-            <button type="button" onClick={() => setView("board")} className={cn("rounded px-2 py-1 text-xs", view === "board" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewBoard")}</button>
-            <button type="button" onClick={() => setView("list")} className={cn("rounded px-2 py-1 text-xs", view === "list" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewList")}</button>
-          </div>
-          <Button size="sm" onClick={() => setNewOpen(true)}>
-            <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.newTodo")}
-          </Button>
+      <div className="flex items-center gap-2 border-b px-3 py-2">
+        <div className="relative min-w-0 flex-1">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchTodos")} className="h-7 w-full rounded-md pl-8 text-xs" />
         </div>
+        <div className="flex shrink-0 items-center rounded-md border p-0.5">
+          <button type="button" onClick={() => setView("board")} className={cn("rounded px-2 py-1 text-xs", view === "board" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewBoard")}</button>
+          <button type="button" onClick={() => setView("list")} className={cn("rounded px-2 py-1 text-xs", view === "list" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewList")}</button>
+        </div>
+        <Button size="sm" className="h-7 shrink-0" onClick={() => setNewOpen(true)}>
+          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.newTodo")}
+        </Button>
       </div>
       {(overdueTodos.length > 0 || dueToday.length > 0) && (
         <div className="flex items-center gap-3 border-b px-4 py-1.5 text-xs">
@@ -1262,7 +1346,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
               <p className="text-sm text-muted-foreground">{t("knowledge.noTodos")}</p>
             ) : (
               listSorted.map(({ src, content }) => (
-                <TodoCard key={src.id} src={src} content={content} onDelete={handleDelete} onMove={handleMove} />
+                <TodoCard key={src.id} src={src} content={content} onDelete={askDelete} onMove={handleMove} />
               ))
             )}
           </div>
@@ -1293,7 +1377,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
                     key={src.id}
                     src={src}
                     content={content}
-                    onDelete={handleDelete}
+                    onDelete={askDelete}
                     onMove={handleMove}
                   />
                 ))}
@@ -1303,6 +1387,17 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
         </div>
         )}
       </ScrollArea>
+
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        name={deleteTarget?.content ?? ""}
+        onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          await handleDelete(deleteTarget.src.id);
+          setDeleteTarget(null);
+        }}
+      />
 
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>

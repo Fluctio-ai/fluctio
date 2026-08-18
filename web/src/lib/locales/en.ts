@@ -400,6 +400,8 @@ const en: Record<string, string> = {
   "common.testFailed": "Test failed",
   "common.cancel": "Cancel",
   "common.delete": "Delete",
+  "common.deleteConfirmTitle": "Confirm delete",
+  "common.deleteConfirmBody": "Delete \"{name}\"? This cannot be undone.",
   "common.dismiss": "Dismiss",
   "common.copy": "Copy",
   "common.copied": "Copied",
@@ -756,6 +758,8 @@ const en: Record<string, string> = {
   "knowledge.saveFlash": "Save",
   "knowledge.noFlashes": "No inspiration flashes yet. Capture your first one above.",
   "knowledge.searchFlashes": "Search flashes…",
+  "knowledge.searchArticles": "Search articles…",
+  "knowledge.searchTodos": "Search todos…",
   "knowledge.sortNewest": "Newest first",
   "knowledge.sortOldest": "Oldest first",
   "knowledge.noSearchResult": "No matching flashes.",
@@ -1136,6 +1140,7 @@ const en: Record<string, string> = {
 
   // Wiki
   "wiki.title": "Wiki",
+  "wiki.search": "Search pages…",
   "wiki.deletePageTitle": "Delete page",
   "wiki.deletePageConfirm": "Delete \"{name}\"? This cannot be undone.",
   "wiki.deleteFailed": "Failed to delete page",

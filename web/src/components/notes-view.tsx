@@ -34,6 +34,7 @@ import {
   type KBNoteAttachment,
 } from "@/lib/api";
 import { readCache, writeCache } from "@/lib/page-data-cache";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { cn } from "@/lib/utils";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { Whiteboard } from "@/components/whiteboard";
@@ -118,6 +119,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   const [uploading, setUploading] = React.useState(false);
   const [query, setQuery] = React.useState("");
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [deleteTarget, setDeleteTarget] = React.useState<KBNote | null>(null);
   // boardDialog indexes into splitBody(draft.content_md)'s board slots;
   // -1 = closed.
   const [boardDialog, setBoardDialog] = React.useState(-1);
@@ -329,6 +331,18 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   }, [notes, query]);
   const searching = query.trim().length > 0;
 
+  // Delete flows through ConfirmDeleteDialog: the trash button stages the
+  // note, the confirm closes the editor if it held that note.
+  const confirmDeleteNote = React.useCallback(() => {
+    if (!agentId || !deleteTarget) return;
+    const id = deleteTarget.id;
+    setDeleteTarget(null);
+    deleteNote(agentId, id).then(() => {
+      if (id === selectedId) backToList();
+      load();
+    });
+  }, [agentId, deleteTarget, selectedId, backToList, load]);
+
   // Drag the vertical divider — mirrors ArticleView.startDrag verbatim.
   const startDrag = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -377,10 +391,10 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
             <Button variant="outline" size="sm" className="h-7 text-xs" onClick={newNote}>
               <PlusIcon className="mr-1 size-3" /> {t("knowledge.notes.new")}
             </Button>
-            <p className="ml-auto text-xs tabular-nums text-muted-foreground">
-              {t("knowledge.notes.count", { n: notes.length })}
-            </p>
           </div>
+          <p className="text-xs tabular-nums text-muted-foreground">
+            {t("knowledge.notes.count", { n: notes.length })}
+          </p>
         </div>
         <ScrollArea className="min-h-0 flex-1">
           <div className="p-2">
@@ -442,7 +456,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                     <button
                       type="button"
                       className="relative shrink-0 text-muted-foreground opacity-0 after:absolute after:-inset-2 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                      onClick={(e) => { e.stopPropagation(); if (agentId) { deleteNote(agentId, n.id).then(() => { if (n.id === selectedId) backToList(); load(); }); } }}
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(n); }}
                       aria-label={t("knowledge.notes.delete")}
                     >
                       <Trash2Icon className="size-3.5" />
@@ -689,6 +703,13 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
           </div>
         )}
       </div>
+
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        name={deleteTarget ? noteTitle(deleteTarget, t("knowledge.notes.untitled")) : ""}
+        onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}
+        onConfirm={confirmDeleteNote}
+      />
     </div>
   );
 }

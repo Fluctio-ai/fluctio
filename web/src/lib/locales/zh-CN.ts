@@ -400,6 +400,8 @@ const zhCN: Record<string, string> = {
   "common.testFailed": "测试失败",
   "common.cancel": "取消",
   "common.delete": "删除",
+  "common.deleteConfirmTitle": "确认删除",
+  "common.deleteConfirmBody": "确定删除「{name}」？此操作无法撤销。",
   "common.dismiss": "关闭",
   "common.copy": "复制",
   "common.copied": "已复制",
@@ -756,6 +758,8 @@ const zhCN: Record<string, string> = {
   "knowledge.saveFlash": "记录",
   "knowledge.noFlashes": "还没有灵感闪记。在上方输入框记下第一笔。",
   "knowledge.searchFlashes": "搜索闪记…",
+  "knowledge.searchArticles": "搜索文章…",
+  "knowledge.searchTodos": "搜索待办…",
   "knowledge.sortNewest": "最新优先",
   "knowledge.sortOldest": "最早优先",
   "knowledge.noSearchResult": "没有匹配的闪记。",
@@ -1136,6 +1140,7 @@ const zhCN: Record<string, string> = {
 
   // Wiki
   "wiki.title": "知识维基",
+  "wiki.search": "搜索页面…",
   "wiki.deletePageTitle": "删除页面",
   "wiki.deletePageConfirm": "确定删除「{name}」？此操作无法撤销。",
   "wiki.deleteFailed": "删除页面失败",

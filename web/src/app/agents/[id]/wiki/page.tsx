@@ -4,6 +4,7 @@ import { usePageHeader } from "@/components/sidebar";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -26,6 +27,7 @@ import {
   NetworkIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
+  SearchIcon,
   TrashIcon,
   XIcon,
 } from "lucide-react";
@@ -80,6 +82,7 @@ export default function WikiPage() {
   );
   const [stats, setStats] = useState<WikiStats | null>(initialWiki?.stats ?? null);
   const [pages, setPages] = useState<WikiPage[]>(initialWiki?.pages ?? []);
+  const [query, setQuery] = useState("");
   const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
   const [selectedPage, setSelectedPage] = useState<WikiPage | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WikiPage | null>(null);
@@ -199,11 +202,13 @@ export default function WikiPage() {
   // sections. Slicing BEFORE grouping keeps per-type counts consistent
   // with what's actually shown. titleMap still uses the full list so
   // in-body [[wiki links]] resolve to the target page's title even when
-  // that page is outside the visible window.
-  const visiblePages = useMemo(
-    () => pages.slice(0, visibleCount),
-    [pages, visibleCount],
-  );
+  // that page is outside the visible window. While searching, the title
+  // filter replaces the window (no slice) so every match is reachable.
+  const visiblePages = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matched = q ? pages.filter((p) => p.title.toLowerCase().includes(q)) : pages;
+    return q ? matched : matched.slice(0, visibleCount);
+  }, [pages, visibleCount, query]);
   const grouped = useMemo(() => {
     const m: Record<string, WikiPage[]> = {};
     for (const p of visiblePages) {
@@ -379,13 +384,21 @@ export default function WikiPage() {
           selectedPageId ? "hidden md:flex" : "flex",
         )}
       >
-        <div className="p-3 border-b">
+        <div className="space-y-2 border-b p-3">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold">{t("wiki.title")}</h3>
+            <div className="relative min-w-0 flex-1">
+              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t("wiki.search")}
+                className="h-7 w-full rounded-md pl-8 text-xs"
+              />
+            </div>
             <Button
               variant="ghost"
               size="icon"
-              className="ml-auto h-7 w-7 lg:hidden"
+              className="h-7 w-7 shrink-0 lg:hidden"
               onClick={() => setShowGraphOverlay(true)}
               title={t("wiki.knowledgeGraph")}
             >
@@ -393,7 +406,7 @@ export default function WikiPage() {
             </Button>
           </div>
           {stats && (
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-xs text-muted-foreground">
               {t("wiki.pageStats", {
                 pages: stats.total_pages,
                 links: stats.total_edges,
@@ -454,7 +467,12 @@ export default function WikiPage() {
                 );
               })
             )}
-            {visibleCount < pages.length && (
+            {!loading && pages.length > 0 && query.trim() !== "" && Object.values(grouped).every((a) => !a || a.length === 0) && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                {t("knowledge.noSearchResult")}
+              </p>
+            )}
+            {!query.trim() && visibleCount < pages.length && (
               <div ref={sentinelRef} className="py-2 flex justify-center">
                 <Button
                   variant="ghost"
