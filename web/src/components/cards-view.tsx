@@ -21,8 +21,10 @@ import {
   ArchiveRestoreIcon,
   ArrowLeftIcon,
   CalendarIcon,
+  FlameIcon,
   LayersIcon,
   PencilIcon,
+  PlayIcon,
   PlusIcon,
   SearchIcon,
   SendIcon,
@@ -32,6 +34,7 @@ import {
 import {
   type KBCard,
   type KBCardReview,
+  type KBCardStats,
   listCards,
   getCard,
   saveCard,
@@ -40,11 +43,13 @@ import {
   archiveCard,
   restoreCard,
   generateCards,
+  getCardStats,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { CardsReview } from "@/components/cards-review";
 
 // CardsView — the Q&A flashcard library (卡片库): left list (filter chips +
 // source select + search + paged loading), right detail (flip preview,
@@ -103,6 +108,11 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const [deleteTarget, setDeleteTarget] = useState<KBCard | null>(null);
   const [generating, setGenerating] = useState(false);
 
+  // Header dashboard + review flow (M5).
+  const [stats, setStats] = useState<KBCardStats | null>(null);
+  const [reviewQueue, setReviewQueue] = useState<KBCard[] | null>(null);
+  const reviewStartedRef = useRef(false);
+
   const load = useCallback(
     async (offset: number, replace: boolean) => {
       if (!agentId) return;
@@ -139,6 +149,51 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
     if (cards.length) writeCache(`kb-cards:${agentId}`, cards.slice(0, 100));
   }, [agentId, cards]);
 
+  // loadStats feeds the header dashboard; called on mount, after each
+  // review session, and after any corpus mutation.
+  const loadStats = useCallback(async () => {
+    if (!agentId) return;
+    setStats(await getCardStats(agentId));
+  }, [agentId]);
+
+  useEffect(() => { loadStats(); }, [loadStats]);
+
+  // startReview builds the due queue (oldest-due first: overdue cards come
+  // back before fresh ones) and opens the overlay. An empty result closes
+  // immediately — the button is disabled in that case anyway.
+  const startReview = useCallback(async () => {
+    if (!agentId) return;
+    const due = await listCards(agentId, { filter: "due", limit: 100 });
+    if (!due.length) {
+      await loadStats();
+      return;
+    }
+    setReviewQueue(due.reverse()); // list is newest-created first; review oldest first
+  }, [agentId, loadStats]);
+
+  const endReview = useCallback(() => {
+    setReviewQueue(null);
+    load(0, true);
+    loadStats();
+  }, [load, loadStats]);
+
+  // Deep link: /knowledge/cards?review=1 auto-starts a session once (IM
+  // digest link). reviewStartedRef guards against remount retriggering.
+  useEffect(() => {
+    if (!agentId || reviewStartedRef.current) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("review") === "1") {
+      reviewStartedRef.current = true;
+      startReview();
+      // Strip the param so a later manual reload of the page doesn't
+      // re-trigger the session.
+      params.delete("review");
+      const qs = params.toString();
+      router.replace(`${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    }
+  }, [agentId, startReview, router]);
+
   // Selecting a card fetches its review timeline; the flip resets.
   const openCard = useCallback(
     async (c: KBCard) => {
@@ -171,7 +226,8 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
     if (res.error) { notify(res.error); return; }
     setAddOpen(false); setAddQ(""); setAddA("");
     load(0, true);
-  }, [agentId, addQ, addA, notify, load]);
+    loadStats();
+  }, [agentId, addQ, addA, notify, load, loadStats]);
 
   const handleEditSave = useCallback(async () => {
     if (!agentId || !selected) return;
@@ -195,7 +251,8 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
     if (selected?.id === deleteTarget.id) setSelected(null);
     setDeleteTarget(null);
     load(0, true);
-  }, [agentId, deleteTarget, selected, notify, load]);
+    loadStats();
+  }, [agentId, deleteTarget, selected, notify, load, loadStats]);
 
   const handleArchive = useCallback(async (c: KBCard, archive: boolean) => {
     if (!agentId) return;
@@ -205,7 +262,8 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
       setSelected({ ...c, status: archive ? "archived" : "active" });
     }
     load(0, true);
-  }, [agentId, selected, notify, load]);
+    loadStats();
+  }, [agentId, selected, notify, load, loadStats]);
 
   const handleGenerate = useCallback(async () => {
     if (!agentId) return;
@@ -229,7 +287,31 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   );
 
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Header dashboard: due today (CTA), streak, learning/mastered. */}
+      <div className="flex items-center gap-3 border-b px-3 py-2">
+        {stats && stats.due_today > 0 ? (
+          <Button size="sm" className="h-8 text-xs" onClick={startReview}>
+            <PlayIcon className="mr-1 size-3.5" />
+            {t("cards.reviewCta")} · {t("cards.reviewN", { n: stats.due_today })}
+          </Button>
+        ) : (
+          <span className="text-xs text-emerald-600 dark:text-emerald-400">{t("cards.dueNone")}</span>
+        )}
+        {stats && stats.streak_days > 0 && (
+          <Badge variant="outline" className="gap-1 border-warning/40 px-1.5 py-0 text-[11px] text-warning">
+            <FlameIcon className="size-3" />
+            {t("cards.streakDays", { n: stats.streak_days })}
+          </Badge>
+        )}
+        {stats && (
+          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+            {t("cards.statActive", { n: stats.active })} · {t("cards.statMastered", { n: stats.mastered })}
+          </span>
+        )}
+      </div>
+
+    <div className="flex min-h-0 flex-1">
       {/* ── Left: card list ── */}
       <div
         className={cn(
@@ -543,6 +625,12 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
         onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}
         onConfirm={handleDelete}
       />
+
+      {/* Review overlay (due queue, one card at a time). */}
+      {reviewQueue && reviewQueue.length > 0 && (
+        <CardsReview agentId={agentId!} queue={reviewQueue} onDone={endReview} />
+      )}
+    </div>
     </div>
   );
 }
