@@ -15,6 +15,7 @@ import {
   CheckSquareIcon,
   ChevronRightIcon,
   FileTextIcon,
+  LayersIcon,
   LightbulbIcon,
   LinkIcon,
   StickyNoteIcon,
@@ -107,7 +108,7 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
   // is gone — each KB view is now its own sidebar entry (plus Wiki), so the
   // user lands on a view directly instead of through a tab switch. Icons are
   // lucide to match the rest of the sidebar (FileText/Lightbulb/CheckSquare/
-  // Calendar/Link/StickyNote/BookMarked).
+  // Calendar/Link/StickyNote/Layers/BookMarked).
   const items = [
     { title: t("knowledge.articles"), url: `/agents/${agentId}/knowledge/`, icon: FileTextIcon },
     { title: t("knowledge.notes"), url: `/agents/${agentId}/knowledge/notes/`, icon: StickyNoteIcon },
@@ -115,6 +116,7 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
     { title: t("knowledge.todos"), url: `/agents/${agentId}/knowledge/todos/`, icon: CheckSquareIcon },
     { title: t("knowledge.diary"), url: `/agents/${agentId}/knowledge/diary/`, icon: CalendarIcon },
     { title: t("knowledge.bookmarks"), url: `/agents/${agentId}/knowledge/bookmarks/`, icon: LinkIcon },
+    { title: t("knowledge.cards"), url: `/agents/${agentId}/knowledge/cards/`, icon: LayersIcon },
     { title: t("nav.knowledge.wiki"), url: `/agents/${agentId}/wiki/`, icon: BookMarkedIcon },
   ];
 

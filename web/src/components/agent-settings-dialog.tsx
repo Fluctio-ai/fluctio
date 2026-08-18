@@ -39,6 +39,7 @@ import AgentSchedulerPage from "@/app/agents/[id]/scheduler/page";
 import AgentRegexHooksPage from "@/app/agents/[id]/regex-hooks/page";
 import { KBSettingsCard } from "@/components/kb-settings-card";
 import { DiarySettingsCard } from "@/components/diary-settings-card";
+import { CardsSettingsCard } from "@/components/cards-settings-card";
 import { WikiAutoGenSettingsCard } from "@/components/wiki-autogen-settings-card";
 import AgentMemoryPage from "@/app/agents/[id]/vectorization/page";
 import AgentPrivacyPage from "@/app/agents/[id]/privacy/page";
@@ -288,6 +289,7 @@ export function AgentSettingsDialog({
               </div>
               <KBSettingsCard />
               <DiarySettingsCard />
+              <CardsSettingsCard />
               <WikiAutoGenSettingsCard />
             </div>
           )}

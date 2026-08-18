@@ -1568,6 +1568,8 @@ export interface AgentUpdatePayload {
   // The dedup thresholds (articleDupHigh/Mid/flashDupThreshold/todoDupThreshold)
   // gate inbound write dedup; nil = built-in default.
   kb?: AgentKBCfg;
+  // Per-agent Q&A card config blob (whole-replace, same pattern as kb).
+  cards?: AgentCardsCfg;
   // Per-agent overrides for LLM generation + the ReAct iteration budget.
   // Omit to leave unchanged; pass <=0 to clear (fall back to the
   // agents.defaults entry → system default 8192 / 0.7 / 20).
@@ -1643,6 +1645,10 @@ export interface AgentFileConfig {
   mcpServers?: Record<string, MCPServerConfig>;
   kb?: AgentKBCfg;
   diary?: AgentDiaryCfg;
+  // cards mirrors config.AgentFileConfig.Cards — Q&A flashcard generation
+  // + push config. Read/written via getAgentConfig/updateAgent under the
+  // Knowledge settings tab.
+  cards?: AgentCardsCfg;
   // admins mirrors config.AgentFileConfig.Admins — per-channel admin
   // platform IDs (IM identity claim flow binds via /claim <code>).
   admins?: Record<string, string[]>;
@@ -1691,6 +1697,21 @@ export interface AgentDiaryCfg {
   cronTime?: string;
   /** Blindspot-detection strength: ""/"blindspots" (default), "off", "deep". */
   thinkingMode?: string;
+}
+
+// AgentCardsCfg mirrors config.AgentCardsCfg — per-agent Q&A flashcard
+// generation + due-card push config.
+export interface AgentCardsCfg {
+  enabled?: boolean;
+  /** Daily generation time "HH:MM" UTC+8. Default "03:00". */
+  cronTime?: string;
+  /** Max cards one nightly run may create. Default 10. */
+  dailyLimit?: number;
+  pushEnabled?: boolean;
+  /** Daily digest push time "HH:MM" UTC+8. Default "09:00". */
+  pushTime?: string;
+  /** IM channel for the digest (wechat default). */
+  pushChannel?: string;
 }
 
 // --- Daily diary types + API (per-agent daily-diary generator) ---
@@ -1916,6 +1937,120 @@ export async function deleteBookmark(agentId: string, bookmarkId: string): Promi
   if (!res.ok) return { error: `HTTP ${res.status}` };
   return res.json();
 }
+// --- 知识卡片（间隔重复问答卡）---
+export type KBCard = {
+  id: string;
+  agent_id: string;
+  question: string;
+  answer: string;
+  source_type: "diary" | "wiki" | "manual";
+  source_ref: string;
+  source_excerpt: string;
+  status: "active" | "mastered" | "archived";
+  interval_index: number;
+  due_at?: string | null;
+  last_reviewed_at?: string | null;
+  review_count: number;
+  lapse_count: number;
+  created_at: string;
+  updated_at: string;
+};
+export type KBCardReview = {
+  id: number;
+  card_id: string;
+  agent_id: string;
+  grade: "forgot" | "fuzzy" | "remembered";
+  prev_interval_index: number;
+  new_interval_index: number;
+  new_due_at?: string | null;
+  reviewed_at: string;
+};
+export type KBCardStats = {
+  due_today: number;
+  active: number;
+  mastered: number;
+  archived: number;
+  streak_days: number;
+};
+export async function listCards(
+  agentId: string,
+  opts?: { filter?: string; source?: string; q?: string; limit?: number; offset?: number },
+): Promise<KBCard[]> {
+  const p = new URLSearchParams();
+  if (opts?.filter) p.set("filter", opts.filter);
+  if (opts?.source) p.set("source", opts.source);
+  if (opts?.q) p.set("q", opts.q);
+  if (opts?.limit) p.set("limit", String(opts.limit));
+  if (opts?.offset) p.set("offset", String(opts.offset));
+  const qs = p.toString();
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards${qs ? `?${qs}` : ""}`);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => []);
+  return Array.isArray(data) ? data : [];
+}
+export async function getCard(agentId: string, cardId: string): Promise<{ card: KBCard; reviews: KBCardReview[] } | null> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards/${cardId}`);
+  if (!res.ok) return null;
+  return res.json();
+}
+export async function saveCard(agentId: string, question: string, answer: string): Promise<{ id?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, answer }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function updateCard(
+  agentId: string, cardId: string, patch: { question?: string; answer?: string },
+): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards/${cardId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function deleteCard(agentId: string, cardId: string): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards/${cardId}`, { method: "DELETE" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+// reviewCard applies one Ebbinghaus grade (forgot|fuzzy|remembered) and
+// returns the updated card.
+export async function reviewCard(agentId: string, cardId: string, grade: string): Promise<KBCard | { error: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards/${cardId}/review`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ grade }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function archiveCard(agentId: string, cardId: string): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards/${cardId}/archive`, { method: "POST" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function restoreCard(agentId: string, cardId: string): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards/${cardId}/restore`, { method: "POST" });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+export async function getCardStats(agentId: string): Promise<KBCardStats> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards/stats`);
+  if (!res.ok) return { due_today: 0, active: 0, mastered: 0, archived: 0, streak_days: 0 };
+  return res.json().catch(() => ({ due_today: 0, active: 0, mastered: 0, archived: 0, streak_days: 0 }));
+}
+// generateCards manually triggers the nightly cardsgen pass (补跑/debug).
+export async function generateCards(agentId: string, date?: string): Promise<{ date?: string; created?: number; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/cards/generate`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(date ? { date } : {}),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
+
 // --- 笔记 ---
 export async function listNotes(agentId: string): Promise<KBNote[]> {
   const res = await apiFetch(`/api/agents/${agentId}/kb/notes`);
