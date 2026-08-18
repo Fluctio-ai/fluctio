@@ -119,7 +119,7 @@ export default function AgentRecallTuningPage() {
   }
 
   const exploreRate = state.total_recalls
-    ? (state.explored_recalls ?? 0) / state.total_recalls
+    ? (state.bandit_explored_recalls ?? 0) / state.total_recalls
     : 0;
 
   return (
@@ -129,7 +129,7 @@ export default function AgentRecallTuningPage() {
         <p className="text-sm text-muted-foreground mt-1">{t("recallTuning.description")}</p>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
           label={t("recallTuning.currentLambda")}
           value={state.mmr_lambda?.toFixed(2) ?? "—"}
@@ -139,6 +139,15 @@ export default function AgentRecallTuningPage() {
           label={t("recallTuning.totalRecalls")}
           value={String(state.total_recalls ?? 0)}
           icon={<Database className="h-4 w-4" />}
+        />
+        <Stat
+          label={t("recallTuning.consumedRate")}
+          value={
+            state.total_recalls
+              ? `${(((state.consumed_recalls ?? 0) / state.total_recalls) * 100).toFixed(0)}%`
+              : "—"
+          }
+          icon={<Sparkles className="h-4 w-4" />}
         />
         <Stat
           label={t("recallTuning.exploreRate")}
@@ -275,14 +284,32 @@ export default function AgentRecallTuningPage() {
           <ul className="space-y-2">
             {recalls!.map((rc) => (
               <li key={rc.recall_id} className="rounded border p-2 text-sm">
-                <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-mono">{new Date(rc.created_at).toLocaleString()}</span>
                   <span>λ={rc.lambda.toFixed(2)}</span>
-                  {rc.explored && <span className="rounded bg-muted px-1">explored</span>}
+                  {rc.bandit_explored && (
+                    <span className="rounded bg-muted px-1">{t("recallTuning.banditExplored")}</span>
+                  )}
+                  {rc.consumed && (
+                    <span className="rounded bg-muted px-1">{t("recallTuning.consumed")}</span>
+                  )}
+                </div>
+                <div className="mb-1 text-xs">
+                  <span className="text-muted-foreground">{t("recallTuning.triggerQuery")}: </span>
+                  <span className="font-medium">{rc.query || t("recallTuning.queryUnknown")}</span>
                 </div>
                 {rc.summaries.map((sm) => (
-                  <div key={sm.id} className="text-muted-foreground">
-                    {sm.topic ? `${sm.topic}: ` : ""}
-                    {sm.summary}
+                  <div key={sm.id} className="border-b border-border/60 py-1.5 last:border-b-0 last:pb-0 first:pt-0">
+                    <div className="flex items-baseline gap-2">
+                      <span
+                        className="w-8 shrink-0 text-right tabular-nums font-mono text-[11px] text-muted-foreground"
+                        title={t("recallTuning.relevanceHint")}
+                      >
+                        {sm.relevance != null ? sm.relevance.toFixed(2) : ""}
+                      </span>
+                      <span className="font-medium">{sm.topic || "—"}</span>
+                    </div>
+                    <div className="pl-10 text-xs leading-relaxed text-muted-foreground">{sm.summary}</div>
                   </div>
                 ))}
                 <div className="mt-1 flex gap-2">

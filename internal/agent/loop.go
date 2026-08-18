@@ -494,6 +494,7 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	// at send time. The registerBuiltins pass inside NewRegistry already
 	// stamped a placeholder; tools.RegisterMessage replaces it.
 	tools.RegisterMemorySearch(registry, rc.Home)
+	tools.RegisterMemoryFetch(registry) // layered injection: detail fetch for memory_search's compact index
 	tools.RegisterWebFetch(registry)
 
 	// Load skills with OpenClaw compatibility. We can't hydrate from OSS
@@ -3025,6 +3026,8 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	ctx = kb.WithSourceOrigin(ctx, kb.SourceOrigin{SessionID: sess.Key(), Seq: len(messages)}) // L1 dedup: same session+seq = rewrite of captured content
 	citedMemos := make(map[int64]bool)
 	ctx = tools.WithCitedSummaries(ctx, &citedMemos) // memory_search dedups against this across calls
+	consumedRecalls := make([]string, 0, 2)
+	ctx = tools.WithConsumedRecallIDs(ctx, &consumedRecalls) // recall.consumed: fetch_messages marks this turn's recall ids used
 
 	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop
 	// so their results are in `messages` when the LLM picks up the turn.

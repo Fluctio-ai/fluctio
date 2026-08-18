@@ -207,6 +207,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateConversationSummariesSegments(ctx); err != nil {
 		return fmt.Errorf("migrate conversation_summaries segments column: %w", err)
 	}
+	if err := d.migrateConversationSummariesLifecycle(ctx); err != nil {
+		return fmt.Errorf("migrate conversation_summaries lifecycle columns: %w", err)
+	}
 	if err := d.migrateKBWiki(ctx); err != nil {
 		return fmt.Errorf("migrate kb/wiki tables: %w", err)
 	}
@@ -233,6 +236,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	}
 	if err := d.migrateRecallEventUser(ctx); err != nil {
 		return fmt.Errorf("migrate recall event user_id: %w", err)
+	}
+	if err := d.migrateRecallEventAudit(ctx); err != nil {
+		return fmt.Errorf("migrate recall event audit columns: %w", err)
 	}
 	// Flatten per-user / per-chatter rows BEFORE the DROP COLUMN
 	// migrations (added in Phase 1.2–1.5) so the drops can't trip a
@@ -6283,6 +6289,45 @@ func (d *DBStore) migrateConversationSummariesSegments(ctx context.Context) erro
 // migrateSessionsAddLastSummarizedSeq adds the last_summarized_seq column
 // to sessions, tracking how far the conversation summary has progressed
 // so the next trigger runs incremental instead of full. Idempotent.
+// migrateConversationSummariesLifecycle adds the memory-lifecycle columns:
+//   - kind: "durable" (stable fact/preference/decision — kept and preferred)
+//     vs "episodic" (one-off session event — first candidate for pruning).
+//   - superseded_by: id of the summary row that replaced this one (0 =
+//     active). Superseded rows drop out of recall so contradictory states
+//     (e.g. "installed skill X" later followed by "removed skill X")
+//     don't both surface.
+// Idempotent via tableHasColumn, same pattern as Scoring/Segments.
+func (d *DBStore) migrateConversationSummariesLifecycle(ctx context.Context) error {
+	hasTable, err := d.tableExists(ctx, "conversation_summaries")
+	if err != nil {
+		return err
+	}
+	if !hasTable {
+		return nil
+	}
+	type col struct {
+		name, decl string
+	}
+	columns := []col{
+		{"kind", "TEXT NOT NULL DEFAULT 'episodic'"},
+		{"superseded_by", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, c := range columns {
+		has, err := d.tableHasColumn(ctx, "conversation_summaries", c.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx, fmt.Sprintf(
+			`ALTER TABLE conversation_summaries ADD COLUMN %s %s`, c.name, c.decl)); err != nil {
+			return fmt.Errorf("add column %s: %w", c.name, err)
+		}
+	}
+	return nil
+}
+
 func (d *DBStore) migrateSessionsAddLastSummarizedSeq(ctx context.Context) error {
 	has, err := d.tableHasColumn(ctx, "sessions", "last_summarized_seq")
 	if err != nil {

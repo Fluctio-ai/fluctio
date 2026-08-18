@@ -785,6 +785,15 @@ type AgentKBCfg struct {
 	FlashTodoKeywords   []string `json:"flashTodoKeywords,omitempty"`
 	FlashTodoMaxResults int      `json:"flashTodoMaxResults,omitempty"`
 	FlashTodoThreshold  *float64 `json:"flashTodoThreshold,omitempty"`
+	// Memory auto-recall group — injects conversation-summary memories
+	// (memory_search's corpus) before the model call, closing the trigger
+	// gap where recall only happened when the LLM decided to call the
+	// tool. Lexical-FTS only (precise, no embedding per turn); empty
+	// AutoMode = "always" (default ON), "disabled" opts out, "keyword"
+	// gates on MemoryKeywords. Superseded rows are filtered by the store.
+	MemoryAutoMode   string   `json:"memoryAutoMode,omitempty"`
+	MemoryKeywords   []string `json:"memoryKeywords,omitempty"`
+	MemoryMaxResults int      `json:"memoryMaxResults,omitempty"`
 	// Dedup thresholds for inbound KB writes (nil = built-in default).
 	// At/above these, an existing same/similar source blocks the write:
 	// flash/todo skip silently; article near-duplicate skips (≥High) or pends (Mid).

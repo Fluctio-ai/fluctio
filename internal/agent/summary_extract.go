@@ -31,6 +31,8 @@ type ExtractedTopic struct {
 	Summary    string       `json:"summary"`
 	Keywords   []string     `json:"keywords"`
 	Importance int          `json:"importance"`
+	Kind       string       `json:"kind"`      // "durable" (stable fact/preference/decision) | "episodic" (one-off session event)
+	Supersedes []int64      `json:"supersedes"` // ids from RECENT MEMORIES this topic replaces (state flips: installed→removed)
 	Segments   []seqSegment `json:"segments"`
 }
 
@@ -43,9 +45,10 @@ func extractConversationTopics(
 	ctx context.Context,
 	prov provider.Provider,
 	model string,
+	recent []store.ConversationSummary,
 	messages []store.SessionMessage,
 ) ([]ExtractedTopic, error) {
-	topics, err := callExtractTopics(ctx, prov, model, messages, false, nil)
+	topics, err := callExtractTopics(ctx, prov, model, messages, false, nil, recent)
 	if err != nil {
 		return nil, err
 	}
@@ -61,9 +64,10 @@ func mergeConversationTopics(
 	prov provider.Provider,
 	model string,
 	existing []store.ConversationSummary,
+	recent []store.ConversationSummary,
 	messages []store.SessionMessage,
 ) ([]ExtractedTopic, error) {
-	topics, err := callExtractTopics(ctx, prov, model, messages, true, existing)
+	topics, err := callExtractTopics(ctx, prov, model, messages, true, existing, recent)
 	if err != nil {
 		return nil, err
 	}
@@ -77,6 +81,7 @@ func callExtractTopics(
 	messages []store.SessionMessage,
 	incremental bool,
 	existing []store.ConversationSummary,
+	recent []store.ConversationSummary,
 ) ([]ExtractedTopic, error) {
 	if len(messages) == 0 {
 		return nil, nil
@@ -99,9 +104,9 @@ func callExtractTopics(
 
 	var prompt string
 	if incremental {
-		prompt = buildIncrementalPrompt(existing, transcript.String())
+		prompt = buildIncrementalPrompt(existing, recent, transcript.String())
 	} else {
-		prompt = buildFullPrompt(transcript.String())
+		prompt = buildFullPrompt(recent, transcript.String())
 	}
 
 	// Disable the model's thinking/reasoning for this extractive call:
@@ -203,7 +208,35 @@ func validateTopics(parsed []ExtractedTopic, messages []store.SessionMessage, ex
 	return cleaned
 }
 
-func buildFullPrompt(transcript string) string {
+// renderRecentMemories formats the agent's recent cross-session memories
+// for the extraction prompt: id + topic + truncated summary, enough for
+// the LLM to (a) skip re-storing what's already remembered and (b) mark a
+// new topic as superseding a now-outdated memory.
+func renderRecentMemories(recent []store.ConversationSummary) string {
+	if len(recent) == 0 {
+		return "[]"
+	}
+	type row struct {
+		ID      int64  `json:"id"`
+		Topic   string `json:"topic"`
+		Summary string `json:"summary"`
+	}
+	rows := make([]row, 0, len(recent))
+	for _, r := range recent {
+		s := r.Summary
+		if len(s) > 160 {
+			s = s[:160] + "..."
+		}
+		rows = append(rows, row{ID: r.ID, Topic: r.Topic, Summary: s})
+	}
+	b, err := json.Marshal(rows)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+func buildFullPrompt(recent []store.ConversationSummary, transcript string) string {
 	return fmt.Sprintf(`Analyze this conversation excerpt. Each line is tagged with its seq number and role.
 
 CRITICAL — OUTPUT LANGUAGE:
@@ -213,6 +246,9 @@ The summary and keywords MUST be in the same language as the conversation.
 - Mixed → use the language the user typed in
 This is load-bearing: a Chinese-speaking user can only search in Chinese. A summary in the wrong language will NEVER be found by later queries.
 
+WORTH-REMEMBERING GATE (skip before summarizing):
+Emit NO topic for one-off task completions and ephemeral exchanges — generating an image on request, testing a feature/channel, asking who you are or what tools exist, installing/listing things that were immediately undone, transient status checks. A topic must be something that would change how a FUTURE conversation behaves. When in doubt, skip it — the corpus must stay small to stay useful.
+
 Group the excerpt into TOPICS. Real conversations interleave several topics (e.g. weather small-talk wedged between health-advice threads). Each topic becomes its own recallable summary, scoped to ONLY the seq ranges where it was actually discussed — so future retrieval fetches the verbatim messages of that topic without unrelated turns.
 
 For each topic emit:
@@ -220,20 +256,25 @@ For each topic emit:
 - summary: 1-2 sentences in the conversation's language
 - keywords: 3-7 keywords in the conversation's language
 - importance: 1-5 (usefulness to a FUTURE conversation; 1=trivial, 5=key fact/decision/preference)
+- kind: "durable" for stable facts, preferences, decisions, user/family profile, long-term projects and setups; "episodic" for session-specific events and state that may go stale
+- supersedes: array of ids from RECENT MEMORIES below that this topic directly REPLACES (a state flipped: something installed then removed, a plan cancelled or changed, a preference overridden). Use ONLY ids from that list. Empty array otherwise. When in doubt, empty.
 - segments: list of {"s":N,"e":N} pairs. s and e are seq numbers SHOWN IN THE TRANSCRIPT that belong to this topic. A topic spanning disjoint ranges gets several pairs. Use the exact seq numbers from the transcript; do not invent numbers not present.
 
 Skip greetings, small talk, chit-chat, unresolved errors — emit NO topic for them.
 
+RECENT MEMORIES from other sessions (JSON; for dedup + supersedes):
+%s
+
 Output STRICT JSON only — no markdown fences, no commentary:
-{"topics":[{"topic":"...","summary":"...","keywords":[...],"importance":N,"segments":[{"s":N,"e":N}]}]}
+{"topics":[{"topic":"...","summary":"...","keywords":[...],"importance":N,"kind":"durable|episodic","supersedes":[],"segments":[{"s":N,"e":N}]}]}
 
 If nothing is worth remembering: {"topics":[]}
 
 Conversation:
-%s`, transcript)
+%s`, renderRecentMemories(recent), transcript)
 }
 
-func buildIncrementalPrompt(existing []store.ConversationSummary, transcript string) string {
+func buildIncrementalPrompt(existing []store.ConversationSummary, recent []store.ConversationSummary, transcript string) string {
 	type seg struct {
 		S int `json:"s"`
 		E int `json:"e"`
@@ -266,9 +307,14 @@ Your job: output the FULL updated topic list.
 - Topics that CONTINUE in the new messages: keep them, refresh the summary to cover both old and new content, APPEND the new seq segments to the existing segments list (do NOT drop the old ones).
 - Brand-new topics in the new messages: add them with their own segments.
 - Topics NOT touched by the new messages: carry them over UNCHANGED (same summary, same segments, same importance).
-- Drop greetings/chit-chat/unresolved errors — emit no topic for them.
+- Skip greetings/chit-chat/unresolved errors — emit no topic for them. Also skip one-off task completions (image generation on request, feature tests, identity questions): a topic must change how a FUTURE conversation behaves.
+- kind: "durable" for stable facts/preferences/decisions/profile; "episodic" for session-specific events and state that may go stale.
+- supersedes: if a new topic directly REPLACES one of the RECENT MEMORIES below (state flipped: installed then removed, plan changed), put that memory's id in its supersedes array. Only ids from that list; empty otherwise.
 
 EXISTING TOPICS (JSON; segments are [seq_start, seq_end] pairs already covered):
+%s
+
+RECENT MEMORIES from other sessions (JSON; for supersedes):
 %s
 
 NEW MESSAGES (each tagged with seq and role; use the exact seq numbers shown):
@@ -280,10 +326,10 @@ Rules:
 - Do not invent seq numbers not present in either source.
 
 Output STRICT JSON only — no markdown fences:
-{"topics":[{"topic":"...","summary":"...","keywords":[...],"importance":N,"segments":[{"s":N,"e":N}]}]}
+{"topics":[{"topic":"...","summary":"...","keywords":[...],"importance":N,"kind":"durable|episodic","supersedes":[],"segments":[{"s":N,"e":N}]}]}
 
 If the new messages add nothing worth remembering, return the existing topics unchanged.`,
-		string(existingJSON), transcript)
+		string(existingJSON), renderRecentMemories(recent), transcript)
 }
 
 // summarizeIdleSessions scans this agent's sessions that have been
@@ -381,8 +427,21 @@ func persistConversationSummary(
 		extractErr  error
 		incremental bool
 	)
+	// Recent cross-session memories: shown to the LLM for dedup + the
+	// supersedes chain (state flips like install→remove). Best-effort —
+	// extraction proceeds without it when the lookup fails.
+	recent, rerr := db.ListRecentSummariesForSupersede(ctx, agentID, sessionKey, 40)
+	if rerr != nil {
+		slog.Debug("conversation summary: recent memories lookup failed",
+			"agent", agentID, "error", rerr)
+		recent = nil
+	}
+	recentIDs := make(map[int64]bool, len(recent))
+	for _, r := range recent {
+		recentIDs[r.ID] = true
+	}
 	if lastSeq == 0 {
-		topics, extractErr = extractConversationTopics(ctx, prov, model, allMsgs)
+		topics, extractErr = extractConversationTopics(ctx, prov, model, recent, allMsgs)
 	} else {
 		incremental = true
 		newMsgs := messagesAfterSeq(allMsgs, lastSeq)
@@ -395,9 +454,9 @@ func persistConversationSummary(
 		if lerr != nil {
 			slog.Warn("conversation summary: list existing failed, falling back to full",
 				"agent", agentID, "session", sessionKey, "error", lerr)
-			topics, extractErr = extractConversationTopics(ctx, prov, model, allMsgs)
+			topics, extractErr = extractConversationTopics(ctx, prov, model, recent, allMsgs)
 		} else {
-			topics, extractErr = mergeConversationTopics(ctx, prov, model, existing, newMsgs)
+			topics, extractErr = mergeConversationTopics(ctx, prov, model, existing, recent, newMsgs)
 		}
 	}
 	if extractErr != nil {
@@ -456,6 +515,7 @@ func persistConversationSummary(
 			SeqEnd:         tMaxSeq,
 			EmbeddingModel: embModel,
 			Importance:     t.Importance,
+			Kind:           t.Kind,
 		})
 		if err != nil {
 			slog.Warn("conversation summary persist failed",
@@ -463,6 +523,22 @@ func persistConversationSummary(
 			continue
 		}
 		saved++
+
+		// Supersedes chain: flag each replaced memory (validated against
+		// the ids actually shown to the LLM) so contradictory state stops
+		// surfacing in recall. Best-effort per id.
+		for _, oldID := range t.Supersedes {
+			if oldID <= 0 || !recentIDs[oldID] {
+				continue
+			}
+			if serr := db.MarkSummarySuperseded(ctx, agentID, oldID, id); serr != nil {
+				slog.Warn("conversation summary: supersede failed",
+					"agent", agentID, "old", oldID, "new", id, "error", serr)
+			} else {
+				slog.Info("conversation summary: memory superseded",
+					"agent", agentID, "old", oldID, "new", id, "topic", t.Topic)
+			}
+		}
 
 		if emb != nil && emb.Available() && id > 0 {
 			text := t.Summary

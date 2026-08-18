@@ -31,6 +31,29 @@ func citedSummariesFromCtx(ctx context.Context) *map[int64]bool {
 	return m
 }
 
+// consumedRecallIDsKey carries a *[]string of recall ids minted this turn.
+// fetch_messages / memory_fetch read it back and mark those events
+// consumed — the recall.consumed adoption signal.
+type consumedRecallIDsKey struct{}
+
+func WithConsumedRecallIDs(ctx context.Context, ids *[]string) context.Context {
+	return context.WithValue(ctx, consumedRecallIDsKey{}, ids)
+}
+
+func consumedRecallIDsFromCtx(ctx context.Context) *[]string {
+	ids, _ := ctx.Value(consumedRecallIDsKey{}).(*[]string)
+	return ids
+}
+
+// markRecallConsumed marks a just-minted recall id as "pending consumption
+// attribution" on the turn's ctx (if wired) so a later fetch in the same
+// turn can flag it consumed. No-op without the ctx value.
+func markRecallConsumed(ctx context.Context, recallID string) {
+	if ids := consumedRecallIDsFromCtx(ctx); ids != nil {
+		*ids = append(*ids, recallID)
+	}
+}
+
 // FTSSearcher is the interface for FTS5-based memory search.
 type FTSSearcher interface {
 	Search(query string, limit int) ([]store.FTSResult, error)
@@ -52,8 +75,13 @@ type Reranker interface {
 
 type memorySearchArgs struct {
 	Query string `json:"query"`
-	Limit int    `json:"limit,omitempty"` // default 10
+	Limit int    `json:"limit,omitempty"` // default 10, clamped to memorySearchMaxLimit
 }
+
+// memorySearchMaxLimit is the hard cap on how many summaries one
+// memory_search call may surface. 3-5 well-chosen hits answer a recall
+// need; 15 floods the context with borderline-relevant session digests.
+const memorySearchMaxLimit = 10
 
 type searchResult struct {
 	File      string  `json:"file"`
@@ -81,6 +109,9 @@ type SummarySearcher interface {
 	// InsertRecallEvent records one recall so stage-2b feedback can be
 	// attributed to the lambda that produced it.
 	InsertRecallEvent(ctx context.Context, ev store.RecallEvent) error
+	// MarkRecallEventsConsumed flags recall ids as consumed (adoption
+	// signal) when a later fetch follows the surfaced pointer.
+	MarkRecallEventsConsumed(ctx context.Context, recallIDs []string) error
 }
 
 // RegisterMemorySearch registers the memory_search tool.
@@ -114,7 +145,7 @@ func RegisterMemorySearch(r *Registry, workspace string, fts ...FTSSearcher) {
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
-					"description": "Maximum number of results to return (default 10)",
+					"description": "Maximum number of results to return (default 10, hard cap 10). 3-5 focused results are usually enough — a larger limit does not improve recall.",
 				},
 			},
 			"required": []string{"query"},
@@ -135,6 +166,12 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 		limit := args.Limit
 		if limit <= 0 {
 			limit = 10
+		}
+		// Clamp: the LLM tends to over-fetch (observed limit=15 returning
+		// 9/15 irrelevant hits); more results is not more recall — it just
+		// floods the context and dilutes the feedback signal.
+		if limit > memorySearchMaxLimit {
+			limit = memorySearchMaxLimit
 		}
 
 		// Path A (preferred): conversation_summaries table — cross-session
@@ -183,7 +220,10 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 								if fetchErr == nil {
 									scoped := make([]store.ConversationSummary, 0, len(vecHits))
 									for _, h := range vecHits {
-										if h.AgentID == r.agentID {
+										// Superseded rows drop out of recall — a state
+										// flip (installed→removed) must not surface both
+										// sides as equally valid memories.
+										if h.AgentID == r.agentID && h.SupersededBy == 0 {
 											scoped = append(scoped, h)
 										}
 									}
@@ -261,17 +301,39 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 						}
 						mmrHits := SelectMMR(hits, embMap, queryEmb, lambda, limit)
 						if len(mmrHits) >= limit {
+							// Per-hit relevance (cosine of query vs summary
+							// embedding), stored with the recall event so the
+							// surfaced set can be audited and thresholds
+							// calibrated without re-running the search.
+							scores := make(map[int64]float64, len(mmrHits))
+							for _, h := range mmrHits {
+								if v, ok := embMap[h.ID]; ok {
+									scores[h.ID] = math.Round(cosineSim(queryEmb, v)*10000) / 10000
+								}
+							}
+							// Relative floor (abstention): MMR's contract is
+							// "fill the limit", which pads weak pools with
+							// borderline hits. Surface only what is close
+							// enough to this query's own best hit instead.
+							mmrHits = applyRelativeFloor(mmrHits, scores, recallRelFloorAlpha)
 							hits = mmrHits
 							if r.summaryDB != nil {
+								recallID := newRecallID()
 								_ = r.summaryDB.InsertRecallEvent(ctx, store.RecallEvent{
-									RecallID:   newRecallID(),
+									RecallID:   recallID,
 									AgentID:    r.agentID,
 									UserID:     r.userID,
 									SessionKey: r.sessionID,
+									Query:      args.Query,
+									Scores:     scores,
 									Lambda:     lambda,
 									Explored:   explored,
 									SummaryIDs: summaryIDs(mmrHits),
 								})
+								// Register for consumption attribution: a
+								// fetch_messages call in this same turn
+								// marks the event consumed.
+								markRecallConsumed(ctx, recallID)
 							}
 						}
 					}
@@ -288,6 +350,13 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 					for _, h := range hits {
 						(*cited)[h.ID] = true
 					}
+				}
+				// Layered injection: a large hit set ships as a compact
+				// id+topic index — the LLM pulls full detail (and the
+				// session pointer for fetch_messages) via memory_fetch
+				// only for the hits it actually uses.
+				if len(hits) > memoryCompactThreshold {
+					return formatSummaryCompact(hits, args.Query), nil
 				}
 				return formatSummaryResults(hits, args.Query), nil
 			}
@@ -311,31 +380,89 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 	}
 }
 
-// mergeSummaryResults unions two result sets, deduplicating by ID.
-// FTS results come first (exact keyword matches), vector results follow.
-// Returns at most `limit` entries.
+// mergeSummaryResults unions the FTS and vector ranked lists for the
+// memory_search pool.
 func mergeSummaryResults(fts, vec []store.ConversationSummary, limit int) []store.ConversationSummary {
-	seen := make(map[int64]bool)
-	var out []store.ConversationSummary
+	return FuseSummariesRRF(fts, vec, limit)
+}
 
-	for _, s := range fts {
-		if seen[s.ID] {
-			continue
+// rrfK is the standard Reciprocal Rank Fusion damping constant. Large
+// enough that rank 1 vs rank 2 differs mildly, not winner-take-all.
+const rrfK = 60.0
+
+// FuseSummariesRRF merges two ranked lists with Reciprocal Rank Fusion:
+// score(d) = Σ 1/(rrfK + rank(d)) across the lists. Rank-based fusion
+// sidesteps the incomparable metrics of the two lanes (FTS relevance vs
+// embedding similarity) and promotes hits both lanes agree on — the FTS
+// lane is precise for keyword-ish queries while the vector lane covers
+// paraphrases, and a hit found by both is the strongest recall signal.
+// Deterministic: ties break by summary ID. Returns at most `limit` (0 =
+// no cap).
+func FuseSummariesRRF(fts, vec []store.ConversationSummary, limit int) []store.ConversationSummary {
+	score := make(map[int64]float64)
+	byID := make(map[int64]store.ConversationSummary)
+	add := func(list []store.ConversationSummary) {
+		for i, s := range list {
+			if _, dup := byID[s.ID]; !dup {
+				byID[s.ID] = s
+			}
+			score[s.ID] += 1 / (rrfK + float64(i+1))
 		}
-		seen[s.ID] = true
-		out = append(out, s)
 	}
-
-	for _, s := range vec {
-		if seen[s.ID] {
-			continue
+	add(fts)
+	add(vec)
+	ids := make([]int64, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(a, b int) bool {
+		if score[ids[a]] != score[ids[b]] {
+			return score[ids[a]] > score[ids[b]]
 		}
-		seen[s.ID] = true
-		out = append(out, s)
+		return ids[a] < ids[b]
+	})
+	if limit > 0 && len(ids) > limit {
+		ids = ids[:limit]
 	}
+	out := make([]store.ConversationSummary, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, byID[id])
+	}
+	return out
+}
 
-	if len(out) > limit {
-		out = out[:limit]
+// recallRelFloorAlpha is the relative relevance floor: a surfaced hit is
+// dropped when its relevance < alpha × (the best hit's relevance).
+// Absolute cosine thresholds barely discriminate on same-language corpora
+// — embedding distances compress, so "小毛驴飞天图片" cleared a 0.45 gate
+// for the query "芃芃 学习" (2026-08-18 audit). A floor relative to the
+// query's own best hit adapts to each query's score distribution instead.
+const recallRelFloorAlpha = 0.75
+
+// applyRelativeFloor keeps hits scoring at or above alpha·max(score) of
+// the set. The best hit always survives (alpha < 1), so the result is
+// never empty; hits without a recorded score are kept (no evidence to
+// drop them). This is the abstention semantic: recall fewer rather than
+// pad the limit with borderline hits.
+func applyRelativeFloor(hits []store.ConversationSummary, scores map[int64]float64, alpha float64) []store.ConversationSummary {
+	if len(hits) <= 1 || len(scores) == 0 || alpha <= 0 || alpha >= 1 {
+		return hits
+	}
+	best := 0.0
+	for _, h := range hits {
+		if s, ok := scores[h.ID]; ok && s > best {
+			best = s
+		}
+	}
+	if best <= 0 {
+		return hits
+	}
+	floor := alpha * best
+	out := make([]store.ConversationSummary, 0, len(hits))
+	for _, h := range hits {
+		if s, ok := scores[h.ID]; !ok || s >= floor {
+			out = append(out, h)
+		}
 	}
 	return out
 }
@@ -362,6 +489,34 @@ func summaryIDs(hits []store.ConversationSummary) []int64 {
 		ids[i] = h.ID
 	}
 	return ids
+}
+
+// memoryCompactThreshold is the hit count above which memory_search
+// returns the compact index instead of full summaries. 3-5 full hits fit
+// comfortably; beyond that the context cost outweighs the chance every
+// hit is used, so the LLM fetches details on demand (memory_fetch).
+const memoryCompactThreshold = 5
+
+// formatSummaryCompact renders a large hit set as a one-line-per-hit
+// index: id + topic + a clipped summary. Full bodies (and the
+// session_key/segments pointers for fetch_messages) come from
+// memory_fetch(ids=[...]) on demand.
+func formatSummaryCompact(hits []store.ConversationSummary, query string) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Found %d conversation summaries for %q (compact index — fetch details with memory_fetch):\n\n", len(hits), query)
+	for i, h := range hits {
+		line := h.Summary
+		if len(line) > 100 {
+			line = line[:100] + "…"
+		}
+		topic := h.Topic
+		if topic == "" {
+			topic = "(no topic)"
+		}
+		fmt.Fprintf(&sb, "[M%d] id=%d %s — %s\n", i+1, h.ID, topic, line)
+	}
+	sb.WriteString("\nCall memory_fetch(ids=[...]) with the ids you need the full content of (only the ones you will actually use).\n")
+	return sb.String()
 }
 
 // formatSummaryResults renders conversation_summaries hits for the LLM.

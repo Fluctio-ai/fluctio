@@ -44,10 +44,29 @@ type AutoQueryCfg struct {
 	FlashTodoKeywords   []string
 	FlashTodoMaxResults int
 	FlashTodoThreshold  float64
+	// Memory auto-recall group — conversation summaries, lexical FTS only.
+	// Empty MemoryAutoMode = "always" (default ON); "disabled" opts out.
+	MemoryAutoMode   string
+	MemoryKeywords   []string
+	MemoryMaxResults int
 	// Shared.
 	SearchMode  string // "augment" (default), "strict"
 	EmptyAction string // "llm" (default), "stop"
 }
+
+// MemoryRecallHit is one conversation-summary memory surfaced by the
+// auto-recall memory lane. kb must not import the store package (agent
+// wires this from DBStore), so the hit is a local projection.
+type MemoryRecallHit struct {
+	ID      int64
+	Topic   string
+	Summary string
+}
+
+// MemoryAutoSearcher recalls conversation summaries for the memory lane.
+// The agent manager wires this over the store's FTS path (precise lexical
+// match; superseded rows filtered inside the store).
+type MemoryAutoSearcher func(ctx context.Context, agentID, query string, limit int) ([]MemoryRecallHit, error)
 
 // AutoQueryHook returns a function suitable for use as a BeforeModelCall
 // hook. The cfgFn callback reads the agent's current KB config on each
@@ -68,14 +87,12 @@ type AutoQueryCfg struct {
 // sends a different message. The LLM still sees the ingest result in
 // its tool-result stream and can call knowledgebase_search explicitly
 // to refresh — auto-query is a convenience layer, not the only path.
-func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) func(context.Context, *HookContext) {
+func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, memSearch MemoryAutoSearcher) func(context.Context, *HookContext) {
 	var lastQuery string
+	var lastMemQuery string
 	return func(ctx context.Context, hc *HookContext) {
 		cfg := cfgFn()
 		slog.Debug("kb auto-query hook", "agent", agentID, "enabled", cfg.Enabled, "mode", cfg.AutoMode, "store_nil", store == nil, "source", hc.Source)
-		if store == nil {
-			return
-		}
 		if hc.Source != "" {
 			return
 		}
@@ -87,28 +104,56 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 
 		// Each group triggers independently. A group fires when it is
 		// enabled, its AutoMode isn't "disabled", and (always mode, or
-		// keyword mode matches one of its keywords).
-		wikiOn := cfg.Enabled && cfg.AutoMode != "disabled" && groupTriggered(cfg.AutoMode, query, cfg.Keywords)
-		ftOn := cfg.FlashTodoEnabled && cfg.FlashTodoAutoMode != "disabled" && groupTriggered(cfg.FlashTodoAutoMode, query, cfg.FlashTodoKeywords)
-		if !wikiOn && !ftOn {
+		// keyword mode matches one of its keywords). KB lanes need the
+		// KBStore; the memory lane only needs its own searcher.
+		wikiOn := store != nil && cfg.Enabled && cfg.AutoMode != "disabled" && groupTriggered(cfg.AutoMode, query, cfg.Keywords)
+		ftOn := store != nil && cfg.FlashTodoEnabled && cfg.FlashTodoAutoMode != "disabled" && groupTriggered(cfg.FlashTodoAutoMode, query, cfg.FlashTodoKeywords)
+		// Memory lane defaults ON: empty mode = "always". The trigger-gap
+		// fix only works if recall fires without the LLM choosing to ask.
+		memMode := cfg.MemoryAutoMode
+		if memMode == "" {
+			memMode = "always"
+		}
+		memOn := memSearch != nil && groupTriggered(memMode, query, cfg.MemoryKeywords)
+		if !wikiOn && !ftOn && !memOn {
 			return
 		}
 
-		// Cache hit: same query already processed AND the [KB]
-		// injection it produced is still in hc.Messages. The second
-		// condition matters because the cache is per-agent-lifetime
-		// (the hook closure outlives any one session): if the user
-		// starts a brand-new chat with the same query, the new
-		// session's messages won't carry the old [KB] injection, so
-		// we must re-search to give the LLM its KB context.
-		//
-		// Within a single ReAct loop the prior injection is always
-		// present (iter 1 put it there, iter 2+ reads it back), so
-		// this hits and skips duplicate search + synth emission.
-		// Across turns in the SAME session, the injection is still
-		// in session_messages, so this also hits — and the LLM
-		// keeps operating on the same KB context.
-		if lastQuery == query && messagesContainKBContext(hc.Messages) {
+		// Cache hit: same query already processed AND the injection it
+		// produced is still in hc.Messages. Per-lane caches: a KB lane
+		// checks its [KB] injection, the memory lane its [MEM] one.
+		kbDone := !wikiOn && !ftOn || lastQuery == query && messagesContainKBContext(hc.Messages)
+		memDone := !memOn || lastMemQuery == query && messagesContainMEMContext(hc.Messages)
+		if kbDone && memDone {
+			return
+		}
+
+		// Memory lane runs first and unconditionally of the KB branches
+		// below — its injection must not be skipped by a KB early return
+		// (e.g. strict-mode SkipLLM).
+		if !memDone {
+			memLimit := cfg.MemoryMaxResults
+			if memLimit <= 0 {
+				memLimit = 3
+			}
+			memHits, memErr := memSearch(ctx, agentID, query, memLimit)
+			// Memoize BEFORE branching on results so an empty result also
+			// short-circuits later iterations (same rationale as lastQuery).
+			lastMemQuery = query
+			if memErr != nil {
+				slog.Debug("kb auto-query memory lane failed", "agent", agentID, "error", memErr)
+			} else if len(memHits) > 0 {
+				injectMEMContext(hc, memHits)
+				hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
+					Name:   "memory_search",
+					Args:   fmt.Sprintf(`{"query":%q,"limit":%d}`, query, memLimit),
+					Result: buildMemoryResultSummary(memHits),
+				})
+				slog.Info("kb auto-query memory lane", "agent", agentID, "query", query, "hits", len(memHits))
+			}
+		}
+
+		if kbDone {
 			return
 		}
 
@@ -162,11 +207,11 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg) fu
 			// assistant message for the web UI's clickable badges.
 			citations, sources := numberKBResults(results)
 			hc.KnowledgeSources = sources
-			hc.SyntheticToolCalls = []SyntheticToolCall{{
+			hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
 				Name:   "knowledgebase_search",
 				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, query, wikiLimit+ftLimit),
 				Result: buildToolResultSummary(results, citations),
-			}}
+			})
 			switch cfg.SearchMode {
 			case "strict":
 				content := buildKBAnswer(results, query)
@@ -242,6 +287,69 @@ func messagesContainKBContext(msgs []provider.Message) bool {
 		}
 	}
 	return false
+}
+
+// messagesContainMEMContext is the memory lane's counterpart of
+// messagesContainKBContext — [MEM]-prefixed injections.
+func messagesContainMEMContext(msgs []provider.Message) bool {
+	for _, m := range msgs {
+		if strings.HasPrefix(m.Content, "[MEM]") {
+			return true
+		}
+	}
+	return false
+}
+
+// injectMEMContext inserts a [MEM]-prefixed context message carrying the
+// recalled memories, replacing any previous [MEM] injection (no stacking
+// across ReAct iterations). Parallel to injectKBContext.
+func injectMEMContext(hc *HookContext, hits []MemoryRecallHit) {
+	var sb strings.Builder
+	sb.WriteString("[MEM] The following are memories recalled from past conversations with this user (summaries, not verbatim quotes). Use them if relevant to the user's message.\n\n")
+	for i, h := range hits {
+		fmt.Fprintf(&sb, "--- [M%d] %s ---\n", i+1, h.Topic)
+		content := h.Summary
+		if len(content) > 300 {
+			content = softClipUTF8(content, 300) + "..."
+		}
+		sb.WriteString(content)
+		sb.WriteString("\n\n")
+	}
+
+	memMsg := provider.Message{
+		Role:    "user",
+		Content: sb.String(),
+	}
+
+	insertAt := 0
+	if len(hc.Messages) > 0 && hc.Messages[0].Role == "system" {
+		insertAt = 1
+	}
+
+	var filtered []provider.Message
+	filtered = append(filtered, hc.Messages[:insertAt]...)
+	for _, m := range hc.Messages[insertAt:] {
+		if !strings.HasPrefix(m.Content, "[MEM]") {
+			filtered = append(filtered, m)
+		}
+	}
+	tail := make([]provider.Message, len(filtered)-insertAt)
+	copy(tail, filtered[insertAt:])
+	hc.Messages = append(filtered[:insertAt:insertAt], memMsg)
+	hc.Messages = append(hc.Messages, tail...)
+}
+
+// buildMemoryResultSummary renders the memory lane's synthetic
+// memory_search result (UI visibility of the auto-recall).
+func buildMemoryResultSummary(hits []MemoryRecallHit) string {
+	var sb strings.Builder
+	for i, h := range hits {
+		fmt.Fprintf(&sb, "%d. **%s** — %s", i+1, h.Topic, h.Summary)
+		if i < len(hits)-1 {
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
 }
 
 // groupTriggered reports whether an auto-recall group should fire for this

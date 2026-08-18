@@ -33,6 +33,8 @@ type ConversationSummary struct {
 	SeqEnd         int
 	EmbeddingModel string // empty if no embedding generated
 	Importance     int    // 1-5 LLM-assigned value; 0 = legacy/unset
+	Kind           string // "durable" (stable fact/preference) | "episodic" (one-off event); "" = legacy → treated as episodic
+	SupersededBy   int64  // id of the row that replaced this one; 0 = active. Superseded rows drop out of recall.
 	AccessCount    int    // times surfaced by memory_search (reinforcement)
 	AccessTimeSum  int64  // sum of recall unix ts; /AccessCount = mean recall time (scheme mean_time)
 	LastAccessedAt time.Time
@@ -70,19 +72,20 @@ func (d *DBStore) InsertConversationSummary(
 		err = d.db.QueryRowContext(ctx, `
 			INSERT INTO conversation_summaries
 				(agent_id, session_key,
-				 summary, keywords, seq_start, seq_end, embedding_model, importance, topic, segments)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+				 summary, keywords, seq_start, seq_end, embedding_model, importance, topic, segments, kind)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			ON CONFLICT (agent_id, session_key, seq_start, seq_end)
 			DO UPDATE SET summary = EXCLUDED.summary,
 			              keywords = EXCLUDED.keywords,
 			              embedding_model = EXCLUDED.embedding_model,
 			              importance = EXCLUDED.importance,
 			              topic = EXCLUDED.topic,
-			              segments = EXCLUDED.segments
+			              segments = EXCLUDED.segments,
+			              kind = EXCLUDED.kind
 			RETURNING id`,
 			s.AgentID, s.SessionKey,
 			s.Summary, string(keywordsJSON), s.SeqStart, s.SeqEnd,
-			nilIfEmpty(s.EmbeddingModel), s.Importance, s.Topic, string(segmentsJSON),
+			nilIfEmpty(s.EmbeddingModel), s.Importance, s.Topic, string(segmentsJSON), normalizeSummaryKind(s.Kind),
 		).Scan(&id)
 	default:
 		// SQLite upsert. RETURNING id (modernc supports it) gives the
@@ -91,22 +94,32 @@ func (d *DBStore) InsertConversationSummary(
 		err = d.db.QueryRowContext(ctx, `
 			INSERT INTO conversation_summaries
 				(agent_id, session_key,
-				 summary, keywords, seq_start, seq_end, embedding_model, importance, topic, segments)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 summary, keywords, seq_start, seq_end, embedding_model, importance, topic, segments, kind)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(agent_id, session_key, seq_start, seq_end)
 			DO UPDATE SET summary = excluded.summary,
 			              keywords = excluded.keywords,
 			              embedding_model = excluded.embedding_model,
 			              importance = excluded.importance,
 			              topic = excluded.topic,
-			              segments = excluded.segments
+			              segments = excluded.segments,
+			              kind = excluded.kind
 			RETURNING id`,
 			s.AgentID, s.SessionKey,
 			s.Summary, string(keywordsJSON), s.SeqStart, s.SeqEnd,
-			nilIfEmpty(s.EmbeddingModel), s.Importance, s.Topic, string(segmentsJSON),
+			nilIfEmpty(s.EmbeddingModel), s.Importance, s.Topic, string(segmentsJSON), normalizeSummaryKind(s.Kind),
 		).Scan(&id)
 	}
 	return id, err
+}
+
+// normalizeSummaryKind maps free-form kind strings to the two canonical
+// values; anything unrecognized (including legacy "") is episodic.
+func normalizeSummaryKind(kind string) string {
+	if strings.ToLower(strings.TrimSpace(kind)) == "durable" {
+		return "durable"
+	}
+	return "episodic"
 }
 
 // marshalSegments serializes a slice of [start,end] seq pairs as JSON.
@@ -190,7 +203,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 		args = append(args, fetchLimit)
 		rows, err := d.db.QueryContext(ctx, `
 			SELECT id, agent_id, session_key,
-			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
+			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
 			FROM conversation_summaries
 			WHERE agent_id = $1
 			  AND (`+strings.Join(clauses, " OR ")+`)
@@ -217,9 +230,10 @@ func (d *DBStore) SearchConversationSummariesFTS(
 	args = append(args, fetchLimit)
 	rows, err := d.db.QueryContext(ctx, `
 		SELECT id, agent_id, session_key,
-		       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
+		       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
 		FROM conversation_summaries
 		WHERE agent_id = ?
+		  AND superseded_by = 0
 		  AND (`+strings.Join(clauses, " OR ")+`)
 		ORDER BY created_at DESC
 		LIMIT ?`, args...)
@@ -243,11 +257,12 @@ func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 		var lastAccessed sql.NullTime
 		var topic string
 		var segmentsJSON string
+		var kind string
 		err := rows.Scan(
 			&s.ID, &s.AgentID, &s.SessionKey,
 			&s.Summary, &keywordsJSON, &s.SeqStart, &s.SeqEnd, &embModel,
 			&s.Importance, &s.AccessCount, &s.AccessTimeSum, &lastAccessed, &s.CreatedAt,
-			&topic, &segmentsJSON,
+			&topic, &segmentsJSON, &kind, &s.SupersededBy,
 		)
 		if err != nil {
 			return nil, err
@@ -261,6 +276,7 @@ func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 			s.Keywords = []string{}
 		}
 		s.Topic = topic
+		s.Kind = kind
 		s.Segments = unmarshalSegments(segmentsJSON)
 		out = append(out, s)
 	}
@@ -273,7 +289,7 @@ func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 // are UTC instants; callers convert the UTC+8 day boundaries to UTC.
 func (d *DBStore) ListConversationSummariesByDateRange(ctx context.Context, agentID string, from, to time.Time) ([]ConversationSummary, error) {
 	const cols = `id, agent_id, session_key,
-			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments`
+			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by`
 	var rows *sql.Rows
 	var err error
 	if d.dialect == "postgres" {
@@ -290,6 +306,257 @@ func (d *DBStore) ListConversationSummariesByDateRange(ctx context.Context, agen
 	}
 	defer rows.Close()
 	return scanConversationSummaries(rows)
+}
+
+// ListRecentSummariesForSupersede returns the agent's most recent ACTIVE
+// summaries (superseded_by = 0), excluding the given session, newest
+// first. Fed to the extraction prompt so the LLM can mark a new topic as
+// superseding a now-outdated memory (e.g. a skill installed then removed).
+func (d *DBStore) ListRecentSummariesForSupersede(ctx context.Context, agentID, excludeSession string, limit int) ([]ConversationSummary, error) {
+	if limit <= 0 {
+		limit = 40
+	}
+	var rows *sql.Rows
+	var err error
+	if d.dialect == "postgres" {
+		rows, err = d.db.QueryContext(ctx, `
+			SELECT id, agent_id, session_key,
+			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			FROM conversation_summaries
+			WHERE agent_id = $1 AND superseded_by = 0 AND session_key <> $2
+			ORDER BY created_at DESC LIMIT $3`,
+			agentID, excludeSession, limit)
+	} else {
+		rows, err = d.db.QueryContext(ctx, `
+			SELECT id, agent_id, session_key,
+			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			FROM conversation_summaries
+			WHERE agent_id = ? AND superseded_by = 0 AND session_key <> ?
+			ORDER BY created_at DESC LIMIT ?`,
+			agentID, excludeSession, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanConversationSummaries(rows)
+}
+
+// MarkSummarySuperseded flags oldID as replaced by newID (same agent).
+// Only the first supersede wins (superseded_by = 0 guard) — a memory
+// already replaced is not re-pointed at a later successor; the chain
+// resolves through the newest active row.
+func (d *DBStore) MarkSummarySuperseded(ctx context.Context, agentID string, oldID, newID int64) error {
+	var q string
+	if d.dialect == "postgres" {
+		q = `UPDATE conversation_summaries SET superseded_by = $1
+			WHERE id = $2 AND agent_id = $3 AND superseded_by = 0`
+		_, err := d.db.ExecContext(ctx, q, newID, oldID, agentID)
+		return err
+	}
+	q = `UPDATE conversation_summaries SET superseded_by = ?
+		WHERE id = ? AND agent_id = ? AND superseded_by = 0`
+	_, err := d.db.ExecContext(ctx, q, newID, oldID, agentID)
+	return err
+}
+
+// MemoryConsolidationCfg tunes the deterministic memory-consolidation
+// sweep (no LLM — pruning only; merging happens at write time via the
+// incremental extraction path).
+type MemoryConsolidationCfg struct {
+	// SupersededGraceDays: rows already superseded_by≠0 are kept this long
+	// for inspection, then deleted together with their vector.
+	SupersededGraceDays int
+	// StaleEpisodicDays: episodic (one-off) rows older than this AND never
+	// recalled (access_count=0) AND not durable are evicted. Durable rows
+	// are never evicted by age.
+	StaleEpisodicDays int
+	// QuotaCap: per-agent cap on ACTIVE rows. Over cap, oldest episodic
+	// rows go first; durable rows only when nothing else is left.
+	QuotaCap int
+	// BatchLimit: max rows deleted per pass (bounds transaction size).
+	BatchLimit int
+}
+
+// DefaultMemoryConsolidationCfg — 14d supersede grace, 90d stale-evict,
+// 500-row cap, 1000-row batch.
+var DefaultMemoryConsolidationCfg = MemoryConsolidationCfg{
+	SupersededGraceDays: 14,
+	StaleEpisodicDays:   90,
+	QuotaCap:            500,
+	BatchLimit:          1000,
+}
+
+// MemoryConsolidationStats reports one consolidation pass.
+type MemoryConsolidationStats struct {
+	SupersededPurged int
+	StaleEvicted     int
+	QuotaEvicted     int
+}
+
+// PruneConversationSummaries runs one deterministic memory-consolidation
+// pass: (1) purge superseded rows past their grace window, (2) evict stale
+// never-recalled episodic rows, (3) enforce the per-agent active-row quota.
+// Deletes the sqlite vec rows alongside so the KNN pool doesn't return
+// dead ids. Pure pruning — no LLM, no summary merging (that's the write
+// path's job via supersedes).
+func (d *DBStore) PruneConversationSummaries(ctx context.Context, cfg MemoryConsolidationCfg) (MemoryConsolidationStats, error) {
+	var stats MemoryConsolidationStats
+	if cfg.SupersededGraceDays <= 0 {
+		cfg.SupersededGraceDays = DefaultMemoryConsolidationCfg.SupersededGraceDays
+	}
+	if cfg.StaleEpisodicDays <= 0 {
+		cfg.StaleEpisodicDays = DefaultMemoryConsolidationCfg.StaleEpisodicDays
+	}
+	if cfg.QuotaCap <= 0 {
+		cfg.QuotaCap = DefaultMemoryConsolidationCfg.QuotaCap
+	}
+	if cfg.BatchLimit <= 0 {
+		cfg.BatchLimit = DefaultMemoryConsolidationCfg.BatchLimit
+	}
+
+	deleteRows := func(ids []int64) error {
+		if len(ids) == 0 {
+			return nil
+		}
+		ph := make([]string, 0, len(ids))
+		args := make([]any, 0, len(ids))
+		for i, id := range ids {
+			if d.dialect == "postgres" {
+				ph = append(ph, fmt.Sprintf("$%d", i+1))
+			} else {
+				ph = append(ph, "?")
+			}
+			args = append(args, id)
+		}
+		in := "(" + strings.Join(ph, ",") + ")"
+		if _, err := d.db.ExecContext(ctx,
+			`DELETE FROM conversation_summaries WHERE id IN `+in, args...); err != nil {
+			return err
+		}
+		// pg keeps the vector in the main row (no separate table).
+		if d.dialect != "postgres" {
+			if _, err := d.db.ExecContext(ctx,
+				`DELETE FROM conversation_summaries_vec WHERE summary_id IN `+in, args...); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	collect := func(q string, args ...any) ([]int64, error) {
+		rows, err := d.db.QueryContext(ctx, q, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+			if len(ids) >= cfg.BatchLimit {
+				break
+			}
+		}
+		return ids, rows.Err()
+	}
+
+	// 1. Purge superseded rows past the grace window.
+	supCutoff := time.Now().AddDate(0, 0, -cfg.SupersededGraceDays)
+	supWhere := `SELECT id FROM conversation_summaries WHERE superseded_by != 0 AND created_at < ? LIMIT ?`
+	if d.dialect == "postgres" {
+		supWhere = `SELECT id FROM conversation_summaries WHERE superseded_by != 0 AND created_at < $1 LIMIT $2`
+	}
+	ids, err := collect(supWhere, supCutoff, cfg.BatchLimit)
+	if err != nil {
+		return stats, err
+	}
+	if err := deleteRows(ids); err != nil {
+		return stats, err
+	}
+	stats.SupersededPurged = len(ids)
+
+	// 2. Evict stale never-recalled episodic rows. Durable rows are exempt.
+	staleCutoff := time.Now().AddDate(0, 0, -cfg.StaleEpisodicDays)
+	staleWhere := `SELECT id FROM conversation_summaries
+		WHERE superseded_by = 0 AND (kind = 'episodic' OR kind = '')
+		  AND created_at < ? AND access_count = 0 LIMIT ?`
+	if d.dialect == "postgres" {
+		staleWhere = `SELECT id FROM conversation_summaries
+			WHERE superseded_by = 0 AND (kind = 'episodic' OR kind = '')
+			  AND created_at < $1 AND access_count = 0 LIMIT $2`
+	}
+	ids, err = collect(staleWhere, staleCutoff, cfg.BatchLimit)
+	if err != nil {
+		return stats, err
+	}
+	if err := deleteRows(ids); err != nil {
+		return stats, err
+	}
+	stats.StaleEvicted = len(ids)
+
+	// 3. Per-agent quota on ACTIVE rows: over cap, oldest episodic first.
+	var overAgents []string
+	q := `SELECT agent_id FROM conversation_summaries WHERE superseded_by = 0 GROUP BY agent_id HAVING COUNT(*) > ?`
+	args := []any{cfg.QuotaCap}
+	if d.dialect == "postgres" {
+		q = `SELECT agent_id FROM conversation_summaries WHERE superseded_by = 0 GROUP BY agent_id HAVING COUNT(*) > $1`
+	}
+	rows, err := d.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return stats, err
+	}
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			rows.Close()
+			return stats, err
+		}
+		overAgents = append(overAgents, a)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return stats, err
+	}
+
+	for _, agentID := range overAgents {
+		// Evict exactly the overflow: oldest episodic first. Durable rows
+		// stay unless the agent has no episodic rows left (then the whole
+		// agent exceeds cap with durable-only rows — left alone; durable
+		// eviction is a human decision, not a sweep's).
+		var active int
+		countQ := `SELECT COUNT(*) FROM conversation_summaries WHERE agent_id = ? AND superseded_by = 0`
+		if d.dialect == "postgres" {
+			countQ = `SELECT COUNT(*) FROM conversation_summaries WHERE agent_id = $1 AND superseded_by = 0`
+		}
+		if err := d.db.QueryRowContext(ctx, countQ, agentID).Scan(&active); err != nil {
+			return stats, err
+		}
+		overflow := active - cfg.QuotaCap
+		if overflow <= 0 {
+			continue
+		}
+		over := `SELECT id FROM conversation_summaries
+			WHERE agent_id = ? AND superseded_by = 0 AND (kind = 'episodic' OR kind = '')
+			ORDER BY created_at ASC LIMIT ?`
+		overArgs := []any{agentID, overflow}
+		if d.dialect == "postgres" {
+			over = `SELECT id FROM conversation_summaries
+				WHERE agent_id = $1 AND superseded_by = 0 AND (kind = 'episodic' OR kind = '')
+				ORDER BY created_at ASC LIMIT $2`
+		}
+		ids, err = collect(over, overArgs...)
+		if err != nil {
+			return stats, err
+		}
+		if err := deleteRows(ids); err != nil {
+			return stats, err
+		}
+		stats.QuotaEvicted += len(ids)
+	}
+	return stats, nil
 }
 
 // SetConversationSummaryEmbeddingModel stamps the model that produced a
@@ -913,7 +1180,7 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
 			 FROM conversation_summaries
 			 WHERE agent_id = $1
 			 ORDER BY created_at
@@ -921,7 +1188,7 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 	default:
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
 			 FROM conversation_summaries
 			 WHERE agent_id = ?
 			 ORDER BY created_at
@@ -945,14 +1212,14 @@ func (d *DBStore) ListConversationSummariesBySession(ctx context.Context, agentI
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
 			 FROM conversation_summaries
 			 WHERE agent_id = $1 AND session_key = $2
 			 ORDER BY created_at`, agentID, sessionKey)
 	default:
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
 			 FROM conversation_summaries
 			 WHERE agent_id = ? AND session_key = ?
 			 ORDER BY created_at`, agentID, sessionKey)
@@ -1025,7 +1292,7 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
+			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
 			 FROM conversation_summaries
 			 WHERE embedding IS NULL OR ($1 != '' AND (embedding_model IS NULL OR embedding_model != $1))
 			 ORDER BY created_at
@@ -1064,7 +1331,7 @@ func (d *DBStore) GetConversationSummariesByIDs(ctx context.Context, ids []int64
 	}
 
 	q := fmt.Sprintf(`SELECT id, agent_id, session_key,
-	       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments
+	       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
 	FROM conversation_summaries
 	WHERE id IN (%s)
 	ORDER BY created_at DESC`, strings.Join(placeholders, ","))

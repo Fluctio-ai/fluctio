@@ -102,11 +102,18 @@ func (s *Server) handleGetRecallTuning(w http.ResponseWriter, r *http.Request) {
 		fbStats = nil // best-effort: feedback stats are non-critical for display
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{
-		"ok":               true,
-		"mmr_lambda":       lambda,
-		"min_relevance":    minRelevance,
-		"total_recalls":    stats.TotalRecalls,
-		"explored_recalls": stats.ExploredRecalls,
+		"ok":            true,
+		"mmr_lambda":    lambda,
+		"min_relevance": minRelevance,
+		"total_recalls": stats.TotalRecalls,
+		// bandit_explored_recalls: how many recalls used an ε-greedy
+		// exploration lambda (the only ones the implicit-feedback sweep and
+		// bandit statistics look at). NOT "viewed by user".
+		"bandit_explored_recalls": stats.ExploredRecalls,
+		// consumed_recalls: recalls whose surfaced memory was actually
+		// fetched (fetch_messages followed the pointer) — the adoption
+		// north-star. Recall@K without consumption is a process metric.
+		"consumed_recalls": stats.ConsumedRecalls,
 		"feedback_stats":   fbStats,
 	})
 }
@@ -200,27 +207,17 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// mergeRecallPool dedups FTS + vector hits and re-scopes the global vector
-// results to this agent (vec0 KNN is global). Mirrors memory_search's merge.
+// mergeRecallPool re-scopes the global vector KNN results to this agent
+// (vec0 KNN is global) and fuses with the FTS lane via the same RRF the
+// live memory_search tool uses, so the test box reflects reality.
 func mergeRecallPool(fts, vec []store.ConversationSummary, agentID string, limit int) []store.ConversationSummary {
-	seen := make(map[int64]bool)
-	var out []store.ConversationSummary
-	for _, h := range fts {
-		if !seen[h.ID] {
-			seen[h.ID] = true
-			out = append(out, h)
-		}
-	}
+	scoped := make([]store.ConversationSummary, 0, len(vec))
 	for _, h := range vec {
-		if h.AgentID == agentID && !seen[h.ID] {
-			seen[h.ID] = true
-			out = append(out, h)
+		if h.AgentID == agentID {
+			scoped = append(scoped, h)
 		}
 	}
-	if len(out) > limit {
-		out = out[:limit]
-	}
-	return out
+	return tools.FuseSummariesRRF(fts, scoped, limit)
 }
 
 func recallHitIDs(hits []store.ConversationSummary) []int64 {
@@ -330,11 +327,18 @@ func (s *Server) handleListRecallEvents(w http.ResponseWriter, r *http.Request) 
 		sums := make([]map[string]any, 0, len(ev.SummaryIDs))
 		for _, sid := range ev.SummaryIDs {
 			if sm, ok := sumMap[sid]; ok {
-				sums = append(sums, map[string]any{"id": sm.ID, "summary": sm.Summary, "topic": sm.Topic})
+				item := map[string]any{"id": sm.ID, "summary": sm.Summary, "topic": sm.Topic}
+				// Per-hit relevance when recorded (vector path); absent on
+				// FTS-only recalls.
+				if s, ok := ev.Scores[sid]; ok {
+					item["relevance"] = s
+				}
+				sums = append(sums, item)
 			}
 		}
 		out = append(out, map[string]any{
-			"recall_id": ev.RecallID, "lambda": ev.Lambda, "explored": ev.Explored,
+			"recall_id": ev.RecallID, "lambda": ev.Lambda, "bandit_explored": ev.Explored,
+			"query": ev.Query, "session_key": ev.SessionKey, "consumed": ev.Consumed,
 			"created_at": ev.CreatedAt, "summaries": sums,
 		})
 	}

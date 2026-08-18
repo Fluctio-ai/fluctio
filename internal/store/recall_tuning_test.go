@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -60,6 +61,8 @@ func TestInsertRecallEvent(t *testing.T) {
 		AgentID:    "agent-1",
 		UserID:     "user-1",
 		SessionKey: "sess-1",
+		Query:      "芃芃 学习",
+		Scores:     map[int64]float64{10: 0.83, 20: 0.51, 30: 0.42},
 		Lambda:     0.6,
 		Explored:   true,
 		SummaryIDs: []int64{10, 20, 30},
@@ -68,26 +71,51 @@ func TestInsertRecallEvent(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	// Verify the row landed with the right payload (incl. user_id/session_key + JSON IDs).
+	// Verify the row landed with the right payload (incl. user_id/session_key,
+	// query/scores audit columns + JSON IDs).
 	var (
 		recallID   string
 		userID     string
 		sessionKey string
+		query      string
+		scoresJSON string
+		consumed   int
 		lambda     float64
 		explored   int
 		idsJSON    string
 	)
 	err := db.db.QueryRowContext(ctx,
-		`SELECT recall_id, user_id, session_key, lambda, explored, summary_ids FROM memory_recall_events WHERE recall_id = ?`,
-		ev.RecallID).Scan(&recallID, &userID, &sessionKey, &lambda, &explored, &idsJSON)
+		`SELECT recall_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids FROM memory_recall_events WHERE recall_id = ?`,
+		ev.RecallID).Scan(&recallID, &userID, &sessionKey, &query, &scoresJSON, &consumed, &lambda, &explored, &idsJSON)
 	if err != nil {
 		t.Fatalf("query back: %v", err)
 	}
-	if recallID != "recall-abc" || userID != "user-1" || sessionKey != "sess-1" || lambda != 0.6 || explored != 1 {
-		t.Errorf("row = %q %q %q %v %v, want recall-abc user-1 sess-1 0.6 1", recallID, userID, sessionKey, lambda, explored)
+	if recallID != "recall-abc" || userID != "user-1" || sessionKey != "sess-1" || query != "芃芃 学习" || lambda != 0.6 || explored != 1 || consumed != 0 {
+		t.Errorf("row = %q %q %q %q %v %v %v %v, want recall-abc user-1 sess-1 芃芃 学习 0.6 1 0",
+			recallID, userID, sessionKey, query, lambda, explored, consumed, "")
 	}
 	if idsJSON != "[10,20,30]" {
 		t.Errorf("summary_ids json = %q, want [10,20,30]", idsJSON)
+	}
+	var backScores map[int64]float64
+	if err := json.Unmarshal([]byte(scoresJSON), &backScores); err != nil {
+		t.Fatalf("scores json = %q: %v", scoresJSON, err)
+	}
+	if backScores[10] != 0.83 || backScores[30] != 0.42 {
+		t.Errorf("scores round-trip = %v, want {10:0.83 20:0.51 30:0.42}", backScores)
+	}
+
+	// ListRecentRecallEvents must return the audit columns too.
+	events, err := db.ListRecentRecallEvents(ctx, "agent-1", 5)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("listed %d events, want 1", len(events))
+	}
+	got := events[0]
+	if got.Query != "芃芃 学习" || got.Scores[10] != 0.83 || got.Consumed {
+		t.Errorf("listed event query=%q scores[10]=%v consumed=%v, want 芃芃 学习 0.83 false", got.Query, got.Scores[10], got.Consumed)
 	}
 }
 

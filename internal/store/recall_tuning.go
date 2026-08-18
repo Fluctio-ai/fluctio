@@ -46,6 +46,9 @@ func (d *DBStore) migrateRecallTuning(ctx context.Context) error {
 			agent_id    TEXT NOT NULL,
 			user_id     TEXT NOT NULL DEFAULT '',
 			session_key TEXT NOT NULL DEFAULT '',
+			query       TEXT NOT NULL DEFAULT '',
+			scores      TEXT NOT NULL DEFAULT '',
+			consumed    INTEGER NOT NULL DEFAULT 0,
 			lambda      REAL NOT NULL,
 			explored    INTEGER NOT NULL DEFAULT 0,
 			summary_ids TEXT NOT NULL,
@@ -122,12 +125,48 @@ func (d *DBStore) migrateRecallEventUser(ctx context.Context) error {
 	return err
 }
 
+// migrateRecallEventAudit adds the audit columns to memory_recall_events for
+// existing DBs: query (the trigger query text — without it a recall event
+// can't be judged relevant or not), scores (JSON map summary_id → relevance
+// for the surfaced hits), and consumed (recall.consumed adoption flag; set
+// when the surfaced memory is actually fetched/used). Ships in
+// migrateRecallTuning's CREATE for new DBs. Idempotent via tableHasColumn.
+func (d *DBStore) migrateRecallEventAudit(ctx context.Context) error {
+	hasTable, err := d.tableExists(ctx, "memory_recall_events")
+	if err != nil {
+		return err
+	}
+	if !hasTable {
+		return nil
+	}
+	addCols := []struct{ col, ddl string }{
+		{"query", `ALTER TABLE memory_recall_events ADD COLUMN query TEXT NOT NULL DEFAULT ''`},
+		{"scores", `ALTER TABLE memory_recall_events ADD COLUMN scores TEXT NOT NULL DEFAULT ''`},
+		{"consumed", `ALTER TABLE memory_recall_events ADD COLUMN consumed INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, c := range addCols {
+		has, err := d.tableHasColumn(ctx, "memory_recall_events", c.col)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := d.db.ExecContext(ctx, c.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // RecallEvent records one memory_search call for stage-2b feedback linkage.
 type RecallEvent struct {
 	RecallID   string  // unique id surfaced (later) for thumbs-up/down
 	AgentID    string
 	UserID     string  // owner user_id (implicit feedback: look up session messages)
 	SessionKey string  // chat session the recall happened in (implicit feedback)
+	Query      string  // trigger query text (audit: judge relevance of the surfaced set)
+	Scores     map[int64]float64 // summary_id → relevance of each surfaced hit (audit + calibration)
+	Consumed   bool    // recall.consumed: surfaced memory was actually used (fetched/referenced)
 	Lambda     float64 // the MMR lambda actually used
 	Explored   bool    // true if this was an ε-greedy exploration
 	SummaryIDs []int64 // surfaced summary IDs
@@ -210,17 +249,29 @@ func (d *DBStore) InsertRecallEvent(ctx context.Context, ev RecallEvent) error {
 	if err != nil {
 		return fmt.Errorf("marshal summary ids: %w", err)
 	}
+	scoresJSON := ""
+	if ev.Scores != nil {
+		b, err := json.Marshal(ev.Scores)
+		if err != nil {
+			return fmt.Errorf("marshal scores: %w", err)
+		}
+		scoresJSON = string(b)
+	}
 	explored := 0
 	if ev.Explored {
 		explored = 1
 	}
-	q := `INSERT INTO memory_recall_events (recall_id, agent_id, user_id, session_key, lambda, explored, summary_ids)
-	      VALUES (?, ?, ?, ?, ?, ?, ?)`
-	if d.dialect == "postgres" {
-		q = `INSERT INTO memory_recall_events (recall_id, agent_id, user_id, session_key, lambda, explored, summary_ids)
-		     VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	consumed := 0
+	if ev.Consumed {
+		consumed = 1
 	}
-	_, err = d.db.ExecContext(ctx, q, ev.RecallID, ev.AgentID, ev.UserID, ev.SessionKey, ev.Lambda, explored, string(idsJSON))
+	q := `INSERT INTO memory_recall_events (recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids)
+	      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if d.dialect == "postgres" {
+		q = `INSERT INTO memory_recall_events (recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids)
+		     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	}
+	_, err = d.db.ExecContext(ctx, q, ev.RecallID, ev.AgentID, ev.UserID, ev.SessionKey, ev.Query, scoresJSON, consumed, ev.Lambda, explored, string(idsJSON))
 	return err
 }
 
@@ -302,20 +353,47 @@ func (d *DBStore) GetLambdaFeedbackStats(ctx context.Context, agentID string) ([
 	return stats, rows.Err()
 }
 
+// MarkRecallEventsConsumed sets consumed=1 for the given recall ids — the
+// recall.consumed adoption signal. Called when the surfaced memory is
+// actually used (fetch_messages / memory_fetch followed the pointer in the
+// same turn). Idempotent.
+func (d *DBStore) MarkRecallEventsConsumed(ctx context.Context, recallIDs []string) error {
+	if len(recallIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(recallIDs))
+	args := make([]any, 0, len(recallIDs))
+	for i, id := range recallIDs {
+		if d.dialect == "postgres" {
+			placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
+		} else {
+			placeholders = append(placeholders, "?")
+		}
+		args = append(args, id)
+	}
+	q := `UPDATE memory_recall_events SET consumed = 1 WHERE recall_id IN (` + strings.Join(placeholders, ",") + `)`
+	_, err := d.db.ExecContext(ctx, q, args...)
+	return err
+}
+
 // RecallStats summarizes one agent's recall activity for the tuning panel.
 type RecallStats struct {
 	TotalRecalls    int
 	ExploredRecalls int
+	ConsumedRecalls int
 }
 
-// GetRecallStats returns total + explored recall counts for an agent.
+// GetRecallStats returns total + explored + consumed recall counts for an
+// agent. Consumed = recalls whose surfaced memory was actually fetched —
+// the adoption north-star; Recall@K without consumption is a process
+// metric.
 func (d *DBStore) GetRecallStats(ctx context.Context, agentID string) (RecallStats, error) {
 	var s RecallStats
-	q := `SELECT COUNT(*), COALESCE(SUM(explored), 0) FROM memory_recall_events WHERE agent_id = ?`
+	q := `SELECT COUNT(*), COALESCE(SUM(explored), 0), COALESCE(SUM(consumed), 0) FROM memory_recall_events WHERE agent_id = ?`
 	if d.dialect == "postgres" {
-		q = `SELECT COUNT(*), COALESCE(SUM(explored), 0) FROM memory_recall_events WHERE agent_id = $1`
+		q = `SELECT COUNT(*), COALESCE(SUM(explored), 0), COALESCE(SUM(consumed), 0) FROM memory_recall_events WHERE agent_id = $1`
 	}
-	err := d.db.QueryRowContext(ctx, q, agentID).Scan(&s.TotalRecalls, &s.ExploredRecalls)
+	err := d.db.QueryRowContext(ctx, q, agentID).Scan(&s.TotalRecalls, &s.ExploredRecalls, &s.ConsumedRecalls)
 	return s, err
 }
 
@@ -325,12 +403,12 @@ func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, li
 	if limit <= 0 {
 		limit = 20
 	}
-	q := `SELECT recall_id, agent_id, user_id, session_key, lambda, explored, summary_ids, created_at
+	q := `SELECT recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids, created_at
 		FROM memory_recall_events
 		WHERE agent_id = ?
 		ORDER BY created_at DESC LIMIT ?`
 	if d.dialect == "postgres" {
-		q = `SELECT recall_id, agent_id, user_id, session_key, lambda, explored, summary_ids, created_at
+		q = `SELECT recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids, created_at
 			FROM memory_recall_events
 			WHERE agent_id = $1
 			ORDER BY created_at DESC LIMIT $2`
@@ -345,15 +423,21 @@ func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, li
 		var (
 			ev          RecallEvent
 			explored    int
+			consumed    int
 			summaryJSON string
+			scoresJSON  string
 		)
-		if err := rows.Scan(&ev.RecallID, &ev.AgentID, &ev.UserID, &ev.SessionKey, &ev.Lambda, &explored, &summaryJSON, &ev.CreatedAt); err != nil {
+		if err := rows.Scan(&ev.RecallID, &ev.AgentID, &ev.UserID, &ev.SessionKey, &ev.Query, &scoresJSON, &consumed, &ev.Lambda, &explored, &summaryJSON, &ev.CreatedAt); err != nil {
 			return nil, err
 		}
 		ev.Explored = explored != 0
+		ev.Consumed = consumed != 0
 		_ = json.Unmarshal([]byte(summaryJSON), &ev.SummaryIDs)
 		if ev.SummaryIDs == nil {
 			ev.SummaryIDs = []int64{}
+		}
+		if scoresJSON != "" {
+			_ = json.Unmarshal([]byte(scoresJSON), &ev.Scores)
 		}
 		out = append(out, ev)
 	}

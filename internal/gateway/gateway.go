@@ -862,6 +862,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runSessionEventsRetention(ctx)
 	}()
+	// memory consolidation: daily deterministic prune of conversation
+	// summaries (supersede purge, stale episodic eviction, per-agent
+	// quota). Disabled when FLUCTIO_MEMORY_CONSOLIDATION_HOURS<=0.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runMemoryConsolidation(ctx)
+	}()
 	// workflow retention: prunes finished workflow_runs past their window
 	// (spec decision 11) — succeeded runs older than
 	// FLUCTIO_WORKFLOW_RETENTION_SUCCESS_HOURS (default 7d), failed /

@@ -2283,7 +2283,8 @@ export type RecallTuningState = {
   mmr_lambda?: number;
   min_relevance?: number;
   total_recalls?: number;
-  explored_recalls?: number;
+  bandit_explored_recalls?: number;
+  consumed_recalls?: number;
   feedback_stats?: RecallFeedbackStat[];
   error?: string;
 };
@@ -2355,11 +2356,19 @@ export async function setAgentRecallMinRelevance(
   return res.json().catch(() => ({ ok: false }));
 }
 
-export type RecallSummaryPreview = { id: number; summary: string; topic?: string };
+export type RecallSummaryPreview = {
+  id: number;
+  summary: string;
+  topic?: string;
+  relevance?: number;
+};
 export type RecallEventView = {
   recall_id: string;
   lambda: number;
-  explored: boolean;
+  bandit_explored?: boolean;
+  query?: string;
+  session_key?: string;
+  consumed?: boolean;
   created_at: string;
   summaries: RecallSummaryPreview[];
 };

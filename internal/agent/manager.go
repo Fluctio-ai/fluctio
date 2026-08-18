@@ -356,6 +356,23 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				}
 			}
 			kbCfg := rc.KB
+			// Memory auto-recall lane: FTS over conversation summaries
+			// (precise lexical match, superseded rows filtered in the
+			// store). Wired only when the agent has a relational store.
+			var memSearch kb.MemoryAutoSearcher
+			if db, ok := m.opts.dataStore.(*store.DBStore); ok && db != nil {
+				memSearch = func(ctx context.Context, agentID, query string, limit int) ([]kb.MemoryRecallHit, error) {
+					hits, err := db.SearchConversationSummariesFTS(ctx, agentID, query, limit)
+					if err != nil {
+						return nil, err
+					}
+					out := make([]kb.MemoryRecallHit, 0, len(hits))
+					for _, h := range hits {
+						out = append(out, kb.MemoryRecallHit{ID: h.ID, Topic: h.Topic, Summary: h.Summary})
+					}
+					return out, nil
+				}
+			}
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
 				threshold := 0.45
 				var v config.VectorCfg
@@ -379,10 +396,13 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					FlashTodoKeywords:   kbCfg.FlashTodoKeywords,
 					FlashTodoMaxResults: kbCfg.FlashTodoMaxResults,
 					FlashTodoThreshold:  ftThreshold,
+					MemoryAutoMode:      kbCfg.MemoryAutoMode,
+					MemoryKeywords:      kbCfg.MemoryKeywords,
+					MemoryMaxResults:    kbCfg.MemoryMaxResults,
 					SearchMode:          kbCfg.SearchMode,
 					EmptyAction:         kbCfg.EmptyAction,
 				}
-			})
+			}, memSearch)
 			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {
 				kbHC := &kb.HookContext{
 					Messages: hc.Messages,
