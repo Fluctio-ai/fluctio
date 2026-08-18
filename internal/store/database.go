@@ -222,6 +222,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateDailyDiary(ctx); err != nil {
 		return fmt.Errorf("migrate daily diary table: %w", err)
 	}
+	if err := d.migrateKBCards(ctx); err != nil {
+		return fmt.Errorf("migrate kb cards tables: %w", err)
+	}
 	if err := d.migrateRecallTuning(ctx); err != nil {
 		return fmt.Errorf("migrate recall tuning tables: %w", err)
 	}
@@ -6037,6 +6040,73 @@ func (d *DBStore) migrateDailyDiary(ctx context.Context) error {
 		PRIMARY KEY (agent_id, date)
 	)`); err != nil {
 		return fmt.Errorf("migrate daily_diary: %w", err)
+	}
+	return nil
+}
+
+// migrateKBCards creates the spaced-repetition Q&A card tables:
+//
+//   - kb_cards: one generated or hand-written flashcard. source_type is
+//     "diary" (source_ref = the YYYY-MM-DD diary entry), "wiki"
+//     (source_ref = wiki_pages.id) or "manual". Interval scheduling is
+//     Ebbinghaus-lite: interval_index walks CardIntervals (1/2/4/7/15/30
+//     days) on a "remembered" grade, "fuzzy" re-waits the same interval,
+//     "forgot" resets to day 1. due_at '' = not scheduled; status walks
+//     active → mastered (all intervals done) / archived.
+//   - kb_card_reviews: one row per graded review — the card detail's
+//     timeline plus the streak computation source.
+//   - kb_card_embeddings: one embedding per card (question+answer), the
+//     vector leg of generation-time dedup (keyword fallback is built in).
+//
+// Idempotent — CREATE IF NOT EXISTS on every boot, same pattern as
+// migrateArticleInsights.
+func (d *DBStore) migrateKBCards(ctx context.Context) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS kb_cards (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			question TEXT NOT NULL,
+			answer TEXT NOT NULL DEFAULT '',
+			source_type TEXT NOT NULL DEFAULT 'manual',
+			source_ref TEXT NOT NULL DEFAULT '',
+			source_excerpt TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'active',
+			interval_index INTEGER NOT NULL DEFAULT 0,
+			due_at TEXT NOT NULL DEFAULT '',
+			last_reviewed_at TEXT NOT NULL DEFAULT '',
+			review_count INTEGER NOT NULL DEFAULT 0,
+			lapse_count INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_cards_agent ON kb_cards (agent_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_cards_due ON kb_cards (agent_id, status, due_at)`,
+		`CREATE TABLE IF NOT EXISTS kb_card_reviews (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			card_id TEXT NOT NULL,
+			agent_id TEXT NOT NULL,
+			grade TEXT NOT NULL,
+			prev_interval_index INTEGER NOT NULL DEFAULT 0,
+			new_interval_index INTEGER NOT NULL DEFAULT 0,
+			new_due_at TEXT NOT NULL DEFAULT '',
+			reviewed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_card_reviews_card ON kb_card_reviews (card_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_card_reviews_time ON kb_card_reviews (agent_id, reviewed_at)`,
+		`CREATE TABLE IF NOT EXISTS kb_card_embeddings (
+			card_id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			embedding BLOB,
+			dim INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_kb_card_emb_agent ON kb_card_embeddings (agent_id)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := d.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("migrate kb_cards: %w", err)
+		}
 	}
 	return nil
 }

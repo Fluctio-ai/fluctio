@@ -86,6 +86,54 @@ type KBNoteAttachment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// KBCard is one row of kb_cards — a spaced-repetition Q&A flashcard. The
+// front is Question; the back is Answer (释义/知识点/用法). Cards are
+// generated nightly from the day's diary + wiki delta (SourceType
+// "diary"/"wiki", SourceRef points back at the origin so the UI can deep
+// link) or written by hand ("manual"). Scheduling is Ebbinghaus-lite over
+// CardIntervals: DueAt nil means not yet scheduled. Status walks
+// active → mastered (all intervals done) / archived.
+type KBCard struct {
+	ID              string     `json:"id"`
+	AgentID         string     `json:"agent_id"`
+	Question        string     `json:"question"`
+	Answer          string     `json:"answer"`
+	SourceType      string     `json:"source_type"`
+	SourceRef       string     `json:"source_ref"`
+	SourceExcerpt   string     `json:"source_excerpt"`
+	Status          string     `json:"status"`
+	IntervalIndex   int        `json:"interval_index"`
+	DueAt           *time.Time `json:"due_at,omitempty"`
+	LastReviewedAt  *time.Time `json:"last_reviewed_at,omitempty"`
+	ReviewCount     int        `json:"review_count"`
+	LapseCount      int        `json:"lapse_count"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+}
+
+// KBCardReview is one graded review of one card (kb_card_reviews) — the
+// card detail's timeline and the streak computation source. Grade is
+// "forgot" / "fuzzy" / "remembered".
+type KBCardReview struct {
+	ID                int        `json:"id"`
+	CardID            string     `json:"card_id"`
+	AgentID           string     `json:"agent_id"`
+	Grade             string     `json:"grade"`
+	PrevIntervalIndex int        `json:"prev_interval_index"`
+	NewIntervalIndex  int        `json:"new_interval_index"`
+	NewDueAt          *time.Time `json:"new_due_at,omitempty"`
+	ReviewedAt        time.Time  `json:"reviewed_at"`
+}
+
+// KBCardStats is the cards-page dashboard header payload.
+type KBCardStats struct {
+	DueToday   int `json:"due_today"`
+	Active     int `json:"active"`
+	Mastered   int `json:"mastered"`
+	Archived   int `json:"archived"`
+	StreakDays int `json:"streak_days"`
+}
+
 type KBResult struct {
 	SourceID    string  `json:"source_id"`
 	SourceTitle string  `json:"source_title"`
