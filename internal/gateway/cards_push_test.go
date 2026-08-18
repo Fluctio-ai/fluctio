@@ -45,17 +45,30 @@ func TestCardsPushStampAndDigest(t *testing.T) {
 	due := []kb.KBCard{
 		{Question: "Q1？"}, {Question: "Q2？"}, {Question: "Q3？"}, {Question: "Q4？"},
 	}
-	msg := formatCardsDigest("agt_x", due)
-	if !strings.Contains(msg, "4 张待复习") {
-		t.Fatalf("digest missing count: %q", msg)
+	msg := formatCardsDigest("agt_x", due, kb.KBCardStats{StreakDays: 3})
+	if !strings.Contains(msg, "今日卡片组（4 张 · 连续 3 天）") {
+		t.Fatalf("digest missing group header: %q", msg)
 	}
-	if !strings.Contains(msg, "Q1？") || !strings.Contains(msg, "Q3？") {
-		t.Fatalf("digest missing teaser questions: %q", msg)
-	}
-	if strings.Contains(msg, "Q4？") {
-		t.Fatalf("digest should stop at three teasers: %q", msg)
+	if !strings.Contains(msg, "1. Q1？") || !strings.Contains(msg, "4. Q4？") {
+		t.Fatalf("digest missing numbered questions (cap 12 > 4, all listed): %q", msg)
 	}
 	if strings.Contains(msg, "/knowledge/cards") {
 		t.Fatalf("no public base URL configured — link should be omitted: %q", msg)
 	}
+
+	// Repeat marks and carry-over line.
+	due2 := []kb.KBCard{
+		{Question: "旧卡", ReviewCount: 2},
+		{Question: "新卡"},
+	}
+	due2[0].DueAt = ptrTime(time.Now().In(time.FixedZone("CST", 8*3600)).AddDate(0, 0, -3))
+	msg2 := formatCardsDigest("agt_x", due2, kb.KBCardStats{})
+	if !strings.Contains(msg2, "旧卡 🔁") {
+		t.Fatalf("digest missing repeat mark: %q", msg2)
+	}
+	if !strings.Contains(msg2, "来自前几日未完成") {
+		t.Fatalf("digest missing carry-over line: %q", msg2)
+	}
 }
+
+func ptrTime(t time.Time) *time.Time { return &t }

@@ -859,6 +859,8 @@ const en: Record<string, string> = {
   "cards.front": "Front (question)",
   "cards.back": "Back (answer)",
   "cards.flipHint": "Click the card to flip",
+  "cards.deckLeft": "Still learning",
+  "cards.deckRight": "Got it",
   "cards.excerpt": "Source excerpt",
   "cards.from": "From:",
   "cards.fromDiary": "diary of {date}",

@@ -3,214 +3,396 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  CalendarIcon,
-  XIcon,
-} from "lucide-react";
-import {
-  type KBCard,
-  reviewCard,
-} from "@/lib/api";
+import { CalendarIcon, Loader2Icon, XIcon } from "lucide-react";
+import { type KBCard, listCards, reviewCard } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-// CardsReview — the full-screen spaced-repetition flow (the Anki-style
-// "one card at a time" session). The queue arrives pre-fetched (due cards,
-// oldest-due first is the caller's job; the list endpoint returns newest-
-// created first which is fine). Interactions: click/space flips the card,
-// then 1/2/3 (or the buttons) grade it and advance. Esc exits mid-session
-// (grades already given are kept). Ends with a summary: counts + remember
-// rate + tomorrow's due count (re-read via the parent's onDone callback).
+// CardDeck — the swipe-deck review session (the reference screenshot's
+// stacked-card UX). Today's due cards render as a fanned pile; the front
+// card can be tapped to flip (question → answer + source) or dragged:
+// past the threshold to the LEFT grades 忘了 (stays in rotation), to the
+// RIGHT grades 记得 (advances the Ebbinghaus ladder). 模糊 has no swipe —
+// it stays a button. One component, two mounts: `overlay` (开始复习 /
+// ?review=1 deep link) and `inline` (the cards page's right pane shows
+// the deck by default while nothing is selected). The deck fetches its
+// own due queue on mount and reports the session tally via onFinish.
 
 type Grade = "forgot" | "fuzzy" | "remembered";
-const GRADES: { key: Grade; kbd: string; cls: string }[] = [
-  { key: "forgot", kbd: "1", cls: "border-destructive/40 text-destructive hover:bg-destructive/10" },
-  { key: "fuzzy", kbd: "2", cls: "border-warning/50 text-warning hover:bg-warning/10" },
-  { key: "remembered", kbd: "3", cls: "border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400" },
-];
 
-export function CardsReview({
+export type CardDeckResult = { done: number; remembered: number; fuzzy: number; forgot: number };
+
+// SWIPE_PX is the horizontal drag distance past which releasing grades
+// the card (in the drag direction) instead of springing back. The
+// vertical (down = 模糊) threshold is a touch larger so accidental
+// downward drift during a horizontal swipe doesn't trigger it.
+const SWIPE_PX = 90;
+const SWIPE_PY = 110;
+// CLICK_PX distinguishes a tap (flip) from a drag (swipe).
+const CLICK_PX = 8;
+// FLY_MS is the fly-off animation before the next card advances.
+const FLY_MS = 240;
+
+export function CardDeck({
   agentId,
-  queue,
-  onDone,
+  variant,
+  onFinish,
 }: {
   agentId: string;
-  queue: KBCard[];
-  onDone: (result: { done: number; remembered: number; fuzzy: number; forgot: number }) => void;
+  variant: "overlay" | "inline";
+  onFinish: (result: CardDeckResult) => void;
 }) {
   const t = useT();
+  const [queue, setQueue] = useState<KBCard[] | null>(null); // null = loading
   const [idx, setIdx] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [result, setResult] = useState<CardDeckResult>({ done: 0, remembered: 0, fuzzy: 0, forgot: 0 });
+  // anim: "" idle | "out-left"/"out-right"/"out-down" the graded card flying off.
+  const [anim, setAnim] = useState<"" | "out-left" | "out-right" | "out-down">("");
   const [saving, setSaving] = useState(false);
-  const [result, setResult] = useState({ done: 0, remembered: 0, fuzzy: 0, forgot: 0 });
+  // Drag state: dragX/dragY are the live offsets (state-driven so the
+  // verdict badges track), moved remembers whether the pointer ever left
+  // click radius. dragStartRef holds the pointerdown origin.
+  const [dragX, setDragX] = useState(0);
+  const [dragY, setDragY] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const movedRef = useRef(false);
   const resultRef = useRef(result);
-  // Keep the ref in sync for the Esc handler (which needs the latest
-  // counts without re-binding the keydown listener on every grade).
   useEffect(() => { resultRef.current = result; }, [result]);
+  const closedRef = useRef(false);
+  useEffect(() => { closedRef.current = false; }, []);
 
-  const finished = idx >= queue.length;
+  useEffect(() => {
+    let alive = true;
+    listCards(agentId, { filter: "due", limit: 100 }).then((due) => {
+      if (alive && !closedRef.current) setQueue(due.reverse()); // oldest-due first
+    });
+    return () => { alive = false; closedRef.current = true; };
+  }, [agentId]);
 
-  const handleGrade = useCallback(
-    async (grade: Grade) => {
-      if (!flipped || saving || finished) return;
+  const finished = queue !== null && idx >= queue.length;
+
+  const grade = useCallback(
+    async (g: Grade, via: "swipe" | "button" | "key") => {
+      if (saving || anim !== "" || queue === null || idx >= queue.length) return;
       const card = queue[idx];
+      if (via === "swipe") setAnim(g === "remembered" ? "out-right" : g === "fuzzy" ? "out-down" : "out-left");
       setSaving(true);
       try {
-        await reviewCard(agentId, card.id, grade);
+        await reviewCard(agentId, card.id, g);
       } catch {
-        // Grade failed (network/etc) — still advance so a broken card
-        // can't wedge the session; the card stays due for tomorrow.
+        // Grade failed (network/etc) — still advance so one broken card
+        // can't wedge the session; it stays due for tomorrow.
       }
       setSaving(false);
       setResult((r) => ({
         done: r.done + 1,
-        remembered: r.remembered + (grade === "remembered" ? 1 : 0),
-        fuzzy: r.fuzzy + (grade === "fuzzy" ? 1 : 0),
-        forgot: r.forgot + (grade === "forgot" ? 1 : 0),
+        remembered: r.remembered + (g === "remembered" ? 1 : 0),
+        fuzzy: r.fuzzy + (g === "fuzzy" ? 1 : 0),
+        forgot: r.forgot + (g === "forgot" ? 1 : 0),
       }));
       setFlipped(false);
-      setIdx((i) => i + 1);
+      setDragX(0);
+      setDragY(0);
+      if (via === "swipe") {
+        window.setTimeout(() => { setAnim(""); setIdx((i) => i + 1); }, FLY_MS);
+      } else {
+        setIdx((i) => i + 1);
+      }
     },
-    [flipped, saving, finished, queue, idx, agentId],
+    [saving, anim, queue, idx, agentId],
   );
 
-  // Keyboard: space/enter flip, 1/2/3 grade (only once flipped), Esc exits
-  // (onDone keeps the grades already given).
+  // Keyboard: space/enter flip, ← 忘了 / ↓ 模糊 / → 记得 (matching the
+  // swipe directions), 1/2/3 the buttons, Esc exits early (overlay only)
+  // with the grades already given kept. Overlay-only by design: the
+  // inline deck stays mounted beneath the overlay, and two window-level
+  // listeners would double-grade every keypress.
   useEffect(() => {
+    if (variant !== "overlay") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (finished) return;
+      if (e.key === "Escape" && variant === "overlay") {
         e.preventDefault();
-        onDone(resultRef.current);
+        onFinish(resultRef.current);
         return;
       }
-      if (finished) return;
       if (e.key === " " || e.key === "Enter") {
         e.preventDefault();
         setFlipped((f) => !f);
         return;
       }
-      if (flipped && (e.key === "1" || e.key === "2" || e.key === "3")) {
-        e.preventDefault();
-        const g = GRADES[Number(e.key) - 1];
-        if (g) handleGrade(g.key);
-      }
+      if (e.key === "ArrowLeft" || e.key === "1") { e.preventDefault(); grade("forgot", "key"); return; }
+      if (e.key === "ArrowDown" || e.key === "2") { e.preventDefault(); grade("fuzzy", "key"); return; }
+      if (e.key === "ArrowRight" || e.key === "3") { e.preventDefault(); grade("remembered", "key"); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [finished, flipped, handleGrade, onDone]);
+  }, [finished, grade, onFinish, variant]);
 
-  if (queue.length === 0) return null;
+  // ── Drag mechanics (pointer events cover mouse + touch). ──
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (anim !== "" || finished || queue === null || idx >= queue.length) return;
+    // Capture keeps moves flowing when the cursor leaves the card. Can
+    // throw for a pointerId with no live pointer (synthetic events, or a
+    // released-mid-air race) — the drag still works without capture.
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch { /* pointer already gone — proceed capture-less */ }
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+    movedRef.current = false;
+    setDragging(true);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!dragging) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    if (Math.abs(dx) > CLICK_PX || Math.abs(dy) > CLICK_PX) movedRef.current = true;
+    setDragX(dx);
+    setDragY(dy);
+  };
+  const onPointerUp = () => {
+    if (!dragging) return;
+    setDragging(false);
+    if (!movedRef.current) {
+      setDragX(0);
+      setDragY(0);
+      setFlipped((f) => !f); // tap = flip
+      return;
+    }
+    // The dominant axis wins: down = 模糊, otherwise left/right.
+    if (dragY > SWIPE_PY && dragY > Math.abs(dragX)) grade("fuzzy", "swipe");
+    else if (dragX > SWIPE_PX) grade("remembered", "swipe");
+    else if (dragX < -SWIPE_PX) grade("forgot", "swipe");
+    else { setDragX(0); setDragY(0); } // spring back
+  };
 
-  if (finished) {
-    const total = result.done;
-    const rate = total > 0 ? Math.round((result.remembered / total) * 100) : 0;
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 p-6">
-        <div className="w-full max-w-md space-y-5 text-center">
+  const card = queue !== null && idx < queue.length ? queue[idx] : null;
+  const next = queue !== null && idx + 1 < queue.length ? queue[idx + 1] : null;
+  const next2 = queue !== null && idx + 2 < queue.length ? queue[idx + 2] : null;
+
+  const body = (() => {
+    if (queue === null) {
+      return (
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
+    if (finished) {
+      const total = result.done;
+      const rate = total > 0 ? Math.round((result.remembered / total) * 100) : 0;
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center gap-5 p-6 text-center">
           <h2 className="text-xl font-semibold">{t("cards.reviewDoneTitle")}</h2>
           <p className="text-sm text-muted-foreground">
             {t("cards.reviewDoneStats", { n: total, r: result.remembered, f: result.fuzzy, g: result.forgot })}
           </p>
           <p className="text-3xl font-bold tabular-nums text-primary">{rate}%</p>
-          <Button onClick={() => onDone(result)}>{t("common.close")}</Button>
+          <Button onClick={() => onFinish(result)}>{t("common.close")}</Button>
         </div>
-      </div>
-    );
-  }
+      );
+    }
+    return (
+      <>
+        {/* the pile: front card + up to two peeking behind. Both variants
+            cap at max-w-md so the card spans exactly the grade-button row
+            below (忘了+模糊+记得 combined width). */}
+        <div className={cn("relative flex flex-1 items-center justify-center", variant === "inline" ? "px-2" : "px-6")}>
+          <div className="relative w-full max-w-md">
+            {[next2, next].map((c, i) =>
+              c ? (
+                <div
+                  key={c.id}
+                  aria-hidden
+                  className="absolute inset-0 rounded-2xl border bg-card shadow-sm"
+                  style={{
+                    transform: `translateY(${(2 - i) * 10}px) scale(${1 - (2 - i) * 0.04})`,
+                    opacity: 1 - (2 - i) * 0.25,
+                  }}
+                />
+              ) : null,
+            )}
+            {card && (
+              <div
+                role="button"
+                tabIndex={0}
+                aria-label={card.question}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={() => { setDragging(false); setDragX(0); setDragY(0); }}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setFlipped((f) => !f); } }}
+                style={{
+                  transform:
+                    anim === "out-left" ? "translateX(-130%) rotate(-14deg)"
+                    : anim === "out-right" ? "translateX(130%) rotate(14deg)"
+                    : anim === "out-down" ? "translateY(130%)"
+                    : `translate(${dragX}px, ${dragY}px) rotate(${dragX * 0.05}deg)`,
+                  transition: dragging ? "none" : "transform 220ms cubic-bezier(.2,.8,.3,1)",
+                }}
+                className={cn(
+                  "relative z-10 min-h-[280px] cursor-grab select-none rounded-2xl border bg-card p-6 text-left shadow-lg",
+                  variant === "inline" && "min-h-[320px] md:min-h-[380px]",
+                  "touch-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                  flipped ? "border-primary/50" : "hover:border-primary/30",
+                  anim === "" || "pointer-events-none",
+                )}
+              >
+                {/* swipe verdict badges — opacity follows the drag. Left =
+                    忘了, right = 记得, down = 模糊. */}
+                <span
+                  aria-hidden
+                  style={{ opacity: Math.min(1, Math.max(0, -dragX / SWIPE_PX)) }}
+                  className="pointer-events-none absolute left-3 top-3 -rotate-12 rounded-md border border-destructive/50 bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
+                >
+                  {t("cards.deckLeft")}
+                </span>
+                <span
+                  aria-hidden
+                  style={{ opacity: Math.min(1, Math.max(0, dragX / SWIPE_PX)) }}
+                  className="pointer-events-none absolute right-3 top-3 rotate-12 rounded-md border border-emerald-500/50 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400"
+                >
+                  {t("cards.deckRight")}
+                </span>
+                <span
+                  aria-hidden
+                  style={{ opacity: Math.min(1, Math.max(0, dragY / SWIPE_PY)) }}
+                  className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-md border border-warning/50 bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                >
+                  {t("cards.grade.fuzzy")}
+                </span>
 
-  const card = queue[idx];
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background/95">
-      {/* progress */}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {t("cards.reviewProgress", { cur: idx + 1, total: queue.length })}
-        </span>
-        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-primary transition-all"
-            style={{ width: `${((idx + 1) / queue.length) * 100}%` }}
-          />
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 w-7 p-0"
-          aria-label={t("cards.reviewExit")}
-          onClick={() => onDone(result)}
-        >
-          <XIcon className="size-4" />
-        </Button>
-      </div>
-
-      {/* the card */}
-      <div className="flex flex-1 items-center justify-center px-4">
-        <button
-          type="button"
-          onClick={() => setFlipped((f) => !f)}
-          className={cn(
-            "w-full max-w-lg rounded-2xl border bg-card p-8 text-left shadow-lg transition-colors",
-            flipped ? "border-primary/50" : "hover:border-primary/30",
-          )}
-        >
-          <div className="mb-3 flex items-center gap-1.5">
-            <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
-              {t(`cards.source.${card.source_type}`)}
-            </Badge>
-            {card.review_count > 0 && (
-              <span className="text-[11px] text-muted-foreground">
-                {t("cards.intervalProgress", { cur: card.interval_index, total: 6 })}
-              </span>
+                <div className="mb-3 flex items-center gap-1.5">
+                  <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                    {t(`cards.source.${card.source_type}`)}
+                  </Badge>
+                  {card.review_count > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      {t("cards.intervalProgress", { cur: card.interval_index, total: 6 })}
+                    </span>
+                  )}
+                </div>
+                {flipped ? (
+                  <div className="space-y-3">
+                    <p className="break-words text-sm text-muted-foreground">{card.question}</p>
+                    <div className="whitespace-pre-wrap break-words text-lg font-medium leading-relaxed">{card.answer}</div>
+                    {card.source_excerpt && (
+                      <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">{card.source_excerpt}</p>
+                    )}
+                    {card.source_type === "diary" && card.source_ref && (
+                      <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <CalendarIcon className="size-3" />
+                        {t("cards.fromDiary", { date: card.source_ref })}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="break-words pt-2 text-xl font-medium leading-relaxed">{card.question}</p>
+                )}
+                {!flipped && (
+                  <p className="pt-6 text-xs text-muted-foreground">{t("cards.flipHint")}</p>
+                )}
+              </div>
             )}
           </div>
-          {flipped ? (
-            <div className="space-y-4">
-              <p className="break-words text-sm text-muted-foreground">{card.question}</p>
-              <div className="whitespace-pre-wrap break-words text-xl font-medium leading-relaxed">
-                {card.answer}
-              </div>
-              {card.source_excerpt && (
-                <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">{card.source_excerpt}</p>
-              )}
-              {card.source_ref && card.source_type === "diary" && (
-                <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <CalendarIcon className="size-3" />
-                  {t("cards.fromDiary", { date: card.source_ref })}
-                </p>
-              )}
-            </div>
-          ) : (
-            <p className="break-words pt-2 text-2xl font-medium leading-relaxed">{card.question}</p>
-          )}
-          {!flipped && (
-            <p className="pt-8 text-xs text-muted-foreground">{t("cards.flipHint")}</p>
-          )}
-        </button>
-      </div>
+        </div>
 
-      {/* grades */}
-      <div className="px-4 pb-6 pt-2">
-        {flipped ? (
-          <div className="mx-auto flex max-w-lg gap-2">
-            {GRADES.map((g) => (
-              <Button
-                key={g.key}
-                variant="outline"
-                className={cn("h-11 flex-1 flex-col gap-0 py-1", g.cls)}
-                disabled={saving}
-                onClick={() => handleGrade(g.key)}
-              >
-                <span className="text-sm">{t(`cards.grade.${g.key}`)}</span>
-                <span className="text-[10px] opacity-60">{g.kbd}</span>
-              </Button>
-            ))}
+        {/* grade buttons — mirror the swipe directions (↓ = 模糊) so the
+            deck is fully operable without dragging */}
+        <div className="px-4 pb-6 pt-2">
+          <div className="mx-auto flex max-w-md gap-2">
+            <Button
+              variant="outline"
+              className="h-11 flex-1 flex-col gap-0 border-destructive/40 py-1 text-destructive hover:bg-destructive/10"
+              disabled={saving}
+              onClick={() => grade("forgot", "button")}
+            >
+              <span className="text-sm">{t("cards.grade.forgot")}</span>
+              <span className="text-[10px] opacity-60">←</span>
+            </Button>
+            <Button
+              variant="outline"
+              className="h-11 flex-1 flex-col gap-0 border-warning/50 py-1 text-warning hover:bg-warning/10"
+              disabled={saving}
+              onClick={() => grade("fuzzy", "button")}
+            >
+              <span className="text-sm">{t("cards.grade.fuzzy")}</span>
+              <span className="text-[10px] opacity-60">↓</span>
+            </Button>
+            <Button
+              variant="outline"
+              className="h-11 flex-1 flex-col gap-0 border-emerald-500/40 py-1 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+              disabled={saving}
+              onClick={() => grade("remembered", "button")}
+            >
+              <span className="text-sm">{t("cards.grade.remembered")}</span>
+              <span className="text-[10px] opacity-60">→</span>
+            </Button>
           </div>
-        ) : (
-          <p className="text-center text-xs text-muted-foreground">
-            {t("cards.flipHint")} · 空格
-          </p>
+        </div>
+      </>
+    );
+  })();
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col",
+        variant === "overlay"
+          ? "fixed inset-0 z-50 bg-background/95"
+          // w-full: the inline deck sits in a flex-row pane — without it
+          // the column shrinks to content width and hugs the left edge.
+          : "h-full min-h-0 w-full",
+      )}
+    >
+      {/* progress dots + exit (overlay) / label (inline) */}
+      <div className="flex items-center gap-3 px-4 py-3">
+        {queue !== null && !finished && (
+          <>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {t("cards.reviewProgress", { cur: idx + 1, total: queue.length })}
+            </span>
+            <div className="flex flex-1 items-center gap-1 overflow-hidden">
+              {queue.slice(0, 30).map((c, i) => (
+                <span
+                  key={c.id}
+                  className={cn(
+                    "h-1.5 w-1.5 shrink-0 rounded-full",
+                    i < idx ? "bg-primary/70" : i === idx ? "bg-primary" : "bg-muted",
+                  )}
+                />
+              ))}
+            </div>
+          </>
+        )}
+        {(finished || queue === null) && <div className="flex-1" />}
+        {variant === "overlay" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0"
+            aria-label={t("cards.reviewExit")}
+            onClick={() => onFinish(resultRef.current)}
+          >
+            <XIcon className="size-4" />
+          </Button>
         )}
       </div>
+      {body}
     </div>
   );
+}
+
+// CardsReview is retained as the overlay entry: 开始复习 / ?review=1 wrap
+// the shared deck in a full-screen mount.
+export function CardsReview({
+  agentId,
+  onDone,
+}: {
+  agentId: string;
+  onDone: (result: CardDeckResult) => void;
+}) {
+  return <CardDeck agentId={agentId} variant="overlay" onFinish={onDone} />;
 }

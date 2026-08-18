@@ -96,7 +96,8 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 			slog.Warn("cards push: channel not registered", "agent", ag.ID, "channel", channel, "account", accountID)
 			continue
 		}
-		if err := ch.Send(chatID, formatCardsDigest(ag.ID, due)); err != nil {
+		st, _ := ks.CardStats(ctx, ag.ID)
+		if err := ch.Send(chatID, formatCardsDigest(ag.ID, due, st)); err != nil {
 			slog.Warn("cards push failed", "agent", ag.ID, "error", err)
 			continue // no stamp — retry next tick
 		}
@@ -107,24 +108,60 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 	}
 }
 
-// formatCardsDigest builds the IM body: due count, the first three
-// questions as a teaser, and a deep link into the review flow when a
-// public base URL is configured (env-gated like pubimg).
-func formatCardsDigest(agentID string, due []kb.KBCard) string {
+// formatCardsDigest builds the IM body for the daily card group — the
+// day's learning plan in ONE message:
+//
+//	🧠 今日卡片组（5 张 · 连续 3 天）
+//	1. 问题一
+//	2. 问题二 🔁        ← previously reviewed, back for another pass
+//	…
+//	（其中 2 张来自前几日未完成）
+//	开始复习：<deep link>
+//
+// Reading the numbered questions in chat is itself a light self-test; the
+// 🔁 marks repeat cards and the carry-over line makes an unexecuted group
+// visibly roll into today. The deep link (review flow) only appears when
+// a public base URL is configured — env-gated like pubimg.
+func formatCardsDigest(agentID string, due []kb.KBCard, st kb.KBCardStats) string {
 	var b strings.Builder
-	b.WriteString("🧠 今日知识卡片：" + strconv.Itoa(len(due)) + " 张待复习")
-	for i := 0; i < len(due) && i < 3; i++ {
-		b.WriteString("\n· ")
-		b.WriteString(due[i].Question)
+	b.WriteString("🧠 今日卡片组（" + strconv.Itoa(len(due)) + " 张")
+	if st.StreakDays > 0 {
+		b.WriteString(" · 连续 " + strconv.Itoa(st.StreakDays) + " 天")
 	}
-	if len(due) > 3 {
-		b.WriteString("\n· …")
+	b.WriteString("）")
+	todayStart := time.Now().In(cardsPushCST).Format("2006-01-02")
+	carry := 0
+	const maxList = 12
+	for i, c := range due {
+		if i >= maxList {
+			break
+		}
+		mark := ""
+		if c.ReviewCount > 0 {
+			mark = " 🔁"
+		}
+		b.WriteString("\n" + strconv.Itoa(i+1) + ". " + c.Question + mark)
+	}
+	if len(due) > maxList {
+		b.WriteString("\n…")
+	}
+	for _, c := range due {
+		if c.DueAt != nil && c.DueAt.In(cardsPushCST).Format("2006-01-02") != todayStart {
+			carry++
+		}
+	}
+	if carry > 0 {
+		b.WriteString("\n（其中 " + strconv.Itoa(carry) + " 张来自前几日未完成）")
 	}
 	if base := strings.TrimRight(config.LoadEnv().Gateway.PublicBaseURL, "/"); base != "" {
 		b.WriteString("\n开始复习：" + base + "/agents/" + agentID + "/knowledge/cards?review=1")
 	}
 	return b.String()
 }
+
+// cardsPushCST is the UTC+8 zone the digest's carry-over check groups
+// days by (same boundary as the card scheduler).
+var cardsPushCST = time.FixedZone("CST", 8*3600)
 
 // cardsPushedToday reports whether the agent already got its digest today.
 func cardsPushedToday(ctx context.Context, dbs *store.DBStore, agentID, date string) bool {

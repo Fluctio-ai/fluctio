@@ -859,6 +859,8 @@ const zhCN: Record<string, string> = {
   "cards.front": "正面（问题）",
   "cards.back": "背面（答案）",
   "cards.flipHint": "点击卡片翻面",
+  "cards.deckLeft": "还要学",
+  "cards.deckRight": "已知道",
   "cards.excerpt": "原文摘录",
   "cards.from": "来源：",
   "cards.fromDiary": "{date} 的日记",

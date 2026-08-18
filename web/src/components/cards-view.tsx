@@ -49,7 +49,7 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
-import { CardsReview } from "@/components/cards-review";
+import { CardDeck, CardsReview } from "@/components/cards-review";
 
 // CardsView — the Q&A flashcard library (卡片库): left list (filter chips +
 // source select + search + paged loading), right detail (flip preview,
@@ -108,9 +108,11 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const [deleteTarget, setDeleteTarget] = useState<KBCard | null>(null);
   const [generating, setGenerating] = useState(false);
 
-  // Header dashboard + review flow (M5).
+  // Header dashboard + review flow. The deck fetches its own due queue
+  // (both the inline right-pane mount and the full-screen overlay); here
+  // we only track whether the overlay is open.
   const [stats, setStats] = useState<KBCardStats | null>(null);
-  const [reviewQueue, setReviewQueue] = useState<KBCard[] | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const reviewStartedRef = useRef(false);
 
   const load = useCallback(
@@ -158,27 +160,20 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
 
   useEffect(() => { loadStats(); }, [loadStats]);
 
-  // startReview builds the due queue (oldest-due first: overdue cards come
-  // back before fresh ones) and opens the overlay. An empty result closes
-  // immediately — the button is disabled in that case anyway.
-  const startReview = useCallback(async () => {
-    if (!agentId) return;
-    const due = await listCards(agentId, { filter: "due", limit: 100 });
-    if (!due.length) {
-      await loadStats();
-      return;
-    }
-    setReviewQueue(due.reverse()); // list is newest-created first; review oldest first
-  }, [agentId, loadStats]);
+  // startReview opens the full-screen deck (开始复习 / ?review=1). The
+  // deck self-fetches; an empty due set just closes itself via onFinish.
+  const startReview = useCallback(() => {
+    setReviewOpen(true);
+  }, []);
 
   const endReview = useCallback(() => {
-    setReviewQueue(null);
+    setReviewOpen(false);
     load(0, true);
     loadStats();
   }, [load, loadStats]);
 
-  // Deep link: /knowledge/cards?review=1 auto-starts a session once (IM
-  // digest link). reviewStartedRef guards against remount retriggering.
+  // Deep link: /knowledge/cards?review=1 auto-opens the full-screen deck
+  // once (IM digest link). reviewStartedRef guards remount retriggering.
   useEffect(() => {
     if (!agentId || reviewStartedRef.current) return;
     if (typeof window === "undefined") return;
@@ -575,8 +570,17 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
           </ScrollArea>
         </div>
       ) : (
-        <div className="hidden min-w-0 flex-1 items-center justify-center md:flex">
-          <p className="text-sm text-muted-foreground">{t("cards.selectHint")}</p>
+        <div className="hidden min-w-0 flex-1 md:flex">
+          {/* Default right pane (desktop): today's due deck, front and
+              center — the swipe group. Mobile keeps the list-first
+              master-detail; its deck opens via 开始复习 (full-screen). */}
+          {stats && stats.due_today > 0 ? (
+            <CardDeck agentId={agentId!} variant="inline" onFinish={endReview} />
+          ) : (
+            <div className="flex w-full items-center justify-center">
+              <p className="text-sm text-muted-foreground">{t("cards.selectHint")}</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -633,10 +637,9 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
         onConfirm={handleDelete}
       />
 
-      {/* Review overlay (due queue, one card at a time). */}
-      {reviewQueue && reviewQueue.length > 0 && (
-        <CardsReview agentId={agentId!} queue={reviewQueue} onDone={endReview} />
-      )}
+      {/* Full-screen review deck (开始复习 / ?review=1) — also the mobile
+          entry to the swipe flow. */}
+      {reviewOpen && agentId && <CardsReview agentId={agentId} onDone={endReview} />}
     </div>
     </div>
   );
