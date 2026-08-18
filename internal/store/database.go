@@ -6102,6 +6102,17 @@ func (d *DBStore) migrateKBCards(ctx context.Context) error {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_kb_card_emb_agent ON kb_card_embeddings (agent_id)`,
+		// kb_card_gen_runs records one nightly generation pass per
+		// (agent, date): the nightly sweep's idempotency marker (an
+		// existing row skips re-generation) plus a creation log.
+		`CREATE TABLE IF NOT EXISTS kb_card_gen_runs (
+			agent_id TEXT NOT NULL,
+			date TEXT NOT NULL,
+			created INTEGER NOT NULL DEFAULT 0,
+			model TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (agent_id, date)
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := d.db.ExecContext(ctx, stmt); err != nil {

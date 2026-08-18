@@ -450,6 +450,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/review", auth(s.handleKBReviewCard))
 	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/archive", auth(s.handleKBCardArchive))
 	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/restore", auth(s.handleKBCardRestore))
+	mux.HandleFunc("POST /api/agents/{id}/kb/cards/generate", auth(s.handleKBCardsGenerate))
 	mux.HandleFunc("GET /api/agents/{id}/kb/pending", auth(s.handleKBListPending))
 	mux.HandleFunc("POST /api/agents/{id}/kb/pending/{pendingId}/resolve", auth(s.handleKBResolvePending))
 

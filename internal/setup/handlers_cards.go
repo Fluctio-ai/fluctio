@@ -4,14 +4,19 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/cardsgen"
 	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/wiki"
 )
 
 // Cards API — the spaced-repetition Q&A flashcards behind
 // /agents/{id}/knowledge/cards/. CRUD + archive/restore mirror the
 // bookmark handlers; /review applies one Ebbinghaus grade; /stats feeds
-// the page header (due today, status counts, streak).
+// the page header (due today, status counts, streak); /generate is the
+// manual trigger for the nightly cardsgen pass (debug/补跑).
 
 // handleKBListCards pages the card library. Query params:
 // filter=due|all|active|mastered|archived|new (default all), source=
@@ -238,4 +243,53 @@ func (s *Server) handleKBCardStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// handleKBCardsGenerate manually triggers one cardsgen pass (the nightly
+// job's debug/补跑 entry point). Body: {date?, limit?} — date defaults to
+// yesterday (UTC+8), limit to the agent's cards.dailyLimit (default 10).
+// Runs synchronously so the response reports what was created.
+func (s *Server) handleKBCardsGenerate(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Date  string `json:"date,omitempty"`
+		Limit int    `json:"limit,omitempty"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	cst := time.FixedZone("CST", 8*3600)
+	date := req.Date
+	if date == "" {
+		date = time.Now().In(cst).AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	prov, model := s.providerForAgent(agentID)
+	if prov == nil {
+		http.Error(w, "no provider/model configured", http.StatusServiceUnavailable)
+		return
+	}
+	ks := s.kbStoreFor(agentID)
+	if ks == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	ws := wiki.NewWikiStore(dbs.DB(), dbs.Dialect())
+	created, err := cardsgen.Run(r.Context(), dbs, ks, ws, agentID, date, prov, model, req.Limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"date": date, "created": created})
 }

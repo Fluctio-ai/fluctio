@@ -804,6 +804,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.diaryTicker(ctx)
 	}()
+	// Nightly Q&A cards: half-hourly, walk every agent with cards.enabled
+	// and distill yesterday's diary + wiki delta into flashcards once
+	// today's cards cronTime has passed. Idempotent via kb_card_gen_runs.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.cardsTicker(ctx)
+	}()
 	// Implicit feedback sweep: periodically turns "did the user stay on the
 	// recalled topic?" into thumbs-up/down so the MMR-lambda bandit can tune
 	// without anyone clicking a button. Decoupled from chat traffic.

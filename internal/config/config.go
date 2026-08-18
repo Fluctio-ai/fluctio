@@ -748,6 +748,10 @@ type AgentFileConfig struct {
 	// config sub-object; mapped to AgentDiaryCfg. See AgentDiaryCfg for
 	// field semantics.
 	Diary *AgentDiaryCfg `json:"diary,omitempty"`
+	// Q&A-card auto-generation + push config. Stored as the agent's
+	// "cards" config sub-object; mapped to AgentCardsCfg. See
+	// AgentCardsCfg for field semantics.
+	Cards *AgentCardsCfg `json:"cards,omitempty"`
 }
 
 // AgentKBCfg is the per-agent knowledge-base auto-query configuration.
@@ -812,6 +816,30 @@ type AgentDiaryCfg struct {
 	//   "off": both passes without thinking — fastest, shallow blindspots.
 	//   "deep": both passes with thinking — slowest, deepest blindspots.
 	ThinkingMode string `json:"thinkingMode,omitempty"`
+}
+
+// AgentCardsCfg is the per-agent Q&A flashcard configuration: nightly
+// generation from the day's diary + wiki delta (Enabled/CronTime/
+// DailyLimit) and the daily due-card IM push (PushEnabled/PushTime/
+// PushChannel). Stored as the agent's "cards" config sub-object.
+type AgentCardsCfg struct {
+	// Enabled turns on nightly card generation for this agent.
+	Enabled bool `json:"enabled"`
+	// CronTime is the daily generation time in "HH:MM" (UTC+8). Empty
+	// defaults to "03:00". The generator runs shortly after this time,
+	// distilling the previous day's material into cards.
+	CronTime string `json:"cronTime,omitempty"`
+	// DailyLimit caps how many cards one nightly run may create. 0
+	// defaults to 10.
+	DailyLimit int `json:"dailyLimit,omitempty"`
+	// PushEnabled turns on the daily due-card push to IM.
+	PushEnabled bool `json:"pushEnabled,omitempty"`
+	// PushTime is the daily push time in "HH:MM" (UTC+8). Empty defaults
+	// to "09:00".
+	PushTime string `json:"pushTime,omitempty"`
+	// PushChannel is the IM channel the summary pushes to
+	// (wechat/qq/telegram/discord/slack/feishu/line). Empty = "wechat".
+	PushChannel string `json:"pushChannel,omitempty"`
 }
 
 type SkillsConfig struct {
