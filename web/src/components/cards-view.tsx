@@ -26,6 +26,7 @@ import {
   PencilIcon,
   PlayIcon,
   PlusIcon,
+  RotateCcwIcon,
   SearchIcon,
   SendIcon,
   SparklesIcon,
@@ -108,11 +109,12 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const [deleteTarget, setDeleteTarget] = useState<KBCard | null>(null);
   const [generating, setGenerating] = useState(false);
 
-  // Header dashboard + review flow. The deck fetches its own due queue
+  // Header dashboard + review flow. The deck fetches its own queue
   // (both the inline right-pane mount and the full-screen overlay); here
-  // we only track whether the overlay is open.
+  // we only track whether the overlay is open and in which mode (due
+  // session vs 再练一轮 practice — practice doesn't touch scheduling).
   const [stats, setStats] = useState<KBCardStats | null>(null);
-  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewMode, setReviewMode] = useState<"due" | "practice" | null>(null);
   const reviewStartedRef = useRef(false);
 
   const load = useCallback(
@@ -163,11 +165,17 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   // startReview opens the full-screen deck (开始复习 / ?review=1). The
   // deck self-fetches; an empty due set just closes itself via onFinish.
   const startReview = useCallback(() => {
-    setReviewOpen(true);
+    setReviewMode("due");
+  }, []);
+
+  // startPractice opens the practice deck over the active pool — grades
+  // stay local, scheduling untouched.
+  const startPractice = useCallback(() => {
+    setReviewMode("practice");
   }, []);
 
   const endReview = useCallback(() => {
-    setReviewOpen(false);
+    setReviewMode(null);
     load(0, true);
     loadStats();
   }, [load, loadStats]);
@@ -290,7 +298,8 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header dashboard: due today (CTA), streak, learning/mastered. */}
+      {/* Header dashboard: due today (CTA) / practice re-run, streak,
+          learning·mastered. */}
       <div className="flex items-center gap-3 border-b px-3 py-2">
         {stats && stats.due_today > 0 ? (
           <Button size="sm" className="h-8 text-xs" onClick={startReview}>
@@ -298,7 +307,15 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
             {t("cards.reviewCta")} · {t("cards.reviewN", { n: stats.due_today })}
           </Button>
         ) : (
-          <span className="text-xs text-emerald-600 dark:text-emerald-400">{t("cards.dueNone")}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-emerald-600 dark:text-emerald-400">{t("cards.dueNone")}</span>
+            {stats && stats.active > 0 && (
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={startPractice}>
+                <RotateCcwIcon className="mr-1 size-3.5" />
+                {t("cards.practice")}
+              </Button>
+            )}
+          </div>
         )}
         {stats && stats.streak_days > 0 && (
           <Badge variant="outline" className="gap-1 border-warning/40 px-1.5 py-0 text-[11px] text-warning">
@@ -638,8 +655,11 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
       />
 
       {/* Full-screen review deck (开始复习 / ?review=1) — also the mobile
-          entry to the swipe flow. */}
-      {reviewOpen && agentId && <CardsReview agentId={agentId} onDone={endReview} />}
+          entry to the swipe flow. practice mode = 再练一轮 over the active
+          pool, no scheduling changes. */}
+      {reviewMode && agentId && (
+        <CardsReview agentId={agentId} practice={reviewMode === "practice"} onDone={endReview} />
+      )}
     </div>
     </div>
   );

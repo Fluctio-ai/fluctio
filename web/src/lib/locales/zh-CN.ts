@@ -883,6 +883,8 @@ const zhCN: Record<string, string> = {
   "cards.reviewProgress": "{cur} / {total}",
   "cards.reviewExit": "退出",
   "cards.reviewDoneTitle": "今日复习完成 🎉",
+  "cards.practice": "再练一轮",
+  "cards.practiceDoneTitle": "练习完成 🎉",
   "cards.reviewDoneStats": "复习 {n} 张 · 记得 {r} · 模糊 {f} · 忘了 {g}",
   "cards.reviewDoneTomorrow": "明天还有 {n} 张到期",
   "cards.streakDays": "连续 {n} 天",

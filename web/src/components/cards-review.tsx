@@ -36,10 +36,16 @@ const FLY_MS = 240;
 export function CardDeck({
   agentId,
   variant,
+  practice,
   onFinish,
 }: {
   agentId: string;
   variant: "overlay" | "inline";
+  // practice switches to self-test mode: the queue is the active pool
+  // instead of today's due set, and grades are counted locally but NOT
+  // sent to the API — a re-run never advances/resets the Ebbinghaus
+  // schedule. Backs the 再练一轮 button once today's due set is cleared.
+  practice?: boolean;
   onFinish: (result: CardDeckResult) => void;
 }) {
   const t = useT();
@@ -65,11 +71,14 @@ export function CardDeck({
 
   useEffect(() => {
     let alive = true;
-    listCards(agentId, { filter: "due", limit: 100 }).then((due) => {
-      if (alive && !closedRef.current) setQueue(due.reverse()); // oldest-due first
+    const opts = practice
+      ? { filter: "active", limit: 50 } // practice pool: everything in rotation
+      : { filter: "due", limit: 100 }; // scheduled set, oldest-due first
+    listCards(agentId, opts).then((cards) => {
+      if (alive && !closedRef.current) setQueue(practice ? cards : cards.reverse());
     });
     return () => { alive = false; closedRef.current = true; };
-  }, [agentId]);
+  }, [agentId, practice]);
 
   const finished = queue !== null && idx >= queue.length;
 
@@ -78,14 +87,16 @@ export function CardDeck({
       if (saving || anim !== "" || queue === null || idx >= queue.length) return;
       const card = queue[idx];
       if (via === "swipe") setAnim(g === "remembered" ? "out-right" : g === "fuzzy" ? "out-down" : "out-left");
-      setSaving(true);
-      try {
-        await reviewCard(agentId, card.id, g);
-      } catch {
-        // Grade failed (network/etc) — still advance so one broken card
-        // can't wedge the session; it stays due for tomorrow.
+      if (!practice) {
+        setSaving(true);
+        try {
+          await reviewCard(agentId, card.id, g);
+        } catch {
+          // Grade failed (network/etc) — still advance so one broken card
+          // can't wedge the session; it stays due for tomorrow.
+        }
+        setSaving(false);
       }
-      setSaving(false);
       setResult((r) => ({
         done: r.done + 1,
         remembered: r.remembered + (g === "remembered" ? 1 : 0),
@@ -101,7 +112,7 @@ export function CardDeck({
         setIdx((i) => i + 1);
       }
     },
-    [saving, anim, queue, idx, agentId],
+    [saving, anim, queue, idx, agentId, practice],
   );
 
   // Keyboard: space/enter flip, ← 忘了 / ↓ 模糊 / → 记得 (matching the
@@ -185,7 +196,9 @@ export function CardDeck({
       const rate = total > 0 ? Math.round((result.remembered / total) * 100) : 0;
       return (
         <div className="flex flex-1 flex-col items-center justify-center gap-5 p-6 text-center">
-          <h2 className="text-xl font-semibold">{t("cards.reviewDoneTitle")}</h2>
+          <h2 className="text-xl font-semibold">
+            {practice ? t("cards.practiceDoneTitle") : t("cards.reviewDoneTitle")}
+          </h2>
           <p className="text-sm text-muted-foreground">
             {t("cards.reviewDoneStats", { n: total, r: result.remembered, f: result.fuzzy, g: result.forgot })}
           </p>
@@ -389,10 +402,12 @@ export function CardDeck({
 // the shared deck in a full-screen mount.
 export function CardsReview({
   agentId,
+  practice,
   onDone,
 }: {
   agentId: string;
+  practice?: boolean;
   onDone: (result: CardDeckResult) => void;
 }) {
-  return <CardDeck agentId={agentId} variant="overlay" onFinish={onDone} />;
+  return <CardDeck agentId={agentId} variant="overlay" practice={practice} onFinish={onDone} />;
 }

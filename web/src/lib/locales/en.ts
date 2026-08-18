@@ -883,6 +883,8 @@ const en: Record<string, string> = {
   "cards.reviewProgress": "{cur} / {total}",
   "cards.reviewExit": "Exit",
   "cards.reviewDoneTitle": "Review done for today 🎉",
+  "cards.practice": "Practice again",
+  "cards.practiceDoneTitle": "Practice done 🎉",
   "cards.reviewDoneStats": "{n} reviewed · remembered {r} · fuzzy {f} · forgot {g}",
   "cards.reviewDoneTomorrow": "{n} due tomorrow",
   "cards.streakDays": "{n}-day streak",
