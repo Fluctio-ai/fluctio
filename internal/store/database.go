@@ -6113,6 +6113,16 @@ func (d *DBStore) migrateKBCards(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (agent_id, date)
 		)`,
+		// kb_card_push_runs records one daily due-card push per
+		// (agent, date): the push sweep's once-a-day dedup stamp.
+		`CREATE TABLE IF NOT EXISTS kb_card_push_runs (
+			agent_id TEXT NOT NULL,
+			date TEXT NOT NULL,
+			pushed_count INTEGER NOT NULL DEFAULT 0,
+			channel TEXT NOT NULL DEFAULT '',
+			pushed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (agent_id, date)
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := d.db.ExecContext(ctx, stmt); err != nil {

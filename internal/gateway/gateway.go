@@ -812,6 +812,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.cardsTicker(ctx)
 	}()
+	// Daily due-card digest push: half-hourly, every agent with
+	// cards.pushEnabled gets one IM summary after its pushTime — once a
+	// day, gated by kb_card_push_runs.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runCardsPushSweep(ctx)
+	}()
 	// Implicit feedback sweep: periodically turns "did the user stay on the
 	// recalled topic?" into thumbs-up/down so the MMR-lambda bandit can tune
 	// without anyone clicking a button. Decoupled from chat traffic.
