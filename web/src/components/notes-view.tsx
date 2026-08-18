@@ -377,22 +377,22 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
           editorActive ? "hidden md:flex" : "flex",
         )}
       >
-        <div className="space-y-2 border-b p-3">
-          <div className="relative">
-            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("knowledge.notes.search")}
-              className="h-7 flex-1 rounded-md pl-8 text-xs"
-            />
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={newNote}>
+        <div className="border-b">
+          <div className="flex items-center gap-2 p-3 pb-2">
+            <div className="relative min-w-0 flex-1">
+              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t("knowledge.notes.search")}
+                className="h-7 w-full rounded-md pl-8 text-xs"
+              />
+            </div>
+            <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={newNote}>
               <PlusIcon className="mr-1 size-3" /> {t("knowledge.notes.new")}
             </Button>
           </div>
-          <p className="text-xs tabular-nums text-muted-foreground">
+          <p className="px-3 pb-2 text-xs tabular-nums text-muted-foreground">
             {t("knowledge.notes.count", { n: notes.length })}
           </p>
         </div>

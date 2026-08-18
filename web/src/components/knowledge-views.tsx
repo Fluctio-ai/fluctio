@@ -23,7 +23,6 @@ import {
   ChevronDownIcon,
   CopyIcon,
   FileTextIcon,
-  GlobeIcon,
   ListOrderedIcon,
   PencilIcon,
   PlusIcon,
@@ -398,26 +397,26 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
           selectedSource ? "hidden md:flex" : "flex",
         )}
       >
-        <div className="p-3 border-b space-y-2">
-          <div className="relative">
-            <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("knowledge.searchArticles")}
-              className="h-7 w-full rounded-md pl-8 text-xs"
-            />
-          </div>
-          <div className="flex gap-1.5">
-            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setTextDialogOpen(true)}>
-              <FileTextIcon className="h-3 w-3 mr-1" /> {t("knowledge.text")}
+        <div className="border-b">
+          <div className="flex items-center gap-2 p-3 pb-2">
+            <div className="relative min-w-0 flex-1">
+              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t("knowledge.searchArticles")}
+                className="h-7 w-full rounded-md pl-8 text-xs"
+              />
+            </div>
+            <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={() => setTextDialogOpen(true)}>
+              <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.text")}
             </Button>
-            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setUrlDialogOpen(true)}>
-              <GlobeIcon className="h-3 w-3 mr-1" /> {t("knowledge.url")}
+            <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={() => setUrlDialogOpen(true)}>
+              <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.url")}
             </Button>
           </div>
           {stats && (
-            <p className="text-xs tabular-nums text-muted-foreground">
+            <p className="px-3 pb-2 text-xs tabular-nums text-muted-foreground">
               {stats.source_count} {t("knowledge.sources")} · {stats.entry_count} {t("knowledge.entries")} · {(stats.total_chars / 1024).toFixed(1)} KB
             </p>
           )}
@@ -876,7 +875,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
           {sortNew ? t("knowledge.sortNewest") : t("knowledge.sortOldest")}
         </Button>
         <Button size="sm" className="h-7 shrink-0" onClick={() => setFlashOpen(true)}>
-          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.saveFlash")}
+          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.flashes")}
         </Button>
       </div>
       <ScrollArea className="flex-1">
@@ -1053,7 +1052,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchBookmarks")} className="h-7 w-full rounded-md pl-8 text-xs" />
         </div>
         <Button size="sm" className="h-7 shrink-0" onClick={() => setAddOpen(true)}>
-          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.addBookmark")}
+          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.bookmarks")}
         </Button>
       </div>
       <ScrollArea className="flex-1">
@@ -1328,7 +1327,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
           <button type="button" onClick={() => setView("list")} className={cn("rounded px-2 py-1 text-xs", view === "list" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewList")}</button>
         </div>
         <Button size="sm" className="h-7 shrink-0" onClick={() => setNewOpen(true)}>
-          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.newTodo")}
+          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.todos")}
         </Button>
       </div>
       {(overdueTodos.length > 0 || dueToday.length > 0) && (
