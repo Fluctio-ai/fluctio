@@ -38,7 +38,13 @@ func (s *Server) HandleGetUsage(w http.ResponseWriter, r *http.Request) {
 
 	// Determine target user_id.
 	targetUser := ident.UserID
-	if quid := r.URL.Query().Get("user_id"); quid != "" {
+	if quid := r.URL.Query().Get("user_id"); quid != "" && quid != ident.UserID {
+		if !s.authorizeTargetUser(r, ident, quid) {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
+			})
+			return
+		}
 		targetUser = quid
 	}
 
@@ -121,6 +127,13 @@ func (s *Server) HandleSetQuota(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	ident, _ := auth.FromContext(r.Context())
+	if ident.UserID != "" && req.UserID != ident.UserID && !s.authorizeTargetUser(r, ident, req.UserID) {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
+		})
+		return
+	}
 	if req.ResetDay < 1 || req.ResetDay > 28 {
 		req.ResetDay = 1
 	}
@@ -142,6 +155,19 @@ func (s *Server) HandleSetQuota(w http.ResponseWriter, r *http.Request) {
 		"ok":    true,
 		"quota": q,
 	})
+}
+
+// authorizeTargetUser enforces that an explicit user_id names an app_user
+// minted under the caller's key (OwnerUserID == the authenticated user).
+// The doc comments on these endpoints have claimed this since the start;
+// without it one apikey can read or rewrite another tenant's usage and
+// quota. Refuse (fail-closed) when no lookup is wired.
+func (s *Server) authorizeTargetUser(r *http.Request, ident auth.Identity, targetUser string) bool {
+	if s.userLookup == nil {
+		return false
+	}
+	rec, ok := s.userLookup(r.Context(), targetUser)
+	return ok && rec != nil && rec.OwnerUserID == ident.UserID
 }
 
 // HandleGetQuota handles GET /v1/quota.
@@ -166,6 +192,13 @@ func (s *Server) HandleGetQuota(w http.ResponseWriter, r *http.Request) {
 	if userID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": map[string]string{"message": "user_id query param is required", "type": "invalid_request_error"},
+		})
+		return
+	}
+	ident, _ := auth.FromContext(r.Context())
+	if ident.UserID != "" && userID != ident.UserID && !s.authorizeTargetUser(r, ident, userID) {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
 		})
 		return
 	}
@@ -217,6 +250,13 @@ func (s *Server) HandleDeleteQuota(w http.ResponseWriter, r *http.Request) {
 	if userID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": map[string]string{"message": "user_id query param is required", "type": "invalid_request_error"},
+		})
+		return
+	}
+	ident, _ := auth.FromContext(r.Context())
+	if ident.UserID != "" && userID != ident.UserID && !s.authorizeTargetUser(r, ident, userID) {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
 		})
 		return
 	}

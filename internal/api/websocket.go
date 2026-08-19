@@ -4,14 +4,29 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/gorilla/websocket"
 
 	"github.com/fluctio-ai/fluctio/internal/auth"
 )
 
+// upgrader allows same-origin (or origin-less non-browser) clients.
+// Auth is the connect-frame Bearer token, which a cross-site page can't
+// read, so CSWSH isn't exploitable today — this is defense in depth and
+// keeps a future cookie-auth path from quietly becoming a hole.
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // CLI / SDK clients send no Origin
+		}
+		u, err := url.Parse(origin)
+		if err != nil {
+			return false
+		}
+		return u.Host == r.Host
+	},
 }
 
 // wsFrame is the envelope for all WebSocket messages.

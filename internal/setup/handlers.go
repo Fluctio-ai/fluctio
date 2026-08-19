@@ -2167,9 +2167,12 @@ func (s *Server) handleFeishuWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "appId required"})
 		return
 	}
+	// Signature checks come after the read; cap it first so an oversized
+	// POST can't balloon memory on this pre-auth endpoint.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
 		return
 	}
 	type feishuDispatcher interface {
@@ -2206,9 +2209,12 @@ func (s *Server) handleLINEWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "accountId required"})
 		return
 	}
+	// Same cap as the feishu webhook: HMAC verification reads the raw
+	// body, so bound it before reading.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
 		return
 	}
 	signature := r.Header.Get("x-line-signature")

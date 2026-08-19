@@ -169,6 +169,14 @@ func (s *Server) SetTaskQueue(tq *taskqueue.Queue) {
 // SetAPIServer sets the OpenAI-compatible API server for /v1/* and /ws routes.
 func (s *Server) SetAPIServer(apiSrv *api.Server) {
 	s.apiServer = apiSrv
+	// Billing endpoints (usage/quota) verify that an explicit user_id
+	// names an app_user owned by the caller's key.
+	if s.dataStore != nil {
+		apiSrv.SetUserLookup(func(ctx context.Context, userID string) (*store.UserRecord, bool) {
+			rec, err := s.dataStore.GetUser(ctx, userID)
+			return rec, err == nil && rec != nil
+		})
+	}
 }
 
 // SetUserResolver sets the per-user agent routing resolver.
@@ -639,7 +647,15 @@ func (s *Server) Run(ctx context.Context) error {
 	} else {
 		addr = fmt.Sprintf("127.0.0.1:%d", s.port)
 	}
-	srv := &http.Server{Addr: addr, Handler: mux}
+	// ReadHeaderTimeout stops slowloris-style header dribbling without
+	// touching the body deadline (SSE/WS need unbounded read time).
+	// IdleTimeout reaps keep-alive connections idle past 2 minutes.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 
 	go func() {
 		<-ctx.Done()

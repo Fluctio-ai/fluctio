@@ -9,6 +9,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/agent"
 	"github.com/fluctio-ai/fluctio/internal/auth"
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/usage"
 )
 
@@ -37,6 +38,11 @@ type UserSpaceView struct {
 	Config *config.Config
 }
 
+// UserLookupFn fetches a user row by id — used by the billing endpoints
+// to enforce that an explicit ?user_id= target actually belongs to the
+// caller's key. Second return is false on any lookup failure.
+type UserLookupFn func(ctx context.Context, userID string) (*store.UserRecord, bool)
+
 // Server handles the OpenAI-compatible API and WebSocket gateway.
 type Server struct {
 	resolver     UserResolver
@@ -45,6 +51,14 @@ type Server struct {
 	limiter      *rateLimiter
 	meter        usage.Meter
 	quotaStore   usage.QuotaStore
+	userLookup   UserLookupFn
+}
+
+// SetUserLookup wires the users-table lookup used for app_user ownership
+// checks in /v1/usage and /v1/quota. Optional — without it, any explicit
+// user_id other than the caller's own is refused.
+func (s *Server) SetUserLookup(fn UserLookupFn) {
+	s.userLookup = fn
 }
 
 // NewServer creates a new API server. authResolver is mandatory — there is

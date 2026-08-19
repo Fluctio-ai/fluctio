@@ -280,14 +280,31 @@ func queryTokenAllowed(r *http.Request) bool {
 	}
 	p := r.URL.Path
 	switch {
-	case strings.HasPrefix(p, "/api/agents/") && strings.Contains(p, "/files"):
-		return true
-	case strings.HasPrefix(p, "/api/agents/") && strings.Contains(p, "/system-files/"):
+	case agentScopedPathSegment(p, "files"), agentScopedPathSegment(p, "system-files"):
 		return true
 	case p == "/api/chat/subscribe":
 		return true
 	}
 	return false
+}
+
+// agentScopedPathSegment reports whether path is /api/agents/<id>/<seg>…
+// with seg (or seg/<…>) as the segment immediately after the agent id —
+// an exact segment match, not a substring anywhere in the path. The old
+// Contains(p, "/files") also matched unrelated paths like
+// /api/agents/<id>/files-note, widening the token-in-URL surface beyond
+// the documented allowlist. "<seg>.zip" (the workspace archive) counts.
+func agentScopedPathSegment(path, seg string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/agents/")
+	if !ok {
+		return false
+	}
+	_, rest, ok = strings.Cut(rest, "/")
+	if !ok {
+		return false
+	}
+	next, _, _ := strings.Cut(rest, "/")
+	return next == seg || next == seg+".zip"
 }
 
 // Middleware enforces auth on every wrapped route. 401 on no/invalid
