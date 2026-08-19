@@ -140,7 +140,7 @@ func makeExecToolFull(r *Registry, sbCfg *SandboxConfig, envProvider SkillEnvPro
 		// payloads don't get accidentally rewritten.
 		command := args.Command
 		if args.Stdin != "" {
-			command = fmt.Sprintf("(cat <<'__FCSTDIN__'\n%s\n__FCSTDIN__\n) | %s", args.Stdin, args.Command)
+			command = buildStdinPipeline(args.Command, args.Stdin)
 		}
 
 		// Use sandbox if enabled or forced. The registry's
@@ -232,10 +232,67 @@ func sbCfgImage(sbCfg *SandboxConfig) string {
 	return sbCfg.Image
 }
 
-// resolveSkillEnv checks if the command path references a skill directory
-// and returns the skill's configured env vars.
+// buildStdinPipeline wraps (command, stdin) into the heredoc pipe the
+// single-string exec paths use to deliver stdin. The delimiter is
+// lengthened until it cannot occur inside stdin: with the fixed
+// __FCSTDIN__ marker, a stdin payload containing that exact line closes
+// the heredoc early and hands the remaining payload lines to the shell
+// as commands — a data→command injection for any caller feeding
+// untrusted text through stdin. Quoting the delimiter disables variable
+// expansion inside the heredoc body, so JSON payloads don't get
+// accidentally rewritten.
+func buildStdinPipeline(command, stdin string) string {
+	delim := "__FCSTDIN__"
+	for strings.Contains(stdin, delim) {
+		delim += "_"
+	}
+	return fmt.Sprintf("(cat <<'%s'\n%s\n%s\n) | %s", delim, stdin, delim, command)
+}
+
+// skillRunnerTokens are the interpreter/runner commands that legitimately
+// EXECUTE a script path handed to them as an argument. resolveSkillEnv
+// only injects a skill's secret env when the command actually runs code
+// out of that skill's directory — a bare mention (ls, echo, cat, env
+// alongside /skills/<name>) must not mint the keys.
+var skillRunnerTokens = map[string]bool{
+	"python": true, "python3": true, "node": true, "deno": true, "bun": true,
+	"uv": true, "uvx": true, "npx": true, "ruby": true, "perl": true,
+	"sh": true, "bash": true, "dash": true, "zsh": true,
+}
+
+// commandInvokesUnder reports whether command EXECUTES path itself or a
+// file under path/, rather than merely mentioning it. Tokenizes on
+// whitespace, strips shell punctuation glued to token ends (; | &), and
+// accepts the path token when it's the command's first token (direct
+// execution) or the argument of a known interpreter/runner. Heuristic —
+// deliberately conservative on the accept side: a quoted form like
+// sh -c "python /skills/x/main.py" won't match, which only costs the env
+// injection on that (rare) spelling.
+func commandInvokesUnder(command, path string) bool {
+	fields := strings.Fields(command)
+	for i, tok := range fields {
+		tok = strings.TrimRight(tok, ";|&")
+		if tok != path && !strings.HasPrefix(tok, path+"/") {
+			continue
+		}
+		if i == 0 {
+			return true
+		}
+		prev := strings.TrimRight(fields[i-1], ";|&")
+		if skillRunnerTokens[strings.ToLower(prev)] {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveSkillEnv returns the configured env vars for whichever skill the
+// command actually EXECUTES, so its secrets reach that process. Matching
+// requires an invocation (see commandInvokesUnder), not a substring
+// mention: a chatter's `ls /skills/image-gen; env` must not mint
+// FAL_KEY into shell env readable back into the chat.
 //
-// Two matching paths:
+// Two matching path families:
 //  1. host paths from skillDirs (e.g. "/Users/.../agents/<id>/skills") —
 //     used when exec runs on the host shell.
 //  2. sandbox-internal "/skills/<name>" prefix — every skill is mounted
@@ -244,24 +301,31 @@ func sbCfgImage(sbCfg *SandboxConfig) string {
 //     sandbox use this form. Without this branch, env injection
 //     silently broke for ALL sandbox calls (the host paths in
 //     skillDirs never appear in /workspace-cd'd commands).
+//
+// Residual risk: a deliberate `python /skills/x/main.py; env` still
+// exposes the keys — exports are shell-wide for the whole exec string by
+// construction. Eliminating that needs per-process env isolation, not a
+// matching change.
 func resolveSkillEnv(command string, envProvider SkillEnvProvider, skillDirs []string) map[string]string {
 	// 1. host paths
 	for _, dir := range skillDirs {
-		if strings.Contains(command, dir) {
-			rest := command[strings.Index(command, dir)+len(dir):]
-			if len(rest) > 0 && rest[0] == '/' {
-				rest = rest[1:]
-			}
-			parts := strings.SplitN(rest, "/", 2)
-			if len(parts) > 0 && parts[0] != "" {
-				if env := envProvider(parts[0]); env != nil {
-					return env
-				}
+		if !commandInvokesUnder(command, dir) {
+			continue
+		}
+		rest := command[strings.Index(command, dir)+len(dir):]
+		if len(rest) > 0 && rest[0] == '/' {
+			rest = rest[1:]
+		}
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) > 0 && parts[0] != "" {
+			if env := envProvider(parts[0]); env != nil {
+				return env
 			}
 		}
 	}
 	// 2. sandbox /skills/<name>/... — fixed mount layout
-	if idx := strings.Index(command, "/skills/"); idx >= 0 {
+	if commandInvokesUnder(command, "/skills") && strings.Contains(command, "/skills/") {
+		idx := strings.Index(command, "/skills/")
 		rest := command[idx+len("/skills/"):]
 		parts := strings.SplitN(rest, "/", 2)
 		if len(parts) > 0 && parts[0] != "" {
@@ -370,7 +434,7 @@ func registerHostExec(r *Registry, envProvider SkillEnvProvider, skillDirs []str
 			defer cancel()
 			command := args.Command
 			if args.Stdin != "" {
-				command = fmt.Sprintf("(cat <<'__FCSTDIN__'\n%s\n__FCSTDIN__\n) | %s", args.Stdin, args.Command)
+				command = buildStdinPipeline(args.Command, args.Stdin)
 			}
 			cmd := exec.CommandContext(execCtx, "sh", "-c", command)
 			// host_exec is the operator's escape hatch — even so, scrub
@@ -441,7 +505,7 @@ func registerSandboxedExec(r *Registry, ex sandbox.Executor) {
 		// Stdin via heredoc (mirror the host path) so callers can pipe
 		// JSON args to a skill script.
 		if args.Stdin != "" {
-			command = fmt.Sprintf("(cat <<'__FCSTDIN__'\n%s\n__FCSTDIN__\n) | %s", args.Stdin, args.Command)
+			command = buildStdinPipeline(args.Command, args.Stdin)
 		}
 		// Inject the configured env for whichever skill the command
 		// references (SK skill dirs may be host paths or the
