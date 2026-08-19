@@ -168,6 +168,26 @@ func TestCardListFiltersAndStats(t *testing.T) {
 		t.Fatalf("stats: %+v", stats)
 	}
 
+	// ListDueQueue: most-overdue first, capped — the review-session feed.
+	// A third card 72h overdue must sort ahead of the 24h one even though
+	// it was created later (ListCards' created_at DESC would cut the
+	// wrong end of a capped list).
+	older, _ := store.SaveCard(ctx, agent, "最久未复习", "a", "diary", "2026-08-17", "")
+	store.db.Exec(`UPDATE kb_cards SET due_at = ? WHERE id = ?`,
+		time.Now().UTC().Add(-72*time.Hour).Format(time.RFC3339), older)
+	queue, err := store.ListDueQueue(ctx, agent, 2)
+	if err != nil {
+		t.Fatalf("ListDueQueue: %v", err)
+	}
+	head := "none"
+	if len(queue) > 0 {
+		head = queue[0].ID
+	}
+	if len(queue) != 2 || queue[0].ID != older || queue[1].ID != dueID {
+		t.Fatalf("due queue order/cap: got %d cards head=%q, want [%s %s]",
+			len(queue), head, older, dueID)
+	}
+
 	// one review today → streak 1
 	if _, err := store.ReviewCard(ctx, agent, dueID, "remembered"); err != nil {
 		t.Fatalf("review: %v", err)

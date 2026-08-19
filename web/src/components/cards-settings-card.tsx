@@ -28,6 +28,7 @@ export function CardsSettingsCard() {
   const [enabled, setEnabled] = useState(false);
   const [cronTime, setCronTime] = useState("03:00");
   const [dailyLimit, setDailyLimit] = useState("10");
+  const [reviewLimit, setReviewLimit] = useState("20");
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushTime, setPushTime] = useState("09:00");
   const [pushChannel, setPushChannel] = useState("wechat");
@@ -42,6 +43,7 @@ export function CardsSettingsCard() {
           setEnabled(c.enabled ?? false);
           setCronTime(c.cronTime || "03:00");
           setDailyLimit(String(c.dailyLimit || 10));
+          setReviewLimit(String(c.reviewLimit || 20));
           setPushEnabled(c.pushEnabled ?? false);
           setPushTime(c.pushTime || "09:00");
           setPushChannel(c.pushChannel || "wechat");
@@ -58,13 +60,14 @@ export function CardsSettingsCard() {
         enabled,
         cronTime,
         dailyLimit: parseInt(dailyLimit, 10) || 10,
+        reviewLimit: parseInt(reviewLimit, 10) || 20,
         pushEnabled,
         pushTime,
         pushChannel,
       },
     });
     if (res?.error) throw new Error(res.error);
-  }, [agentId, enabled, cronTime, dailyLimit, pushEnabled, pushTime, pushChannel]);
+  }, [agentId, enabled, cronTime, dailyLimit, reviewLimit, pushEnabled, pushTime, pushChannel]);
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-5">
@@ -101,6 +104,18 @@ export function CardsSettingsCard() {
                 className="h-8 text-xs"
               />
               <p className="text-[11px] text-muted-foreground">{t("cards.settings.dailyLimitDesc")}</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">{t("cards.settings.reviewLimit")}</Label>
+              <Input
+                type="number"
+                min={1}
+                max={200}
+                value={reviewLimit}
+                onChange={(e) => setReviewLimit(e.target.value)}
+                className="h-8 text-xs"
+              />
+              <p className="text-[11px] text-muted-foreground">{t("cards.settings.reviewLimitDesc")}</p>
             </div>
           </div>
 

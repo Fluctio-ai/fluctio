@@ -1707,6 +1707,8 @@ export interface AgentCardsCfg {
   cronTime?: string;
   /** Max cards one nightly run may create. Default 10. */
   dailyLimit?: number;
+  /** Max due cards per review session / daily digest (oldest due first). Default 20. */
+  reviewLimit?: number;
   pushEnabled?: boolean;
   /** Daily digest push time "HH:MM" UTC+8. Default "09:00". */
   pushTime?: string;
@@ -1974,7 +1976,7 @@ export type KBCardStats = {
 };
 export async function listCards(
   agentId: string,
-  opts?: { filter?: string; source?: string; q?: string; limit?: number; offset?: number },
+  opts?: { filter?: string; source?: string; q?: string; limit?: number; offset?: number; queue?: boolean },
 ): Promise<KBCard[]> {
   const p = new URLSearchParams();
   if (opts?.filter) p.set("filter", opts.filter);
@@ -1982,6 +1984,7 @@ export async function listCards(
   if (opts?.q) p.set("q", opts.q);
   if (opts?.limit) p.set("limit", String(opts.limit));
   if (opts?.offset) p.set("offset", String(opts.offset));
+  if (opts?.queue) p.set("queue", "1");
   const qs = p.toString();
   const res = await apiFetch(`/api/agents/${agentId}/kb/cards${qs ? `?${qs}` : ""}`);
   if (!res.ok) return [];

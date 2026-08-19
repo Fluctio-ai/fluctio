@@ -902,6 +902,8 @@ const zhCN: Record<string, string> = {
   "cards.settings.genTime": "生成时间",
   "cards.settings.genTimeDesc": "每天此时间 (UTC+8) 从昨日的日记与 Wiki 生成卡片",
   "cards.settings.dailyLimit": "每日上限",
+  "cards.settings.reviewLimit": "每日复习上限",
+  "cards.settings.reviewLimitDesc": "一次复习最多走的到期卡数（最久未复习优先，其余顺延）。默认 20",
   "cards.settings.dailyLimitDesc": "单次生成最多创建的卡片数",
   "cards.settings.push": "IM 推送",
   "cards.settings.pushTime": "推送时间",

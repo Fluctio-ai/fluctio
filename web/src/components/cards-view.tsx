@@ -45,6 +45,7 @@ import {
   restoreCard,
   generateCards,
   getCardStats,
+  getAgentConfig,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
@@ -158,6 +159,19 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const loadStats = useCallback(async () => {
     if (!agentId) return;
     setStats(await getCardStats(agentId));
+  }, [agentId]);
+
+  // reviewLimit mirrors the deck's cap so the header CTA count matches
+  // what one session actually walks (leftover due cards roll forward).
+  const [reviewLimit, setReviewLimit] = useState(20);
+  useEffect(() => {
+    if (!agentId) return;
+    getAgentConfig(agentId)
+      .then((cfg) => {
+        const n = cfg?.cards?.reviewLimit ?? 0;
+        if (n > 0) setReviewLimit(n);
+      })
+      .catch(() => {});
   }, [agentId]);
 
   useEffect(() => { loadStats(); }, [loadStats]);
@@ -304,7 +318,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
         {stats && stats.due_today > 0 ? (
           <Button size="sm" className="h-8 text-xs" onClick={startReview}>
             <PlayIcon className="mr-1 size-3.5" />
-            {t("cards.reviewCta")} · {t("cards.reviewN", { n: stats.due_today })}
+            {t("cards.reviewCta")} · {t("cards.reviewN", { n: Math.min(stats.due_today, reviewLimit) })}
           </Button>
         ) : (
           <div className="flex items-center gap-2">

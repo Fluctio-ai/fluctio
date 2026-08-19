@@ -45,6 +45,21 @@ func (s *Server) handleKBListCards(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
+	// queue=1 → the review-session feed: most-overdue first, capped at
+	// limit (the agent's cards.reviewLimit, client-supplied). Distinct
+	// from filter=due, which pages the library view newest-first.
+	if q.Get("queue") == "1" {
+		cards, err := kbStore.ListDueQueue(r.Context(), agentID, limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if cards == nil {
+			cards = []kb.KBCard{}
+		}
+		writeJSON(w, http.StatusOK, cards)
+		return
+	}
 	cards, err := kbStore.ListCards(r.Context(), agentID, q.Get("filter"), q.Get("source"), q.Get("q"), limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

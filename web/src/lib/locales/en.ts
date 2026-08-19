@@ -902,6 +902,8 @@ const en: Record<string, string> = {
   "cards.settings.genTime": "Generation time",
   "cards.settings.genTimeDesc": "Generate cards from yesterday's diary + wiki daily at this time (UTC+8)",
   "cards.settings.dailyLimit": "Daily limit",
+  "cards.settings.reviewLimit": "Daily review cap",
+  "cards.settings.reviewLimitDesc": "Max due cards per review session (oldest due first, rest roll forward). Default 20",
   "cards.settings.dailyLimitDesc": "Max cards one nightly run may create",
   "cards.settings.push": "IM push",
   "cards.settings.pushTime": "Push time",

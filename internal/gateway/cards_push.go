@@ -74,7 +74,14 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 			continue
 		}
 		ks := kb.NewKBStore(dbs.DB(), dbs.Dialect())
-		due, err := ks.ListCards(ctx, ag.ID, "due", "", "", 50, 0)
+		// Same queue the web review session walks — capped by
+		// reviewLimit, most-overdue first — so the digest advertises
+		// exactly today's reviewable group, not the whole backlog.
+		reviewLimit := cfg.ReviewLimit
+		if reviewLimit < 1 {
+			reviewLimit = 20
+		}
+		due, err := ks.ListDueQueue(ctx, ag.ID, reviewLimit)
 		if err != nil {
 			slog.Warn("cards push: list due", "agent", ag.ID, "error", err)
 			continue

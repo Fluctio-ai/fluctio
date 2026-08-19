@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CalendarIcon, ExternalLinkIcon, FileTextIcon, Loader2Icon, XIcon } from "lucide-react";
-import { type KBCard, listCards, reviewCard } from "@/lib/api";
+import { type KBCard, getAgentConfig, listCards, reviewCard } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -71,12 +71,21 @@ export function CardDeck({
 
   useEffect(() => {
     let alive = true;
-    const opts = practice
-      ? { filter: "active", limit: 50 } // practice pool: everything in rotation
-      : { filter: "due", limit: 100 }; // scheduled set, oldest-due first
-    listCards(agentId, opts).then((cards) => {
-      if (alive && !closedRef.current) setQueue(practice ? cards : cards.reverse());
-    });
+    // (async iife: the due queue needs the agent's reviewLimit first, so
+    // one capped fetch replaces the old pull-everything-then-reverse.)
+    (async () => {
+      let limit = 20;
+      try {
+        const cfg = await getAgentConfig(agentId);
+        const n = cfg?.cards?.reviewLimit ?? 0;
+        if (n > 0) limit = n;
+      } catch { /* cfg read failed — default cap */ }
+      const opts = practice
+        ? { filter: "active", limit: 50 } // practice pool: everything in rotation
+        : { queue: true, limit }; // review feed: most-overdue first, capped
+      const cards = await listCards(agentId, opts);
+      if (alive && !closedRef.current) setQueue(cards);
+    })();
     return () => { alive = false; closedRef.current = true; };
   }, [agentId, practice]);
 

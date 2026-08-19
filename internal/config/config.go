@@ -841,6 +841,11 @@ type AgentCardsCfg struct {
 	// DailyLimit caps how many cards one nightly run may create. 0
 	// defaults to 10.
 	DailyLimit int `json:"dailyLimit,omitempty"`
+	// ReviewLimit caps how many due cards one review session (and the
+	// daily IM digest) walks — the most-overdue first. Keeps a backlog
+	// from turning one day's review into an endless slog; unreviewed
+	// cards stay due and roll forward. 0 defaults to 20.
+	ReviewLimit int `json:"reviewLimit,omitempty"`
 	// PushEnabled turns on the daily due-card push to IM.
 	PushEnabled bool `json:"pushEnabled,omitempty"`
 	// PushTime is the daily push time in "HH:MM" (UTC+8). Empty defaults

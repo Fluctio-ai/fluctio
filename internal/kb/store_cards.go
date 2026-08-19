@@ -211,6 +211,37 @@ func (s *KBStore) ListCards(ctx context.Context, agentID, filter, source, q stri
 	return out, nil
 }
 
+// ListDueQueue is the review-session feed: active cards due by end of
+// today (CST), most-overdue first, capped at limit. Distinct from
+// ListCards("due") — that one pages the library view newest-first, which
+// would truncate away exactly the oldest overdue cards a capped queue
+// should be serving first.
+func (s *KBStore) ListDueQueue(ctx context.Context, agentID string, limit int) ([]KBCard, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	bound := cardDayBound(time.Now()).UTC().Format(time.RFC3339)
+	rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT %s FROM kb_cards
+			WHERE agent_id = %s AND status = 'active' AND due_at != '' AND due_at <= %s
+			ORDER BY due_at ASC LIMIT %s`,
+			cardColumns, s.ph(1), s.ph(2), s.ph(3)),
+		agentID, bound, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list due queue: %w", err)
+	}
+	defer rows.Close()
+	var out []KBCard
+	for rows.Next() {
+		c, ok := scanCard(rows)
+		if !ok {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
 // CardStats computes the cards dashboard header: due-today count, status
 // counts, and the consecutive-day review streak. A day counts toward the
 // streak when the agent graded at least one card that CST day; the streak
