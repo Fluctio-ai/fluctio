@@ -100,11 +100,18 @@ func (r *Registry) routeFor(path string, op Operation) RouteTarget {
 	// Documents, an absolute /Users/<u>/... that's clearly NOT
 	// sandbox-internal). Fluctio internals must not be exposed through
 	// chat-facing file tools; operator maintenance should use host_exec.
+	//
+	// Host-scope paths additionally require a host-trusted caller
+	// (SetCallerHostTrusted — owner via web/api or a per-channel
+	// allowlisted admin). An IM guest referencing /Users/<operator>/.ssh
+	// must not punch out of the sandbox through this branch; without the
+	// gate the guest lands in RouteSandbox, where the path simply doesn't
+	// exist — the refusal leaks nothing.
 	if sandboxOK {
 		if isFluctioInternalPath(path) {
 			return RouteSandbox
 		}
-		if isExplicitHostScope(path) {
+		if r.callerHostTrusted && isExplicitHostScope(path) {
 			return RouteHostFS
 		}
 		return RouteSandbox

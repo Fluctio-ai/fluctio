@@ -2835,6 +2835,10 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// regular chatters (SOUL/IDENTITY/BOOTSTRAP/... leak as verbatim
 	// chat replies otherwise).
 	a.registry.SetCallerIsAdmin(a.singleUser || a.isAdminChatter(msg))
+	// Host-FS trust is stricter than identity-file trust: no singleUser
+	// short-circuit, or an anonymous IM chatter on a single-user install
+	// could read the operator's ~/.ssh via ~/Documents-style paths.
+	a.registry.SetCallerHostTrusted(a.isAdminChatter(msg))
 	slog.Info("diag: identity gate (msg)", "agent", a.agentID, "singleUser", a.singleUser, "isAdmin", a.isAdminChatter(msg), "channel", msg.Channel, "msgUserID", msg.UserID, "ownerUserID", a.ownerUserID)
 	// Plumb the persistent session_key for goal-scoped tools.
 	// SetSessionID above uses msg.ChatID (the channel-level chat
@@ -3911,6 +3915,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	}
 	a.bindSession(ctx, msg.Channel, msg.AccountID, msg.ChatID, sess.SessionKey(), msg.ProjectID)
 	a.registry.SetCallerIsAdmin(a.singleUser || a.isAdminChatter(msg))
+	a.registry.SetCallerHostTrusted(a.isAdminChatter(msg))
 	slog.Info("diag: identity gate (stream)", "agent", a.agentID, "singleUser", a.singleUser, "isAdmin", a.isAdminChatter(msg), "channel", msg.Channel, "msgUserID", msg.UserID, "ownerUserID", a.ownerUserID)
 	a.registry.SetGoalSessionKey(sess.SessionKey())
 	// Per-user file writes (USER.md / MEMORY.md) need to land in the

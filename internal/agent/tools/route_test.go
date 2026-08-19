@@ -38,11 +38,29 @@ func TestFluctioInternalPathsIncludeRootAndEnvHome(t *testing.T) {
 
 func TestRouteForDoesNotExposeFluctioInternalsViaHostFS(t *testing.T) {
 	r := &Registry{executor: fakeExecutor{}}
+	r.SetCallerHostTrusted(true)
 
 	if got := r.routeFor("/root/.fluctio/workspaces", OpList); got != RouteSandbox {
 		t.Fatalf("routeFor Fluctio internal path = %v, want RouteSandbox", got)
 	}
 	if got := r.routeFor("/Users/maxwell/Documents/report.txt", OpRead); got != RouteHostFS {
 		t.Fatalf("routeFor explicit host document = %v, want RouteHostFS", got)
+	}
+}
+
+// Host-scope paths are an operator-only reach: an untrusted chatter
+// (anonymous IM guest — note callerIsAdmin stays true on single-user
+// installs while host trust doesn't) referencing the operator's home
+// must stay inside the sandbox, where the path simply doesn't exist.
+func TestRouteForBlocksHostScopeForUntrustedCaller(t *testing.T) {
+	r := &Registry{executor: fakeExecutor{}}
+	r.SetCallerIsAdmin(true) // single-user loosening — must NOT grant host FS
+	r.SetCallerHostTrusted(false)
+
+	if got := r.routeFor("/Users/maxwell/Documents/report.txt", OpRead); got != RouteSandbox {
+		t.Fatalf("routeFor host document for untrusted caller = %v, want RouteSandbox", got)
+	}
+	if got := r.routeFor("/home/maxwell/.ssh/id_rsa", OpRead); got != RouteSandbox {
+		t.Fatalf("routeFor /home/.ssh for untrusted caller = %v, want RouteSandbox", got)
 	}
 }

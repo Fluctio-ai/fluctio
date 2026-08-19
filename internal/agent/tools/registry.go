@@ -302,6 +302,15 @@ type Registry struct {
 	// configuration. Without that fail-closed default, a missed wire
 	// silently makes every chatter an admin.
 	callerIsAdmin bool
+	// callerHostTrusted gates host-filesystem routing (RouteHostFS).
+	// Deliberately SEPARATE from callerIsAdmin: single-user installs set
+	// callerIsAdmin=true for every chatter so IM guests can edit identity
+	// files (a name given in conversation persists), but that must NOT
+	// extend to reading the operator's real ~/.ssh or /home/* — an
+	// anonymous IM chatter stays host-untrusted even on a single-user
+	// install. Set per-turn from agent.isAdminChatter(msg) WITHOUT the
+	// singleUser short-circuit.
+	callerHostTrusted bool
 	// envProvider + skillDirs cache the skill-env injection wiring set
 	// at agent boot via RegisterExecWithSkillEnv so a later
 	// SetExecutor (per-session) can re-register the sandboxed exec
@@ -543,6 +552,16 @@ func (r *Registry) SetSessionID(sessionID string) {
 // deny.
 func (r *Registry) SetCallerIsAdmin(v bool) {
 	r.callerIsAdmin = v
+}
+
+// SetCallerHostTrusted records whether the chatter driving this turn may
+// reach the operator's host filesystem via explicit host-scope paths
+// (~/Documents/…, /Users/<u>/…). Set per-turn from isAdminChatter(msg)
+// WITHOUT the singleUser loosening that SetCallerIsAdmin gets — host-disk
+// access is a strictly stronger grant than identity-file access. See the
+// callerHostTrusted field comment for the trust-model split.
+func (r *Registry) SetCallerHostTrusted(v bool) {
+	r.callerHostTrusted = v
 }
 
 // SetProjectID scopes the registry's workspace.Store calls to a project
