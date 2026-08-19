@@ -8,6 +8,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -224,7 +225,17 @@ func resolveWikiProvider(st store.Store, agentID, modelOverride string) (provide
 	if !ok || p.APIKey == "" {
 		return nil, ""
 	}
-	return provider.NewProvider(p.APIKey, p.APIBase, p.APIType), model
+	// Wrap for PII scrubbing: the wiki / cards / diary pipelines this
+	// resolver feeds all consume raw conversation-derived content, and
+	// they run outside the interactive loop's scrub point. The scoped
+	// privacy row decides; missing row = off (PrivacyCfg zero value).
+	var priv config.PrivacyCfg
+	_ = scope.SettingInto(ctx, st, "privacy", ownerUserID, agentID, &priv)
+	return privacy.WrapProvider(
+		provider.NewProvider(p.APIKey, p.APIBase, p.APIType),
+		privacy.Options{Entropy: priv.PIIScrubbing.Entropy},
+		priv.PIIScrubbing.Enabled,
+	), model
 }
 
 // idleSummaryTicker is the background sweep that summarizes sessions the

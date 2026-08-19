@@ -447,11 +447,13 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					return 0.45
 				}, kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
 					return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
-						// Use ag.provider (the agent's own provider from providerForAgent,
-						// e.g. its ccw/glm-5.2 instance) — NOT the buildAgent `prov` arg,
+						// Use ag's own provider (from providerForAgent, e.g. its
+						// ccw/glm-5.2 instance) — NOT the buildAgent `prov` arg,
 						// which is the shared default provider and doesn't recognize a
 						// per-agent model like glm-5.2 (returns "Unsupported model").
-						resp, err := ag.provider.Chat(ctx, msgs, nil, rc.Model, 8192, 0.3)
+						// bgProvider: insights consume raw article/conversation
+						// content, so they must honor the PII scrubbing switch.
+						resp, err := ag.bgProvider().Chat(ctx, msgs, nil, rc.Model, 8192, 0.3)
 						if err != nil {
 							return "", err
 						}

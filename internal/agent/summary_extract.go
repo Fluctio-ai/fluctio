@@ -361,7 +361,7 @@ func (a *Agent) summarizeIdleSessions(ctx context.Context, idleAfter time.Durati
 		slog.Info("idle summary: summarizing quiet session",
 			"agent", a.agentID, "session", s.SessionKey,
 			"messages", s.MessageCount, "idle_for", time.Since(s.UpdatedAt).Round(time.Minute))
-		persistConversationSummary(ctx, db, a.provider, a.summaryModelFor(), a.embedder,
+		persistConversationSummary(ctx, db, a.bgProvider(), a.summaryModelFor(), a.embedder,
 			a.ownerUserID, a.agentID, s.SessionKey)
 	}
 }
@@ -604,7 +604,7 @@ func (a *Agent) maybeExtractSummary(sess *session.Session, trigger string) {
 	owner := a.ownerUserID
 	agentID := a.agentID
 	sessionKey := sess.SessionKey()
-	prov := a.provider
+	prov := a.bgProvider()
 	model := a.summaryModelFor()
 	emb := a.embedder
 

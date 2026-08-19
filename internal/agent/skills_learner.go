@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/skills"
 )
@@ -35,6 +36,8 @@ type SkillsLearner struct {
 	model        string
 	minToolCalls int      // minimum tool calls to consider extracting (default: 3)
 	skillDirs    []string // directories to search for the skill-learner skill
+	piiScrub     bool     // PII-scrub the extraction transcript before it leaves
+	piiEntropy   bool
 }
 
 // NewSkillsLearner creates a new SkillsLearner. agentHome is the directory
@@ -50,6 +53,14 @@ func NewSkillsLearner(workspace, agentHome string, p provider.Provider, model st
 		minToolCalls: 3,
 		skillDirs:    skillDirs,
 	}
+}
+
+// SetPIIScrub arms the PII scrubbing for the extraction LLM call. The
+// transcript embeds chatter conversation content, so without this the
+// privacy.piiScrubbing switch was bypassed by skill extraction.
+func (sl *SkillsLearner) SetPIIScrub(enabled, entropy bool) {
+	sl.piiScrub = enabled
+	sl.piiEntropy = entropy
 }
 
 type extractedSkill struct {
@@ -201,6 +212,12 @@ func (sl *SkillsLearner) extractSkill(ctx context.Context, messages []provider.M
 	extractMsgs := []provider.Message{
 		{Role: "system", Content: prompt + "\n\nOutput ONLY the JSON, no markdown fences."},
 		{Role: "user", Content: sb.String()},
+	}
+
+	// The transcript embeds chatter conversation content — scrub it the
+	// same way the interactive loop does when the switch is on.
+	if sl.piiScrub {
+		extractMsgs = privacy.ScrubMessages(extractMsgs, privacy.Options{Entropy: sl.piiEntropy})
 	}
 
 	resp, err := sl.provider.Chat(provider.WithJSONMode(provider.WithNoThinking(ctx)), extractMsgs, nil, sl.model, 1024, 0.3)

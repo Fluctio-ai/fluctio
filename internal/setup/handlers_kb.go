@@ -20,11 +20,26 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/wiki"
 )
+
+// scrubbedAgentProvider wraps prov so insight/merge LLM calls honor the
+// agent's scoped privacy.piiScrubbing switch — these pipelines consume
+// raw article and conversation content outside the interactive loop's
+// scrub point. Unwrapped (no-op) when scrubbing is off or the store is
+// unavailable.
+func (s *Server) scrubbedAgentProvider(r *http.Request, agentID string, prov provider.Provider) provider.Provider {
+	if s.dataStore == nil {
+		return prov
+	}
+	var priv config.PrivacyCfg
+	_ = scope.SettingInto(r.Context(), s.dataStore, "privacy", "", agentID, &priv)
+	return privacy.WrapProvider(prov, privacy.Options{Entropy: priv.PIIScrubbing.Entropy}, priv.PIIScrubbing.Enabled)
+}
 
 // handleListKBSources lists knowledge base sources for an agent.
 func (s *Server) handleListKBSources(w http.ResponseWriter, r *http.Request) {
@@ -627,6 +642,7 @@ func (s *Server) handleKBGenerateInsights(w http.ResponseWriter, r *http.Request
 		http.Error(w, "no LLM provider configured for this agent", http.StatusServiceUnavailable)
 		return
 	}
+	prov = s.scrubbedAgentProvider(r, agentID, prov)
 	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
 	defer cancel()
 	invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
@@ -724,6 +740,7 @@ func (s *Server) handleKBResolvePending(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "no LLM provider configured for merge", http.StatusServiceUnavailable)
 			return
 		}
+		prov = s.scrubbedAgentProvider(r, agentID, prov)
 		timeoutCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 		defer cancel()
 		invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {

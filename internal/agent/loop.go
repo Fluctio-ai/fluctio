@@ -426,6 +426,16 @@ func summarizeMCPServers(servers map[string]config.MCPServerConfig, sessionDir s
 }
 
 // NewAgent creates a new Agent from a resolved config.
+// bgProvider returns a provider whose outgoing messages are PII-scrubbed
+// when privacy scrubbing is enabled. For background LLM pipelines
+// (compaction, topic summaries, auto-persist, insights) that consume raw
+// conversation content outside the interactive loop's scrub point —
+// without it they silently bypassed the privacy.piiScrubbing switch.
+// Returns the raw provider when scrubbing is off.
+func (a *Agent) bgProvider() provider.Provider {
+	return privacy.WrapProvider(a.provider, privacy.Options{Entropy: a.piiEntropyEnabled}, a.piiScrubEnabled)
+}
+
 func NewAgent(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus, homeDir string) *Agent {
 	return NewAgentWithSkillsCfg(rc, prov, mb, homeDir, config.SkillsCfg{})
 }
@@ -436,6 +446,9 @@ func NewAgentWithFullCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bu
 	ag.memoryCfg = fullCfg.Memory
 	ag.piiScrubEnabled = fullCfg.Privacy.PIIScrubbing.Enabled
 	ag.piiEntropyEnabled = fullCfg.Privacy.PIIScrubbing.Entropy
+	if ag.skillsLearner != nil {
+		ag.skillsLearner.SetPIIScrub(ag.piiScrubEnabled, ag.piiEntropyEnabled)
+	}
 	// splitReplies is plumbed inside NewAgentWithSkillsCfg so foreign-
 	// attached agents also pick up the toggle; don't re-stamp here.
 
@@ -2653,7 +2666,7 @@ func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.
 	// so compression actually removes enough tokens to clear the PTL.
 	threshold := a.compactionThresholdNow("")
 	forceThreshold := max(threshold/2, 1000)
-	compactResult, cerr := CompactMessages(history, a.homePath, a.provider, a.model, forceThreshold)
+	compactResult, cerr := CompactMessages(history, a.homePath, a.bgProvider(), a.model, forceThreshold)
 	if cerr != nil || compactResult == nil || !compactResult.Pruned {
 		slog.Warn("PTL recovery: compaction did not reduce history",
 			"agent", a.name, "error", cerr)
@@ -2908,7 +2921,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			threshold -= pt
 		}
 	}
-	compactResult, err := CompactMessages(sessionMsgs, a.homePath, a.provider, a.model, threshold)
+	compactResult, err := CompactMessages(sessionMsgs, a.homePath, a.bgProvider(), a.model, threshold)
 	if err != nil {
 		slog.Warn("compaction error", "agent", a.name, "error", err)
 	}
@@ -3810,7 +3823,7 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 			model = a.model
 		}
 		slog.Info("auto-persist firing", "agent", a.name, "model", model, "turns", turns, "messages", len(messages))
-		go AutoPersistMemory(ctx, chatterMem, a.provider, model, messages)
+		go AutoPersistMemory(ctx, chatterMem, a.bgProvider(), model, messages)
 	}
 
 	// Auto-title: within the AfterRounds..AfterRounds+MaxTries window,
@@ -3956,7 +3969,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			threshold -= pt
 		}
 	}
-	compactResult, err := CompactMessages(sessionMsgs, a.homePath, a.provider, a.model, threshold)
+	compactResult, err := CompactMessages(sessionMsgs, a.homePath, a.bgProvider(), a.model, threshold)
 	if err != nil {
 		slog.Warn("compaction error", "agent", a.name, "error", err)
 	}
