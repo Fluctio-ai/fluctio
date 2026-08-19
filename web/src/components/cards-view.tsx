@@ -552,12 +552,15 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                       · {t("cards.nextDue", { date: new Date(selected.due_at).toLocaleDateString() })}
                     </span>
                   )}
+                  {/* No reviews yet → fold into the header line instead of
+                      burning a second line for three words. */}
+                  {!detailLoading && reviews.length === 0 && (
+                    <span className="ml-2 font-normal">· {t("cards.noReviews")}</span>
+                  )}
                 </p>
                 {detailLoading ? (
                   <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
-                ) : reviews.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">{t("cards.noReviews")}</p>
-                ) : (
+                ) : reviews.length === 0 ? null : (
                   <div className="space-y-1">
                     {reviews.map((rv) => (
                       <div key={rv.id} className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs">

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CalendarIcon, Loader2Icon, XIcon } from "lucide-react";
+import { CalendarIcon, ExternalLinkIcon, FileTextIcon, Loader2Icon, XIcon } from "lucide-react";
 import { type KBCard, listCards, reviewCard } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -294,11 +294,34 @@ export function CardDeck({
                     {card.source_excerpt && (
                       <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">{card.source_excerpt}</p>
                     )}
-                    {card.source_type === "diary" && card.source_ref && (
-                      <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <CalendarIcon className="size-3" />
-                        {t("cards.fromDiary", { date: card.source_ref })}
-                      </p>
+                    {/* Source deep link — new tab so the review session
+                        stays mounted underneath. Pointer handlers stop
+                        propagation or a tap on the link would flip the
+                        card before the click navigates. */}
+                    {(card.source_type === "diary" || card.source_type === "wiki") && card.source_ref && (
+                      <a
+                        href={
+                          card.source_type === "diary"
+                            ? `/agents/${agentId}/knowledge/diary/?date=${encodeURIComponent(card.source_ref)}`
+                            : `/agents/${agentId}/wiki/?page=${encodeURIComponent(card.source_ref)}`
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onPointerUp={(e) => e.stopPropagation()}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {card.source_type === "diary" ? (
+                          <CalendarIcon className="size-3" />
+                        ) : (
+                          <FileTextIcon className="size-3" />
+                        )}
+                        {card.source_type === "diary"
+                          ? t("cards.fromDiary", { date: card.source_ref })
+                          : t("cards.viewWiki")}
+                        <ExternalLinkIcon className="size-3" />
+                      </a>
                     )}
                   </div>
                 ) : (

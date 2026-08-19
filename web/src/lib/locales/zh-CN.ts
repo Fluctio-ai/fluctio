@@ -870,6 +870,7 @@ const zhCN: Record<string, string> = {
   "cards.excerpt": "原文摘录",
   "cards.from": "来源：",
   "cards.fromDiary": "{date} 的日记",
+  "cards.viewWiki": "查看 Wiki 原文",
   "cards.timeline": "复习时间线",
   "cards.nextDue": "下次 {date} 到期",
   "cards.noReviews": "尚未复习过",

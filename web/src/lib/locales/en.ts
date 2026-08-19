@@ -870,6 +870,7 @@ const en: Record<string, string> = {
   "cards.excerpt": "Source excerpt",
   "cards.from": "From:",
   "cards.fromDiary": "diary of {date}",
+  "cards.viewWiki": "Open wiki page",
   "cards.timeline": "Review timeline",
   "cards.nextDue": "next due {date}",
   "cards.noReviews": "Not reviewed yet",
