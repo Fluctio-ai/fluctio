@@ -21,6 +21,9 @@ func (s *Server) loginAllowed(ip, login string) bool {
 	cutoff := time.Now().Add(-loginWindow)
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
+	if s.loginFails == nil {
+		s.loginFails = map[string][]time.Time{}
+	}
 	ts := s.loginFails[key]
 	start := 0
 	for start < len(ts) && ts[start].Before(cutoff) {
