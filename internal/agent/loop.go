@@ -4938,6 +4938,8 @@ func (a *Agent) ReloadWorkspaceFiles() {
 // downloadMediaURL fetches a media URL (图床, e.g. image_gen output) with a
 // timeout and returns the bytes. Used by fetchImageBytes for inbound image
 // attachments (data: URLs are base64-decoded separately in fetchImageBytes).
+// SSRF-guarded client + the attachment size cap: the URL comes from message
+// content / tool output, either of which an attacker can influence.
 func downloadMediaURL(url string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -4945,7 +4947,7 @@ func downloadMediaURL(url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := attachmentFetchClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -4953,7 +4955,7 @@ func downloadMediaURL(url string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return io.ReadAll(resp.Body)
+	return io.ReadAll(io.LimitReader(resp.Body, maxAttachmentBytes+1))
 }
 
 // mcpSafeName mirrors mcp.prefixToolName's server-name sanitization so the

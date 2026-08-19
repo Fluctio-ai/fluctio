@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 )
 
 // maxAttachmentBytes caps a single attachment regardless of whether it
@@ -28,6 +30,11 @@ const maxAttachmentBytes = 25 * 1024 * 1024
 // 96 is roughly the longest a filename can be before terminals start
 // wrapping in chat bubbles, and well clear of any path-length limits.
 const maxAttachmentNameLen = 96
+
+// attachmentFetchClient applies the shared SSRF dial guards — attachment
+// URLs are chatter-supplied, so internal targets must be unreachable.
+// See internal/httpclient/safefetch.go.
+var attachmentFetchClient = httpclient.SafeClient(0)
 
 // Attachment is one item the caller wants materialized into /workspace
 // for the current turn. URL is required (data URL or http(s) URL); Name
@@ -199,7 +206,7 @@ func decodeAttachment(ctx context.Context, u string) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := attachmentFetchClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("fetch: %w", err)
 	}

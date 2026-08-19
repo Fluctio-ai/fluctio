@@ -44,6 +44,10 @@ func TestStripHTMLToText(t *testing.T) {
 // the article text is returned with paragraph structure intact (newlines
 // between paragraphs, not one fused blob).
 func TestFetchURLContentExtractsArticle(t *testing.T) {
+	// kbFetchClient applies the SSRF dial guards, which block the
+	// 127.0.0.1 loopback httptest server — opt into the documented
+	// loopback escape hatch for this test.
+	t.Setenv("FLUCTIO_ALLOW_UNSAFE_LOOPBACK_FETCH", "1")
 	const page = `<!DOCTYPE html><html><head><title>Test Article</title></head><body>
 <nav>Home About Contact Login</nav>
 <article>

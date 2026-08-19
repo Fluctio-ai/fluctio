@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 	webfetchprovider "github.com/fluctio-ai/fluctio/internal/toolproviders/webfetch"
 )
@@ -26,81 +26,10 @@ const (
 	fetchUserAgent = "Fluctio/1.0 (AI Agent Web Fetcher)"
 )
 
-// safeFetchClient is an http.Client whose dialer rejects private,
-// loopback, link-local, multicast, and CGNAT addresses — the SSRF
-// defense for web_fetch. The check runs at DIAL time, after DNS has
-// resolved, so a hostname that points at 169.254.169.254 (cloud
-// metadata) or a DNS-rebinding trick still gets stopped. We dial the
-// resolved IP directly instead of letting net.Dial re-resolve, to
-// close the TOCTOU between our check and the actual connection.
-var safeFetchClient = &http.Client{
-	Timeout: fetchTimeout,
-	Transport: &http.Transport{
-		DialContext:           safeDialContext,
-		ForceAttemptHTTP2:     true,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
-		IdleConnTimeout:       60 * time.Second,
-	},
-	// Cap redirect chains so an attacker can't follow a public URL into
-	// an internal one. Each redirect target also goes through
-	// safeDialContext, but bounded depth keeps the request finite.
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return fmt.Errorf("too many redirects")
-		}
-		return nil
-	},
-}
-
-func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		return nil, err
-	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("no addresses for %s", host)
-	}
-	for _, ip := range ips {
-		if isBlockedAddr(ip.IP) {
-			return nil, fmt.Errorf("blocked address %s for host %s", ip.IP, host)
-		}
-	}
-	// Dial the first IP we already validated; passing host:port back to
-	// net.Dialer would do a second resolution and an attacker controlling
-	// authoritative DNS could swap in 169.254.169.254 between our check
-	// and the dial.
-	d := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	return d.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
-}
-
-func isBlockedAddr(ip net.IP) bool {
-	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
-		return true
-	}
-	if ip.IsPrivate() { // 10/8, 172.16/12, 192.168/16, fc00::/7
-		return true
-	}
-	if ip4 := ip.To4(); ip4 != nil {
-		// 100.64.0.0/10 — CGNAT, can route to internal infra at some providers
-		if ip4[0] == 100 && ip4[1]&0xc0 == 0x40 {
-			return true
-		}
-		// 169.254/16 covered by IsLinkLocalUnicast, but AWS/GCP metadata
-		// uses 169.254.169.254 specifically; spell it out as a guard for
-		// readers and as belt-and-suspenders if a future Go release ever
-		// narrows IsLinkLocalUnicast.
-		if ip4[0] == 169 && ip4[1] == 254 {
-			return true
-		}
-	}
-	return false
-}
+// safeFetchClient applies the shared SSRF dial guards (private /
+// loopback / link-local / CGNAT blocked at dial time, redirects
+// re-validated). See internal/httpclient/safefetch.go.
+var safeFetchClient = httpclient.SafeClient(fetchTimeout)
 
 func init() {
 	// Register will be called from registerWebFetch

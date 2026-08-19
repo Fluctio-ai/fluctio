@@ -23,6 +23,11 @@ func (Direct) CredentialFree() bool { return true }
 
 const directTimeout = 30 * time.Second
 
+// directFetchClient applies the shared SSRF dial guards — the chain's
+// URL comes from the model, which can be steered by chatter content, so
+// internal targets must be unreachable. See internal/httpclient/safefetch.go.
+var directFetchClient = httpclient.SafeClient(0)
+
 func (d *Direct) Execute(ctx context.Context, req toolproviders.Request) (toolproviders.Response, error) {
 	a, err := parseArgs(req.Args)
 	if err != nil {
@@ -37,7 +42,7 @@ func (d *Direct) Execute(ctx context.Context, req toolproviders.Request) (toolpr
 	}
 	httpReq.Header.Set("User-Agent", httpclient.UserAgent())
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := directFetchClient.Do(httpReq)
 	if err != nil {
 		return toolproviders.Response{}, toolproviders.Retry(fmt.Errorf("direct fetch: %w", err))
 	}

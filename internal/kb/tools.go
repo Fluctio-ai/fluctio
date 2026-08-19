@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -766,22 +765,11 @@ var (
 	newlineRunRe    = regexp.MustCompile(`\n{3,}`)
 )
 
-var kbFetchClient = &http.Client{
-	Timeout: 30 * time.Second,
-	Transport: httpclient.Wrap(&http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			d := &net.Dialer{Timeout: 10 * time.Second}
-			return d.DialContext(ctx, network, addr)
-		},
-		ResponseHeaderTimeout: 20 * time.Second,
-	}),
-	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return fmt.Errorf("too many redirects")
-		}
-		return nil
-	},
-}
+// kbFetchClient applies the shared SSRF dial guards — URL ingestion /
+// bookmark fetches take chatter- or LLM-supplied URLs, so loopback,
+// private, CGNAT, and cloud-metadata targets must be unreachable, and
+// every redirect hop re-validates. See internal/httpclient/safefetch.go.
+var kbFetchClient = httpclient.SafeClient(30 * time.Second)
 
 func FetchURLContent(ctx context.Context, rawURL string) (title, body string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
