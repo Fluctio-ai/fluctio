@@ -473,6 +473,40 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		v.APIKey = maskAPIKey(v.APIKey)
 		masked.Providers[k] = v
 	}
+	// Channels / toolProviders / hooks hold live credentials too (IM bot
+	// tokens, QQ app secrets, webhook bearer token) — same treatment as
+	// Providers. None of these namespaces round-trip through POST /api/config
+	// (each has a dedicated editor: the agent channels page, /api/tools, the
+	// config file), so masked values shown here can't be written back over
+	// stored secrets. MCPServers headers are intentionally NOT masked yet:
+	// the MCP editor pre-fills its form from this blob and saves through
+	// updateAgent, which would persist the mask.
+	masked.ToolProviders = make(map[string]config.ToolProviderCfg, len(cfg.ToolProviders))
+	for k, v := range cfg.ToolProviders {
+		v.APIKey = maskAPIKey(v.APIKey)
+		masked.ToolProviders[k] = v
+	}
+	masked.Hooks = cfg.Hooks
+	masked.Hooks.Token = maskAPIKey(cfg.Hooks.Token)
+	if len(cfg.Channels) > 0 {
+		mc := make(map[string]config.ChannelConfig, len(cfg.Channels))
+		for k, v := range cfg.Channels {
+			v.BotToken = maskAPIKey(v.BotToken)
+			v.AppToken = maskAPIKey(v.AppToken)
+			if len(v.Accounts) > 0 {
+				ac := make(map[string]config.AccountConfig, len(v.Accounts))
+				for ak, av := range v.Accounts {
+					av.BotToken = maskAPIKey(av.BotToken)
+					av.ClientSecret = maskAPIKey(av.ClientSecret)
+					av.EncryptKey = maskAPIKey(av.EncryptKey)
+					ac[ak] = av
+				}
+				v.Accounts = ac
+			}
+			mc[k] = v
+		}
+		masked.Channels = mc
+	}
 	if len(cfg.Skills.Entries) > 0 {
 		me := make(map[string]config.SkillEntryCfg, len(cfg.Skills.Entries))
 		for k, v := range cfg.Skills.Entries {
@@ -652,7 +686,21 @@ func (s *Server) handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
 		return
 	}
-	jsonResponse(w, http.StatusOK, runProviderTest(r.Context(), req))
+	// The route is registered with optionalAuth so the setup wizard can
+	// test a provider before the first account exists. Once any account
+	// does, an anonymous caller must not use this endpoint as an SSRF
+	// oracle (attacker-chosen apiBase + upstream-body echo) — require
+	// auth from then on. Unauthenticated callers that do pass the
+	// onboarding gate also lose the body echo (see runProviderTest);
+	// status-code-only feedback can't exfiltrate internal content.
+	_, authed := auth.FromContext(r.Context())
+	if !authed && s.accounts != nil {
+		if count, cerr := s.accounts.Count(r.Context()); cerr == nil && count > 0 {
+			jsonResponse(w, http.StatusForbidden, map[string]any{"ok": false, "error": "authentication required"})
+			return
+		}
+	}
+	jsonResponse(w, http.StatusOK, runProviderTest(r.Context(), req, authed))
 }
 
 // handleBuiltinModels returns the merged model metadata table (builtin +
@@ -778,7 +826,7 @@ func (s *Server) handleTestStoredProvider(w http.ResponseWriter, r *http.Request
 		Model:    body.Model,
 		APIType:  apiType,
 		AuthType: authType,
-	}))
+	}, true))
 }
 
 // runProviderTest issues a lightweight chat completion against the
@@ -792,7 +840,7 @@ func (s *Server) handleTestStoredProvider(w http.ResponseWriter, r *http.Request
 // A bare 2xx check there reports green for a URL that the runtime will
 // later 404 on. So after the request we also require the response to
 // look like a real Messages / ChatCompletion object.
-func runProviderTest(ctx context.Context, req testProviderRequest) map[string]any {
+func runProviderTest(ctx context.Context, req testProviderRequest, authed bool) map[string]any {
 	base := provider.NormalizeAPIBase(req.APIBase, req.APIType)
 	var testURL string
 	var payload string
@@ -827,12 +875,24 @@ func runProviderTest(ctx context.Context, req testProviderRequest) map[string]an
 	}
 
 	if statusCode < 200 || statusCode >= 300 {
+		// Body echo is an authenticated-only convenience — for the
+		// unauthenticated onboarding path it's the exfil channel of the
+		// SSRF probe, so status-code-only there.
+		detail := truncate(strings.TrimSpace(string(respBody)), 240)
+		if !authed {
+			detail = ""
+		}
 		return map[string]any{
 			"ok":    false,
-			"error": fmt.Sprintf("HTTP %d: %s", statusCode, truncate(strings.TrimSpace(string(respBody)), 240)),
+			"error": fmt.Sprintf("HTTP %d: %s", statusCode, detail),
 		}
 	}
 	if err := validateProviderTestBody(req.APIType, respBody); err != nil {
+		if !authed {
+			// validateProviderTestBody's "not JSON" branch echoes body
+			// content — same exfil channel as above.
+			err = fmt.Errorf("response did not validate as a chat completion")
+		}
 		return map[string]any{"ok": false, "error": err.Error()}
 	}
 	return map[string]any{"ok": true}

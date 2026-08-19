@@ -41,7 +41,7 @@ func TestRunProviderTestRetriesMaxCompletionTokens(t *testing.T) {
 		APIKey:  "test-key",
 		Model:   "gpt-5.5",
 		APIType: "openai-chat",
-	})
+	}, true)
 	if ok, _ := got["ok"].(bool); !ok {
 		t.Fatalf("runProviderTest ok = false, got %#v", got)
 	}
