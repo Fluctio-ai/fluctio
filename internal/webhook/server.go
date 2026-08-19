@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -78,26 +79,41 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fail-closed: hooks enabled but token unset means the operator
+	// hasn't finished configuring — an unauthenticated ingress on a
+	// public port is worse than a broken integration, so refuse every
+	// request until a token exists (same posture as the feishu/line
+	// signature checks).
+	if s.token == "" {
+		slog.Error("webhook: rejecting request — hooks.enabled but no token configured")
+		writeJSON(w, http.StatusUnauthorized, WebhookResponse{Error: "webhook token not configured"})
+		return
+	}
+
 	// Validate bearer token and optionally resolve to a user ID.
+	// isAdminToken marks the shared admin/local token; per-user tokens
+	// (cloud mode) resolve through userLookup instead.
 	var ownerUserID string
 	auth := r.Header.Get("Authorization")
 	token := strings.TrimPrefix(auth, "Bearer ")
-	if s.token != "" {
-		if token == s.token {
-			// Admin / local-mode token matches.
-		} else if s.userLookup != nil {
-			if uid, ok := s.userLookup.LookupByToken(token); ok {
-				ownerUserID = uid
-			} else {
-				writeJSON(w, http.StatusUnauthorized, WebhookResponse{Error: "unauthorized"})
-				return
-			}
+	isAdminToken := subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) == 1
+	if isAdminToken {
+		// Admin / local-mode token matches.
+	} else if s.userLookup != nil {
+		if uid, ok := s.userLookup.LookupByToken(token); ok {
+			ownerUserID = uid
 		} else {
 			writeJSON(w, http.StatusUnauthorized, WebhookResponse{Error: "unauthorized"})
 			return
 		}
+	} else {
+		writeJSON(w, http.StatusUnauthorized, WebhookResponse{Error: "unauthorized"})
+		return
 	}
 
+	// Bounded body: the endpoint is reachable pre-auth, so an endless
+	// POST must not balloon memory.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req WebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, WebhookResponse{Error: "invalid request body"})
@@ -122,8 +138,11 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		chatID = "webhook-default"
 	}
 
-	// Prefer explicit userId in request body, then token-derived.
-	if req.UserID != "" {
+	// An explicit userId in the body routes to that user's agent — but
+	// ONLY for the admin token. A per-user token already resolved to its
+	// own (unprivileged) identity; letting the body override it would be
+	// impersonation.
+	if req.UserID != "" && isAdminToken {
 		ownerUserID = req.UserID
 	}
 
@@ -145,7 +164,9 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	reply, err := s.handler.HandleMessage(r.Context(), req.AgentID, msg)
 	if err != nil {
 		slog.Error("webhook handler error", "agent", req.AgentID, "error", err)
-		writeJSON(w, http.StatusInternalServerError, WebhookResponse{Error: err.Error()})
+		// Details (store paths, driver internals) go to the log, not the
+		// unauthenticated caller.
+		writeJSON(w, http.StatusInternalServerError, WebhookResponse{Error: "internal error"})
 		return
 	}
 
