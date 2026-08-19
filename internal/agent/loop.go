@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/codeany-ai/open-agent-sdk-go/costtracker"
@@ -141,8 +142,12 @@ type Agent struct {
 	// uploaded post-boot or on a sibling replica become visible here.
 	workspaceStore workspace.Store
 	skillsLearner  *SkillsLearner
-	turnCount      int
-	engine         *sdkEngine
+	// turnCount is atomic: taskqueue serializes per chat but the global
+	// maxConcurrent lets turns on different chats of the SAME agent run
+	// in parallel — runPostTurn's increment and the auto-persist gate's
+	// read would otherwise be a data race.
+	turnCount atomic.Int64
+	engine    *sdkEngine
 	costTracker    *costtracker.Tracker
 	agentID        string
 	// meter is the admin-level token meter. Non-nil only when the
@@ -3724,7 +3729,7 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 	if chatterMem == nil {
 		chatterMem = a.memory
 	}
-	a.turnCount++
+	a.turnCount.Add(1)
 
 	// Index user/assistant messages in FTS. Skip runtime-injected
 	// messages (e.g. goal_context continuations) — they're synthetic
@@ -3745,7 +3750,7 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 		AgentName:      a.name,
 		Point:          PostTurn,
 		Messages:       messages,
-		TurnCount:      a.turnCount,
+		TurnCount:      int(a.turnCount.Load()),
 		ToolCallCount:  toolCallCount,
 		Workspace:      a.homePath,
 		UserID:         a.ownerUserID,
@@ -3785,7 +3790,7 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 	// threading a session_key into runPostTurn just to re-count user
 	// messages from the DB.
 	willFire := false
-	turns := a.turnCount
+	turns := int(a.turnCount.Load())
 	if a.memoryCfg.AutoPersist.Enabled && a.memoryCfg.AutoPersist.EveryNTurns > 0 {
 		willFire = turns > 0 && turns%a.memoryCfg.AutoPersist.EveryNTurns == 0
 	}

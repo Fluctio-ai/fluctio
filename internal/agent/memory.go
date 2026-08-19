@@ -291,6 +291,15 @@ func (m *Memory) LoadUserFile() string {
 // AutoPersistMemory uses an LLM to extract facts from recent messages and
 // append them to MEMORY.md and USER.md. Called every N turns.
 func AutoPersistMemory(ctx context.Context, mem *Memory, prov provider.Provider, model string, messages []provider.Message) {
+	// Detach from the turn's lifecycle: every call site launches this as a
+	// fire-and-forget goroutine from runPostTurn, and both parent paths get
+	// cancelled within milliseconds of that — the taskqueue's WithTimeout
+	// has `defer cancel()` on handler return, and the web SSE handler's
+	// `defer cancel()` fires right after forwarding the final `done` event.
+	// WithoutCancel keeps the extract LLM call alive; the 3-minute cap
+	// bounds a stuck call since no parent deadline remains.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+	defer cancel()
 	// Build a summary of recent messages for the LLM
 	var sb strings.Builder
 	// Only look at last 20 messages to keep prompt small
