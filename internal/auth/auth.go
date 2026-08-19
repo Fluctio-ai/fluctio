@@ -133,8 +133,9 @@ func NewResolver(st store.Store) (*Resolver, error) {
 }
 
 // IssueSession creates a web session for userID and returns the cookie.
-// Caller writes the cookie to the response.
-func (r *Resolver) IssueSession(ctx context.Context, userID string) (*http.Cookie, error) {
+// Caller writes the cookie to the response. secure marks the cookie
+// Secure (TLS-only) — pass whether the login request arrived over HTTPS.
+func (r *Resolver) IssueSession(ctx context.Context, userID string, secure bool) (*http.Cookie, error) {
 	sid, err := newSID()
 	if err != nil {
 		return nil, err
@@ -155,8 +156,25 @@ func (r *Resolver) IssueSession(ctx context.Context, userID string) (*http.Cooki
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Expires:  rec.ExpiresAt,
+		// Only over TLS: plain-HTTP local logins must not set it or the
+		// browser refuses to store the cookie at all.
+		Secure:  secure,
+		Expires: rec.ExpiresAt,
 	}, nil
+}
+
+// RevokeUserSessions deletes every web session for userID except keepSID
+// (the caller's current cookie; "" drops all). Used after a password
+// change so sessions minted under the old credential die with it.
+func (r *Resolver) RevokeUserSessions(ctx context.Context, userID, keepSID string) error {
+	type byUserRevoker interface {
+		DeleteWebSessionsByUserExcept(ctx context.Context, userID, keepSID string) error
+	}
+	rev, ok := r.store.(byUserRevoker)
+	if !ok {
+		return errors.New("session store does not support per-user revocation")
+	}
+	return rev.DeleteWebSessionsByUserExcept(ctx, userID, keepSID)
 }
 
 // RevokeSession drops a session from the store.

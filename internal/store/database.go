@@ -3488,6 +3488,22 @@ func (d *DBStore) DeleteWebSession(ctx context.Context, sid string) error {
 	return err
 }
 
+// DeleteWebSessionsByUserExcept drops every session for userID except
+// keepSID ("" drops all). Password changes call it so other devices'
+// cookies die with the old credential.
+func (d *DBStore) DeleteWebSessionsByUserExcept(ctx context.Context, userID, keepSID string) error {
+	if keepSID != "" {
+		_, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM web_sessions WHERE user_id = %s AND sid != %s`, d.ph(1), d.ph(2)),
+			userID, keepSID)
+		return err
+	}
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM web_sessions WHERE user_id = %s`, d.ph(1)),
+		userID)
+	return err
+}
+
 func (d *DBStore) DeleteExpiredWebSessions(ctx context.Context, before time.Time) error {
 	_, err := d.db.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM web_sessions WHERE expires_at < %s`, d.ph(1)), before)

@@ -35,18 +35,33 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
 		return
 	}
+	ip := clientIP(r)
+	if !s.loginAllowed(ip, req.Login) {
+		jsonResponse(w, http.StatusTooManyRequests, map[string]any{"ok": false, "error": "too many attempts; retry in a few minutes"})
+		return
+	}
 	acct, err := s.accounts.Authenticate(r.Context(), req.Login, req.Password)
 	if err != nil {
+		s.loginFailed(ip, req.Login)
 		jsonResponse(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid credentials"})
 		return
 	}
-	cookie, err := s.authResolver.IssueSession(r.Context(), acct.ID)
+	s.loginSucceeded(ip, req.Login)
+	cookie, err := s.authResolver.IssueSession(r.Context(), acct.ID, requestIsHTTPS(r))
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	http.SetCookie(w, cookie)
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "user": acct})
+}
+
+// requestIsHTTPS reports whether the client's connection to us (or to the
+// reverse proxy in front of us) is TLS — gates the session cookie's
+// Secure flag. Plain-HTTP local logins must NOT set it or the cookie
+// stops working entirely.
+func requestIsHTTPS(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -292,6 +307,17 @@ func (s *Server) handleChangeMyPassword(w http.ResponseWriter, r *http.Request) 
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	// A session cookie minted under the old password outlives the
+	// credential that no longer protects it — revoke every OTHER web
+	// session so the change evicts anyone else who was logged in. The
+	// caller's own cookie survives (or, for apikey callers, all web
+	// sessions drop — the operator just logs in again). Best-effort:
+	// the password itself is already rotated.
+	keepSID := ""
+	if c, err := r.Cookie(auth.SessionCookieName); err == nil {
+		keepSID = c.Value
+	}
+	_ = s.authResolver.RevokeUserSessions(r.Context(), ident.UserID, keepSID)
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -447,7 +473,7 @@ func (s *Server) handleOnboard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cookie, err := s.authResolver.IssueSession(r.Context(), acct.ID)
+	cookie, err := s.authResolver.IssueSession(r.Context(), acct.ID, requestIsHTTPS(r))
 	if err == nil {
 		http.SetCookie(w, cookie)
 	}

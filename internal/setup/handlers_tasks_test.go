@@ -40,7 +40,7 @@ func TestListTasksRouteRequiresPlatformAdmin(t *testing.T) {
 	})
 
 	t.Run("super admin is allowed", func(t *testing.T) {
-		cookie, err := resolver.IssueSession(ctx, adminUser.ID)
+		cookie, err := resolver.IssueSession(ctx, adminUser.ID, false)
 		if err != nil {
 			t.Fatalf("IssueSession: %v", err)
 		}

@@ -101,7 +101,7 @@ func createAuthTestUser(t *testing.T, ctx context.Context, accts *users.Accounts
 func authTestRequest(t *testing.T, ctx context.Context, resolver *auth.Resolver, method, path, userID string) *http.Request {
 	t.Helper()
 
-	cookie, err := resolver.IssueSession(ctx, userID)
+	cookie, err := resolver.IssueSession(ctx, userID, false)
 	if err != nil {
 		t.Fatalf("IssueSession: %v", err)
 	}

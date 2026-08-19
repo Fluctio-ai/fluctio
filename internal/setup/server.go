@@ -127,6 +127,10 @@ type Server struct {
 	// mutex because streams and stop calls race.
 	turnCancels   map[string]*turnCancelEntry
 	turnCancelsMu sync.Mutex
+	// loginFails backs the /api/login brute-force limiter (see
+	// login_limit.go). Lazily created; guarded by loginMu.
+	loginMu    sync.Mutex
+	loginFails map[string][]time.Time
 	usage      usage.Meter
 	startedAt  time.Time
 	// runtimeMgr powers the coding-agent project runtime (live dev server
