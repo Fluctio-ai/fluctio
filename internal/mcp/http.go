@@ -9,6 +9,9 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 )
 
 // HTTPClient implements the MCP client for HTTP (Streamable HTTP) servers.
@@ -25,8 +28,12 @@ func NewHTTPClient(url string, headers map[string]string) *HTTPClient {
 	return &HTTPClient{
 		url:     url,
 		headers: expandHeaders(headers),
-		client:  &http.Client{},
-		nextID:  1,
+		// Hard request ceiling: a wedged MCP server otherwise hangs the
+		// calling agent's tool goroutine forever (the client previously
+		// carried no timeout at all). 120s matches the exec tool's
+		// default budget.
+		client: httpclient.NewClient(120 * time.Second),
+		nextID: 1,
 	}
 }
 
@@ -76,7 +83,9 @@ func (c *HTTPClient) sendRequest(method string, params interface{}) (*jsonRPCRes
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	// Bounded read: a hostile/misbehaving server must not be able to
+	// balloon the gateway's memory through an endless response.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
