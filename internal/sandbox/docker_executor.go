@@ -167,6 +167,14 @@ func (d *DockerExecutor) SnapshotWorkspace(ctx context.Context) (map[string][]by
 			}
 			return nil
 		}
+		// A symlink inside the bind-mounted workspace may point anywhere on
+		// the host (a chatter-driven `ln -s /etc …` inside the container):
+		// reading through it would exfiltrate operator host files into the
+		// durable store. WalkDir doesn't follow symlinked dirs, but symlink
+		// FILE entries land here — skip them.
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			return err

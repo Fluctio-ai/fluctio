@@ -74,8 +74,15 @@ func (f *LocalFS) scopeDir(agentID, projectID, sessionID string) string {
 }
 
 // resolvePath joins scopeDir with path and rejects attempts to escape via
-// "..". Any symbolic link inside the scope dir is left alone — escape via
-// symlinks is a filesystem-level trust boundary users control.
+// ".." or via symbolic links. Sandbox containers bind-mount the scope dir
+// read-write, so a chatter-driven `ln -s /etc …` inside the container
+// creates real symlinks on the host side of the mount — the old "leave
+// symlinks alone, users control the FS" posture predates that and let a
+// read through a workspace symlink reach operator host files.
+//
+// The lexical path is returned as-is (os.Remove on a link still removes
+// the link itself, not its target); containment is enforced on the
+// symlink-resolved path.
 func (f *LocalFS) resolvePath(agentID, projectID, sessionID, path string) (string, error) {
 	dir := f.scopeDir(agentID, projectID, sessionID)
 	absDir, err := filepath.Abs(dir)
@@ -85,6 +92,32 @@ func (f *LocalFS) resolvePath(agentID, projectID, sessionID, path string) (strin
 	full := filepath.Join(absDir, filepath.Clean("/"+path)) // strip leading ../
 	if full != absDir && !strings.HasPrefix(full, absDir+string(filepath.Separator)) {
 		return "", fmt.Errorf("workspace: path %q escapes scope root", path)
+	}
+	resolved := full
+	if r, rerr := filepath.EvalSymlinks(full); rerr == nil {
+		resolved = r
+	} else {
+		// Create path (Put): resolve the nearest existing ancestor so a
+		// symlinked parent can't smuggle the write outside the root.
+		// Stop at the scope root — above it are operator dirs, and an
+		// absent root means nothing (link or file) exists under it yet.
+		d, tail := filepath.Dir(full), filepath.Base(full)
+		for d != absDir && filepath.Dir(d) != d {
+			if r, rerr := filepath.EvalSymlinks(d); rerr == nil {
+				resolved = filepath.Join(r, tail)
+				break
+			}
+			tail = filepath.Join(filepath.Base(d), tail)
+			d = filepath.Dir(d)
+		}
+	}
+	root := absDir
+	if rr, rerr := filepath.EvalSymlinks(absDir); rerr == nil {
+		root = rr // the operator may have symlinked the workspace root itself
+	}
+	under := func(p, r string) bool { return p == r || strings.HasPrefix(p, r+string(filepath.Separator)) }
+	if !under(resolved, absDir) && !under(resolved, root) {
+		return "", fmt.Errorf("workspace: path %q escapes scope root via symlink", path)
 	}
 	return full, nil
 }
