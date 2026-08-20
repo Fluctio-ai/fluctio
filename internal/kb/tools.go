@@ -32,6 +32,7 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 	registerKBListTodos(r, store, agentID)
 	registerKBListFlashes(r, store, agentID)
 	registerKBBookmark(r, store, agentID)
+	registerKBNotes(r, store, agentID)
 	registerKBVerifyClaim(r, store, agentID)
 	// The deep-reading tool needs an LLM invoker; when none is wired (e.g. an
 	// agent without a provider) the tool is simply unavailable rather than
@@ -195,7 +196,7 @@ func registerKBSearchRaw(r *tools.Registry, store *KBStore, agentID string) {
 }
 
 func registerKBAdd(r *tools.Registry, store *KBStore, agentID string) {
-	r.Register("knowledgebase_add", "Add text content to the agent's knowledge base. The content will be automatically chunked and indexed for future retrieval. Use when the user explicitly asks to save or remember something in the knowledge base. For short one-line ideas prefer knowledgebase_save_flash; use this for substantive content — don't store the same content as both flash and article.", map[string]interface{}{
+	r.Register("knowledgebase_add", "Add text content to the agent's knowledge base. The content will be automatically chunked and indexed for future retrieval. Use when the user explicitly asks to save or remember something in the knowledge base. For short one-line ideas prefer knowledgebase_save_flash; for a document the user will keep editing in the Notes view prefer knowledgebase_save_note; use this for substantive retrievable content — don't store the same content as both flash and article.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"title": map[string]interface{}{
@@ -376,7 +377,7 @@ func registerKBDelete(r *tools.Registry, store *KBStore, agentID string) {
 // the agent capture proactively (harness visibility: the when-to-use lives in
 // the tool description per tool-guidance-placement A, no prompt_modules entry).
 func registerKBFlash(r *tools.Registry, store *KBStore, agentID string) {
-	r.Register("knowledgebase_save_flash", "Save or update a short inspiration flash (灵感闪记). TWO modes: (1) NEW — omit source_id, record a brand-new idea the user EXPLICITLY asks to capture; (2) UPDATE — pass source_id to overwrite an existing flash with the FULL evolved text, used when the user iterates / refines / clarifies / adds to an idea they already recorded (so one idea stays as ONE complete iterated flash instead of fragmenting into many partial duplicates). Always write the complete current version of the idea, never just the delta. Use ONLY on explicit user intent (我有一个想法 / 帮我记一下 / 更新刚才那个想法 / 补充一下). Never proactive, and never capture content the user did not ask to record. For longer substantive content, use knowledgebase_add (article) instead — don't store the same content as both flash and article.", map[string]interface{}{
+	r.Register("knowledgebase_save_flash", "Save or update a short inspiration flash (灵感闪记). TWO modes: (1) NEW — omit source_id, record a brand-new idea the user EXPLICITLY asks to capture; (2) UPDATE — pass source_id to overwrite an existing flash with the FULL evolved text, used when the user iterates / refines / clarifies / adds to an idea they already recorded (so one idea stays as ONE complete iterated flash instead of fragmenting into many partial duplicates). Always write the complete current version of the idea, never just the delta. Use ONLY on explicit user intent (我有一个想法 / 帮我记一下 / 更新刚才那个想法 / 补充一下). Never proactive, and never capture content the user did not ask to record. For longer substantive content, use knowledgebase_add (article) instead, or knowledgebase_save_note for an editable note document — don't store the same content as both flash and article.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"content": map[string]interface{}{
