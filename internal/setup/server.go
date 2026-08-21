@@ -338,6 +338,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/chats", auth(s.handleChats))
 	mux.HandleFunc("GET /api/chat/history", auth(s.handleChatHistory))
 	mux.HandleFunc("GET /api/chat/todo", auth(s.handleChatTodo))
+	mux.HandleFunc("GET /api/chat/todo/latest", auth(s.handleChatTodoLatest))
 	mux.HandleFunc("GET /api/chat/sessions", auth(s.handleChatSessions))
 	mux.HandleFunc("PUT /api/chat/sessions/{key}", auth(s.handleRenameSession))
 	mux.HandleFunc("DELETE /api/chat/sessions/{key}", auth(s.handleDeleteSession))

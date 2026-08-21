@@ -111,6 +111,7 @@ function renderContentWithDataImages(
 
 import { usePageHeader } from "@/components/sidebar";
 import { channelLabel } from "@/components/channel-icon";
+import { ChatDashboard } from "@/components/chat-dashboard";
 import { useT } from "@/lib/i18n";
 
 interface ProducedFile {
@@ -2552,7 +2553,14 @@ export function ChatScreen() {
           // an equal bottom padding biases the centered group upward by
           // half the header height so the optical centre lines up with
           // the geometric centre of the screen.
-          (isEmpty ? " justify-center pb-12" : "")
+          // Empty state now also carries the dashboard board below the
+          // composer: `safe_center` keeps the Manus-style centering while
+          // the content fits, and falls back to start-aligned scrolling
+          // (instead of clipping the top) when the board overflows the
+          // viewport — plain justify-center would cut the hero off-screen.
+          (isEmpty
+            ? " [justify-content:safe_center] overflow-y-auto pb-12"
+            : "")
         }
       >
       {/* Messages */}
@@ -3247,6 +3255,25 @@ export function ChatScreen() {
             </div>
           </div>
         </div>
+
+        {/* Dashboard board — B-variant empty state: the hero + composer
+            keep their Manus-style centering, and the board (today's
+            cards / latest todo / recent chats) fills the space below.
+            Mounted for the whole life of the empty state so module state
+            (deck position, fetched lists) survives; visibility toggles
+            with the hidden class because a fresh keystroke means the
+            user is composing — the board collapsing restores the clean
+            centered hero. Attachments count as composing too. */}
+        {isEmpty && !urlSessionId && selectedAgent && (
+          <div
+            className={
+              "shrink-0 px-4 pb-8 pt-6 " +
+              (input.trim() || attachments.length > 0 ? "hidden" : "")
+            }
+          >
+            <ChatDashboard agentId={selectedAgent} />
+          </div>
+        )}
         {lightboxSrc && (
           <div
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6 cursor-zoom-out"
