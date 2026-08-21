@@ -915,35 +915,6 @@ export async function getChatTodo(agentId: string, sessionId: string): Promise<T
   };
 }
 
-// LatestTodo is the dashboard variant of TodoState: the newest todo.md
-// across ALL the agent's sessions (not one specific chat), plus the
-// owning session's id/title/channel so the empty-state board can link
-// back into that chat. getLatestChatTodo returns null when there is no
-// open todo anywhere — same "empty is not an error" convention as
-// getChatTodo.
-export interface LatestTodo extends TodoState {
-  sessionId?: string;
-  title?: string;
-  channel?: string;
-  updatedAt?: number;
-}
-
-export async function getLatestChatTodo(agentId: string): Promise<LatestTodo | null> {
-  if (!agentId) return null;
-  const res = await apiFetch(`/api/chat/todo/latest?agentId=${encodeURIComponent(agentId)}`);
-  if (!res.ok) return null;
-  const data = await res.json().catch(() => null);
-  if (!data || !Array.isArray(data?.items) || data.items.length === 0) return null;
-  return {
-    items: data.items,
-    raw: typeof data.raw === "string" ? data.raw : "",
-    sessionId: typeof data.sessionId === "string" ? data.sessionId : undefined,
-    title: typeof data.title === "string" ? data.title : undefined,
-    channel: typeof data.channel === "string" ? data.channel : undefined,
-    updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : undefined,
-  };
-}
-
 export async function getChatHistory(agentId: string, sessionId: string): Promise<ChatHistoryMessage[]> {
   const res = await apiFetch(`/api/chat/history?agentId=${encodeURIComponent(agentId)}&sessionId=${encodeURIComponent(sessionId)}`);
   if (!res.ok) return [];

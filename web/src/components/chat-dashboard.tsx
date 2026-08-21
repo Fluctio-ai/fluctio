@@ -3,13 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
-  Check,
   Flame,
   Layers,
   Loader2,
   ListTodo,
   MessageSquare,
-  Minus,
   Timer,
 } from "lucide-react";
 import { CardDeck } from "@/components/cards-review";
@@ -18,11 +16,10 @@ import {
   type AgentCronJob,
   type ChatSessionEntry,
   type KBCardStats,
-  type LatestTodo,
-  type TodoItem,
+  type KBSource,
   getCardStats,
   getChatSessions,
-  getLatestChatTodo,
+  kbListTodos,
   listAgentCronJobs,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -30,14 +27,14 @@ import { useT } from "@/lib/i18n";
 // ChatDashboard — the agent board that replaces the blank Manus-style
 // empty state. Four light modules over data the backend already has:
 // today's due cards (the shared CardDeck, inlined, so a review session
-// is one tap from landing), the agent's most recent ACTIVE todo list
-// (todo.md is per-session, so the board links back into the owning
-// chat), the latest conversations across channels (web + IM via
-// ChannelIcon), and the enabled cron jobs with their next fire time.
-// The parent only mounts this on a fresh chat with an untouched
-// composer — typing hides it again (the "empty state IS the dashboard"
-// behavior); each module is an entry into an existing page, no new
-// interaction surfaces beyond the deck itself.
+// is one tap from landing), the agent's OPEN knowledge-base todos
+// (kb_sources type=todo — NOT the per-chat todo.md checklists), the
+// latest conversations across channels (web + IM via ChannelIcon), and
+// the enabled cron jobs with their next fire time. The parent only
+// mounts this on a fresh chat with an untouched composer — typing hides
+// it again (the "empty state IS the dashboard" behavior); each module
+// is an entry into an existing page, no new interaction surfaces beyond
+// the deck itself.
 //
 // Panes size to their content (grid items-start, lists clamp with
 // max-h + scroll) so a pane with little data reads as a small card
@@ -46,12 +43,15 @@ import { useT } from "@/lib/i18n";
 const RECENT_SESSIONS = 5;
 const TODO_PREVIEW = 6;
 
+// Open KB todos only — done/cancelled rows stay in the todos page.
+const isOpenTodo = (s: KBSource) => s.status === "pending" || s.status === "in_progress";
+
 export function ChatDashboard({ agentId }: { agentId: string }) {
   const t = useT();
-  // undefined = still loading, null = loaded-and-none (only todo makes
+  // undefined = still loading, null = loaded-and-empty (only todos makes
   // that distinction; sessions' empty state renders an inline hint).
   const [stats, setStats] = useState<KBCardStats | null>(null);
-  const [todo, setTodo] = useState<LatestTodo | null | undefined>(undefined);
+  const [todos, setTodos] = useState<KBSource[] | null | undefined>(undefined);
   const [sessions, setSessions] = useState<ChatSessionEntry[] | null>(null);
   const [crons, setCrons] = useState<AgentCronJob[] | null>(null);
   // "Now" for the relative timestamps — stamped alongside the async data
@@ -63,7 +63,12 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
   useEffect(() => {
     let alive = true;
     getCardStats(agentId).then((s) => alive && setStats(s));
-    getLatestChatTodo(agentId).then((td) => alive && setTodo(td));
+    // Board rows show title only (the full markdown body lives in KB
+    // entries — fetching those is an N+1 the board doesn't need).
+    kbListTodos(agentId).then((ts) => {
+      if (!alive) return;
+      setTodos(ts.filter(isOpenTodo));
+    });
     // Order isn't guaranteed by the backend across modes — sort locally
     // so the board always leads with the most recently touched thread.
     getChatSessions(agentId).then((ss) => {
@@ -152,48 +157,48 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
         </div>
       </section>
 
-      {/* ── Latest todo ── */}
+      {/* ── Open KB todos ── */}
       <section className="flex flex-col overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
           <ListTodo className="size-4 text-muted-foreground" />
           {t("dashboard.todo.title")}
-          {todo && todo.items.length > 0 && (
-            <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-              {todo.items.filter((i) => i.done).length}/{todo.items.length}
-            </span>
+          {todos && todos.length > 0 && (
+            <span className="ml-auto text-xs tabular-nums text-muted-foreground">{todos.length}</span>
           )}
         </div>
-        {todo === undefined ? (
+        {todos === undefined ? (
           <div className="flex h-24 items-center justify-center">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
-        ) : !todo ? (
+        ) : todos === null || todos.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
             <ListTodo className="size-8 text-muted-foreground/50" />
             <p className="text-sm text-muted-foreground">{t("dashboard.todo.none")}</p>
           </div>
         ) : (
           <div className="flex min-h-0 flex-col">
-            {/* Owning-chat header: the todo belongs to a past session —
-                show which one so "continue in chat" has a target. */}
-            {todo.title && (
-              <p className="truncate px-4 pt-2 text-xs text-muted-foreground" title={todo.title}>
-                {todo.title}
-              </p>
-            )}
             <ul className="max-h-[420px] space-y-1 overflow-y-auto px-3 py-2 text-sm">
-              {todo.items.slice(0, TODO_PREVIEW).map((it, i) => (
-                <TodoRow key={i} item={it} />
-              ))}
+              {[...todos]
+                .sort((a, b) => {
+                  // Overdue + soonest due first; undated ones trail by recency.
+                  const due = (s: KBSource) => (s.end_at ? new Date(s.end_at).getTime() : Infinity);
+                  const da = due(a);
+                  const db = due(b);
+                  if (da !== db) return da - db;
+                  return (b.updated_at ? new Date(b.updated_at).getTime() : 0) -
+                    (a.updated_at ? new Date(a.updated_at).getTime() : 0);
+                })
+                .slice(0, TODO_PREVIEW)
+                .map((td) => (
+                  <TodoRow key={td.id} todo={td} nowTs={nowTs} />
+                ))}
             </ul>
-            {todo.sessionId && (
-              <Link
-                href={`/agents/${agentId}/chat/${todo.sessionId}`}
-                className="border-t border-border/60 px-4 py-2.5 text-xs text-primary hover:underline"
-              >
-                {t("dashboard.todo.continue")}
-              </Link>
-            )}
+            <Link
+              href={`/agents/${agentId}/knowledge/todos/`}
+              className="border-t border-border/60 px-4 py-2.5 text-xs text-primary hover:underline"
+            >
+              {t("dashboard.todo.view")}
+            </Link>
           </div>
         )}
       </section>
@@ -278,28 +283,49 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
   );
 }
 
-// TodoRow renders one checklist item in the static TodoPanel style: done
-// gets the success check + strikethrough, cancelled the muted dash, and
-// pending a hollow bullet (the live "current step" ring stays a
-// TodoPanel-only cue — nothing is executing on the board).
-function TodoRow({ item }: { item: TodoItem }) {
+// TodoRow renders one open KB todo: a hollow bullet for pending, the
+// warning ring for in_progress (matching the TodoCard status colors),
+// title text, and the due time — destructive-styled once past. nowTs is
+// the stamped "now" from the data load (render-time Date.now() trips
+// the purity lint); 0 suppresses the time label.
+// shortDateTime renders an ISO timestamp for the todo/cron due labels:
+// HH:mm on the stamped "today", else a short date + time. nowTs is the
+// load-time stamp (0 → best-effort with the parsed date only).
+function shortDateTime(iso: string, nowTs: number): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const sameDay = nowTs !== 0 && new Date(nowTs).toDateString() === d.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// TodoRow renders one open KB todo: a hollow bullet for pending, the
+// warning ring for in_progress (matching the TodoCard status colors),
+// title text, and the due time — destructive-styled once past.
+function TodoRow({ todo, nowTs }: { todo: KBSource; nowTs: number }) {
+  const t = useT();
+  const overdue = nowTs !== 0 && new Date(todo.end_at ?? "").getTime() < nowTs;
   return (
     <li className="flex items-start gap-2 rounded px-1.5 py-0.5">
-      {item.done ? (
-        <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
-      ) : item.cancelled ? (
-        <Minus className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+      {todo.status === "in_progress" ? (
+        <div className="mt-1 size-3 shrink-0 rounded-full border-2 border-warning" />
       ) : (
         <div className="mt-1 size-2.5 shrink-0 rounded-full border border-muted-foreground/40" />
       )}
-      <span
-        className={
-          "min-w-0 break-words " +
-          (item.done || item.cancelled ? "text-muted-foreground line-through" : "")
-        }
-      >
-        {item.text}
-      </span>
+      <span className="min-w-0 flex-1 break-words">{todo.title}</span>
+      {todo.end_at && (
+        <span
+          className={
+            "shrink-0 text-xs " +
+            (overdue ? "font-medium text-destructive" : "text-muted-foreground")
+          }
+        >
+          {overdue
+            ? t("dashboard.todo.overdue")
+            : t("dashboard.todo.dueAt", { time: shortDateTime(todo.end_at, nowTs) })}
+        </span>
+      )}
     </li>
   );
 }

@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1722,89 +1721,6 @@ func (s *Server) handleChatTodo(w http.ResponseWriter, r *http.Request) {
 		"items": items,
 		"raw":   string(raw),
 	})
-}
-
-// handleChatTodoLatest serves the dashboard's empty-state todo card: the
-// agent's most recent ACTIVE todo list across all sessions, not just the
-// (nonexistent) one for a chat the user hasn't started yet. Walks
-// sessions newest-first and returns the first todo.md that parses to a
-// non-empty checklist, alongside the owning session's id/title so the
-// frontend can link back into that chat. Mirrors handleChatTodo's
-// convention: no todo anywhere → 200 {items: [], raw: ""}.
-func (s *Server) handleChatTodoLatest(w http.ResponseWriter, r *http.Request) {
-	agentID := r.URL.Query().Get("agentId")
-	ag := s.resolveAgent(r, agentID)
-	if ag == nil {
-		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "agent not found"})
-		return
-	}
-
-	sessions := ag.WebChatSessions()
-
-	scope := func(sessionKey string) (chatID, projectID string) {
-		chatID = s.workspaceSessionScope(r.Context(), ag.Name(), sessionKey)
-		projectID = s.resolveSessionProject(r.Context(), r, ag.Name(), sessionKey)
-		return chatID, projectID
-	}
-	read := func(relPath string) ([]byte, error) {
-		return s.readWorkspaceFileBytes(r.Context(), ag.Name(), relPath)
-	}
-
-	if out, ok := pickLatestTodo(sessions, scope, read); ok {
-		jsonResponse(w, http.StatusOK, out)
-		return
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{"items": []any{}, "raw": ""})
-}
-
-// pickLatestTodo is the testable core of handleChatTodoLatest: order the
-// sessions by updatedAt (newest first), then walk them resolving each to
-// its workspace todo.md path and return the payload for the first
-// session whose checklist parses non-empty. Only the newest 20 sessions
-// are scanned — the active todo lives in whatever chat ran last, and the
-// cap bounds the per-request cost (each iteration is a triple lookup +
-// one workspace read). scope/read are injected so tests don't need a
-// full gateway harness.
-func pickLatestTodo(sessions []session.WebSession,
-	scope func(sessionKey string) (chatID, projectID string),
-	read func(relPath string) ([]byte, error)) (map[string]any, bool) {
-
-	ordered := make([]session.WebSession, len(sessions))
-	copy(ordered, sessions)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].UpdatedAt > ordered[j].UpdatedAt })
-	if len(ordered) > 20 {
-		ordered = ordered[:20]
-	}
-
-	for _, ws := range ordered {
-		chatID, projectID := scope(ws.ID)
-		if chatID == "" {
-			continue
-		}
-		var relPath string
-		if projectID != "" {
-			relPath = "projects/" + projectID + "/" + chatID + "/todo.md"
-		} else {
-			relPath = "sessions/" + chatID + "/todo.md"
-		}
-		raw, err := read(relPath)
-		if err != nil {
-			continue
-		}
-		items := parseTodoMarkdown(string(raw))
-		if len(items) == 0 {
-			continue
-		}
-		return map[string]any{
-			"sessionId": ws.ID,
-			"title":     ws.Title,
-			"channel":   ws.Channel,
-			"updatedAt": ws.UpdatedAt,
-			"items":     items,
-			"raw":       string(raw),
-		}, true
-	}
-	return nil, false
 }
 
 // readWorkspaceFileBytes reads a single agent-relative file via the
