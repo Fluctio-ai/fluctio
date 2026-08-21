@@ -1,12 +1,19 @@
 package kb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/google/uuid"
 )
 
 // tools_notes.go exposes the 笔记 (personal notes) view to the harness.
@@ -22,6 +29,7 @@ func registerKBNotes(r *tools.Registry, store *KBStore, agentID string) {
 	registerKBListNotes(r, store, agentID)
 	registerKBReadNote(r, store, agentID)
 	registerKBSaveNote(r, store, agentID)
+	registerKBAttachFile(r, store, agentID)
 }
 
 // findNote loads one note by id. Notes are few and ListNotes already returns
@@ -110,7 +118,7 @@ func registerKBReadNote(r *tools.Registry, store *KBStore, agentID string) {
 // ```whiteboard fence is rejected) — an LLM rewrite silently wiping a
 // hand-drawn board is the expensive failure that guard prevents.
 func registerKBSaveNote(r *tools.Registry, store *KBStore, agentID string) {
-	r.Register("knowledgebase_save_note", "Save or organize content into the user's NOTES (笔记) — markdown documents in the knowledge-base Notes view that the user also edits by hand (may contain whiteboard drawings). THREE modes: (1) CREATE — omit note_id, pass content (title optional, defaults to its first line). (2) APPEND — pass note_id + append=true: content is appended as a new section after the existing body; existing text and whiteboards are untouched. This is the DEFAULT for adding to an existing note — do NOT read-and-rewrite just to add a section. (3) REWRITE — pass note_id + the FULL new body (read the note first via knowledgebase_read_note); ```whiteboard blocks must be carried over verbatim or the write is rejected. Use when the user asks to save / organize / write into a note (记到笔记 / 整理成笔记 / 写进XX笔记). Routing: retrievable knowledge → knowledgebase_add (article); one-line idea → knowledgebase_save_flash; editable document → this tool. Don't store the same content in two places.", map[string]interface{}{
+	r.Register("knowledgebase_save_note", "Save or organize content into the user's NOTES (笔记) — markdown documents in the knowledge-base Notes view that the user also edits by hand (may contain whiteboard drawings). THREE modes: (1) CREATE — omit note_id, pass content (title optional, defaults to its first line). (2) APPEND — pass note_id + append=true: content is appended as a new section after the existing body; existing text and whiteboards are untouched. This is the DEFAULT for adding to an existing note — do NOT read-and-rewrite just to add a section. (3) REWRITE — pass note_id + the FULL new body (read the note first via knowledgebase_read_note); ```whiteboard blocks must be carried over verbatim or the write is rejected. Use when the user asks to save / organize / write into a note (记到笔记 / 整理成笔记 / 写进XX笔记). Images/files from the conversation go in via knowledgebase_save_note_attachment after the note exists. Routing: retrievable knowledge → knowledgebase_add (article); one-line idea → knowledgebase_save_flash; editable document → this tool. Don't store the same content in two places.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"title": map[string]interface{}{
@@ -188,4 +196,143 @@ func registerKBSaveNote(r *tools.Registry, store *KBStore, agentID string) {
 		}
 		return fmt.Sprintf("Rewrote note %q (note_id=%s, now %d chars).", note.Title, note.ID, len([]rune(content))), nil
 	})
+}
+
+// registerKBAttachFile adds knowledgebase_save_note_attachment — copy files
+// the agent can already reach (inbound IM/web image paths, file-tool outputs,
+// sandbox-reported /workspace/... paths) into a note's attachment area,
+// mirroring the web upload handler exactly: bytes land in the workspace at
+// notes/<noteID>/<uuid8>-<name> plus a kb_note_attachments row, so the Notes
+// UI shows them like manual uploads.
+func registerKBAttachFile(r *tools.Registry, store *KBStore, agentID string) {
+	r.Register("knowledgebase_save_note_attachment", "Attach files (images, PDFs, …) to an existing note (笔记). Use when the user wants a photo/file from the conversation kept in a note (把这张图存到笔记 / 连同图片一起整理到笔记). file_paths accept THREE forms: the local path listed under a user-uploaded image in the chat, a path a file tool reported, or a sandbox-reported /workspace/... path (mapped to the host workspace automatically). Files outside the agent workspace (e.g. sandbox /tmp) are rejected — copy them into /workspace first. This tool only handles FILES; the note's text goes through knowledgebase_save_note.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"note_id": map[string]interface{}{
+				"type":        "string",
+				"description": "The note to attach to (note_id from knowledgebase_list_notes or knowledgebase_save_note output)",
+			},
+			"file_paths": map[string]interface{}{
+				"type":  "array",
+				"items": map[string]interface{}{"type": "string"},
+				"description": "Local file paths to attach (1..N). Accepts the conversation's image paths, file-tool output paths, or sandbox /workspace/... paths.",
+			},
+		},
+		"required": []string{"note_id", "file_paths"},
+	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
+		var args struct {
+			NoteID    string   `json:"note_id"`
+			FilePaths []string `json:"file_paths"`
+		}
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		if args.NoteID == "" {
+			return "", fmt.Errorf("note_id is required")
+		}
+		if len(args.FilePaths) == 0 {
+			return "", fmt.Errorf("file_paths is required")
+		}
+		ws := r.WorkspaceStore()
+		if ws == nil {
+			return "", fmt.Errorf("workspace store unavailable on this deployment")
+		}
+		if !store.NoteExists(ctx, agentID, args.NoteID) {
+			return fmt.Sprintf("找不到 note_id=%s 的笔记。请先 knowledgebase_save_note 新建或 knowledgebase_list_notes 确认。", args.NoteID), nil
+		}
+		home, err := config.HomeDir()
+		if err != nil {
+			return "", err
+		}
+		root := filepath.Join(home, "workspaces", agentID)
+		var saved []string
+		for _, p := range args.FilePaths {
+			p = strings.TrimSpace(p)
+			// The model reports sandbox paths as logical /workspace/<name>;
+			// this process runs on the host where they live at UserRoot/<name>
+			// — same mapping as the vision tool / deliver_file.
+			if p == "/workspace" || strings.HasPrefix(p, "/workspace/") {
+				if ur := r.UserRoot(); ur != "" {
+					p = filepath.Join(ur, strings.TrimPrefix(p, "/workspace"))
+				}
+			}
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				return "", fmt.Errorf("resolve %q: %w", p, err)
+			}
+			if !pathWithinWorkspace(abs, root) {
+				return fmt.Sprintf("拒绝 %s：只支持本 agent 工作区内的文件（%s 子树）。sandbox 里 /workspace 之外的文件（如 /tmp）请先用文件工具复制到 /workspace 下再附加。", p, root), nil
+			}
+			data, err := os.ReadFile(abs)
+			if err != nil {
+				return "", fmt.Errorf("read %q: %w", p, err)
+			}
+			if int64(len(data)) > 64<<20 {
+				return fmt.Sprintf("文件 %s 超过 64MB 上限（%d MB），未附加。", filepath.Base(abs), len(data)>>20), nil
+			}
+			name := sanitizeNoteFileName(filepath.Base(abs))
+			if name == "" {
+				return fmt.Sprintf("无法从路径 %q 推导出安全的文件名，未附加。", p), nil
+			}
+			mimeType := mime.TypeByExtension(filepath.Ext(name))
+			if mimeType == "" || mimeType == "application/octet-stream" {
+				mimeType = http.DetectContentType(data)
+			}
+			wsPath := fmt.Sprintf("notes/%s/%s-%s", args.NoteID, uuid.NewString()[:8], name)
+			if err := ws.Put(ctx, agentID, "", "", wsPath, bytes.NewReader(data), int64(len(data)), mimeType); err != nil {
+				return "", err
+			}
+			if _, err := store.AddAttachment(ctx, agentID, args.NoteID, name, wsPath, mimeType, int64(len(data))); err != nil {
+				_ = ws.Delete(ctx, agentID, "", "", wsPath)
+				return "", err
+			}
+			saved = append(saved, fmt.Sprintf("%s (%d KB)", name, len(data)/1024))
+		}
+		return fmt.Sprintf("已附加 %d 个文件到笔记（note_id=%s）：%s。附件在笔记页与手动上传一样展示。", len(saved), args.NoteID, strings.Join(saved, "、")), nil
+	})
+}
+
+// pathWithinWorkspace reports whether abs sits inside root (or equals it),
+// tolerating case differences on Windows (drive-letter casing varies between
+// paths the LLM echoes back and what UserHomeDir produced). Symlinks are
+// resolved on both sides first so a link planted inside the workspace can't
+// smuggle a read from outside it.
+func pathWithinWorkspace(abs, root string) bool {
+	if r, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = r
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	if r, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = r
+	}
+	if abs == absRoot {
+		return true
+	}
+	return len(abs) > len(absRoot) && abs[len(absRoot)] == filepath.Separator &&
+		strings.EqualFold(abs[:len(absRoot)], absRoot)
+}
+
+// sanitizeNoteFileName reduces a path's base name to a safe single path
+// component. Mirrors the copies in setup/handlers_kb.go and
+// agent/attachments.go (both unexported; local copy keeps the kb package
+// self-contained, same rationale as those two).
+func sanitizeNoteFileName(raw string) string {
+	raw = strings.ReplaceAll(raw, `\`, "/")
+	if i := strings.LastIndexByte(raw, '/'); i >= 0 {
+		raw = raw[i+1:]
+	}
+	if raw == "." || raw == ".." {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range raw {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' || r == ':' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
 }

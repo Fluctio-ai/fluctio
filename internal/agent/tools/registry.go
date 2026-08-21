@@ -368,6 +368,11 @@ func (r *Registry) SetWorkspaceStore(ws workspace.Store, agentID string) {
 	r.agentID = agentID
 }
 
+// WorkspaceStore returns the installed workspace store (nil in pure
+// filesystem mode) — for tool handlers registered from other packages that
+// persist artifacts through the store (e.g. KB note attachments).
+func (r *Registry) WorkspaceStore() workspace.Store { return r.workspaceStore }
+
 // SetUserRoot overrides the on-disk root for user-facing artifacts
 // (write_file / read_file / edit_file / list_dir via rootForPath, and
 // host-mode exec cwd). bindSession sets this per-turn to the session/

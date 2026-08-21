@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 // TestRegisterKBToolsIncludesFlashTodo verifies the content-type tools land in
@@ -29,6 +33,7 @@ func TestRegisterKBToolsIncludesFlashTodo(t *testing.T) {
 		"knowledgebase_list_notes",
 		"knowledgebase_read_note",
 		"knowledgebase_save_note",
+		"knowledgebase_save_note_attachment",
 		"knowledgebase_search", // existing — sanity check
 	} {
 		if !r.HasBuiltin(name) {
@@ -136,5 +141,113 @@ func TestNoteToolsAppendAndWhiteboardGuard(t *testing.T) {
 	}
 	if note, _, _ := findNote(ctx, store, "agt_test", id); !strings.Contains(note.ContentMD, "```whiteboard") {
 		t.Fatalf("fence-carrying rewrite lost the fence: %q", note.ContentMD)
+	}
+}
+
+// TestNoteAttachmentTool exercises knowledgebase_save_note_attachment end to
+// end: sandbox /workspace path mapping, bytes landing in the note's
+// attachment dir + kb_note_attachments row, and the outside-workspace
+// rejection guard.
+func TestNoteAttachmentTool(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("FLUCTIO_HOME", home)
+	db := setupKBVectorTestDB(t)
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS kb_notes (
+			id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+			content_md TEXT NOT NULL DEFAULT '', whiteboard TEXT NOT NULL DEFAULT '',
+			sort_order REAL NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+		`CREATE TABLE IF NOT EXISTS kb_note_attachments (
+			id TEXT PRIMARY KEY, note_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+			file_name TEXT NOT NULL, file_path TEXT NOT NULL, mime TEXT NOT NULL DEFAULT '',
+			size INTEGER NOT NULL DEFAULT 0,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("create table: %v", err)
+		}
+	}
+	store := NewKBStore(db, "sqlite")
+	ws := workspace.NewLocalFS(filepath.Join(home, "workspaces"))
+	r := tools.NewRegistry("", "")
+	r.SetWorkspaceStore(ws, "agt_test")
+	RegisterKBTools(r, store, "agt_test", nil, nil, nil, "", 0)
+	ctx := context.Background()
+
+	if _, err := r.Execute(ctx, "knowledgebase_save_note",
+		`{"title":"带图笔记","content":"看这张图"}`); err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	notes, err := store.ListNotes(ctx, "agt_test")
+	if err != nil || len(notes) != 1 {
+		t.Fatalf("ListNotes: %d notes, err=%v", len(notes), err)
+	}
+	id := notes[0].ID
+
+	// A "user-uploaded" file inside the agent workspace (session scope).
+	const srcRel = "uploads/photo.png"
+	if err := ws.Put(ctx, "agt_test", "", "s1", srcRel, strings.NewReader("PNGDATA"), 7, "image/png"); err != nil {
+		t.Fatalf("seed source file: %v", err)
+	}
+
+	// Sandbox view: the session dir is mounted at /workspace — the model
+	// reports /workspace/uploads/photo.png; the tool must map it back.
+	r.SetUserRoot(filepath.Join(home, "workspaces", "agt_test", "sessions", "s1"))
+	out, err := r.Execute(ctx, "knowledgebase_save_note_attachment",
+		fmt.Sprintf(`{"note_id":%q,"file_paths":["/workspace/uploads/photo.png"]}`, id))
+	if err != nil {
+		t.Fatalf("attach via /workspace path: %v (out=%s)", err, out)
+	}
+	if !strings.Contains(out, "已附加") {
+		t.Fatalf("attach output unexpected: %s", out)
+	}
+	atts, err := store.ListNoteAttachments(ctx, "agt_test", id)
+	if err != nil || len(atts) != 1 {
+		t.Fatalf("ListNoteAttachments: %d, err=%v", len(atts), err)
+	}
+	if atts[0].FileName != "photo.png" || atts[0].Mime != "image/png" ||
+		!strings.HasPrefix(atts[0].FilePath, "notes/"+id+"/") {
+		t.Fatalf("attachment row wrong: %+v", atts[0])
+	}
+	rc, err := ws.Get(ctx, "agt_test", "", "", atts[0].FilePath)
+	if err != nil {
+		t.Fatalf("read back attachment bytes: %v", err)
+	}
+	data, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(data) != "PNGDATA" {
+		t.Fatalf("attachment bytes wrong: %q", data)
+	}
+
+	// Host absolute path form works too.
+	hostPath := filepath.Join(home, "workspaces", "agt_test", "sessions", "s1", "uploads", "photo.png")
+	if _, err := r.Execute(ctx, "knowledgebase_save_note_attachment",
+		fmt.Sprintf(`{"note_id":%q,"file_paths":[%q]}`, id, hostPath)); err != nil {
+		t.Fatalf("attach via host path: %v", err)
+	}
+	if atts, _ := store.ListNoteAttachments(ctx, "agt_test", id); len(atts) != 2 {
+		t.Fatalf("expected 2 attachments after second attach, got %d", len(atts))
+	}
+
+	// Outside the agent workspace → refused.
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if out, err := r.Execute(ctx, "knowledgebase_save_note_attachment",
+		fmt.Sprintf(`{"note_id":%q,"file_paths":[%q]}`, id, outside)); err != nil {
+		t.Fatalf("outside guard should refuse, not error: %v", err)
+	} else if !strings.Contains(out, "拒绝") {
+		t.Fatalf("outside file not refused: %s", out)
+	}
+
+	// Unknown note → friendly refusal, no orphan attachment rows.
+	if out, err := r.Execute(ctx, "knowledgebase_save_note_attachment",
+		fmt.Sprintf(`{"note_id":"nope","file_paths":[%q]}`, hostPath)); err != nil {
+		t.Fatalf("bad note should refuse, not error: %v", err)
+	} else if !strings.Contains(out, "找不到") {
+		t.Fatalf("bad note not refused: %s", out)
 	}
 }

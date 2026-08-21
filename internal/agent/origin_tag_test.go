@@ -1,7 +1,12 @@
 package agent
 
 import (
+	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/fluctio-ai/fluctio/internal/bus"
@@ -149,5 +154,52 @@ func TestBuildUserMessageTextOnlyModelRoutesImagesAsText(t *testing.T) {
 	}
 	if got.Content == "" || !reflect.DeepEqual(got.ContentParts, []provider.ContentPart(nil)) {
 		t.Errorf("expected Content text + nil ContentParts, got %+v", got)
+	}
+}
+
+// Multimodal model + materialized local image: the model sees the image
+// inline, but tool calls later in the turn (note attachments, file tools)
+// need the on-disk path — it must ride along as a text hint.
+func TestBuildUserMessageMultimodalLocalPathHint(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "photo.png")
+	writeTinyPNG(t, p)
+	got := buildUserMessage(bus.InboundMessage{Text: "look", ImagePaths: []string{p}}, testVisionModel)
+	if len(got.ContentParts) != 2 || got.ContentParts[0].Type != "text" {
+		t.Fatalf("expected text+image parts, got %+v", got.ContentParts)
+	}
+	if !strings.Contains(got.ContentParts[0].Text, "look") || !strings.Contains(got.ContentParts[0].Text, p) {
+		t.Errorf("text part missing caption or path hint: %q", got.ContentParts[0].Text)
+	}
+	if got.ContentParts[1].Type != "image_url" || !strings.HasPrefix(got.ContentParts[1].ImageURL.URL, "data:") {
+		t.Errorf("image part wrong: %+v", got.ContentParts[1])
+	}
+}
+
+// Image-only local upload: the hint becomes the leading text part (no
+// empty-text part — some upstreams reject content-less wire messages).
+func TestBuildUserMessageMultimodalImageOnlyHint(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "only.png")
+	writeTinyPNG(t, p)
+	got := buildUserMessage(bus.InboundMessage{ImagePaths: []string{p}}, testVisionModel)
+	if len(got.ContentParts) != 2 || got.ContentParts[0].Type != "text" {
+		t.Fatalf("expected hint text + image parts, got %+v", got.ContentParts)
+	}
+	if !strings.Contains(got.ContentParts[0].Text, p) {
+		t.Errorf("hint missing path: %q", got.ContentParts[0].Text)
+	}
+}
+
+// writeTinyPNG materializes a minimal valid PNG — buildUserMessage's
+// multimodal branch inlines image_url parts from the local bytes, so the
+// file must actually decode.
+func writeTinyPNG(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create png: %v", err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatalf("encode png: %v", err)
 	}
 }

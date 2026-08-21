@@ -1421,6 +1421,18 @@ func buildUserMessage(msg bus.InboundMessage, modelID string) provider.Message {
 		if len(parts) == 0 {
 			return userMsg
 		}
+		// The model sees the image bytes inline but not where they live on
+		// disk; acting on the file later in the turn (vision fallback, note
+		// attachments, file tools) needs the path — surface local paths the
+		// same way the text-only branch does, minus the vision-lecture.
+		if locals := localImagePaths(imageRefs); len(locals) > 0 {
+			hint := buildImagePathHint(locals)
+			if parts[0].Type == "text" && parts[0].Text != "" {
+				parts[0].Text += "\n\n" + hint
+			} else {
+				parts = append([]provider.ContentPart{{Type: "text", Text: hint}}, parts...)
+			}
+		}
 		userMsg.Content = ""
 		userMsg.ContentParts = parts
 	} else {
@@ -1436,6 +1448,34 @@ func buildUserMessage(msg bus.InboundMessage, modelID string) provider.Message {
 		}
 	}
 	return userMsg
+}
+
+// localImagePaths filters refs down to materialized local files — URL/data
+// refs have no on-disk path to surface.
+func localImagePaths(refs []string) []string {
+	var out []string
+	for _, r := range refs {
+		if !looksLikeURL(r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// buildImagePathHint is the multimodal counterpart of buildImageRefHint: the
+// model already sees the image inline, but acting on the file later in the
+// turn (vision fallback, note attachments, file tools) needs its path.
+func buildImagePathHint(refs []string) string {
+	if len(refs) == 1 {
+		return fmt.Sprintf("（图片已保存到本地：%s。需要对该文件操作（如存入笔记附件）时使用此路径。）", refs[0])
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "（图片已保存到本地，共 %d 张；需要文件操作（如存入笔记附件）时使用以下路径：\n", len(refs))
+	for _, r := range refs {
+		fmt.Fprintf(&sb, "- %s\n", r)
+	}
+	sb.WriteString("）")
+	return sb.String()
 }
 
 // buildImageRefHint renders the text-only-model fallback notice that lists
