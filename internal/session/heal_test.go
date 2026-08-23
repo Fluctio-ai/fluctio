@@ -116,6 +116,65 @@ func TestHealInterruptedTurnNoOpOnCleanHistory(t *testing.T) {
 	}
 }
 
+// TestAppendClaimOnce covers the one-shot claim primitive: first claim
+// wins, second is rejected, and the claim rides the persisted history so
+// a reload (fresh Manager over the same file) keeps rejecting.
+func TestAppendClaimOnce(t *testing.T) {
+	dir := t.TempDir()
+	key := "chat-claim-1"
+	s := NewManager(dir).Get("web", "", key, "")
+
+	if !s.AppendClaimOnce(provider.Message{Role: "user", Content: "first"}, "turnAborted", true) {
+		t.Fatal("first claim should win")
+	}
+	if s.AppendClaimOnce(provider.Message{Role: "user", Content: "second"}, "turnAborted", true) {
+		t.Error("second claim with same key+marker should be rejected")
+	}
+	// A different marker value is a different claim.
+	if !s.AppendClaimOnce(provider.Message{Role: "user", Content: "other"}, "turnAborted", "crash") {
+		t.Error("different marker value should claim independently")
+	}
+	got := s.GetMessages()
+	if len(got) != 2 || got[0].Content != "first" || got[1].Content != "other" {
+		t.Errorf("claim ordering wrong: %+v", got)
+	}
+
+	// Reload keeps rejecting: the claim persisted with the history.
+	s2 := NewManager(dir).Get("web", "", key, "")
+	if s2.AppendClaimOnce(provider.Message{Role: "user", Content: "after reload"}, "turnAborted", true) {
+		t.Error("claim must survive restart via persisted history")
+	}
+}
+
+// TestAbortMarkerClaimGuard: when a turnAborted marker already exists
+// (e.g. a previous stop), a NEW dangling-call repair still pads but must
+// not stack a second marker.
+func TestAbortMarkerClaimGuard(t *testing.T) {
+	dir := t.TempDir()
+	s := NewManager(dir).Get("web", "", "chat-claim-2", "")
+	s.Append(provider.Message{Role: "user", Content: "go"})
+	s.Append(provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{
+		{ID: "call_1", Type: "function", Function: provider.FunctionCall{Name: "exec", Arguments: "{}"}},
+	}})
+	s.PadOrphanToolResultsAndMarkAborted(ToolResultStoppedNote) // pads + marks
+
+	// New turn, new dangling call after the marker is in place.
+	s.Append(provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{
+		{ID: "call_2", Type: "function", Function: provider.FunctionCall{Name: "exec", Arguments: "{}"}},
+	}})
+	s.PadOrphanToolResultsAndMarkAborted(ToolResultStoppedNote)
+
+	markers := 0
+	for _, m := range s.GetMessages() {
+		if m.Metadata["turnAborted"] == true {
+			markers++
+		}
+	}
+	if markers != 1 {
+		t.Errorf("want exactly 1 turnAborted marker across repeated aborts, got %d", markers)
+	}
+}
+
 // TestPadOrphanToolResultsStopNote covers the raw pad primitive the
 // turn-exit path used before markers existed: pads only, no marker.
 func TestPadOrphanToolResultsStopNote(t *testing.T) {

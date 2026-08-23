@@ -594,7 +594,10 @@ func (s *Session) AgentID() string { return s.agentID }
 func (s *Session) Append(msg provider.Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.appendLocked(msg)
+}
 
+func (s *Session) appendLocked(msg provider.Message) {
 	// Auto-set timestamp if not provided
 	if msg.Timestamp == 0 {
 		msg.Timestamp = time.Now().UnixMilli()
@@ -616,6 +619,37 @@ func (s *Session) Append(msg provider.Message) {
 	} else {
 		s.appendToFile(msg)
 	}
+}
+
+// AppendClaimOnce appends msg only when no message in the working set
+// carries Metadata[key] == marker yet — a one-shot claim for injected
+// effects that must fire exactly once per session (turn-abort markers,
+// one-shot nudges). The marker is stamped onto msg.Metadata by this
+// method itself, so callers can't defeat the claim by forgetting to set
+// it. The claim lives in the same persisted history it guards, so it
+// survives restarts for free: a reload sees the marker and the second
+// claimant is rejected. The scan+stamp+append runs under the session
+// lock, so overlapping claimants (turn-exit defers from concurrent
+// turns, load-time heal) can't both fire.
+//
+// marker must be a comparable scalar (bool/string/int) — comparing an
+// incomparable dynamic type with == panics. The claim is scoped to the
+// working set: compaction's ReplaceMessages resets it, allowing a fresh
+// claim per compacted window.
+func (s *Session) AppendClaimOnce(msg provider.Message, key string, marker any) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Messages {
+		if v, ok := s.Messages[i].Metadata[key]; ok && v == marker {
+			return false
+		}
+	}
+	if msg.Metadata == nil {
+		msg.Metadata = map[string]any{}
+	}
+	msg.Metadata[key] = marker
+	s.appendLocked(msg)
+	return true
 }
 
 // RollbackLastUser removes the trailing message iff it is an unanswered
@@ -904,11 +938,13 @@ func (s *Session) healInterruptedTurn() {
 	if !s.PadOrphanToolResults(toolResultCrashNote) {
 		return
 	}
-	s.Append(provider.Message{
-		Role:     "user",
-		Content:  turnAbortedCrashNote,
-		Metadata: map[string]any{"turnAborted": true},
-	})
+	// One marker per working set (compaction resets the claim): stacking
+	// abort notes across repeated crashes adds context noise while the
+	// per-call crash pads already carry the interruption facts.
+	s.AppendClaimOnce(provider.Message{
+		Role:    "user",
+		Content: turnAbortedCrashNote,
+	}, "turnAborted", true)
 }
 
 // PadOrphanToolResultsAndMarkAborted is the turn-exit variant of
@@ -921,11 +957,12 @@ func (s *Session) PadOrphanToolResultsAndMarkAborted(padText string) {
 	if !s.PadOrphanToolResults(padText) {
 		return
 	}
-	s.Append(provider.Message{
-		Role:     "user",
-		Content:  turnAbortedStopNote,
-		Metadata: map[string]any{"turnAborted": true},
-	})
+	// Claim-gated: overlapping turn defers can both pad (each sees real
+	// orphans) but only one marker lands.
+	s.AppendClaimOnce(provider.Message{
+		Role:    "user",
+		Content: turnAbortedStopNote,
+	}, "turnAborted", true)
 }
 
 func (s *Session) load() {
