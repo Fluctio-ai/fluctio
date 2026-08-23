@@ -346,6 +346,14 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
   while (i < history.length) {
     const h = history[i];
     if (h.role === "user") {
+      // Turn-abort boundary marker (kind=turn_aborted_notice from
+      // WebChatHistory) renders as a centered notice pill, not a user
+      // bubble — it's a system fact about an interrupted turn.
+      if (h.kind === "turn_aborted_notice") {
+        msgs.push({ id: `h-${i}`, role: "notice", kind: "turn_aborted_notice", content: h.content || "", timestamp: h.timestamp || 0 });
+        i++;
+        continue;
+      }
       // Surface image attachments on history-loaded user bubbles. The
       // server emits `imageUrls` on user turns whose ContentParts had
       // image_url blocks; map them into UserAttachment entries so the
@@ -669,6 +677,11 @@ export function ChatScreen() {
     phase?: "thinking" | "running" | "final-delivery" | "done";
     tools?: string[];
   }>(null);
+  // Backend connection-retry tier is riding out a network outage — shown
+  // as a transient pill under the message list. State, not a message:
+  // it must never persist into history. Any subsequent progress event
+  // (content / tool call / done) clears it.
+  const [reconnecting, setReconnecting] = useState<null | { attempt?: number }>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [filesSheetOpen, setFilesSheetOpen] = useState(false);
   // File the user clicked inside the conversation (a FilesPanel row) —
@@ -993,6 +1006,10 @@ export function ChatScreen() {
           // reloaded tab still gets the tappable buttons.
           description?: string;
           options?: { cmd: string; label_zh: string; label_en: string }[];
+          // reconnecting fields — live-only (not persisted), so catch-up
+          // never carries this; kept for shape parity with the POST path.
+          attempt?: number;
+          backoffMs?: number;
         };
       };
       try {
@@ -1021,7 +1038,20 @@ export function ChatScreen() {
         const claim = () => {
           if (seq >= 0) maxSeqRef.current = seq;
         };
+        // Any progress event means the backend's reconnecting tier
+        // recovered — clear the transient indicator (no-op re-render
+        // when already null, so content_delta storms stay cheap).
+        if (data.type !== "reconnecting") setReconnecting(null);
         switch (data.type) {
+          case "reconnecting": {
+            // Unbounded connection-retry tier is riding out a network
+            // outage (attempt ≥ 2 — the 1st retry is usually a silent
+            // blip). Not persisted server-side, so this only ever fires
+            // live.
+            claim();
+            setReconnecting({ attempt: data.data?.attempt });
+            break;
+          }
           case "content": {
             const content = data.data?.content || "";
             const meta = data.data?.metadata;
@@ -1799,7 +1829,12 @@ export function ChatScreen() {
           if (evt.seq <= maxSeqRef.current) return;
           maxSeqRef.current = evt.seq;
         }
+        if (evt.type !== "reconnecting") setReconnecting(null);
         switch (evt.type) {
+          case "reconnecting": {
+            setReconnecting({ attempt: evt.data?.attempt });
+            break;
+          }
           case "content_delta": {
             // Incremental token chunk from the provider. Append to the
             // in-flight assistant bubble — create one on the first
@@ -2723,6 +2758,20 @@ export function ChatScreen() {
                   continue;
                 }
                 elements.push(renderRegularBubble(msg));
+              }
+              // Transient reconnecting indicator: the backend's
+              // unbounded connection-retry tier is riding out a network
+              // outage. Rendered below the last message while waiting;
+              // cleared by the first progress event that follows
+              // recovery (see the SSE handlers).
+              if (reconnecting) {
+                elements.push(
+                  <div key="reconnecting-pill" className="flex justify-center my-3">
+                    <span className="text-xs text-muted-foreground bg-muted/40 rounded-full px-3 py-1 animate-pulse">
+                      {t("chat.reconnecting", { attempt: reconnecting.attempt ?? "…" })}
+                    </span>
+                  </div>,
+                );
               }
               return elements;
 

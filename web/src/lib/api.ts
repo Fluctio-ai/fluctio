@@ -858,9 +858,10 @@ export async function getChangedFiles(
 export interface ChatHistoryMessage {
   role: "user" | "assistant" | "tool";
   content?: string;
-  // Set to "compaction_notice" for auto-compaction notice entries so the
-  // chat UI can render them as centered system bubbles instead of normal
-  // assistant messages.
+  // Set to "compaction_notice" for auto-compaction notice entries (and
+  // "turn_aborted_notice" for turn-abort boundary markers) so the chat
+  // UI can render them as centered system bubbles instead of normal
+  // user/assistant messages.
   kind?: string;
   toolCalls?: { id: string; name: string; arguments: string }[];
   name?: string;
@@ -1227,7 +1228,8 @@ export interface ChatStreamEvent {
     | "subagent_progress"
     | "auth_prompt"
     | "compaction_notice"
-    | "skill_pending";
+    | "skill_pending"
+    | "reconnecting";
   // Per-session monotonic sequence assigned by chat_events. Lets the
   // chat page dedupe events arriving on both the active POST stream
   // and the parallel /api/chat/subscribe SSE connection. -1 means
@@ -1272,6 +1274,12 @@ export interface ChatStreamEvent {
     // runPostTurn emit + loop_auth.go emitAuthPrompt for the shape parity.
     count?: number;
     names?: string[];
+    // reconnecting payload — only populated when type === "reconnecting".
+    // The backend's unbounded connection-retry tier riding out a network
+    // outage. Transient: these events are NOT persisted to session_events,
+    // so they arrive live-only with seq undefined.
+    attempt?: number;
+    backoffMs?: number;
   };
 }
 

@@ -1305,6 +1305,7 @@ const zhCN: Record<string, string> = {
   // Chat
   "chat.unknownError": "未知错误",
   "chat.skillPending": "📝 {count} 个技能待审批：{names}。运行 `fluctio skill approve <名称>` 以激活。",
+  "chat.reconnecting": "📡 网络波动，正在重连…（第 {attempt} 次）",
   "chat.clearHistory": "清除对话历史",
   "chat.undoTurn": "撤销上一轮",
   "chat.greeting": "有什么可以帮助你的？",
