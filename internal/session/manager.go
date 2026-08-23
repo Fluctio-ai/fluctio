@@ -6,6 +6,7 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -557,6 +558,12 @@ func (m *Manager) getByKey(key, channel, accountID, chatID, projectID string) *S
 		s.load()
 	}
 
+	// Repair a working set left dangling by a mid-turn daemon death —
+	// see healInterruptedTurn. Fresh loads only: a restart leaves no turn
+	// in flight, so appending here can never race a live one (the cached
+	// reload above is deliberately left alone for exactly that reason).
+	s.healInterruptedTurn()
+
 	m.sessions[key] = s
 	return s
 }
@@ -820,6 +827,83 @@ func (s *Session) Clear() {
 	} else {
 		os.Remove(s.filePath)
 	}
+}
+
+// ToolResultStoppedNote pads a tool result that never arrived because the
+// turn was stopped (user abort / turn exit) before the tool returned.
+const ToolResultStoppedNote = "(stopped — execution was interrupted before the tool returned)"
+
+// toolResultCrashNote pads a tool result that never arrived because the
+// daemon died mid-turn: the pad may understate reality — the tool could
+// have run to completion in the outside world without the result ever
+// being recorded.
+const toolResultCrashNote = "(interrupted — the service restarted before this tool returned; it may have partially executed)"
+
+// turnAbortedNote is appended (user role, metadata.turnAborted) after a
+// crash heal so the model resumes across an explicit boundary instead of
+// hallucinating continuity over the gap.
+const turnAbortedNote = "[system] 上一轮执行被中断(服务重启):被中止的工具可能已部分执行,后台进程可能仍在运行。请基于当前实际状态核实后再继续,不要假设中断前的操作已完成。"
+
+// PadOrphanToolResults pads the latest assistant message's unanswered
+// tool_calls with padText. History whose assistant tool_calls lack results
+// is rejected by OpenAI-compatible providers and semantically ambiguous to
+// every model. Runs on turn exit (deferred in the agent loop) and after a
+// crash-restart load. Returns true when at least one pad was appended.
+func (s *Session) PadOrphanToolResults(padText string) bool {
+	msgs := s.GetMessages()
+	// Walk back to the latest assistant message; if it has no tool_calls
+	// or all tool_calls already have results after it, nothing to do.
+	lastAssistantIdx := -1
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" && len(msgs[i].ToolCalls) > 0 {
+			lastAssistantIdx = i
+			break
+		}
+	}
+	if lastAssistantIdx < 0 {
+		return false
+	}
+	resolved := make(map[string]bool)
+	for _, m := range msgs[lastAssistantIdx+1:] {
+		if m.Role == "tool" && m.ToolCallID != "" {
+			resolved[m.ToolCallID] = true
+		}
+	}
+	padded := false
+	for _, tc := range msgs[lastAssistantIdx].ToolCalls {
+		if resolved[tc.ID] {
+			continue
+		}
+		slog.Warn("padding orphan tool_use with stopped result",
+			"session", s.sessionKey, "toolCallID", tc.ID, "tool", tc.Function.Name)
+		s.Append(provider.Message{
+			Role:       "tool",
+			ToolCallID: tc.ID,
+			Name:       tc.Function.Name,
+			Content:    padText,
+		})
+		padded = true
+	}
+	return padded
+}
+
+// healInterruptedTurn repairs a cold-loaded working set after a daemon
+// crash. When the persisted history ends with unanswered tool_calls, the
+// deferred PadOrphanToolResults never ran (process death skips defers),
+// and the next LLM request would carry an invalid assistant/tool sequence
+// — the "restart kills a long task forever" failure mode. Pads the
+// dangling calls, then appends a user-role turn-aborted marker so the
+// model knows the boundary it is resuming across. No-op on clean
+// histories, so it is safe to run on every fresh load.
+func (s *Session) healInterruptedTurn() {
+	if !s.PadOrphanToolResults(toolResultCrashNote) {
+		return
+	}
+	s.Append(provider.Message{
+		Role:     "user",
+		Content:  turnAbortedNote,
+		Metadata: map[string]any{"turnAborted": true},
+	})
 }
 
 func (s *Session) load() {

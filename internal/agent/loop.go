@@ -2400,7 +2400,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	// (review the plan, then reply to execute).
 	sess.BeginTurn()
 	defer a.flushLeftoverSteer(sess)
-	defer padOrphanToolResults(sess)
+	defer sess.PadOrphanToolResults(session.ToolResultStoppedNote)
 
 	// Mirror the regular path's user-message construction so multimodal
 	// + IM-bridge payloads (PhotoURL / PhotoURLs) land in session
@@ -2906,7 +2906,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// buffered onto the session (drained between tool iterations below)
 	// instead of starting a separate turn. flushLeftoverSteer parks any
 	// steer that lost the end-of-turn race into history. Registered
-	// before padOrphanToolResults so it runs LAST (defers are LIFO) —
+	// before PadOrphanToolResults so it runs LAST (defers are LIFO) —
 	// orphan padding settles history first.
 	sess.BeginTurn()
 	defer a.flushLeftoverSteer(sess)
@@ -2919,7 +2919,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// rendering as a forever-spinning "running" entry on history
 	// rebuild and the next turn's API call gets a 400 from Anthropic
 	// for orphaned tool_use ids.
-	defer padOrphanToolResults(sess)
+	defer sess.PadOrphanToolResults(session.ToolResultStoppedNote)
 
 	// Reset per-turn tool failure tracking. The web_fetch (and any
 	// future tool that opts in) consults the registry's
@@ -3721,50 +3721,10 @@ func hideTrippedTools(toolDefs []provider.Tool, streak map[string]int, limit int
 	return filtered, append(already, newlyTripped...)
 }
 
-// padOrphanToolResults walks the session and appends a synthetic
-// tool_result for any tool_use id from the latest assistant message that
-// doesn't already have a matching tool_result. Earlier rounds aren't
-// scanned — once the loop has moved past them they're already
-// well-formed, otherwise the previous turn's API call would have failed.
-//
-// Triggered by HandleMessage's defer so a client-side Stop (or any other
-// premature exit) can't leave the conversation in a state where the next
-// turn's API call gets a 400 for orphan tool_use ids and the UI keeps
-// spinning a "Running tools" indicator that will never resolve.
-func padOrphanToolResults(sess *session.Session) {
-	msgs := sess.GetMessages()
-	// Walk back to the latest assistant message; if it has no tool_calls
-	// or all tool_calls already have results after it, nothing to do.
-	lastAssistantIdx := -1
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "assistant" && len(msgs[i].ToolCalls) > 0 {
-			lastAssistantIdx = i
-			break
-		}
-	}
-	if lastAssistantIdx < 0 {
-		return
-	}
-	resolved := make(map[string]bool)
-	for _, m := range msgs[lastAssistantIdx+1:] {
-		if m.Role == "tool" && m.ToolCallID != "" {
-			resolved[m.ToolCallID] = true
-		}
-	}
-	for _, tc := range msgs[lastAssistantIdx].ToolCalls {
-		if resolved[tc.ID] {
-			continue
-		}
-		slog.Warn("padding orphan tool_use with stopped result",
-			"toolCallID", tc.ID, "tool", tc.Function.Name)
-		sess.Append(provider.Message{
-			Role:       "tool",
-			ToolCallID: tc.ID,
-			Name:       tc.Function.Name,
-			Content:    "(stopped — execution was interrupted before the tool returned)",
-		})
-	}
-}
+// padOrphanToolResults lives on Session now (Session.PadOrphanToolResults
+// in internal/session) — the turn-exit defers call it directly, and the
+// crash-restart load path reuses the same walk to heal sessions whose
+// last turn died with the daemon (see Session.healInterruptedTurn).
 
 // msg is the InboundMessage that drove this turn — its (channel, account,
 // chat, project) plus Source ride along on the HookContext so PostTurn
@@ -3983,7 +3943,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// turn's API request — especially against Anthropic-compat endpoints
 	// like DeepSeek's /anthropic — then 400s with "tool_use ids were found
 	// without tool_result blocks immediately after".
-	defer padOrphanToolResults(sess)
+	defer sess.PadOrphanToolResults(session.ToolResultStoppedNote)
 
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeSystemPrompt, UserID: a.ownerUserID})
 	chatterMem := a.memory
