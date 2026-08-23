@@ -53,7 +53,7 @@ import { readCache, writeCache } from "@/lib/page-data-cache";
 // WikiPage is the three-pane wiki browser at /agents/<id>/wiki/.
 //   Left   — page list grouped by type (overview/entity/concept/source)
 //   Center — markdown preview of the selected page
-//   Right  — knowledge graph (vis-network), always mounted
+//   Right  — knowledge graph (WebGL engine, see components/wiki-graph/engine)
 // All three panes are interlinked: selecting a page (left list or graph
 // node click) updates the center preview AND focuses/highlights the
 // node in the graph. Panes are resizable via draggable dividers; the
@@ -65,13 +65,32 @@ const PAGE_TYPE_SECTIONS = (t: ReturnType<typeof useT>) => [
   { type: "source", label: t("wiki.source"), icon: BookOpenIcon },
 ];
 
+// Graph palette per resolved theme. The WebGL engine can't read CSS
+// variables, so colors are resolved here; node fills mirror the page-type
+// colors the left pane groups by.
+const graphTheme = (isDark: boolean): import("@/components/wiki-graph/engine").GraphTheme => ({
+  bg: isDark ? "#0a0a0a" : "#ffffff",
+  node: "#6b7280",
+  label: isDark ? "#e5e7eb" : "#1f2937",
+  edge: isDark ? "#555" : "#9ca3af",
+  edgeHover: isDark ? "#9ca3af" : "#4b5563",
+  selectedBorder: "#8b5cf6",
+  typeColors: {
+    overview: "#8b5cf6",
+    entity: "#3b82f6",
+    concept: "#10b981",
+    source: "#f59e0b",
+    query: "#ef4444",
+  },
+});
+
 export default function WikiPage() {
   const t = useT();
   usePageHeader(<h1 className="text-sm font-semibold">{t("wiki.title")}</h1>, []);
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
-  // vis-network colors can't follow CSS variables, so the graph reads the
-  // resolved theme and rebuilds on change.
+  // The graph is a WebGL engine whose colors can't follow CSS variables, so
+  // it reads the resolved theme and hot-swaps its palette on change.
   const { resolvedTheme } = useTheme();
 
   // Stale-while-revalidate: seed stats/pages from the module cache so a
@@ -105,13 +124,13 @@ export default function WikiPage() {
   // toggled by buttons in the list/preview headers. PC keeps the inline pane.
   const [showGraphOverlay, setShowGraphOverlay] = useState(false);
 
-  // The right-pane graph is always mounted. networkRef persists the
-  // vis-network instance across renders so we can focus/select nodes
-  // when the selected page changes. handleSelectPageRef lets the
-  // graph's click handler call the latest selector without forcing the
-  // network-build effect to depend on (and rebuild on) every change.
+  // The right-pane graph is always mounted. engineRef persists the
+  // WikiGraphEngine instance across renders so we can focus nodes when the
+  // selected page changes. handleSelectPageRef lets the engine's click
+  // handler call the latest selector without forcing the engine-build
+  // effect to depend on (and rebuild on) every change.
   const graphRef = useRef<HTMLDivElement>(null);
-  const networkRef = useRef<import("vis-network").Network | null>(null);
+  const engineRef = useRef<import("@/components/wiki-graph/engine").WikiGraphEngine | null>(null);
   const handleSelectPageRef = useRef<(id: string) => void>(() => {});
 
   const loadData = useCallback(async () => {
@@ -148,6 +167,11 @@ export default function WikiPage() {
     [agentId],
   );
   handleSelectPageRef.current = handleSelectPage;
+  // Mirrors selectedPageId for the async engine-build effect: lets the
+  // freshly built engine replay a focus for a page selected while it was
+  // still loading, without the effect depending on the state itself.
+  const selectedPageIdRef = useRef<string | null>(null);
+  selectedPageIdRef.current = selectedPageId;
 
   // Deep link: /wiki/?page=<pageId> selects that page once on mount —
   // the cards source link lands here (page ids are "type:slug" pairs,
@@ -259,103 +283,66 @@ export default function WikiPage() {
     if (!graphRef.current || !agentId) return;
     let cancelled = false;
     const init = async () => {
-      const [{ Network }, { DataSet }] = await Promise.all([
-        import("vis-network/standalone"),
-        import("vis-data/standalone"),
-      ]);
+      // Dynamic import keeps pixi.js + d3 out of the initial page bundle.
+      const { WikiGraphEngine } = await import("@/components/wiki-graph/engine");
       if (cancelled || !graphRef.current) return;
       const g = await getWikiGraph(agentId);
-      if (cancelled) return;
-
-      // vis-network colors can't follow CSS variables, so pick from the
-      // resolved theme. Dot labels render on the pane background (not on
-      // the node), so the old fixed #e5e7eb was near-invisible on the
-      // light pane background. Edges get the matching contrast tone too.
-      const isDark = resolvedTheme !== "light";
-      const labelColor = isDark ? "#e5e7eb" : "#1f2937";
-      const edgeColor = isDark ? "#555" : "#9ca3af";
-      const typeColors: Record<string, string> = {
-        overview: "#8b5cf6",
-        entity: "#3b82f6",
-        concept: "#10b981",
-        source: "#f59e0b",
-        query: "#ef4444",
-      };
-      const nodes = new DataSet(
+      if (cancelled || !graphRef.current) return;
+      const engine = await WikiGraphEngine.create(graphRef.current, {
+        theme: graphTheme(resolvedTheme !== "light"),
+        onNodeClick: (id: string) => handleSelectPageRef.current?.(id),
+      });
+      if (cancelled) {
+        engine.destroy();
+        return;
+      }
+      engine.setData(
         g.nodes.map((n) => ({
           id: n.id,
           label: n.title.length > 12 ? n.title.slice(0, 12) + "…" : n.title,
-          title: n.title,
-          color: { background: typeColors[n.page_type] || "#666", border: "#333" },
-          font: { size: 11, color: labelColor },
-          shape: "dot",
-          size: 20,
+          pageType: n.page_type,
         })),
+        (g.edges ?? []).map((e) => ({ source: e.src_page_id, target: e.dst_page_id })),
       );
-      const edges = new DataSet(
-        (g.edges ?? []).map((e, i) => ({
-          id: i + 1,
-          from: e.src_page_id,
-          to: e.dst_page_id,
-          title: e.relation,
-          arrows: "to",
-          color: { color: edgeColor, opacity: 0.5 },
-          width: 1,
-        })),
-      );
-      const network = new Network(graphRef.current, { nodes, edges }, {
-        physics: { stabilization: { iterations: 100 }, solver: "forceAtlas2Based" },
-        interaction: { hover: true, tooltipDelay: 200 },
-        edges: { smooth: true },
-      });
-      networkRef.current = network;
-      // Three-pane interlink: clicking a graph node selects that page.
-      network.on("click", (params: { nodes?: string[] }) => {
-        if (params.nodes?.length) {
-          handleSelectPageRef.current?.(params.nodes[0]);
-        }
-      });
+      // If a page was already selected before the engine finished loading
+      // (e.g. deep link), replay the focus now that nodes exist.
+      if (selectedPageIdRef.current) engine.focusNode(selectedPageIdRef.current);
+      engineRef.current = engine;
     };
     init();
     return () => {
       cancelled = true;
-      if (networkRef.current) {
-        networkRef.current.destroy();
-        networkRef.current = null;
+      if (engineRef.current) {
+        engineRef.current.destroy();
+        engineRef.current = null;
       }
     };
     // Re-run when the right pane re-mounts after a collapse/expand:
-    // collapsing unmounts the graphRef div, so on expand the network
-    // has to be rebuilt against the freshly mounted DOM node. Also
-    // re-run on theme switch so node labels/edges pick up the new tone.
-  }, [agentId, rightCollapsed, resolvedTheme]);
+    // collapsing unmounts the graphRef div, so on expand the engine has to
+    // be rebuilt against the freshly mounted DOM node. Theme changes are
+    // handled hot by the setTheme effect below (no rebuild).
+  }, [agentId, rightCollapsed]);
+
+  // Theme swap is hot: the WebGL engine recolors without rebuilding.
+  useEffect(() => {
+    engineRef.current?.setTheme(graphTheme(resolvedTheme !== "light"));
+  }, [resolvedTheme]);
 
   // Selection sync: focus + highlight the matching node whenever the
   // selected page changes (left-list click OR graph-node click).
   useEffect(() => {
-    const net = networkRef.current;
-    if (!net || !selectedPageId) return;
-    try {
-      net.selectNodes([selectedPageId]);
-      net.focus(selectedPageId, {
-        scale: 1.2,
-        animation: { duration: 400, easingFunction: "easeInOutQuad" },
-      });
-    } catch {
-      // Node may not exist in the graph (e.g. a page with no edges);
-      // selecting it is best-effort, not fatal.
-    }
+    if (!selectedPageId) return;
+    // Node may not exist in the graph (e.g. a page with no edges);
+    // focusing it is best-effort, not fatal.
+    engineRef.current?.focusNode(selectedPageId);
   }, [selectedPageId]);
 
   // Mobile graph overlay: opening flips the pane display:none → fixed
-  // full-screen. vis-network's autoResize usually adapts, but explicitly
-  // fit + redraw shortly after open so the graph fills the overlay at once.
+  // full-screen. The engine's ResizeObserver adapts the canvas; explicitly
+  // re-fit shortly after open so the graph fills the overlay at once.
   useEffect(() => {
-    if (!showGraphOverlay || !networkRef.current) return;
-    const id = setTimeout(() => {
-      networkRef.current?.fit();
-      networkRef.current?.redraw();
-    }, 60);
+    if (!showGraphOverlay) return;
+    const id = setTimeout(() => engineRef.current?.fitView(), 60);
     return () => clearTimeout(id);
   }, [showGraphOverlay]);
 
