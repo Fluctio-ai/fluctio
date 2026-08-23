@@ -839,10 +839,15 @@ const ToolResultStoppedNote = "(stopped — execution was interrupted before the
 // being recorded.
 const toolResultCrashNote = "(interrupted — the service restarted before this tool returned; it may have partially executed)"
 
-// turnAbortedNote is appended (user role, metadata.turnAborted) after a
-// crash heal so the model resumes across an explicit boundary instead of
-// hallucinating continuity over the gap.
-const turnAbortedNote = "[system] 上一轮执行被中断(服务重启):被中止的工具可能已部分执行,后台进程可能仍在运行。请基于当前实际状态核实后再继续,不要假设中断前的操作已完成。"
+// turnAbortedCrashNote / turnAbortedStopNote are appended (user role,
+// metadata.turnAborted) when a turn ends without answering its tool_calls,
+// so the model resumes across an explicit boundary instead of
+// hallucinating continuity over the gap. Crash flavor: the daemon died
+// mid-turn (load-time heal). Stop flavor: turn-exit defer — the run was
+// stopped or errored out, and the defer can't tell which, so the wording
+// stays neutral.
+const turnAbortedCrashNote = "[system] 上一轮执行被中断(服务重启):被中止的工具可能已部分执行,后台进程可能仍在运行。请基于当前实际状态核实后再继续,不要假设中断前的操作已完成。"
+const turnAbortedStopNote = "[system] 上一轮执行未正常结束(被停止或出错退出):被中止的工具可能已部分执行,后台进程可能仍在运行。继续时请基于当前实际状态核实,不要假设此前的操作已完成。"
 
 // PadOrphanToolResults pads the latest assistant message's unanswered
 // tool_calls with padText. History whose assistant tool_calls lack results
@@ -901,7 +906,24 @@ func (s *Session) healInterruptedTurn() {
 	}
 	s.Append(provider.Message{
 		Role:     "user",
-		Content:  turnAbortedNote,
+		Content:  turnAbortedCrashNote,
+		Metadata: map[string]any{"turnAborted": true},
+	})
+}
+
+// PadOrphanToolResultsAndMarkAborted is the turn-exit variant of
+// PadOrphanToolResults: when repairs were made, the turn ended without
+// answering its tool_calls (user Stop, premature exit), so append the
+// stop-flavored turn-aborted marker alongside the pads — the model then
+// knows the boundary it resumes across instead of treating the stopped
+// tools as if they had never run.
+func (s *Session) PadOrphanToolResultsAndMarkAborted(padText string) {
+	if !s.PadOrphanToolResults(padText) {
+		return
+	}
+	s.Append(provider.Message{
+		Role:     "user",
+		Content:  turnAbortedStopNote,
 		Metadata: map[string]any{"turnAborted": true},
 	})
 }

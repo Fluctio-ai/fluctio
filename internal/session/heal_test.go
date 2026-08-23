@@ -116,8 +116,8 @@ func TestHealInterruptedTurnNoOpOnCleanHistory(t *testing.T) {
 	}
 }
 
-// TestPadOrphanToolResultsStopNote covers the turn-exit (defer) path that
-// moved onto Session: pads with the stop note only, no abort marker.
+// TestPadOrphanToolResultsStopNote covers the raw pad primitive the
+// turn-exit path used before markers existed: pads only, no marker.
 func TestPadOrphanToolResultsStopNote(t *testing.T) {
 	dir := t.TempDir()
 	s := NewManager(dir).Get("web", "", "chat-stop-1", "")
@@ -139,5 +139,40 @@ func TestPadOrphanToolResultsStopNote(t *testing.T) {
 	// Second run over the same history is a no-op.
 	if s.PadOrphanToolResults(ToolResultStoppedNote) {
 		t.Error("second pad should be a no-op")
+	}
+}
+
+// TestPadOrphanToolResultsAndMarkAborted covers the turn-exit defer
+// variant: pads the dangling call AND appends the stop-flavored
+// turn-aborted marker (user role, metadata) so the model sees an explicit
+// boundary; a clean history gets neither.
+func TestPadOrphanToolResultsAndMarkAborted(t *testing.T) {
+	dir := t.TempDir()
+	s := NewManager(dir).Get("web", "", "chat-stop-2", "")
+	s.Append(provider.Message{Role: "user", Content: "go"})
+	s.Append(provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{
+		{ID: "call_7", Type: "function", Function: provider.FunctionCall{Name: "exec", Arguments: "{}"}},
+	}})
+
+	s.PadOrphanToolResultsAndMarkAborted(ToolResultStoppedNote)
+	got := s.GetMessages()
+	if len(got) != 4 {
+		t.Fatalf("want 4 messages (pad + marker), got %d", len(got))
+	}
+	if got[2].Content != ToolResultStoppedNote || got[2].ToolCallID != "call_7" {
+		t.Errorf("pad wrong: %+v", got[2])
+	}
+	marker := got[3]
+	if marker.Role != "user" || marker.Metadata["turnAborted"] != true {
+		t.Errorf("marker wrong: role=%q metadata=%v", marker.Role, marker.Metadata)
+	}
+	if marker.Content != turnAbortedStopNote {
+		t.Errorf("marker should use the stop-flavored note: %q", marker.Content)
+	}
+
+	// Idempotent: nothing left dangling, so a second call changes nothing.
+	s.PadOrphanToolResultsAndMarkAborted(ToolResultStoppedNote)
+	if got := s.GetMessages(); len(got) != 4 {
+		t.Errorf("second call appended again: want 4 messages, got %d", len(got))
 	}
 }

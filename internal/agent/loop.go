@@ -2400,7 +2400,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	// (review the plan, then reply to execute).
 	sess.BeginTurn()
 	defer a.flushLeftoverSteer(sess)
-	defer sess.PadOrphanToolResults(session.ToolResultStoppedNote)
+	defer sess.PadOrphanToolResultsAndMarkAborted(session.ToolResultStoppedNote)
 
 	// Mirror the regular path's user-message construction so multimodal
 	// + IM-bridge payloads (PhotoURL / PhotoURLs) land in session
@@ -2919,7 +2919,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// rendering as a forever-spinning "running" entry on history
 	// rebuild and the next turn's API call gets a 400 from Anthropic
 	// for orphaned tool_use ids.
-	defer sess.PadOrphanToolResults(session.ToolResultStoppedNote)
+	defer sess.PadOrphanToolResultsAndMarkAborted(session.ToolResultStoppedNote)
 
 	// Reset per-turn tool failure tracking. The web_fetch (and any
 	// future tool that opts in) consults the registry's
@@ -3943,7 +3943,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// turn's API request — especially against Anthropic-compat endpoints
 	// like DeepSeek's /anthropic — then 400s with "tool_use ids were found
 	// without tool_result blocks immediately after".
-	defer sess.PadOrphanToolResults(session.ToolResultStoppedNote)
+	defer sess.PadOrphanToolResultsAndMarkAborted(session.ToolResultStoppedNote)
 
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeSystemPrompt, UserID: a.ownerUserID})
 	chatterMem := a.memory
