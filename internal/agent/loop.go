@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -2557,6 +2558,19 @@ func classifyLLMError(err error) string {
 	}
 	var he *provider.HTTPError
 	if !errors.As(err, &he) {
+		// Connection-layer failure (dial refused/reset, read EOF, stream
+		// cut): the providers wrap these as "send request: %w" /
+		// "read stream: %w" around *url.Error / net errors, which
+		// implement net.Error. Tier them apart from bounded "retryable":
+		// a network blip never reached the provider and amplifies no
+		// server load, so llmRetry retries them without a cap. Errors
+		// WITHOUT a typed network cause (plain strings, response parse
+		// failures) deliberately stay bounded — an unbounded loop on a
+		// deterministic error would hang the turn forever.
+		var ne net.Error
+		if errors.As(err, &ne) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return "connection"
+		}
 		// Network-layer failure (send/read/EOF) — transient, retry.
 		return "retryable"
 	}
@@ -2587,21 +2601,43 @@ func classifyLLMError(err error) string {
 	}
 }
 
-// llmRetry wraps an LLM call with retry logic for transient errors (network
-// glitches, server 5xx, EOF). Context cancellation / deadline exceeded and
-// non-transient HTTP failures (billing/auth) are treated as terminal —
-// there's no point retrying when the caller has gone away or the failure is
-// permanent. Context-length errors are surfaced immediately as
-// ErrContextTooLong so the caller can compress and resend rather than
-// retrying an oversized payload. Uses exponential backoff (1s, 4s, 9s)
-// across up to llmRetryAttempts calls.
+// llmRetry wraps an LLM call with retry logic, in two tiers:
+//
+//   - bounded (5xx/429, untyped network strings): exponential backoff
+//     (1s, 4s, 9s) across up to llmRetryAttempts calls. The server may
+//     genuinely be overloaded — hammering it forever is abuse.
+//   - unbounded (typed connection failures — dial/read/EOF before or
+//     mid-stream): the request never reached the provider, so retries
+//     load nobody but ourselves. Codex-style connection retry: 5s
+//     doubling capped at 60s, no attempt limit, so a long task survives
+//     a 30-minute network outage instead of dying after 14 seconds.
+//     ctx cancellation (Stop, shutdown) always breaks the loop.
+//
+// Context cancellation / deadline exceeded and non-transient HTTP
+// failures (billing/auth) are treated as terminal — there's no point
+// retrying when the caller has gone away or the failure is permanent.
+// Context-length errors are surfaced immediately as ErrContextTooLong so
+// the caller can compress and resend rather than retrying an oversized
+// payload.
 //
 // The label argument is used for structured logging (typically a.name).
 const llmRetryAttempts = 3
 
+// connRetryBackoff computes the unbounded tier's delay: 5s doubling,
+// capped at 60s. A var so tests can shrink the sleeps.
+var connRetryBackoff = func(attempt int) time.Duration {
+	d := 5 * time.Second
+	for i := 1; i < attempt; i++ {
+		d *= 2
+		if d >= time.Minute {
+			return time.Minute
+		}
+	}
+	return d
+}
+
 func llmRetry(ctx context.Context, label string, fn func(context.Context) (*provider.Response, error)) (*provider.Response, error) {
-	var lastErr error
-	for attempt := 1; attempt <= llmRetryAttempts; attempt++ {
+	for attempt := 1; ; attempt++ {
 		resp, err := fn(ctx)
 		if err == nil {
 			if attempt > 1 {
@@ -2610,7 +2646,6 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 			}
 			return resp, nil
 		}
-		lastErr = err
 
 		// Classify the error to decide whether retrying helps at all.
 		// This is the Hermes-style recovery router: terminal errors
@@ -2633,21 +2668,39 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 			return nil, fmt.Errorf("%w: %s", ErrContextTooLong, err.Error())
 		}
 
-		if attempt < llmRetryAttempts {
-			backoff := time.Duration(attempt*attempt) * time.Second // 1s, 4s, 9s
-			slog.Warn("LLM call failed, retrying",
-				"agent", label, "attempt", attempt,
-				"max", llmRetryAttempts, "backoff", backoff, "error", err)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return nil, errors.Join(lastErr, ctx.Err())
+		connection := category == "connection"
+		if !connection && attempt >= llmRetryAttempts {
+			slog.Error("LLM call failed after all retries",
+				"agent", label, "attempts", llmRetryAttempts, "error", err)
+			return nil, err
+		}
+
+		var backoff time.Duration
+		if connection {
+			backoff = connRetryBackoff(attempt)
+			if attempt >= 2 {
+				// Surface from the 2nd retry on (the 1st is usually a
+				// transient blip that resolves silently): the user sees
+				// "reconnecting" instead of a seemingly frozen turn.
+				// No-op when ctx carries no event consumers (background
+				// Complete calls).
+				emitEvent(ctx, ChatEvent{Type: "reconnecting", Data: map[string]any{
+					"attempt":   attempt,
+					"backoffMs": backoff.Milliseconds(),
+				}})
 			}
+		} else {
+			backoff = time.Duration(attempt*attempt) * time.Second // 1s, 4s, 9s
+		}
+		slog.Warn("LLM call failed, retrying",
+			"agent", label, "attempt", attempt,
+			"category", category, "backoff", backoff, "error", err)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return nil, errors.Join(err, ctx.Err())
 		}
 	}
-	slog.Error("LLM call failed after all retries",
-		"agent", label, "attempts", llmRetryAttempts, "error", lastErr)
-	return nil, lastErr
 }
 
 // callLLMWithPTLRecovery wraps one ReAct-round LLM call with context-length

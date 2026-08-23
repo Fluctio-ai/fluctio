@@ -3,9 +3,14 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
 )
@@ -110,6 +115,16 @@ func TestClassifyLLMError(t *testing.T) {
 		{"deadline", context.DeadlineExceeded, "terminal"},
 		{"network EOF", errors.New("read tcp: EOF"), "retryable"},
 		{"send failure", errors.New("send request: connection reset"), "retryable"},
+		// Typed connection errors (what the providers actually emit via
+		// "send request: %w" / "read stream: %w") get the unbounded tier.
+		{"url.Error transport", &url.Error{Op: "Post", URL: "https://api.example/v1", Err: errors.New("dial tcp: connection refused")}, "connection"},
+		{"wrapped send request", fmt.Errorf("send request: %w", &url.Error{Op: "Post", URL: "https://api.example/v1", Err: errors.New("connection reset")}), "connection"},
+		{"wrapped unexpected EOF", fmt.Errorf("read stream: %w", io.ErrUnexpectedEOF), "connection"},
+		{"bare EOF", io.EOF, "connection"},
+		{"net op error", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}, "connection"},
+		// Deterministic non-network errors stay bounded so the unbounded
+		// tier can never hang a turn on a parse failure.
+		{"json parse failure", fmt.Errorf("decode response: %w", errors.New("invalid character 'x'")), "retryable"},
 		{"402 billing", httpErr(http.StatusPaymentRequired, "insufficient credits"), "terminal"},
 		{"401 auth", httpErr(http.StatusUnauthorized, "invalid api key"), "terminal"},
 		{"403 forbidden", httpErr(http.StatusForbidden, "forbidden"), "terminal"},
@@ -191,6 +206,83 @@ func TestLLMRetryRetryableRetries(t *testing.T) {
 	}
 	if err == nil {
 		t.Errorf("expected error after all retries failed")
+	}
+}
+
+// TestLLMRetryConnectionUnbounded verifies the connection tier retries
+// past the bounded llmRetryAttempts limit (a network blip must not kill
+// a long task), emits "reconnecting" events from the 2nd retry on, and
+// respects ctx cancellation.
+func TestLLMRetryConnectionUnbounded(t *testing.T) {
+	origBackoff := connRetryBackoff
+	connRetryBackoff = func(attempt int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { connRetryBackoff = origBackoff })
+
+	connErr := fmt.Errorf("send request: %w", &url.Error{
+		Op: "Post", URL: "https://api.example/v1", Err: errors.New("dial tcp: connection refused"),
+	})
+
+	calls := 0
+	ch := make(chan ChatEvent, 16)
+	ctx := ContextWithChatEvents(context.Background(), ch)
+	resp, err := llmRetry(ctx, "test", func(ctx context.Context) (*provider.Response, error) {
+		calls++
+		if calls <= 5 { // 5 failures > llmRetryAttempts(3) — bounded tier would give up
+			return nil, connErr
+		}
+		return &provider.Response{Content: "ok"}, nil
+	})
+	if err != nil {
+		t.Fatalf("expected recovery after network blip, got %v", err)
+	}
+	if resp == nil || resp.Content != "ok" {
+		t.Fatalf("expected response, got %+v", resp)
+	}
+	if calls != 6 {
+		t.Errorf("expected 6 calls (5 failed + 1 ok), got %d", calls)
+	}
+
+	// Reconnecting events fire from the 2nd retry on: attempts 2..5 = 4 events.
+	reconnects := 0
+	for {
+		select {
+		case evt := <-ch:
+			if evt.Type == "reconnecting" {
+				reconnects++
+			}
+		default:
+			if reconnects != 4 {
+				t.Errorf("expected 4 reconnecting events (attempts 2-5), got %d", reconnects)
+			}
+			return
+		}
+	}
+}
+
+// TestLLMRetryConnectionCtxCancel verifies the unbounded tier is always
+// escapable: a cancelled ctx must break the retry loop instead of looping
+// forever on connection failures.
+func TestLLMRetryConnectionCtxCancel(t *testing.T) {
+	origBackoff := connRetryBackoff
+	connRetryBackoff = func(attempt int) time.Duration { return time.Millisecond }
+	t.Cleanup(func() { connRetryBackoff = origBackoff })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	connErr := fmt.Errorf("read stream: %w", io.ErrUnexpectedEOF)
+	_, err := llmRetry(ctx, "test", func(ctx context.Context) (*provider.Response, error) {
+		calls++
+		return nil, connErr
+	})
+	if err == nil {
+		t.Fatal("expected error after ctx cancel")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled in joined error, got %v", err)
 	}
 }
 
