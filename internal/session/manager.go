@@ -944,6 +944,7 @@ func (s *Session) healInterruptedTurn() {
 	s.AppendClaimOnce(provider.Message{
 		Role:    "user",
 		Content: turnAbortedCrashNote,
+		Origin:  provider.OriginTurnAbort,
 	}, "turnAborted", true)
 }
 
@@ -962,6 +963,7 @@ func (s *Session) PadOrphanToolResultsAndMarkAborted(padText string) {
 	s.AppendClaimOnce(provider.Message{
 		Role:    "user",
 		Content: turnAbortedStopNote,
+		Origin:  provider.OriginTurnAbort,
 	}, "turnAborted", true)
 }
 

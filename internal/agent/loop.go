@@ -1687,6 +1687,18 @@ func (a *Agent) WebChatHistory(sessionId string, beforeSeq, limit int) ([]map[st
 	}
 	var history []map[string]any
 	for _, m := range renderedPage {
+		// turn_aborted 边界标记（崩溃自愈 / 停止标记）：runtime 注入但
+		// 用户可见 —— 在 Origin 过滤之前拦截，渲染成 notice entry（前端
+		// 识别 kind="turn_aborted_notice"），不作为用户气泡。
+		if m.Origin == provider.OriginTurnAbort {
+			history = append(history, map[string]any{
+				"role":      "user",
+				"kind":      "turn_aborted_notice",
+				"content":   m.TextContent(),
+				"timestamp": m.Timestamp,
+			})
+			continue
+		}
 		// Hide runtime-injected messages (currently only goal_context
 		// continuations). They live in the session for the LLM's
 		// benefit; surfacing them to the user would expose audit

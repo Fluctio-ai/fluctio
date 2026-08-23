@@ -54,7 +54,10 @@ func emitEvent(ctx context.Context, evt ChatEvent) {
 	// no replay value: the trailing `content` event carries the full
 	// final text, so a refresh in the middle of a turn just rejoins
 	// the live hub and gets the final on completion.
-	persist := evt.Type != "content_delta"
+	// reconnecting is transient connection status: replaying a past
+	// outage's "reconnecting" on a mid-turn refresh would flash a stale
+	// indicator for no replay value.
+	persist := evt.Type != "content_delta" && evt.Type != "reconnecting"
 
 	if persist && stream != nil && stream.sink != nil && stream.userID != "" && stream.sessionKey != "" {
 		blob, _ := json.Marshal(evt.Data)

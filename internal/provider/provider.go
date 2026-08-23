@@ -58,7 +58,8 @@ func newLLMHTTPClient() *http.Client {
 const (
 	OriginUser        = "" // default — pre-existing producers stay correct without edits
 	OriginGoalContext = "goal_context"
-	OriginCron        = "cron" // scheduled-task trigger — a cron-fired inbound, not a real user turn
+	OriginCron        = "cron"       // scheduled-task trigger — a cron-fired inbound, not a real user turn
+	OriginTurnAbort   = "turn_abort" // turn-abort boundary marker (crash heal / stopped turn) — LLM-visible, rendered as a UI notice
 )
 
 // Message represents a chat message.
@@ -87,8 +88,11 @@ type Message struct {
 	RawAssistant json.RawMessage `json:"_raw,omitempty"`
 
 	// Origin distinguishes runtime-injected messages from real user /
-	// assistant exchanges. Empty (OriginUser) is the default. Currently
-	// only OriginGoalContext is set, by the /goal continuation path.
+	// assistant exchanges. Empty (OriginUser) is the default. Set today
+	// by the /goal continuation path (OriginGoalContext), cron-fired
+	// inbounds (OriginCron), and the turn-abort boundary markers written
+	// by Session.healInterruptedTurn / PadOrphanToolResultsAndMarkAborted
+	// (OriginTurnAbort).
 	// User-visible history (WebChatHistory) and the FTS index filter
 	// on this so synthetic prompts don't pollute either view. Rides
 	// as part of the JSONB sessions.messages working set and as a

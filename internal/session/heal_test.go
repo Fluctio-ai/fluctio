@@ -79,6 +79,9 @@ func TestHealInterruptedTurnPadsOrphansAndMarksBoundary(t *testing.T) {
 	if marker.Role != "user" || marker.Metadata["turnAborted"] != true {
 		t.Errorf("marker wrong: role=%q metadata=%v", marker.Role, marker.Metadata)
 	}
+	if marker.Origin != provider.OriginTurnAbort {
+		t.Errorf("marker Origin = %q, want %q", marker.Origin, provider.OriginTurnAbort)
+	}
 	if !strings.Contains(marker.Content, "中断") {
 		t.Errorf("marker content should explain the interruption: %q", marker.Content)
 	}
@@ -224,6 +227,9 @@ func TestPadOrphanToolResultsAndMarkAborted(t *testing.T) {
 	marker := got[3]
 	if marker.Role != "user" || marker.Metadata["turnAborted"] != true {
 		t.Errorf("marker wrong: role=%q metadata=%v", marker.Role, marker.Metadata)
+	}
+	if marker.Origin != provider.OriginTurnAbort {
+		t.Errorf("marker Origin = %q, want %q", marker.Origin, provider.OriginTurnAbort)
 	}
 	if marker.Content != turnAbortedStopNote {
 		t.Errorf("marker should use the stop-flavored note: %q", marker.Content)

@@ -86,3 +86,40 @@ func TestWebChatHistoryCompactionNotice(t *testing.T) {
 		t.Errorf("notice timestamp = %v, want 2000", notice["timestamp"])
 	}
 }
+
+// WebChatHistory must surface turn-abort boundary markers (Origin=
+// turn_abort, written by the crash heal / stopped-turn paths) as
+// kind="turn_aborted_notice" entries — BEFORE the Origin!=OriginUser
+// filter that hides runtime-injected messages, because unlike goal
+// scaffolding these boundaries are user-visible history facts.
+func TestWebChatHistoryTurnAbortedNotice(t *testing.T) {
+	a := newSlashTestAgent(t)
+	sess := a.sessions.Get("web", "", "abort-chat", "")
+	const sessionKey = "abort-chat"
+
+	sess.Append(provider.Message{Role: "user", Content: "run the build"})
+	sess.Append(provider.Message{
+		Role:      "user",
+		Content:   "[system] 上一轮执行被中断(服务重启):被中止的工具可能已部分执行。",
+		Origin:    provider.OriginTurnAbort,
+		Timestamp: 3000,
+	})
+
+	hist, _, _ := a.WebChatHistory(sessionKey, 0, 50)
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history entries, got %d: %+v", len(hist), hist)
+	}
+	if hist[0]["role"] != "user" || hist[0]["content"] != "run the build" {
+		t.Errorf("entry 0 wrong: %+v", hist[0])
+	}
+	marker := hist[1]
+	if marker["kind"] != "turn_aborted_notice" {
+		t.Errorf("marker kind = %v, want turn_aborted_notice", marker["kind"])
+	}
+	if marker["role"] != "user" {
+		t.Errorf("marker role = %v, want user", marker["role"])
+	}
+	if marker["timestamp"] != int64(3000) {
+		t.Errorf("marker timestamp = %v, want 3000", marker["timestamp"])
+	}
+}
