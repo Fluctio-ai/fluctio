@@ -1,5 +1,5 @@
 "use client";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,8 @@ import {
   CheckIcon,
   CheckSquareIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CopyIcon,
   FileTextIcon,
   ListOrderedIcon,
@@ -1208,10 +1210,13 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
   const [loading, setLoading] = useState(!initialTodo);
   const [newOpen, setNewOpen] = useState(false);
   const [newContent, setNewContent] = useState("");
+  const [newStart, setNewStart] = useState("");
   const [newEnd, setNewEnd] = useState("");
   const [creating, setCreating] = useState(false);
-  const [view, setView] = useState<"board" | "list">("board");
+  const [view, setView] = useState<"board" | "calendar" | "list">("board");
   const [deleteTarget, setDeleteTarget] = useState<FlashItem | null>(null);
+  const [detailTarget, setDetailTarget] = useState<FlashItem | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
@@ -1234,22 +1239,46 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
 
   useEffect(() => { load(); }, [load]);
 
+  // Keep the detail dialog fresh after load() swaps the FlashItem objects
+  // (status/date edits re-fetch the whole list).
+  useEffect(() => {
+    setDetailTarget((prev) => (prev ? todos.find((it) => it.src.id === prev.src.id) ?? null : prev));
+  }, [todos]);
+
+  // openCreate opens the new-todo dialog with optional prefilled dates —
+  // calendar empty-cell clicks pass the clicked day as the due date.
+  const openCreate = useCallback((start?: string, end?: string) => {
+    setNewStart(start ?? "");
+    setNewEnd(end ?? "");
+    setNewOpen(true);
+  }, []);
+
   const handleCreate = useCallback(async () => {
     if (!agentId || !newContent.trim()) return;
     setCreating(true);
     try {
+      const startAt = newStart ? new Date(newStart).toISOString() : undefined;
       const endAt = newEnd ? new Date(newEnd).toISOString() : undefined;
-      const res = await kbSaveTodo(agentId, newContent.trim(), "pending", undefined, endAt);
+      const res = await kbSaveTodo(agentId, newContent.trim(), "pending", startAt, endAt);
       if ("error" in res) notify(res.error!); else {
-        setNewOpen(false); setNewContent(""); setNewEnd(""); load();
+        setNewOpen(false); setNewContent(""); setNewStart(""); setNewEnd(""); load();
       }
     } catch { notify(t("knowledge.failedAddText")); }
     setCreating(false);
-  }, [agentId, newContent, newEnd, load, t]);
+  }, [agentId, newContent, newStart, newEnd, load, t]);
 
   const handleMove = useCallback(async (id: string, status: TodoStatus) => {
     if (!agentId) return;
     const res = await kbUpdateTodo(agentId, id, { status });
+    if ("error" in res) notify(res.error!); else load();
+  }, [agentId, load]);
+
+  // handlePatchDates saves the start/due edits from the detail dialog.
+  // Undefined keys are omitted from the PATCH, so a cleared input field
+  // simply leaves the stored date unchanged.
+  const handlePatchDates = useCallback(async (id: string, patch: { start_at?: string; end_at?: string }) => {
+    if (!agentId) return;
+    const res = await kbUpdateTodo(agentId, id, patch);
     if ("error" in res) notify(res.error!); else load();
   }, [agentId, load]);
 
@@ -1265,20 +1294,21 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
     setDeleteTarget(todos.find((it) => it.src.id === id) ?? null);
   }, [todos]);
 
-  const byStatus = useMemo(() => {
-    // Content filter applied before grouping so the board, the list view and
-    // the overdue/today summary all respect the search box.
+  // visibleTodos applies the search-box content filter shared by the board,
+  // calendar and list views.
+  const visibleTodos = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const visibleTodos = q
-      ? todos.filter((it) => it.content.toLowerCase().includes(q))
-      : todos;
+    return q ? todos.filter((it) => it.content.toLowerCase().includes(q)) : todos;
+  }, [todos, query]);
+
+  const byStatus = useMemo(() => {
     const m: Record<TodoStatus, FlashItem[]> = { pending: [], in_progress: [], done: [], cancelled: [] };
     for (const it of visibleTodos) {
       const s = (it.src.status || "pending") as TodoStatus;
       if (m[s]) m[s].push(it);
     }
     return m;
-  }, [todos, query]);
+  }, [visibleTodos]);
 
   // dueSoon: active todos with a due date, split into overdue vs. due-today
   // for the urgency summary above the board.
@@ -1287,8 +1317,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
     const eod = new Date(); eod.setHours(23, 59, 59, 999);
     const overdue: FlashItem[] = [];
     const today: FlashItem[] = [];
-    const q = query.trim().toLowerCase();
-    for (const it of q ? todos.filter((x) => x.content.toLowerCase().includes(q)) : todos) {
+    for (const it of visibleTodos) {
       if (it.src.status !== "pending" && it.src.status !== "in_progress") continue;
       if (!it.src.end_at) continue;
       const due = new Date(it.src.end_at).getTime();
@@ -1296,24 +1325,30 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
       else if (due <= eod.getTime()) today.push(it);
     }
     return { overdue, today };
-  }, [todos, query]);
+  }, [visibleTodos]);
 
-  // listSorted: flat urgency-ordered list for the list view — active first,
-  // then ascending due date (undated last).
-  const listSorted = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const visibleTodos = q
-      ? todos.filter((it) => it.content.toLowerCase().includes(q))
-      : todos;
-    return [...visibleTodos].sort((a, b) => {
-      const aa = a.src.status === "pending" || a.src.status === "in_progress";
-      const bb = b.src.status === "pending" || b.src.status === "in_progress";
-      if (aa !== bb) return aa ? -1 : 1;
-      const ea = a.src.end_at ? new Date(a.src.end_at).getTime() : Infinity;
-      const eb = b.src.end_at ? new Date(b.src.end_at).getTime() : Infinity;
-      return ea - eb;
-    });
-  }, [todos, query]);
+  // listGroups buckets the visible todos by due date for the list view:
+  // overdue / today / tomorrow / this week / later / undated, plus the done
+  // and cancelled archives (rendered collapsed at the bottom).
+  const listGroups = useMemo(() => {
+    const { now, eod, eodTomorrow, eodWeek } = dueBounds();
+    const g: Record<TodoGroupKey, FlashItem[]> = {
+      overdue: [], today: [], tomorrow: [], week: [], later: [], undated: [],
+      done: [], cancelled: [],
+    };
+    for (const it of visibleTodos) {
+      const st = it.src.status || "pending";
+      if (st === "done" || st === "cancelled") { g[st].push(it); continue; }
+      if (!it.src.end_at) { g.undated.push(it); continue; }
+      const due = new Date(it.src.end_at).getTime();
+      if (due < now) g.overdue.push(it);
+      else if (due <= eod.getTime()) g.today.push(it);
+      else if (due <= eodTomorrow.getTime()) g.tomorrow.push(it);
+      else if (due <= eodWeek.getTime()) g.week.push(it);
+      else g.later.push(it);
+    }
+    return g;
+  }, [visibleTodos]);
 
   return (
     <div className="flex h-full flex-col">
@@ -1324,9 +1359,10 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
         </div>
         <div className="flex shrink-0 items-center rounded-md border p-0.5">
           <button type="button" onClick={() => setView("board")} className={cn("rounded px-2 py-1 text-xs", view === "board" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewBoard")}</button>
+          <button type="button" onClick={() => setView("calendar")} className={cn("rounded px-2 py-1 text-xs", view === "calendar" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewCalendar")}</button>
           <button type="button" onClick={() => setView("list")} className={cn("rounded px-2 py-1 text-xs", view === "list" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewList")}</button>
         </div>
-        <Button size="sm" className="h-7 shrink-0" onClick={() => setNewOpen(true)}>
+        <Button size="sm" className="h-7 shrink-0" onClick={() => openCreate()}>
           <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.todos")}
         </Button>
       </div>
@@ -1338,17 +1374,60 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
       )}
       <ScrollArea className="flex-1">
         {view === "list" ? (
-          <div className="mx-auto max-w-2xl space-y-2 p-4">
+          <div className="mx-auto max-w-3xl space-y-5 p-4">
             {loading ? (
               <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
-            ) : listSorted.length === 0 ? (
+            ) : visibleTodos.length === 0 ? (
               <p className="text-sm text-muted-foreground">{t("knowledge.noTodos")}</p>
             ) : (
-              listSorted.map(({ src, content }) => (
-                <TodoCard key={src.id} src={src} content={content} onDelete={askDelete} onMove={handleMove} />
-              ))
+              <>
+                {TODO_LIST_GROUPS.map(({ key, label, accent }) =>
+                  listGroups[key].length === 0 ? null : (
+                    <section key={key}>
+                      <h3 className={cn("mb-1.5 px-0.5 text-xs font-semibold uppercase tracking-wide", accent)}>
+                        {t(label)} ({listGroups[key].length})
+                      </h3>
+                      <div className="space-y-1.5">
+                        {listGroups[key].map((it) => (
+                          <TodoRow key={it.src.id} item={it} onOpen={setDetailTarget} onDelete={askDelete} />
+                        ))}
+                      </div>
+                    </section>
+                  ),
+                )}
+                {(["done", "cancelled"] as const).map((st) =>
+                  listGroups[st].length === 0 ? null : (
+                    <div key={st} className="overflow-hidden rounded-lg border">
+                      <button
+                        type="button"
+                        onClick={() => setArchiveOpen((o) => ({ ...o, [st]: !(o[st] ?? false) }))}
+                        className="flex w-full items-center justify-between px-3 py-2 hover:bg-accent/50"
+                      >
+                        <span className={cn("text-xs font-semibold uppercase tracking-wide", statusAccent(st))}>
+                          {t("knowledge.status_" + st)} ({listGroups[st].length})
+                        </span>
+                        <ChevronDownIcon className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", archiveOpen[st] && "rotate-180")} />
+                      </button>
+                      {archiveOpen[st] && (
+                        <div className="space-y-1.5 border-t p-2">
+                          {listGroups[st].map((it) => (
+                            <TodoRow key={it.src.id} item={it} onOpen={setDetailTarget} onDelete={askDelete} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ),
+                )}
+              </>
             )}
           </div>
+        ) : view === "calendar" ? (
+          <TodoCalendar
+            items={visibleTodos}
+            onOpenItem={setDetailTarget}
+            onCreateAt={(day) => openCreate(undefined, `${day}T09:00`)}
+            onDelete={askDelete}
+          />
         ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
           {TODO_STATUSES.map((st) => (
@@ -1398,6 +1477,15 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
         }}
       />
 
+      <TodoDetailDialog
+        key={detailTarget?.src.id ?? "none"}
+        item={detailTarget}
+        onMove={handleMove}
+        onPatchDates={handlePatchDates}
+        onDelete={(id) => { setDetailTarget(null); askDelete(id); }}
+        onOpenChange={(o) => { if (!o) setDetailTarget(null); }}
+      />
+
       <Dialog open={newOpen} onOpenChange={setNewOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{t("knowledge.newTodo")}</DialogTitle></DialogHeader>
@@ -1410,6 +1498,10 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
                 onChange={(e) => setNewContent(e.target.value)}
                 placeholder={t("knowledge.todoContentPlaceholder")}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t("knowledge.startLabel")}</Label>
+              <Input type="datetime-local" value={newStart} onChange={(e) => setNewStart(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <Label>{t("knowledge.dueLabel")}</Label>
@@ -1501,6 +1593,493 @@ function statusAccent(s: TodoStatus): string {
       return "text-muted-foreground line-through";
   }
   return "";
+}
+
+// --- Calendar + compact list (shared by the calendar and list views) ---
+
+type TodoGroupKey = "overdue" | "today" | "tomorrow" | "week" | "later" | "undated" | "done" | "cancelled";
+
+// TODO_LIST_GROUPS drives the list view's urgency sections; done/cancelled
+// render separately as collapsed archives at the bottom.
+const TODO_LIST_GROUPS: ReadonlyArray<{ key: Exclude<TodoGroupKey, "done" | "cancelled">; label: string; accent: string }> = [
+  { key: "overdue", label: "knowledge.tgOverdue", accent: "text-destructive" },
+  { key: "today", label: "knowledge.today", accent: "text-warning" },
+  { key: "tomorrow", label: "knowledge.tgTomorrow", accent: "text-muted-foreground" },
+  { key: "week", label: "knowledge.tgWeek", accent: "text-muted-foreground" },
+  { key: "later", label: "knowledge.tgLater", accent: "text-muted-foreground" },
+  { key: "undated", label: "knowledge.noDate", accent: "text-muted-foreground" },
+];
+
+// todoOverdue: active todo whose due timestamp is in the past.
+function todoOverdue(src: KBSource): boolean {
+  return !!src.end_at && new Date(src.end_at).getTime() < Date.now() &&
+    (src.status === "pending" || src.status === "in_progress");
+}
+
+// dueBounds returns the current-time bucket edges for the list view.
+function dueBounds() {
+  const now = Date.now();
+  const eod = new Date(); eod.setHours(23, 59, 59, 999);
+  const eodTomorrow = new Date(eod); eodTomorrow.setDate(eod.getDate() + 1);
+  const eodWeek = new Date(eod); eodWeek.setDate(eod.getDate() + 7);
+  return { now, eod, eodTomorrow, eodWeek };
+}
+
+// todoFirstLine pulls the first non-empty line out of a markdown todo body
+// for compact one-line chips/rows; heading hashes are stripped.
+function todoFirstLine(content: string): string {
+  const line = content.split("\n").find((l) => l.trim());
+  return (line ?? "").replace(/^#{1,6}\s*/, "").trim();
+}
+
+// dayKey formats a local date as "YYYY-MM-DD" — the join key between todo
+// timestamps and calendar cells (calendar days, not instants).
+function dayKey(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// monthGrid returns the 42 days (6 weeks, Monday-first) covering anchor's
+// month so a todo spanning a week boundary still renders as aligned bars.
+function monthGrid(anchor: Date): Date[] {
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - ((first.getDay() + 6) % 7));
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    return d;
+  });
+}
+
+// fmtShort renders a timestamp as "M/D" (plus "HH:mm" when it carries a
+// time-of-day) for compact list rows.
+function fmtShort(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const md = `${d.getMonth() + 1}/${d.getDate()}`;
+  if (!d.getHours() && !d.getMinutes()) return md;
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${md} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// todoSpanText renders a todo's date coverage: "M/D – M/D" when start and
+// due fall on different days, else the single timestamp.
+function todoSpanText(src: KBSource): string {
+  const s = src.start_at, e = src.end_at;
+  if (s && e) {
+    const sameDay = dayKey(new Date(s)) === dayKey(new Date(e));
+    return sameDay ? fmtShort(e) : `${fmtShort(s)} – ${fmtShort(e)}`;
+  }
+  return fmtShort(e || s || "");
+}
+
+// statusBar / statusChipBg carry the same four lifecycle colors as the
+// kanban column headers (statusAccent) into list rows and calendar chips.
+function statusBar(s: TodoStatus): string {
+  switch (s) {
+    case "pending":
+      return "bg-muted-foreground/40";
+    case "in_progress":
+      return "bg-info";
+    case "done":
+      return "bg-success";
+    case "cancelled":
+      return "bg-muted-foreground/25";
+  }
+  return "";
+}
+function statusChipBg(s: TodoStatus): string {
+  switch (s) {
+    case "pending":
+      return "bg-muted text-foreground/75";
+    case "in_progress":
+      return "bg-info/15 text-info";
+    case "done":
+      return "bg-success/15 text-success";
+    case "cancelled":
+      return "bg-muted/60 text-muted-foreground/80 line-through";
+  }
+  return "";
+}
+
+// TodoRow is the compact one-line row shared by the list view, the
+// calendar's undated strip and the day sheet: status color bar + truncated
+// title + date span. Click opens the detail dialog.
+function TodoRow({
+  item,
+  onOpen,
+  onDelete,
+}: {
+  item: FlashItem;
+  onOpen: (it: FlashItem) => void;
+  onDelete: (id: string) => void;
+}) {
+  const t = useT();
+  const st = (item.src.status || "pending") as TodoStatus;
+  const overdue = todoOverdue(item.src);
+  const span = todoSpanText(item.src);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(item)}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        onOpen(item);
+      }}
+      className="group flex cursor-pointer items-center gap-2.5 rounded-md border bg-background px-2.5 py-1.5 hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2"
+    >
+      <span className={cn("h-7 w-1 shrink-0 rounded-full", statusBar(st))} />
+      <span className={cn("min-w-0 flex-1 truncate text-sm", st === "cancelled" && "line-through opacity-70")}>
+        {todoFirstLine(item.content)}
+      </span>
+      {span && (
+        <span className={cn("shrink-0 text-xs", overdue ? "font-medium text-destructive" : "text-muted-foreground")}>
+          {span}
+        </span>
+      )}
+      <CopyIconButton sizeClass="h-3 w-3" value={item.content} />
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onDelete(item.src.id); }}
+        aria-label={t("common.delete")}
+        className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+      >
+        <TrashIcon className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+// TodoDetailDialog is the shared editor opened from calendar chips and list
+// rows: full markdown body, the four status pills and start/due datetime
+// editing. Date fields cleared blank are simply omitted from the PATCH, so
+// they leave the stored dates unchanged. The caller passes a key of the todo
+// id so a different todo remounts (and reseeds) the datetime inputs; edits
+// that reload the same todo keep the field values.
+function TodoDetailDialog({
+  item,
+  onMove,
+  onPatchDates,
+  onDelete,
+  onOpenChange,
+}: {
+  item: FlashItem | null;
+  onMove: (id: string, status: TodoStatus) => void;
+  onPatchDates: (id: string, patch: { start_at?: string; end_at?: string }) => void;
+  onDelete: (id: string) => void;
+  onOpenChange: (o: boolean) => void;
+}) {
+  const t = useT();
+  const [start, setStart] = useState(() => (item?.src.start_at ? datetimeLocalValue(item.src.start_at) : ""));
+  const [end, setEnd] = useState(() => (item?.src.end_at ? datetimeLocalValue(item.src.end_at) : ""));
+  if (!item) return null;
+  const cur = (item.src.status || "pending") as TodoStatus;
+  const origStart = item.src.start_at ? datetimeLocalValue(item.src.start_at) : "";
+  const origEnd = item.src.end_at ? datetimeLocalValue(item.src.end_at) : "";
+  const dirty = start !== origStart || end !== origEnd;
+  return (
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>{t("knowledge.todoDetail")}</DialogTitle></DialogHeader>
+        <div className="prose prose-sm dark:prose-invert max-h-64 max-w-none overflow-y-auto">
+          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+            {item.content}
+          </ReactMarkdown>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {TODO_STATUSES.map((st) => (
+            <button
+              key={st}
+              type="button"
+              onClick={() => onMove(item.src.id, st)}
+              className={cn(
+                "rounded-md border px-2.5 py-1 text-xs transition-colors",
+                cur === st
+                  ? cn("border-current font-medium", statusAccent(st))
+                  : "text-muted-foreground hover:border-foreground/30",
+              )}
+            >
+              {t("knowledge.status_" + st)}
+            </button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs">{t("knowledge.startLabel")}</Label>
+            <Input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} className="h-8 text-xs" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">{t("knowledge.dueLabel")}</Label>
+            <Input type="datetime-local" value={end} onChange={(e) => setEnd(e.target.value)} className="h-8 text-xs" />
+          </div>
+        </div>
+        <DialogFooter className="sm:justify-between">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-destructive hover:text-destructive"
+            onClick={() => onDelete(item.src.id)}
+          >
+            <TrashIcon className="mr-1 h-3 w-3" /> {t("common.delete")}
+          </Button>
+          <Button
+            size="sm"
+            className="h-7"
+            disabled={!dirty}
+            onClick={() =>
+              onPatchDates(item.src.id, {
+                start_at: start ? new Date(start).toISOString() : undefined,
+                end_at: end ? new Date(end).toISOString() : undefined,
+              })
+            }
+          >
+            {t("common.save")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// One segment of a calendar event on a given day.
+interface CalSeg {
+  item: FlashItem;
+  track: number;
+  // Segment opens here (event start or week boundary) → rounded left.
+  isStart: boolean;
+  // Segment closes here (event end or week boundary) → rounded right.
+  isEnd: boolean;
+  // Week-first segment renders the title text.
+  showLabel: boolean;
+}
+
+// TodoCalendar renders the month-grid calendar view: dated todos become day
+// chips, multi-day spans render as aligned color bars (rounded only at
+// segment ends, one track per event so a span reads as one continuous
+// block), and undated todos collect in a collapsed strip below the grid.
+function TodoCalendar({
+  items,
+  onOpenItem,
+  onCreateAt,
+  onDelete,
+}: {
+  items: FlashItem[];
+  onOpenItem: (it: FlashItem) => void;
+  onCreateAt: (day: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const t = useT();
+  const { locale } = useLocale();
+  const [anchor, setAnchor] = useState(() => new Date());
+  const [undatedOpen, setUndatedOpen] = useState(false);
+  const [dayDialog, setDayDialog] = useState<{ day: string; items: FlashItem[] } | null>(null);
+
+  const grid = useMemo(() => monthGrid(anchor), [anchor]);
+  const todayK = dayKey(new Date());
+
+  // Layout: per-day segments with track assignment. The lowest track free
+  // across an event's whole in-grid span keeps a multi-day bar on one row,
+  // so it reads as one continuous block across the week.
+  const { byDay, undated } = useMemo(() => {
+    const gridKeys = grid.map(dayKey);
+    const evs: { item: FlashItem; s: string; e: string }[] = [];
+    const undated: FlashItem[] = [];
+    for (const it of items) {
+      const s = it.src.start_at ? dayKey(new Date(it.src.start_at)) : "";
+      const e = it.src.end_at ? dayKey(new Date(it.src.end_at)) : "";
+      if (s && e && e >= s) evs.push({ item: it, s, e });
+      else if (e) evs.push({ item: it, s: e, e }); // due only → single day
+      else if (s) evs.push({ item: it, s, e: s }); // start only → single day
+      else undated.push(it);
+    }
+    evs.sort((a, b) => (a.s < b.s ? -1 : 1));
+    const taken = new Map<number, Set<string>>();
+    const byDay = new Map<string, CalSeg[]>();
+    for (const ev of evs) {
+      const days = gridKeys.filter((k) => k >= ev.s && k <= ev.e);
+      let track = 0;
+      outer: while (true) {
+        const set = taken.get(track);
+        if (!set) break;
+        for (const k of days) {
+          if (set.has(k)) { track++; continue outer; }
+        }
+        break;
+      }
+      let set = taken.get(track);
+      if (!set) { set = new Set(); taken.set(track, set); }
+      for (const k of days) {
+        set.add(k);
+        const idx = gridKeys.indexOf(k);
+        const arr = byDay.get(k) ?? [];
+        arr.push({
+          item: ev.item,
+          track,
+          isStart: k === ev.s || idx % 7 === 0,
+          isEnd: k === ev.e || idx % 7 === 6,
+          showLabel: k === ev.s || idx % 7 === 0,
+        });
+        byDay.set(k, arr);
+      }
+    }
+    return { byDay, undated };
+  }, [items, grid]);
+
+  const monthTitle = new Intl.DateTimeFormat(locale, { year: "numeric", month: "long" }).format(anchor);
+  // 2024-01-01 is a Monday — enumerate the weekday labels Monday-first.
+  const dowLabels = Array.from({ length: 7 }, (_, i) =>
+    new Intl.DateTimeFormat(locale, { weekday: "short" }).format(new Date(2024, 0, 1 + i)));
+  const dayTitle = (k: string) =>
+    new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", weekday: "short" }).format(new Date(`${k}T00:00`));
+
+  // Empty-cell click: desktop starts a new todo dated that day; mobile opens
+  // a day sheet instead (the chips are too cramped at 7 columns).
+  const cellClick = (k: string) => {
+    if (window.matchMedia("(min-width: 640px)").matches) onCreateAt(k);
+    else setDayDialog({ day: k, items: (byDay.get(k) ?? []).map((s) => s.item) });
+  };
+  const openDay = (k: string) =>
+    setDayDialog({ day: k, items: (byDay.get(k) ?? []).map((s) => s.item) });
+
+  return (
+    <div className="p-3 sm:p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.prevMonth")}
+          onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1))}>
+          <ChevronLeftIcon className="h-3.5 w-3.5" />
+        </Button>
+        <span className="min-w-32 text-center text-sm font-semibold">{monthTitle}</span>
+        <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.nextMonth")}
+          onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1))}>
+          <ChevronRightIcon className="h-3.5 w-3.5" />
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => setAnchor(new Date())}>
+          {t("knowledge.today")}
+        </Button>
+      </div>
+      <div className="overflow-hidden rounded-lg border">
+        <div className="grid grid-cols-7 border-b bg-muted/30">
+          {dowLabels.map((d, i) => (
+            <div key={i} className="py-1 text-center text-[11px] font-medium text-muted-foreground">{d}</div>
+          ))}
+        </div>
+        <div className="grid grid-cols-7 gap-px bg-border">
+          {grid.map((d) => {
+            const k = dayKey(d);
+            const segs = (byDay.get(k) ?? []).slice().sort((a, b) => a.track - b.track);
+            const inMonth = d.getMonth() === anchor.getMonth();
+            // Track-padded row count: a bar on track 2 keeps two blank rows
+            // above it so its position stays stable across days.
+            const rows = Math.min(3, segs.length ? segs[segs.length - 1].track + 1 : 0);
+            const hidden = segs.filter((s) => s.track >= rows).length;
+            return (
+              <div
+                key={k}
+                onClick={() => cellClick(k)}
+                className={cn(
+                  "flex min-h-[76px] cursor-pointer flex-col bg-background p-1 hover:bg-accent/40 sm:min-h-[96px]",
+                  !inMonth && "bg-muted/30",
+                  k === todayK && "bg-primary/5",
+                )}
+              >
+                <span className={cn(
+                  "mb-0.5 inline-flex size-5 items-center justify-center self-start rounded-full text-[11px]",
+                  k === todayK
+                    ? "bg-primary font-semibold text-primary-foreground"
+                    : inMonth ? "text-foreground/70" : "text-muted-foreground/50",
+                )}>
+                  {d.getDate()}
+                </span>
+                <div className="flex flex-col gap-[2px] overflow-hidden">
+                  {Array.from({ length: rows }, (_, tr) => {
+                    const seg = segs.find((s) => s.track === tr);
+                    if (!seg) return <div key={tr} className="h-[18px]" />;
+                    const st = (seg.item.src.status || "pending") as TodoStatus;
+                    const overdue = todoOverdue(seg.item.src);
+                    return (
+                      <button
+                        key={tr}
+                        type="button"
+                        title={todoFirstLine(seg.item.content)}
+                        onClick={(e) => { e.stopPropagation(); onOpenItem(seg.item); }}
+                        className={cn(
+                          "flex h-[18px] items-center gap-1 overflow-hidden px-1 text-left text-[10px] sm:text-[11px]",
+                          seg.isStart && "rounded-l-sm pl-1.5",
+                          seg.isEnd && "rounded-r-sm pr-1.5",
+                          statusChipBg(st),
+                        )}
+                      >
+                        {seg.showLabel ? (
+                          <span className="truncate">{todoFirstLine(seg.item.content)}</span>
+                        ) : (
+                          <span className="truncate opacity-0">·</span>
+                        )}
+                        {overdue && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-destructive" />}
+                      </button>
+                    );
+                  })}
+                  {hidden > 0 && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openDay(k); }}
+                      className="text-left text-[10px] text-muted-foreground hover:text-foreground"
+                    >
+                      +{hidden}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      {undated.length > 0 && (
+        <div className="mt-3 overflow-hidden rounded-lg border">
+          <button
+            type="button"
+            onClick={() => setUndatedOpen((v) => !v)}
+            className="flex w-full items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <span>{t("knowledge.noDate")} ({undated.length})</span>
+            <ChevronDownIcon className={cn("h-3.5 w-3.5 transition-transform", undatedOpen && "rotate-180")} />
+          </button>
+          {undatedOpen && (
+            <div className="space-y-1.5 border-t p-2">
+              {undated.map((it) => (
+                <TodoRow key={it.src.id} item={it} onOpen={onOpenItem} onDelete={onDelete} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <Dialog open={dayDialog !== null} onOpenChange={(o) => { if (!o) setDayDialog(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{dayDialog ? dayTitle(dayDialog.day) : ""}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            {(dayDialog?.items ?? []).length === 0 && (
+              <p className="text-sm text-muted-foreground">{t("knowledge.noTodos")}</p>
+            )}
+            {(dayDialog?.items ?? []).map((it) => (
+              <TodoRow key={it.src.id} item={it} onOpen={(x) => { setDayDialog(null); onOpenItem(x); }} onDelete={onDelete} />
+            ))}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => { const k = dayDialog?.day; setDayDialog(null); if (k) onCreateAt(k); }}
+            >
+              <PlusIcon className="mr-1 h-3 w-3" /> {t("knowledge.newTodo")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
 }
 
 // CopyIconButton copies markdown text to the clipboard and briefly flips to a
