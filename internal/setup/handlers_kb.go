@@ -647,7 +647,9 @@ func (s *Server) handleKBGenerateInsights(w http.ResponseWriter, r *http.Request
 	defer cancel()
 	invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
 		return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
-			resp, err := prov.Chat(ctx, msgs, nil, model, 8192, 0.3)
+			// JSON mode: the insight payload embeds article quotes, where
+			// unescaped quotes are likeliest to break the downstream parse.
+			resp, err := prov.Chat(provider.WithJSONMode(ctx), msgs, nil, model, 8192, 0.3)
 			if err != nil {
 				return "", err
 			}

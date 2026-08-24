@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 )
@@ -362,15 +363,19 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
 	// ```json … ``` even when the prompt asks for "no markdown fences".
 	cleaned := stripJSONFence(resp.Content)
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-		// Same Warn upgrade as above — silent skip here was hiding
-		// "Sonnet returned wrapped JSON, parse failed" in the wild.
-		preview := cleaned
-		if len(preview) > 200 {
-			preview = preview[:200] + "…"
+		// Bare quotes inside values (models ignoring the JSON-mode hint) —
+		// repair once and retry before giving up on this extraction.
+		if err2 := json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(cleaned)), &result); err2 != nil {
+			// Same Warn upgrade as above — silent skip here was hiding
+			// "Sonnet returned wrapped JSON, parse failed" in the wild.
+			preview := cleaned
+			if len(preview) > 200 {
+				preview = preview[:200] + "…"
+			}
+			slog.Warn("auto-persist: failed to parse LLM response",
+				"error", err, "model", model, "preview", preview)
+			return
 		}
-		slog.Warn("auto-persist: failed to parse LLM response",
-			"error", err, "model", model, "preview", preview)
-		return
 	}
 	slog.Info("auto-persist: extracted",
 		"model", model,

@@ -1,4 +1,4 @@
-package agent
+package llmjson
 
 import (
 	"encoding/json"
@@ -35,11 +35,20 @@ func TestRepairUnescapedQuotes(t *testing.T) {
 			input: `{"a":"v" , "b":1}`,
 			want:  `{"a":"v" , "b":1}`,
 		},
+		{
+			// The quote after 好 precedes a comma, which a strict parser
+			// would read as a close — the heuristic still escapes it
+			// because an earlier repair keeps the scanner inside the
+			// string, and the final result stays valid JSON.
+			name:  "quote before comma inside value still repaired",
+			input: `{"a":"他说"好,"然后走了","b":1}`,
+			want:  `{"a":"他说\"好,\"然后走了","b":1}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := repairUnescapedQuotes(tt.input); got != tt.want {
-				t.Errorf("repairUnescapedQuotes(%q) = %q, want %q", tt.input, got, tt.want)
+			if got := RepairUnescapedQuotes(tt.input); got != tt.want {
+				t.Errorf("RepairUnescapedQuotes(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -48,14 +57,18 @@ func TestRepairUnescapedQuotes(t *testing.T) {
 // The repaired output of the logged failure shape must actually unmarshal
 // — that's the whole point of the repair path.
 func TestRepairUnescapedQuotesRoundTrip(t *testing.T) {
-	raw := `{"topics":[{"topic":"AgentFlow开源项目分析","summary":"用户让分析GitHub上的AgentFlow项目。","keywords":["AgentFlow","模块化Agent"],"importance":3,"kind":"durable","supersedes":[],"segments":[{"s":23,"e":26}]},{"topic":"吃饭时间","summary":"核心观点：早餐要吃好、晚餐要少吃，颠覆了常见的"中午随便、晚上大餐"习惯。","keywords":["吃饭时间"],"importance":2,"kind":"episodic","supersedes":[],"segments":[{"s":114,"e":117}]}]}`
+	type topic struct {
+		Topic   string   `json:"topic"`
+		Summary string   `json:"summary"`
+	}
+	raw := `{"topics":[{"topic":"AgentFlow开源项目分析","summary":"用户让分析GitHub上的AgentFlow项目。"},{"topic":"吃饭时间","summary":"核心观点：早餐要吃好、晚餐要少吃，颠覆了常见的"中午随便、晚上大餐"习惯。"}]}`
 	if json.Valid([]byte(raw)) {
 		t.Fatal("test premise: raw must be invalid JSON (bare quotes)")
 	}
 	var parsed struct {
-		Topics []ExtractedTopic `json:"topics"`
+		Topics []topic `json:"topics"`
 	}
-	if err := json.Unmarshal([]byte(repairUnescapedQuotes(raw)), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(RepairUnescapedQuotes(raw)), &parsed); err != nil {
 		t.Fatalf("repaired JSON still fails to parse: %v", err)
 	}
 	if len(parsed.Topics) != 2 {

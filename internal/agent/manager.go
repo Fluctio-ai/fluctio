@@ -453,7 +453,9 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 						// per-agent model like glm-5.2 (returns "Unsupported model").
 						// bgProvider: insights consume raw article/conversation
 						// content, so they must honor the PII scrubbing switch.
-						resp, err := ag.bgProvider().Chat(ctx, msgs, nil, rc.Model, 8192, 0.3)
+						// JSON mode: insight payloads embed article quotes, where
+						// unescaped quotes are likeliest to break the parse.
+						resp, err := ag.bgProvider().Chat(provider.WithJSONMode(ctx), msgs, nil, rc.Model, 8192, 0.3)
 						if err != nil {
 							return "", err
 						}

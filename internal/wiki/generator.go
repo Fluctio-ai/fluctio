@@ -14,6 +14,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
@@ -721,15 +722,23 @@ var jsonBlockRe = regexp.MustCompile("(?s)\\{.*\\}")
 var codeFenceRe = regexp.MustCompile("(?s)^```\\w*\\n?|\\n?```$")
 
 func extractPlan(text string) *wikiPlan {
+	// tryUnmarshal parses s, repairing bare quotes inside string values
+	// (models ignoring the JSON hint) and retrying once on failure.
+	tryUnmarshal := func(s string, plan *wikiPlan) bool {
+		if err := json.Unmarshal([]byte(s), plan); err != nil {
+			return json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(s)), plan) == nil
+		}
+		return true
+	}
 	// Try multiple extraction strategies in order.
 	tryParse := func(s string) (*wikiPlan, bool) {
 		s = stripCodeFences(s)
 		var plan wikiPlan
-		if err := json.Unmarshal([]byte(s), &plan); err == nil && len(plan.Pages) > 0 {
+		if tryUnmarshal(s, &plan) && len(plan.Pages) > 0 {
 			return &plan, true
 		}
 		if m := extractJSONObject(s); m != "" {
-			if err := json.Unmarshal([]byte(m), &plan); err == nil && len(plan.Pages) > 0 {
+			if tryUnmarshal(m, &plan) && len(plan.Pages) > 0 {
 				return &plan, true
 			}
 		}

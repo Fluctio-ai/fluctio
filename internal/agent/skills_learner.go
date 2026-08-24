@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/skills"
@@ -229,8 +230,13 @@ func (sl *SkillsLearner) extractSkill(ctx context.Context, messages []provider.M
 	// Try to parse response as JSON
 	content := strings.TrimSpace(resp.Content)
 	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		slog.Debug("skill extraction: LLM response not valid JSON", "error", err)
-		return nil, nil
+		// Bare quotes inside values (models ignoring the JSON-mode hint) —
+		// repair once and retry. Failure here stays a silent skip: the
+		// learner is opportunistic by design.
+		if json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(content)), &result) != nil {
+			slog.Debug("skill extraction: LLM response not valid JSON", "error", err)
+			return nil, nil
+		}
 	}
 
 	if !result.Extract || result.Skill.Slug == "" || result.Skill.Content == "" {

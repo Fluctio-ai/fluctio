@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
@@ -382,12 +383,17 @@ func callLLM(ctx context.Context, prov provider.Provider, model, prompt string, 
 	return resp.Content, nil
 }
 
-// parseJSONLoose strips a ```json fence if present then unmarshals.
+// parseJSONLoose strips a ```json fence if present then unmarshals. On
+// strict-parse failure it repairs bare quotes inside string values (models
+// ignoring the JSON-mode hint) and retries once before giving up.
 func parseJSONLoose(s string, v any) error {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "```json")
 	s = strings.TrimPrefix(s, "```")
 	s = strings.TrimSuffix(s, "```")
 	s = strings.TrimSpace(s)
-	return json.Unmarshal([]byte(s), v)
+	if err := json.Unmarshal([]byte(s), v); err != nil {
+		return json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(s)), v)
+	}
+	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/kb"
+	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/wiki"
@@ -274,14 +275,19 @@ func HasRunFor(ctx context.Context, dbs *store.DBStore, agentID, date string) bo
 	return err == nil
 }
 
-// parseJSONLoose strips a ```json fence if present then unmarshals.
+// parseJSONLoose strips a ```json fence if present then unmarshals. On
+// strict-parse failure it repairs bare quotes inside string values (models
+// ignoring the JSON-mode hint) and retries once before giving up.
 func parseJSONLoose(s string, v any) error {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "```json")
 	s = strings.TrimPrefix(s, "```")
 	s = strings.TrimSuffix(s, "```")
 	s = strings.TrimSpace(s)
-	return json.Unmarshal([]byte(s), v)
+	if err := json.Unmarshal([]byte(s), v); err != nil {
+		return json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(s)), v)
+	}
+	return nil
 }
 
 // clip truncates s to at most max runes on a rune boundary.

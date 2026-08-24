@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
@@ -82,12 +83,16 @@ func (s *KBStore) GenerateInsights(ctx context.Context, agentID, sourceID string
 	cleaned := stripInsightJSONFence(strings.TrimSpace(raw))
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(cleaned), &doc); err != nil {
-		preview := cleaned
-		if len(preview) > 200 {
-			preview = preview[:200] + "…"
+		// Bare quotes inside values (quotes are literal article excerpts
+		// here, so the model trips on them often) — repair once and retry.
+		if err2 := json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(cleaned)), &doc); err2 != nil {
+			preview := cleaned
+			if len(preview) > 200 {
+				preview = preview[:200] + "…"
+			}
+			slog.Warn("insights: parse JSON failed", "agent", agentID, "source", sourceID, "preview", preview)
+			return nil, fmt.Errorf("parse insight JSON: %w (preview: %s)", err, preview)
 		}
-		slog.Warn("insights: parse JSON failed", "agent", agentID, "source", sourceID, "preview", preview)
-		return nil, fmt.Errorf("parse insight JSON: %w (preview: %s)", err, preview)
 	}
 	ins := &ArticleInsights{SourceID: sourceID}
 	if v, ok := doc["summary"]; ok {

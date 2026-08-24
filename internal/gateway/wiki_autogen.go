@@ -76,7 +76,9 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	}
 	invoker := func(ctx context.Context, messages []provider.Message) (string, error) {
 		return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
-			resp, err := prov.Chat(provider.WithNoThinking(ctx), msgs, nil, model, maxTokens, 0.3)
+			// JSON mode: page plans embed free-text titles/bodies, where
+			// unescaped quotes would break the downstream plan parse.
+			resp, err := prov.Chat(provider.WithJSONMode(provider.WithNoThinking(ctx)), msgs, nil, model, maxTokens, 0.3)
 			if err != nil {
 				return "", err
 			}
