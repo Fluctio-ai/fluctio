@@ -10,6 +10,7 @@ import * as React from "react";
 import {
   ArrowLeftIcon,
   DownloadIcon,
+  EyeIcon,
   FileIcon,
   GripVerticalIcon,
   ImagePlusIcon,
@@ -18,6 +19,7 @@ import {
   PlusIcon,
   SearchIcon,
   Trash2Icon,
+  XIcon,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
@@ -122,6 +124,10 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   // boardDialog indexes into splitBody(draft.content_md)'s board slots;
   // -1 = closed.
   const [boardDialog, setBoardDialog] = React.useState(-1);
+  // Mobile only: the rendered preview opens on demand behind a floating eye
+  // button (chat-file-preview sheet shape) instead of a stacked pane, so the
+  // md source owns the screen. Desktop keeps the side-by-side split.
+  const [previewOpen, setPreviewOpen] = React.useState(false);
   // Resizable left pane — mirrors ArticleView's divider (220–520px).
   const [leftWidth, setLeftWidth] = React.useState(320);
   // Note-list ordering is server-side newest-first (updated_at DESC) —
@@ -170,6 +176,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
     setSelectedId(null);
     skipSaveRef.current = true;
     setDraft({ title: "", content_md: "" });
+    setPreviewOpen(false);
   }, []);
 
   React.useEffect(() => {
@@ -339,6 +346,40 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
 
   const dark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
   const charCount = draft.content_md.replace(/```whiteboard[\s\S]*?\n```/g, "").replace(/\s/g, "").length;
+
+  // Rendered body shared by the desktop split pane and the mobile preview
+  // sheet — one source of truth so both stay in sync with the draft.
+  const previewBody = draft.content_md.trim() ? (
+    parts.map((p, i) =>
+      p.kind === "md" ? (
+        p.text.trim() ? <ChatMarkdown key={i} text={p.text} /> : null
+      ) : (
+        <BoardCard
+          key={i}
+          slot={slots.indexOf(i)}
+          totalSlots={slots.length}
+          json={p.json}
+          dark={dark}
+          dragging={dragBoardSlot}
+          dropAt={boardDropAt}
+          onDragStartSlot={(s) => { dragBoardSlotRef.current = s; setDragBoardSlot(s); }}
+          onDragOverSlot={(slot, before) => setBoardDropAt({ slot, before })}
+          onDropSlot={(slot, before) => {
+            const from = dragBoardSlotRef.current;
+            if (from !== null) moveBoard(from, slot, before);
+            dragBoardSlotRef.current = null;
+            setDragBoardSlot(null);
+            setBoardDropAt(null);
+          }}
+          onDragEndSlot={() => { dragBoardSlotRef.current = null; setDragBoardSlot(null); setBoardDropAt(null); }}
+          onOpen={() => setBoardDialog(slots.indexOf(i))}
+          onRemove={() => removeBoard(slots.indexOf(i))}
+        />
+      ),
+    )
+  ) : (
+    <p className="text-xs text-muted-foreground">{t("knowledge.notes.previewEmpty")}</p>
+  );
 
   return (
     <div className="flex h-full min-h-0">
@@ -515,50 +556,30 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
               </p>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {/* 正文：textarea + live preview (split on md+, stacked on mobile) */}
-              <div className="flex flex-col md:flex-row-reverse md:h-full">
-                <div className="min-w-0 flex-1 overflow-y-auto p-4 md:h-full">
-                  {draft.content_md.trim() ? (
-                    parts.map((p, i) =>
-                      p.kind === "md" ? (
-                        p.text.trim() ? <ChatMarkdown key={i} text={p.text} /> : null
-                      ) : (
-                        <BoardCard
-                          key={i}
-                          slot={slots.indexOf(i)}
-                          totalSlots={slots.length}
-                          json={p.json}
-                          dark={dark}
-                          dragging={dragBoardSlot}
-                          dropAt={boardDropAt}
-                          onDragStartSlot={(s) => { dragBoardSlotRef.current = s; setDragBoardSlot(s); }}
-                          onDragOverSlot={(slot, before) => setBoardDropAt({ slot, before })}
-                          onDropSlot={(slot, before) => {
-                            const from = dragBoardSlotRef.current;
-                            if (from !== null) moveBoard(from, slot, before);
-                            dragBoardSlotRef.current = null;
-                            setDragBoardSlot(null);
-                            setBoardDropAt(null);
-                          }}
-                          onDragEndSlot={() => { dragBoardSlotRef.current = null; setDragBoardSlot(null); setBoardDropAt(null); }}
-                          onOpen={() => setBoardDialog(slots.indexOf(i))}
-                          onRemove={() => removeBoard(slots.indexOf(i))}
-                        />
-                      ),
-                    )
-                  ) : (
-                    <p className="text-xs text-muted-foreground">{t("knowledge.notes.previewEmpty")}</p>
-                  )}
+            <div className="relative min-h-0 flex-1 overflow-y-auto">
+              {/* 正文：desktop textarea + live preview 分栏；mobile 只显 md 源码
+                  （渲染预览收进右上角浮动按钮的全屏 sheet） */}
+              <div className="flex h-full flex-col md:flex-row-reverse">
+                <div className="hidden min-w-0 flex-1 overflow-y-auto p-4 md:block md:h-full">
+                  {previewBody}
                 </div>
                 <textarea
                   value={draft.content_md}
                   onChange={(e) => setDraft((d) => ({ ...d, content_md: e.target.value }))}
                   placeholder={t("knowledge.notes.bodyPlaceholder")}
                   spellCheck={false}
-                  className="h-48 w-full shrink-0 resize-none border-t bg-transparent p-4 font-mono text-[13.5px] leading-normal outline-none placeholder:text-muted-foreground md:h-full md:w-1/2 md:border-t-0 md:border-r"
+                  className="h-full w-full shrink-0 resize-none border-t bg-transparent p-4 font-mono text-[13.5px] leading-normal outline-none placeholder:text-muted-foreground md:w-1/2 md:border-t-0 md:border-r"
                 />
               </div>
+              {/* mobile: floating preview entry, chat-file-preview shaped */}
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(true)}
+                className="absolute right-3 top-3 z-10 rounded-full border bg-background/80 p-2 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted hover:text-foreground md:hidden"
+                aria-label={t("knowledge.notes.preview")}
+              >
+                <EyeIcon className="size-4" />
+              </button>
             </div>
 
             {/* attachments strip */}
@@ -610,6 +631,34 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
             {dragOver && (
               <div className="shrink-0 border-t-2 border-dashed border-primary/60 bg-primary/5 px-3 py-2 text-center text-xs text-primary">
                 {t("knowledge.notes.dropHere")}
+              </div>
+            )}
+
+            {/* mobile full-screen rendered preview (same sheet shape as the
+                chat file viewer); renders after the whiteboard dialog's JSX
+                position so the board editor still stacks above it */}
+            {previewOpen && (
+              <div
+                className="fixed inset-0 z-50 flex flex-col bg-background md:hidden"
+                style={{
+                  paddingTop: "env(safe-area-inset-top)",
+                  paddingBottom: "env(safe-area-inset-bottom)",
+                }}
+              >
+                <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
+                  <span className="min-w-0 truncate text-sm font-medium">
+                    {draft.title || t("knowledge.notes.untitled")}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewOpen(false)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                    aria-label={t("preview.close")}
+                  >
+                    <XIcon className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-4">{previewBody}</div>
               </div>
             )}
 

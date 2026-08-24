@@ -971,6 +971,7 @@ const zhCN: Record<string, string> = {
   "knowledge.notes.delete": "删除笔记",
   "knowledge.notes.deleteConfirm": "确认删除",
   "knowledge.notes.dropHere": "松开以上传附件",
+  "knowledge.notes.preview": "预览",
   "diary.loading": "加载中…",
   "diary.empty": "这一天还没有日记",
   "diary.emptyHint": "点击右上角【生成】按钮手动生成，或等待定时任务自动生成",

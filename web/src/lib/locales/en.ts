@@ -971,6 +971,7 @@ const en: Record<string, string> = {
   "knowledge.notes.delete": "Delete note",
   "knowledge.notes.deleteConfirm": "Confirm delete",
   "knowledge.notes.dropHere": "Drop to upload",
+  "knowledge.notes.preview": "Preview",
   "diary.loading": "Loading…",
   "diary.empty": "No diary for this day",
   "diary.emptyHint": "Click Generate to build it manually, or wait for the scheduled task.",
