@@ -356,6 +356,14 @@ export class WikiGraphEngine {
     return true;
   }
 
+  /** Clear selection (deselect) and un-fade — viewport untouched. */
+  clearSelection(): void {
+    if (this.destroyed) return;
+    this.selectedId = null;
+    this.updateFocusAndRender();
+    this.syncSelectionRing();
+  }
+
   fitView(opts?: { animate?: boolean }): void {
     if (this.nodes.length === 0) return;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;

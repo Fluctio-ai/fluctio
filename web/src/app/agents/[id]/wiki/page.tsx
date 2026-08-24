@@ -173,6 +173,30 @@ export default function WikiPage() {
   const selectedPageIdRef = useRef<string | null>(null);
   selectedPageIdRef.current = selectedPageId;
 
+  // Deselect: state off + engine un-fade. Used by graph-node toggle-click
+  // and Esc — the faded-neighbour focus mode makes other nodes hard to
+  // pick while a selection is active.
+  const clearPageSelection = useCallback(() => {
+    setSelectedPageId(null);
+    setSelectedPage(null);
+    engineRef.current?.clearSelection();
+  }, []);
+
+  // Esc deselects (same as toggle-clicking the selected node). Radix
+  // dialogs (delete confirm) keep their own Esc handling — skip while one
+  // is open, or while typing in a field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !selectedPageIdRef.current) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return;
+      clearPageSelection();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [clearPageSelection]);
+
   // Deep link: /wiki/?page=<pageId> selects that page once on mount —
   // the cards source link lands here (page ids are "type:slug" pairs,
   // URL-encoded by the sender). One-shot via ref; window.location.search
@@ -290,7 +314,11 @@ export default function WikiPage() {
       if (cancelled || !graphRef.current) return;
       const engine = await WikiGraphEngine.create(graphRef.current, {
         theme: graphTheme(resolvedTheme !== "light"),
-        onNodeClick: (id: string) => handleSelectPageRef.current?.(id),
+        onNodeClick: (id: string) => {
+          // Toggle: clicking the already-selected node deselects it.
+          if (id === selectedPageIdRef.current) clearPageSelection();
+          else handleSelectPageRef.current?.(id);
+        },
       });
       if (cancelled) {
         engine.destroy();
@@ -321,7 +349,7 @@ export default function WikiPage() {
     // collapsing unmounts the graphRef div, so on expand the engine has to
     // be rebuilt against the freshly mounted DOM node. Theme changes are
     // handled hot by the setTheme effect below (no rebuild).
-  }, [agentId, rightCollapsed]);
+  }, [agentId, rightCollapsed, clearPageSelection]);
 
   // Theme swap is hot: the WebGL engine recolors without rebuilding.
   useEffect(() => {
