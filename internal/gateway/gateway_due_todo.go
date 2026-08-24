@@ -34,9 +34,10 @@ func (g *Gateway) runDueTodoReminderSweep(ctx context.Context) {
 
 // sweepAllAgentsDueTodos walks every agent, builds a throwaway KB store, and
 // pushes each due-unreminded todo to the agent's reminder channel (default
-// wechat), then stamps reminded_at. Target addressing reuses list_channels'
-// logic: the channel must be bound+enabled for the agent, and the chat is the
-// most recent session on it. Per-agent best-effort; a push failure (or no
+// wechat), archives it hidden for web visibility (see archivePushNotice),
+// then stamps reminded_at. Target addressing reuses list_channels' logic: the
+// channel must be bound+enabled for the agent, and the chat is the most
+// recent session on it. Per-agent best-effort; a push failure (or no
 // deliverable target) skips MarkTodoReminded so the todo retries next tick.
 func (g *Gateway) sweepAllAgentsDueTodos(ctx context.Context, windowHours int) {
 	dbs, ok := g.store.(*store.DBStore)
@@ -59,7 +60,7 @@ func (g *Gateway) sweepAllAgentsDueTodos(ctx context.Context, windowHours int) {
 		if len(due) == 0 {
 			continue
 		}
-		accountID, chatID, ok := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
+		accountID, chatID, sessionKey, ok := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
 		if !ok {
 			slog.Warn("due-todo sweep: no deliverable target; skipping (bind+message the agent once)", "agent", ag.ID, "channel", channel)
 			continue
@@ -70,9 +71,15 @@ func (g *Gateway) sweepAllAgentsDueTodos(ctx context.Context, windowHours int) {
 			continue
 		}
 		for _, t := range due {
-			if err := ch.Send(chatID, formatTodoReminder(t)); err != nil {
+			text := formatTodoReminder(t)
+			if err := ch.Send(chatID, text); err != nil {
 				slog.Warn("due-todo push failed", "agent", ag.ID, "todo", t.ID, "error", err)
 				continue // don't stamp — retry next tick
+			}
+			if err := archivePushNotice(ctx, dbs, ag.ID, sessionKey, text, "todo_reminder"); err != nil {
+				// IM delivery already succeeded — log only, still stamp so
+				// the reminder doesn't re-fire for a lost web bubble.
+				slog.Warn("due-todo sweep: archive notice", "agent", ag.ID, "todo", t.ID, "error", err)
 			}
 			slog.Info("due-todo reminder pushed", "agent", ag.ID, "todo", t.ID, "title", t.Title, "channel", channel, "chat", chatID)
 			if err := ks.MarkTodoReminded(ctx, ag.ID, t.ID); err != nil {
@@ -99,16 +106,34 @@ func reminderChannelFor(ag store.AgentRecord) string {
 	return "wechat"
 }
 
-// deliverableTargetForAgent resolves the (accountID, chatID) the reminders sweep
-// should push to for one agent on one channel. It reuses list_channels'
-// addressing: the channel row must be bound+enabled for the agent, and the
-// chat is the most recently updated session on that channel whose account is
-// bound (delivery can only route through a registered adapter). Returns
-// ok=false when the channel isn't bound or has no session yet.
-func deliverableTargetForAgent(ctx context.Context, st *store.DBStore, agentID, channel string) (accountID, chatID string, ok bool) {
+// archivePushNotice writes a delivered IM push (cards digest, todo
+// reminder) into the target session's archive with llm_visible=0 — the
+// regex-hook FeedToLLM=false shape: web history shows the notification
+// bubble while the LLM working set, summary and recall never see it (all
+// three filter on llm_visible / the working set is never touched by a
+// direct archive append). Origin must stay empty — WebChatHistory skips
+// rows whose Origin != OriginUser, which would hide the notice from the
+// very surface this write exists for. The pushNotice kind marker
+// distinguishes these rows from genuine assistant turns when auditing.
+func archivePushNotice(ctx context.Context, dbs *store.DBStore, agentID, sessionKey, text, kind string) error {
+	return dbs.AppendSessionMessage(ctx, agentID, sessionKey, store.SessionMessage{
+		Role:       "assistant",
+		Content:    text,
+		Metadata:   map[string]any{"pushNotice": kind},
+		LLMVisible: false,
+	})
+}
+
+// deliverableTargetForAgent resolves the (accountID, chatID, sessionKey) the
+// reminders / cards-digest sweeps should push to for one agent on one channel.
+// It reuses list_channels' addressing: the channel row must be bound+enabled
+// for the agent, and the chat is the most recently updated session on that
+// channel whose account is bound (delivery can only route through a registered
+// adapter). Returns ok=false when the channel isn't bound or has no session yet.
+func deliverableTargetForAgent(ctx context.Context, st *store.DBStore, agentID, channel string) (accountID, chatID, sessionKey string, ok bool) {
 	all, err := st.ListAllChannels(ctx)
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	bound := map[string]bool{}
 	for _, c := range all {
@@ -117,13 +142,13 @@ func deliverableTargetForAgent(ctx context.Context, st *store.DBStore, agentID, 
 		}
 	}
 	if len(bound) == 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	sessions, err := st.ListSessions(ctx, agentID)
 	if err != nil {
-		return "", "", false
+		return "", "", "", false
 	}
-	var bestChat, bestAcct string
+	var bestChat, bestAcct, bestKey string
 	var bestLast time.Time
 	for _, s := range sessions {
 		if s.Channel != channel || s.ChatID == "" {
@@ -133,10 +158,10 @@ func deliverableTargetForAgent(ctx context.Context, st *store.DBStore, agentID, 
 			continue
 		}
 		if s.UpdatedAt.After(bestLast) {
-			bestLast, bestChat, bestAcct = s.UpdatedAt, s.ChatID, s.AccountID
+			bestLast, bestChat, bestAcct, bestKey = s.UpdatedAt, s.ChatID, s.AccountID, s.Key
 		}
 	}
-	return bestAcct, bestChat, bestChat != ""
+	return bestAcct, bestChat, bestKey, bestChat != ""
 }
 
 // formatTodoReminder builds the IM body for one due todo: title + due time in

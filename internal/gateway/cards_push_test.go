@@ -72,3 +72,53 @@ func TestCardsPushStampAndDigest(t *testing.T) {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// TestArchivePushNoticeHidden covers the reghook-style web-visibility write
+// shared by both push sweeps (cards digest, todo reminder): the notice lands
+// in the session archive as an assistant row the web history renders (origin
+// empty, content set) but llm_visible=0 keeps it out of the LLM working set /
+// summary / recall.
+func TestArchivePushNoticeHidden(t *testing.T) {
+	dbs, err := store.NewDBStore("sqlite", "file::memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer dbs.Close()
+	if err := dbs.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	ctx := context.Background()
+
+	digest := "🧠 今日卡片组（2 张）\n1. Q1？\n2. Q2？"
+	if err := archivePushNotice(ctx, dbs, "a1", "s-key", digest, "cards_digest"); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if err := archivePushNotice(ctx, dbs, "a1", "s-key", "⏰ 待办提醒：交报告", "todo_reminder"); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	msgs, err := dbs.ListSessionMessages(ctx, "a1", "s-key")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("want 2 archived rows, got %d", len(msgs))
+	}
+	for i, want := range []string{"cards_digest", "todo_reminder"} {
+		m := msgs[i]
+		if m.Role != "assistant" {
+			t.Fatalf("row %d role=%q, want assistant", i, m.Role)
+		}
+		if m.LLMVisible {
+			t.Fatalf("row %d must archive hidden (llm_visible=0)", i)
+		}
+		if m.Origin != "" {
+			t.Fatalf("origin must stay empty — WebChatHistory hides non-OriginUser rows, got %q", m.Origin)
+		}
+		if v, _ := m.Metadata["pushNotice"].(string); v != want {
+			t.Fatalf("row %d metadata marker=%v, want %q", i, m.Metadata["pushNotice"], want)
+		}
+	}
+	if msgs[0].Content != digest || msgs[1].Content != "⏰ 待办提醒：交报告" {
+		t.Fatalf("contents mismatch: %q / %q", msgs[0].Content, msgs[1].Content)
+	}
+}

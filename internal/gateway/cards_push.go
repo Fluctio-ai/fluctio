@@ -36,8 +36,9 @@ func (g *Gateway) runCardsPushSweep(ctx context.Context) {
 // cardsPushCycle walks every agent with cards.pushEnabled whose pushTime
 // has passed today and hasn't been pushed to yet, and sends one summary
 // digest (due count + first few questions + deep link when a public base
-// URL is configured). Best-effort per agent; failure leaves no stamp so
-// the next tick retries.
+// URL is configured), then archives it hidden into the target session so
+// the web history shows the notification too. Best-effort per agent;
+// failure leaves no stamp so the next tick retries.
 func (g *Gateway) cardsPushCycle(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -93,7 +94,7 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 		if channel == "" {
 			channel = "wechat"
 		}
-		accountID, chatID, ok := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
+		accountID, chatID, sessionKey, ok := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
 		if !ok {
 			slog.Warn("cards push: no deliverable target; skipping (bind+message the agent once)", "agent", ag.ID, "channel", channel)
 			continue
@@ -104,9 +105,15 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 			continue
 		}
 		st, _ := ks.CardStats(ctx, ag.ID)
-		if err := ch.Send(chatID, formatCardsDigest(ag.ID, due, st)); err != nil {
+		digest := formatCardsDigest(ag.ID, due, st)
+		if err := ch.Send(chatID, digest); err != nil {
 			slog.Warn("cards push failed", "agent", ag.ID, "error", err)
 			continue // no stamp — retry next tick
+		}
+		if err := archivePushNotice(ctx, dbs, ag.ID, sessionKey, digest, "cards_digest"); err != nil {
+			// IM delivery already succeeded — keep the push stamped and
+			// just log: losing the web-side bubble beats double-sending.
+			slog.Warn("cards push: archive digest", "agent", ag.ID, "error", err)
 		}
 		if err := stampCardsPush(ctx, dbs, ag.ID, today, len(due), channel); err != nil {
 			slog.Warn("cards push: stamp", "agent", ag.ID, "error", err)
