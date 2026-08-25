@@ -1890,6 +1890,14 @@ export async function kbSaveFlash(agentId: string, content: string): Promise<{ s
   if (!res.ok) return { error: `HTTP ${res.status}` };
   return res.json();
 }
+export async function kbUpdateFlash(agentId: string, sourceId: string, content: string): Promise<{ status?: string; error?: string }> {
+  const res = await apiFetch(`/api/agents/${agentId}/kb/flash/${sourceId}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json();
+}
 export async function kbSaveTodo(
   agentId: string,
   content: string,

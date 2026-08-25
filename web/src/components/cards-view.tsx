@@ -328,7 +328,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
           learning·mastered. */}
       <div className="flex items-center gap-3 border-b px-3 py-2">
         {stats && stats.due_today > 0 ? (
-          <Button size="sm" className="h-8 text-xs" onClick={startReview}>
+          <Button size="sm" className="h-7 text-xs" onClick={startReview}>
             <PlayIcon className="mr-1 size-3.5" />
             {t("cards.reviewCta")} · {t("cards.reviewN", { n: Math.min(stats.due_today, reviewLimit) })}
           </Button>
@@ -552,7 +552,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
               )}
 
               {selected.source_ref && sourceRoute(selected) && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <div className="flex items-center gap-1.5 pl-3 text-xs text-muted-foreground">
                   <CalendarIcon className="size-3.5" />
                   <span>{t("cards.from")}</span>
                   <button
@@ -570,8 +570,10 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                 </div>
               )}
 
-              {/* Review timeline */}
-              <div>
+              {/* Review timeline — pl-3 lines the label up with the excerpt
+                  box's text above (both boxes have inner padding; these two
+                  blocks are bare, so they'd hug the box borders). */}
+              <div className="pl-3">
                 <p className="mb-1.5 text-xs font-medium text-muted-foreground">
                   {t("cards.timeline")}
                   {selected.due_at && selected.status === "active" && (

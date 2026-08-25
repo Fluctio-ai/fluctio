@@ -762,6 +762,7 @@ const zhCN: Record<string, string> = {
   "knowledge.todos": "待办",
   "knowledge.flashPlaceholder": "记一笔灵感…",
   "knowledge.saveFlash": "记录",
+  "knowledge.editFlash": "编辑灵感",
   "knowledge.noFlashes": "还没有灵感闪记。在上方输入框记下第一笔。",
   "knowledge.searchFlashes": "搜索闪记…",
   "knowledge.searchArticles": "搜索文章…",

@@ -333,6 +333,43 @@ func (s *Server) handleKBSaveFlash(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"source_id": id})
 }
 
+// handleKBUpdateFlash overwrites an existing flash's content (single chunk
+// rewritten, title re-derived, re-embedded) — the manual-edit twin of the
+// knowledgebase_update_flash agent tool.
+func (s *Server) handleKBUpdateFlash(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	sourceID := r.PathValue("sourceId")
+	if agentID == "" || sourceID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Content == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+	kbStore := s.kbStoreFor(agentID)
+	if kbStore == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := kbStore.UpdateFlash(r.Context(), agentID, sourceID, req.Content); err != nil {
+		if errors.Is(err, kb.ErrFlashNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
 // handleKBSaveTodo creates a todo item with optional status/start_at/end_at.
 func (s *Server) handleKBSaveTodo(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")

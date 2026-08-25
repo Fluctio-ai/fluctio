@@ -49,6 +49,7 @@ import {
   getKBStats,
   generateWiki,
   kbSaveFlash,
+  kbUpdateFlash,
   kbSaveTodo,
   kbUpdateTodo,
   kbListTodos,
@@ -817,6 +818,11 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
   const [query, setQuery] = useState("");
   const [sortNew, setSortNew] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<FlashItem | null>(null);
+  // Manual content edit (the pencil on a card): editTarget is the flash
+  // being edited, editDraft its textarea value.
+  const [editTarget, setEditTarget] = useState<FlashItem | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -856,6 +862,18 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
     await deleteKBSource(agentId, id);
     load();
   }, [agentId, load]);
+
+  // handleUpdateFlash saves the edit dialog's content over the existing
+  // flash (backend rewrites the chunk, re-derives the title, re-embeds).
+  const handleUpdateFlash = useCallback(async () => {
+    if (!agentId || !editTarget || !editDraft.trim()) return;
+    setEditSaving(true);
+    const res = await kbUpdateFlash(agentId, editTarget.src.id, editDraft.trim());
+    setEditSaving(false);
+    if ("error" in res) { notify(res.error!); return; }
+    setEditTarget(null);
+    load();
+  }, [agentId, editTarget, editDraft, notify, load]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -902,6 +920,14 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
                 <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                   <span>{relativeTime(src.created_at)}</span>
                   <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-primary relative after:absolute after:-inset-2"
+                      onClick={() => { setEditDraft(content); setEditTarget({ src, content }); }}
+                      aria-label={t("common.edit")}
+                    >
+                      <PencilIcon className="h-3 w-3" />
+                    </button>
                     <CopyIconButton sizeClass="h-3 w-3" value={content} />
                     <button
                       type="button"
@@ -935,6 +961,28 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
             <Button variant="outline" onClick={() => setFlashOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={handleSave} disabled={saving || !draft.trim()}>
               {saving ? t("common.saving") : t("knowledge.saveFlash")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Flash edit dialog — the pencil's target, same shape as the capture one. */}
+      <Dialog open={editTarget !== null} onOpenChange={(o) => { if (!o) setEditTarget(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t("knowledge.editFlash")}</DialogTitle></DialogHeader>
+          <div className="space-y-1.5">
+            <Label>{t("knowledge.contentLabel")}</Label>
+            <textarea
+              className="flex min-h-[120px] w-full rounded-md border bg-transparent px-3 py-2 text-sm"
+              value={editDraft}
+              onChange={(e) => setEditDraft(e.target.value)}
+              placeholder={t("knowledge.flashPlaceholder")}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditTarget(null)}>{t("common.cancel")}</Button>
+            <Button onClick={handleUpdateFlash} disabled={editSaving || !editDraft.trim()}>
+              {editSaving ? t("common.saving") : t("common.save")}
             </Button>
           </DialogFooter>
         </DialogContent>

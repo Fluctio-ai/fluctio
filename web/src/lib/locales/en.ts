@@ -762,6 +762,7 @@ const en: Record<string, string> = {
   "knowledge.todos": "Todos",
   "knowledge.flashPlaceholder": "Capture a spark…",
   "knowledge.saveFlash": "Save",
+  "knowledge.editFlash": "Edit flash",
   "knowledge.noFlashes": "No inspiration flashes yet. Capture your first one above.",
   "knowledge.searchFlashes": "Search flashes…",
   "knowledge.searchArticles": "Search articles…",
