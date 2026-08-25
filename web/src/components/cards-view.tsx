@@ -46,6 +46,7 @@ import {
   generateCards,
   getCardStats,
   getAgentConfig,
+  getWikiPage,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
@@ -98,6 +99,10 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const [reviews, setReviews] = useState<KBCardReview[]>([]);
   const [flipped, setFlipped] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  // wikiTitle resolves the selected card's wiki source_ref (a "type:slug"
+  // page id) into the page's title, so the source shows a name instead of
+  // the raw id/link.
+  const [wikiTitle, setWikiTitle] = useState<string | null>(null);
 
   const [addOpen, setAddOpen] = useState(false);
   const [addQ, setAddQ] = useState("");
@@ -211,12 +216,19 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
     }
   }, [agentId, startReview, router]);
 
-  // Selecting a card fetches its review timeline; the flip resets.
+  // Selecting a card fetches its review timeline; the flip resets. Wiki
+  // sources also resolve their page title for the source displays.
   const openCard = useCallback(
     async (c: KBCard) => {
       setSelected(c);
       setFlipped(false);
       setReviews([]);
+      setWikiTitle(null);
+      if (agentId && c.source_type === "wiki" && c.source_ref) {
+        getWikiPage(agentId, c.source_ref)
+          .then((p) => setWikiTitle(p?.title || null))
+          .catch(() => {});
+      }
       setDetailLoading(true);
       try {
         const d = agentId ? await getCard(agentId, c.id) : null;
@@ -324,7 +336,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">{t("cards.dueNone")}</span>
             {stats && stats.active > 0 && (
-              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={startPractice}>
+              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={startPractice}>
                 <RotateCcwIcon className="mr-1 size-3.5" />
                 {t("cards.practice")}
               </Button>
@@ -479,7 +491,8 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
             </Button>
             <Badge variant="outline" className="px-1.5 py-0 text-[11px]">
               {t(`cards.source.${selected.source_type}`)}
-              {selected.source_ref ? ` · ${selected.source_ref}` : ""}
+              {selected.source_type === "diary" && selected.source_ref ? ` · ${selected.source_ref}` : ""}
+              {selected.source_type === "wiki" && wikiTitle ? ` · ${wikiTitle}` : ""}
             </Badge>
             <span className="text-[11px] text-muted-foreground">
               {t("cards.intervalProgress", { cur: selected.interval_index, total: 6 })}
@@ -552,7 +565,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                   >
                     {selected.source_type === "diary"
                       ? t("cards.fromDiary", { date: selected.source_ref })
-                      : selected.source_ref}
+                      : wikiTitle ?? t("cards.viewWiki")}
                   </button>
                 </div>
               )}

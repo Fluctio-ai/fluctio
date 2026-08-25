@@ -1907,7 +1907,7 @@ export async function kbSaveTodo(
 export async function kbUpdateTodo(
   agentId: string,
   sourceId: string,
-  patch: { status?: string; start_at?: string; end_at?: string },
+  patch: { content?: string; status?: string; start_at?: string; end_at?: string },
 ): Promise<{ status?: string; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/kb/todos/${sourceId}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" },

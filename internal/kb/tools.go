@@ -510,12 +510,16 @@ func registerKBUpdateTodo(r *tools.Registry, store *KBStore, agentID string) {
 			"description": desc,
 		}
 	}
-	r.Register("knowledgebase_update_todo", "Update an existing todo's status and/or timing. Pass source_id (from knowledgebase_list_todos or knowledgebase_save_todo) plus any of status/start_at/end_at to change; omit a field to leave it unchanged. Use it as a todo moves forward (pending→in_progress→done, or cancelled) or when its timing changes.", map[string]interface{}{
+	r.Register("knowledgebase_update_todo", "Update an existing todo's status, timing, and/or content. Pass source_id (from knowledgebase_list_todos or knowledgebase_save_todo) plus any of content/status/start_at/end_at to change; omit a field to leave it unchanged. Use it as a todo moves forward (pending→in_progress→done, or cancelled), when its timing changes, or to edit/extend its text (content is the full replacement text).", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"source_id": map[string]interface{}{
 				"type":        "string",
 				"description": "The source_id of the todo to update",
+			},
+			"content": map[string]interface{}{
+				"type":        "string",
+				"description": "Full new markdown text for the todo (omit to leave unchanged)",
 			},
 			"status":   statusProp("New lifecycle state"),
 			"start_at": timeProp("New RFC 3339 start time (omit to leave unchanged)"),
@@ -525,6 +529,7 @@ func registerKBUpdateTodo(r *tools.Registry, store *KBStore, agentID string) {
 	}, func(ctx context.Context, rawArgs json.RawMessage) (string, error) {
 		var args struct {
 			SourceID string `json:"source_id"`
+			Content  string `json:"content,omitempty"`
 			Status   string `json:"status,omitempty"`
 			StartAt  string `json:"start_at,omitempty"`
 			EndAt    string `json:"end_at,omitempty"`
@@ -535,7 +540,7 @@ func registerKBUpdateTodo(r *tools.Registry, store *KBStore, agentID string) {
 		if args.SourceID == "" {
 			return "", fmt.Errorf("source_id is required")
 		}
-		if err := store.UpdateTodo(ctx, agentID, args.SourceID, args.Status, args.StartAt, args.EndAt); err != nil {
+		if err := store.UpdateTodo(ctx, agentID, args.SourceID, args.Content, args.Status, args.StartAt, args.EndAt); err != nil {
 			if errors.Is(err, ErrTodoNotFound) {
 				return "", fmt.Errorf("todo %s not found (it may belong to another agent or not be a todo; check via knowledgebase_list_todos)", args.SourceID)
 			}

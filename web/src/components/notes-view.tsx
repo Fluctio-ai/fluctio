@@ -99,13 +99,9 @@ function noteTitle(n: KBNote, untitled: string): string {
   return n.title || n.content_md.split("\n").map((l) => l.trim()).find(Boolean) || untitled;
 }
 
-function relativeTime(iso: string): string {
-  const s = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (s < 60) return "刚刚";
-  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
-  if (s < 86400 * 7) return `${Math.floor(s / 86400)} 天前`;
-  return new Date(iso).toLocaleDateString();
+function noteTime(iso: string): string {
+  const d = new Date(iso);
+  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 export function NotesView({ notify }: { notify: (msg: string) => void }) {
@@ -426,7 +422,6 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
               <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("knowledge.notes.empty")}</p>
             ) : (
               filtered.map((n) => {
-                const hasBoard = splitBody(n.content_md).some((p) => p.kind === "board");
                 return (
                   <div
                     key={n.id}
@@ -444,8 +439,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                     <div className="min-w-0 flex-1">
                       <p className="truncate">{noteTitle(n, t("knowledge.notes.untitled"))}</p>
                       <p className="text-xs tabular-nums text-muted-foreground">
-                        {hasBoard && <PenLineIcon className="mr-0.5 inline size-3 align-[-2px]" aria-label={t("knowledge.notes.tabBoard")} />}
-                        {relativeTime(n.updated_at)}
+                        {noteTime(n.updated_at)}
                       </p>
                     </div>
                     <button

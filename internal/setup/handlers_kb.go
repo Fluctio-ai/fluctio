@@ -372,7 +372,7 @@ func (s *Server) handleKBSaveTodo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"source_id": id})
 }
 
-// handleKBUpdateTodo mutates a todo's status/timing. Only non-empty fields land.
+// handleKBUpdateTodo mutates a todo's content/status/timing. Only non-empty fields land.
 func (s *Server) handleKBUpdateTodo(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	sourceID := r.PathValue("sourceId")
@@ -381,6 +381,7 @@ func (s *Server) handleKBUpdateTodo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		Content string `json:"content,omitempty"`
 		Status  string `json:"status,omitempty"`
 		StartAt string `json:"start_at,omitempty"`
 		EndAt   string `json:"end_at,omitempty"`
@@ -394,7 +395,7 @@ func (s *Server) handleKBUpdateTodo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
 		return
 	}
-	if err := kbStore.UpdateTodo(r.Context(), agentID, sourceID, req.Status, req.StartAt, req.EndAt); err != nil {
+	if err := kbStore.UpdateTodo(r.Context(), agentID, sourceID, req.Content, req.Status, req.StartAt, req.EndAt); err != nil {
 		if errors.Is(err, kb.ErrTodoNotFound) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return

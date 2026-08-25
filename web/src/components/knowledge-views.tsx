@@ -1273,10 +1273,10 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
     if ("error" in res) notify(res.error!); else load();
   }, [agentId, load]);
 
-  // handlePatchDates saves the start/due edits from the detail dialog.
+  // handlePatch saves the content/start/due edits from the detail dialog.
   // Undefined keys are omitted from the PATCH, so a cleared input field
-  // simply leaves the stored date unchanged.
-  const handlePatchDates = useCallback(async (id: string, patch: { start_at?: string; end_at?: string }) => {
+  // simply leaves the stored value unchanged.
+  const handlePatch = useCallback(async (id: string, patch: { content?: string; start_at?: string; end_at?: string }) => {
     if (!agentId) return;
     const res = await kbUpdateTodo(agentId, id, patch);
     if ("error" in res) notify(res.error!); else load();
@@ -1481,7 +1481,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
         key={detailTarget?.src.id ?? "none"}
         item={detailTarget}
         onMove={handleMove}
-        onPatchDates={handlePatchDates}
+        onPatch={handlePatch}
         onDelete={(id) => { setDetailTarget(null); askDelete(id); }}
         onOpenChange={(o) => { if (!o) setDetailTarget(null); }}
       />
@@ -1754,41 +1754,68 @@ function TodoRow({
 }
 
 // TodoDetailDialog is the shared editor opened from calendar chips and list
-// rows: full markdown body, the four status pills and start/due datetime
-// editing. Date fields cleared blank are simply omitted from the PATCH, so
-// they leave the stored dates unchanged. The caller passes a key of the todo
-// id so a different todo remounts (and reseeds) the datetime inputs; edits
-// that reload the same todo keep the field values.
+// rows: the markdown body (pencil toggles it into a raw textarea for content
+// edits), the four status pills and start/due datetime editing. Patched
+// fields left blank are simply omitted, so they leave the stored values
+// unchanged. The caller passes a key of the todo id so a different todo
+// remounts (and reseeds) the datetime inputs; edits that reload the same
+// todo keep the field values.
 function TodoDetailDialog({
   item,
   onMove,
-  onPatchDates,
+  onPatch,
   onDelete,
   onOpenChange,
 }: {
   item: FlashItem | null;
   onMove: (id: string, status: TodoStatus) => void;
-  onPatchDates: (id: string, patch: { start_at?: string; end_at?: string }) => void;
+  onPatch: (id: string, patch: { content?: string; start_at?: string; end_at?: string }) => void | Promise<void>;
   onDelete: (id: string) => void;
   onOpenChange: (o: boolean) => void;
 }) {
   const t = useT();
   const [start, setStart] = useState(() => (item?.src.start_at ? datetimeLocalValue(item.src.start_at) : ""));
   const [end, setEnd] = useState(() => (item?.src.end_at ? datetimeLocalValue(item.src.end_at) : ""));
+  // Content editing: draft starts null (not editing); the pencil seeds it
+  // with the current body and flips the preview into a textarea.
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string | null>(null);
   if (!item) return null;
   const cur = (item.src.status || "pending") as TodoStatus;
   const origStart = item.src.start_at ? datetimeLocalValue(item.src.start_at) : "";
   const origEnd = item.src.end_at ? datetimeLocalValue(item.src.end_at) : "";
-  const dirty = start !== origStart || end !== origEnd;
+  const contentDirty = draft !== null && draft.trim() !== item.content.trim();
+  const dirty = start !== origStart || end !== origEnd || contentDirty;
   return (
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader><DialogTitle>{t("knowledge.todoDetail")}</DialogTitle></DialogHeader>
-        <div className="prose prose-sm dark:prose-invert max-h-64 max-w-none overflow-y-auto">
-          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-            {item.content}
-          </ReactMarkdown>
-        </div>
+        {editing ? (
+          <textarea
+            className="flex max-h-64 min-h-[120px] w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm"
+            value={draft ?? ""}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={t("knowledge.todoContentPlaceholder")}
+            autoFocus
+          />
+        ) : (
+          <div className="relative">
+            <div className="prose prose-sm dark:prose-invert max-h-64 max-w-none overflow-y-auto">
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                {item.content}
+              </ReactMarkdown>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setDraft(item.content); setEditing(true); }}
+              className="absolute right-0 top-0 rounded p-1 text-muted-foreground transition-colors hover:text-primary"
+              aria-label={t("common.edit")}
+              title={t("common.edit")}
+            >
+              <PencilIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {TODO_STATUSES.map((st) => (
             <button
@@ -1829,12 +1856,15 @@ function TodoDetailDialog({
             size="sm"
             className="h-7"
             disabled={!dirty}
-            onClick={() =>
-              onPatchDates(item.src.id, {
+            onClick={async () => {
+              await onPatch(item.src.id, {
+                content: contentDirty && draft!.trim() ? draft!.trim() : undefined,
                 start_at: start ? new Date(start).toISOString() : undefined,
                 end_at: end ? new Date(end).toISOString() : undefined,
-              })
-            }
+              });
+              setEditing(false);
+              setDraft(null);
+            }}
           >
             {t("common.save")}
           </Button>

@@ -65,7 +65,7 @@ func TestSaveFlashTodoCRUD(t *testing.T) {
 	}
 
 	// pending → in_progress shows up under "active".
-	if err := store.UpdateTodo(ctx, agent, todoID, "in_progress", "", ""); err != nil {
+	if err := store.UpdateTodo(ctx, agent, todoID, "", "in_progress", "", ""); err != nil {
 		t.Fatalf("UpdateTodo in_progress: %v", err)
 	}
 	active, _ := store.ListTodos(ctx, agent, "active", 0)
@@ -74,18 +74,36 @@ func TestSaveFlashTodoCRUD(t *testing.T) {
 	}
 
 	// done drops out of the active working set.
-	if err := store.UpdateTodo(ctx, agent, todoID, "done", "", ""); err != nil {
+	if err := store.UpdateTodo(ctx, agent, todoID, "", "done", "", ""); err != nil {
 		t.Fatalf("UpdateTodo done: %v", err)
 	}
 	if active2, _ := store.ListTodos(ctx, agent, "active", 0); len(active2) != 0 {
 		t.Errorf("active after done = %d, want 0", len(active2))
 	}
 
+	// content edit rewrites the single chunk and re-derives the title.
+	if err := store.UpdateTodo(ctx, agent, todoID, "写月度复盘报告", "", "", ""); err != nil {
+		t.Fatalf("UpdateTodo content: %v", err)
+	}
+	var body string
+	if err := db.QueryRow(`SELECT content FROM kb_entries WHERE source_id = ? AND agent_id = ? AND chunk_index = 0`, todoID, agent).Scan(&body); err != nil {
+		t.Fatalf("read todo entry: %v", err)
+	}
+	if body != "写月度复盘报告" {
+		t.Errorf("entry content = %q, want 写月度复盘报告", body)
+	}
+	todosAfter, _ := store.ListTodos(ctx, agent, "", 0)
+	for _, s := range todosAfter {
+		if s.ID == todoID && s.Title != "写月度复盘报告" {
+			t.Errorf("title after content edit = %q, want 写月度复盘报告", s.Title)
+		}
+	}
+
 	// wrong id / foreign type → ErrTodoNotFound.
-	if err := store.UpdateTodo(ctx, agent, "nope", "done", "", ""); err != ErrTodoNotFound {
+	if err := store.UpdateTodo(ctx, agent, "nope", "", "done", "", ""); err != ErrTodoNotFound {
 		t.Errorf("wrong id err = %v, want ErrTodoNotFound", err)
 	}
-	if err := store.UpdateTodo(ctx, agent, flashID, "done", "", ""); err != ErrTodoNotFound {
+	if err := store.UpdateTodo(ctx, agent, flashID, "", "done", "", ""); err != ErrTodoNotFound {
 		t.Errorf("flash-as-todo err = %v, want ErrTodoNotFound", err)
 	}
 }
@@ -154,7 +172,7 @@ func TestListDueTodosAndMarkReminded(t *testing.T) {
 	}
 
 	// Rescheduling into the window resets reminded_at → re-eligible.
-	if err := store.UpdateTodo(ctx, agent, dueID, "", "",
+	if err := store.UpdateTodo(ctx, agent, dueID, "", "", "",
 		time.Now().UTC().Add(8*time.Hour).Format(time.RFC3339)); err != nil {
 		t.Fatalf("UpdateTodo: %v", err)
 	}

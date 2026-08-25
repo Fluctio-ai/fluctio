@@ -215,17 +215,29 @@ func (s *KBStore) SaveTodo(ctx context.Context, agentID, content, status, startA
 	return s.saveSingleChunk(ctx, agentID, "todo", deriveTitle(content), content, "text", "manual", status, startAt, endAt)
 }
 
-// UpdateTodo mutates a todo's status/start_at/end_at. Only non-empty arguments
-// are applied; an empty argument leaves that field untouched. reminded_at is
-// reset on every change so a rescheduled or reopened todo can be pushed again
-// by the due-reminder sweep. Returns ErrTodoNotFound when no todo row matched.
-func (s *KBStore) UpdateTodo(ctx context.Context, agentID, sourceID string, status, startAt, endAt string) error {
+// UpdateTodo mutates a todo's content/status/start_at/end_at. Only non-empty
+// arguments are applied; an empty argument leaves that field untouched. A
+// content edit passes the full new text and mirrors UpdateFlash: the single
+// chunk 0 is rewritten, the title re-derived, and the source re-embedded.
+// reminded_at is reset on every change so a rescheduled or reopened todo can
+// be pushed again by the due-reminder sweep. Returns ErrTodoNotFound when no
+// todo row matched.
+func (s *KBStore) UpdateTodo(ctx context.Context, agentID, sourceID, content, status, startAt, endAt string) error {
+	content = strings.TrimSpace(content)
 	if status != "" && !validTodoStatus(status) {
 		return fmt.Errorf("invalid status %q", status)
 	}
 	var sets []string
 	var args []interface{}
 	n := 0
+	if content != "" {
+		n++
+		sets = append(sets, fmt.Sprintf("title = %s", s.ph(n)))
+		args = append(args, deriveTitle(content))
+		n++
+		sets = append(sets, fmt.Sprintf("total_chars = %s", s.ph(n)))
+		args = append(args, len(content))
+	}
 	if status != "" {
 		n++
 		sets = append(sets, fmt.Sprintf("status = %s", s.ph(n)))
@@ -252,14 +264,33 @@ func (s *KBStore) UpdateTodo(ctx context.Context, agentID, sourceID string, stat
 	args = append(args, time.Now().UTC().Format(time.RFC3339))
 	n++
 	args = append(args, sourceID, agentID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
 	q := fmt.Sprintf(`UPDATE kb_sources SET %s WHERE id = %s AND agent_id = %s AND type = 'todo'`,
 		strings.Join(sets, ", "), s.ph(n), s.ph(n+1))
-	res, err := s.db.ExecContext(ctx, q, args...)
+	res, err := tx.ExecContext(ctx, q, args...)
 	if err != nil {
 		return fmt.Errorf("update todo: %w", err)
 	}
 	if rows, _ := res.RowsAffected(); rows == 0 {
 		return ErrTodoNotFound
+	}
+	if content != "" {
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`UPDATE kb_entries SET content = %s WHERE source_id = %s AND agent_id = %s AND chunk_index = 0`,
+				s.ph(1), s.ph(2), s.ph(3)),
+			content, sourceID, agentID); err != nil {
+			return fmt.Errorf("update todo entry: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	if content != "" && s.embedder != nil && s.embedder.Available() {
+		go s.embedSourceEntries(context.Background(), agentID, sourceID)
 	}
 	return nil
 }
