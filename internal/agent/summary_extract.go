@@ -143,10 +143,30 @@ func callExtractTopics(
 			"model", model)
 		return nil, nil
 	}
+	return parseTopicsBody(content)
+}
+
+// parseTopicsBody decodes the LLM's topics output. The prompt (and JSON mode)
+// asks for {"topics":[...]}, but some models drop the wrapper and emit the
+// bare array — accept both, each with a one-shot bare-quote repair fallback,
+// so a drift like this doesn't fail the same window on every idle sweep.
+func parseTopicsBody(content string) ([]ExtractedTopic, error) {
 	var parsed struct {
 		Topics []ExtractedTopic `json:"topics"`
 	}
 	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
+		// Bare top-level array: "cannot unmarshal array into Go value of
+		// type struct { Topics []agent.ExtractedTopic }".
+		trimmed := strings.TrimSpace(content)
+		if strings.HasPrefix(trimmed, "[") {
+			var topics []ExtractedTopic
+			if json.Unmarshal([]byte(trimmed), &topics) == nil {
+				return topics, nil
+			}
+			if json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(trimmed)), &topics) == nil {
+				return topics, nil
+			}
+		}
 		// Some models ignore or get degraded off the JSON-mode hint and emit
 		// bare quotes inside string values (e.g. 常见的"中午随便"习惯), which
 		// Unmarshal rejects with "invalid character ... after object
