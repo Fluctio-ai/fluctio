@@ -211,7 +211,7 @@ export function ChatMarkdown({
         return (
           <button
             type="button"
-            className="rounded bg-primary/10 px-1 font-medium text-primary hover:bg-primary/15"
+            className="rounded-md bg-primary/10 px-1 font-medium text-primary hover:bg-primary/15"
             title={source ? knowledgeSourceLabel(source) : id}
             onClick={(e) => {
               e.preventDefault();

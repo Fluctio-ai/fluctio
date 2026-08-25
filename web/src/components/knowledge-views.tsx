@@ -146,7 +146,7 @@ export function KnowledgePage({
             type="button"
             onClick={() => setToast(null)}
             aria-label={t("common.dismiss")}
-            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <XIcon className="h-3.5 w-3.5" />
           </button>
@@ -1128,7 +1128,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                   <div className="flex shrink-0 items-center gap-0.5">
                     <button
                       type="button"
-                      className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
+                      className="rounded-md p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-foreground"
                       onClick={() => openEdit(b)}
                       aria-label={t("common.edit")}
                     >
@@ -1136,7 +1136,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                     </button>
                     <button
                       type="button"
-                      className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
+                      className="rounded-md p-1 text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive"
                       onClick={() => setDeleteTarget(b)}
                       aria-label={t("common.delete")}
                     >
@@ -1449,7 +1449,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
                       <button
                         type="button"
                         onClick={() => setArchiveOpen((o) => ({ ...o, [st]: !(o[st] ?? false) }))}
-                        className="flex w-full items-center justify-between px-3 py-2 hover:bg-accent/50"
+                        className="rounded-md flex w-full items-center justify-between px-3 py-2 hover:bg-accent/50"
                       >
                         <span className={cn("text-xs font-semibold uppercase tracking-wide", statusAccent(st))}>
                           {t("knowledge.status_" + st)} ({listGroups[st].length})
@@ -1856,7 +1856,7 @@ function TodoDetailDialog({
             <button
               type="button"
               onClick={() => { setDraft(item.content); setEditing(true); }}
-              className="absolute right-0 top-0 rounded p-1 text-muted-foreground transition-colors hover:text-primary"
+              className="absolute right-0 top-0 rounded-md p-1 text-muted-foreground transition-colors hover:text-primary"
               aria-label={t("common.edit")}
               title={t("common.edit")}
             >

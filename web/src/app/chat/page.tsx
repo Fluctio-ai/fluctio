@@ -474,7 +474,7 @@ export default function ChatPage() {
                       {msg.role === "agent" && (
                         <button
                           onClick={() => handleCopy(msg)}
-                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                          className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
                           title="Copy"
                         >
                           {copiedId === msg.id ? (
@@ -529,7 +529,7 @@ export default function ChatPage() {
                 onClick={handleSend}
                 disabled={!input.trim() || !selectedAgent || sending}
                 size="icon"
-                className="h-8 w-8 shrink-0 rounded-lg"
+                className="h-8 w-8 shrink-0"
               >
                 <Send className="h-4 w-4" />
               </Button>
@@ -569,7 +569,7 @@ function ToolCallGroup({ msg }: { msg: ChatMessage }) {
         <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
           <button
             onClick={() => setGroupOpen(!groupOpen)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+            className="rounded-md flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
               <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-warning border-t-transparent animate-spin" />
@@ -597,7 +597,7 @@ function ToolCallGroup({ msg }: { msg: ChatMessage }) {
                 <div key={tc.id} className="border-b border-border last:border-b-0">
                   <button
                     onClick={() => toggleTool(tc.id)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-colors"
+                    className="rounded-md flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-colors"
                   >
                     {tc.result === undefined ? (
                       <div className="h-3 w-3 shrink-0 rounded-full border-2 border-warning/60 border-t-transparent animate-spin" />

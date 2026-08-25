@@ -2964,7 +2964,7 @@ export function ChatScreen() {
                           )}
                           <button
                             onClick={() => handleCopy(msg)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
                             title={t("chat.copy")}
                           >
                             {copiedId === msg.id ? (
@@ -2975,7 +2975,7 @@ export function ChatScreen() {
                           </button>
                           <button
                             onClick={() => handleRetry(msg)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
                             title={t("chat.resend")}
                           >
                             <RotateCcw className="h-3 w-3" />
@@ -2993,7 +2993,7 @@ export function ChatScreen() {
                           )}
                           <button
                             onClick={() => handleCopy(msg)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
                             title={t("chat.copy")}
                           >
                             {copiedId === msg.id ? (
@@ -3004,7 +3004,7 @@ export function ChatScreen() {
                           </button>
                           <button
                             onClick={() => setFilesSheetOpen(true)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
                             title={t("chat.viewTaskFiles")}
                           >
                             <FolderOpen className="h-3 w-3" />
@@ -3012,7 +3012,7 @@ export function ChatScreen() {
                           {msg.seq != null && msg.seq >= 0 && (
                             <button
                               onClick={() => handleFork(msg)}
-                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
                               title={t("chat.fork")}
                             >
                               <GitBranch className="h-3 w-3" />
@@ -3147,7 +3147,7 @@ export function ChatScreen() {
                         <button
                           type="button"
                           onClick={() => removeAttachment(i)}
-                          className="p-0.5 rounded hover:bg-muted-foreground/15 text-muted-foreground hover:text-foreground"
+                          className="p-0.5 rounded-md hover:bg-muted-foreground/15 text-muted-foreground hover:text-foreground"
                           aria-label="Remove attachment"
                         >
                           <X className="h-3 w-3" />
@@ -3184,7 +3184,7 @@ export function ChatScreen() {
                   <div className="mt-2 flex items-center justify-between">
                     <div className="flex items-center gap-2 min-w-0">
                       <label
-                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors ${
+                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors ${
                           !canAttach
                             ? "opacity-50"
                             : "hover:bg-muted hover:text-foreground cursor-pointer"
@@ -3217,7 +3217,7 @@ export function ChatScreen() {
                       <Button
                         onClick={handleStop}
                         size="icon"
-                        className="h-9 w-9 shrink-0 rounded-lg"
+                        className="h-9 w-9 shrink-0"
                         aria-label={t("chat.stopGenerating")}
                       >
                         <Square className="h-3.5 w-3.5 fill-current" />
@@ -3230,7 +3230,7 @@ export function ChatScreen() {
                         }}
                         disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                         size="icon"
-                        className="h-9 w-9 shrink-0 rounded-lg"
+                        className="h-9 w-9 shrink-0"
                         aria-label={t("chat.sendMessage")}
                       >
                         <Send className="h-4 w-4" />
@@ -3241,7 +3241,7 @@ export function ChatScreen() {
               ) : (
                 <div className="flex items-center gap-2">
                   <label
-                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors ${
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors ${
                       !canAttach
                         ? "opacity-50"
                         : "hover:bg-muted hover:text-foreground cursor-pointer"
@@ -3280,7 +3280,7 @@ export function ChatScreen() {
                     <Button
                       onClick={handleStop}
                       size="icon"
-                      className="h-8 w-8 shrink-0 rounded-lg"
+                      className="h-8 w-8 shrink-0"
                       aria-label={t("chat.stopGenerating")}
                     >
                       <Square className="h-3.5 w-3.5 fill-current" />
@@ -3293,7 +3293,7 @@ export function ChatScreen() {
                       }}
                       disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                       size="icon"
-                      className="h-8 w-8 shrink-0 rounded-lg"
+                      className="h-8 w-8 shrink-0"
                       aria-label={t("chat.sendMessage")}
                     >
                       <Send className="h-4 w-4" />
@@ -3555,7 +3555,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
       <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
           <button
             onClick={() => setGroupOpen(!groupOpen)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+            className="rounded-md flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
               <div className="h-5 w-5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
@@ -3598,7 +3598,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
                 <div key={tc.id} className="border-b border-border last:border-b-0">
                   <button
                     onClick={() => toggleTool(tc.id)}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-colors"
+                    className="rounded-md flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/30 transition-colors"
                   >
                     {(() => {
                       const fam = familyOf(tc.name);
@@ -3744,7 +3744,7 @@ function ToolRoundsBundle({
         <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
           <button
             onClick={() => setOpen(!open)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
+            className="rounded-md flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
               <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
@@ -4485,7 +4485,7 @@ function WorkspacePanel({
             <div className="flex items-center rounded-md bg-muted p-0.5 text-xs">
               <button
                 onClick={() => setTab("code")}
-                className={`rounded px-2.5 py-1 transition-colors ${
+                className={`rounded-md px-2.5 py-1 transition-colors ${
                   tab === "code"
                     ? "bg-background font-medium text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
@@ -4495,7 +4495,7 @@ function WorkspacePanel({
               </button>
               <button
                 onClick={() => setTab("preview")}
-                className={`flex items-center gap-1 rounded px-2.5 py-1 transition-colors ${
+                className={`flex items-center gap-1 rounded-md px-2.5 py-1 transition-colors ${
                   tab === "preview"
                     ? "bg-background font-medium text-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
@@ -4531,7 +4531,7 @@ function WorkspacePanel({
                 <div className="flex items-center gap-1 border-b border-border px-3 py-1.5 text-xs">
                   <button
                     onClick={() => setShowAll(false)}
-                    className={`rounded px-2 py-0.5 transition-colors ${
+                    className={`rounded-md px-2 py-0.5 transition-colors ${
                       !showAll ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
@@ -4539,7 +4539,7 @@ function WorkspacePanel({
                   </button>
                   <button
                     onClick={() => setShowAll(true)}
-                    className={`rounded px-2 py-0.5 transition-colors ${
+                    className={`rounded-md px-2 py-0.5 transition-colors ${
                       showAll ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
@@ -4670,7 +4670,7 @@ function WorkspacePanel({
             <button
               type="button"
               onClick={() => setPreviewing(null)}
-              className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+              className="rounded-md flex shrink-0 items-center gap-1 border-b border-border px-4 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
               <ChevronLeft className="h-4 w-4 shrink-0" />
               <span className="truncate">{previewing.path.split("/").pop() || previewing.path}</span>
@@ -4889,7 +4889,7 @@ function SlashMenu({
                 onSelect(it);
               }}
               onMouseEnter={() => onHover(i)}
-              className={`w-full flex items-start gap-3 px-3 py-2 text-left transition-colors ${
+              className={`w-full flex items-start gap-3 rounded-md px-3 py-2 text-left transition-colors ${
                 i === activeIndex ? "bg-muted/60" : "hover:bg-muted/40"
               }`}
             >

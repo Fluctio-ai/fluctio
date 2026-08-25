@@ -295,7 +295,7 @@ export default function WorkflowsPage() {
               key={w.id}
               onClick={() => setSelected(w.id)}
               className={
-                "w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent " +
+                "w-full text-left rounded-md px-2 py-1.5 text-sm hover:bg-accent " +
                 (selected === w.id ? "bg-accent" : "")
               }
             >

@@ -646,7 +646,7 @@ export default function ModelsPage() {
                           type="button"
                           disabled={exists}
                           onClick={() => handlePickFetchedModel(fm.id, fm.contextWindow, fm.maxTokens)}
-                          className="flex items-center justify-between w-full px-2.5 py-1.5 rounded text-xs hover:bg-accent font-mono disabled:opacity-40 disabled:cursor-not-allowed"
+                          className="flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs hover:bg-accent font-mono disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <span>{fm.id}</span>
                           <span className="text-muted-foreground text-[10px]">

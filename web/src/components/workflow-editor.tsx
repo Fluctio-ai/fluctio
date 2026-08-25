@@ -394,7 +394,7 @@ export function WorkflowEditor({
               key={k}
               type="button"
               onClick={() => setTab(k)}
-              className={"px-2 py-1 border-b-2 whitespace-nowrap shrink-0 " + (tab === k ? "border-primary font-semibold" : "border-transparent text-muted-foreground")}
+              className={"rounded-md px-2 py-1 border-b-2 whitespace-nowrap shrink-0 " + (tab === k ? "border-primary font-semibold" : "border-transparent text-muted-foreground")}
             >
               {t(key)}
             </button>
@@ -430,7 +430,7 @@ export function WorkflowEditor({
             <label className="block">
               {t("workflow.concurrency")}
               <select
-                className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
+                className="ml-1 border rounded-md px-2.5 py-1 h-9 bg-transparent w-full text-sm"
                 value={def.concurrency || ""}
                 onChange={(e) => mutate((d) => { if (e.target.value) d.concurrency = e.target.value; else delete d.concurrency; })}
               >
@@ -616,13 +616,13 @@ function FieldRef({ options, value, onChange, placeholder }: {
   return (
     <div className="flex gap-1">
       <input
-        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent flex-1 font-mono text-sm min-w-0"
+        className="border rounded-md px-2.5 py-1 h-9 bg-transparent flex-1 font-mono text-sm min-w-0"
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
       />
       <select
-        className="border rounded-lg px-2.5 py-1 h-9 bg-background text-sm shrink-0"
+        className="border rounded-md px-2.5 py-1 h-9 bg-background text-sm shrink-0"
         value=""
         onChange={(e) => { if (e.target.value) onChange(e.target.value); }}
       >
@@ -642,7 +642,7 @@ function InsertField({ options, onInsert }: { options: RefOption[]; onInsert: (r
   const t = useT();
   return (
     <select
-      className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm"
+      className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm"
       value=""
       onChange={(e) => { if (e.target.value) onInsert(e.target.value); }}
     >
@@ -675,7 +675,7 @@ function KVRows({ obj, options, onChange, valueMode = "ref" }: {
       {entries.map(([k, v], i) => (
         <div key={i} className="flex gap-1 items-center">
           <input
-            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-24 shrink-0"
+            className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm w-24 shrink-0"
             value={k}
             onChange={(e) => {
               const next: Record<string, unknown> = { ...obj };
@@ -687,7 +687,7 @@ function KVRows({ obj, options, onChange, valueMode = "ref" }: {
           />
           {valueMode === "type" ? (
             <select
-              className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1"
+              className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm flex-1"
               value={v && typeof v === "object" && "type" in v ? String((v as { type: string }).type) : "string"}
               onChange={(e) => commit({ ...obj, [k]: { type: e.target.value } })}
             >
@@ -755,7 +755,7 @@ function InputSchemaEditor({ schema, onChange }: {
             }}
           />
           <input
-            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-20 shrink-0"
+            className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm w-20 shrink-0"
             value={name}
             onChange={(e) => {
               const nn = e.target.value;
@@ -769,14 +769,14 @@ function InputSchemaEditor({ schema, onChange }: {
             }}
           />
           <select
-            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm shrink-0"
+            className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm shrink-0"
             value={p?.type || "string"}
             onChange={(e) => commit({ ...props, [name]: { ...p, type: e.target.value } }, required)}
           >
             {TYPES.map((ty) => <option key={ty} value={ty}>{ty}</option>)}
           </select>
           <input
-            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
+            className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
             value={p?.description || ""}
             placeholder={t("workflow.fieldDescPh")}
             onChange={(e) => commit({ ...props, [name]: { ...p, description: e.target.value } }, required)}
@@ -816,7 +816,7 @@ function OutputMapEditor({ output, options, onChange }: {
       {entries.map(([k, v], i) => (
         <div key={i} className="flex gap-1 items-center">
           <input
-            className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-24 shrink-0"
+            className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm w-24 shrink-0"
             value={k}
             onChange={(e) => {
               const next: Record<string, unknown> = { ...output };
@@ -884,7 +884,7 @@ function SessionPicker({ agentId, channel, chatId, account, onChange }: {
   return (
     <div className="relative">
       <input
-        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
+        className="border rounded-md px-2.5 py-1 h-9 bg-transparent w-full text-sm"
         placeholder={t("workflow.sessionSearchPh")}
         value={display}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
@@ -904,7 +904,7 @@ function SessionPicker({ agentId, channel, chatId, account, onChange }: {
                 setQ("");
                 setOpen(false);
               }}
-              className="block w-full text-left px-1 py-0.5 hover:bg-muted"
+              className="rounded-md block w-full text-left px-1 py-0.5 hover:bg-muted"
             >
               <div>{s.title || s.preview || s.chatId}</div>
               <div className="text-muted-foreground text-[10px]">{s.channel} · {(s.chatId || "").slice(0, 16)}</div>
@@ -957,7 +957,7 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
   return (
     <div className="relative">
       <input
-        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
+        className="border rounded-md px-2.5 py-1 h-9 bg-transparent w-full text-sm"
         placeholder={multiple ? t("workflow.articleMultiPh") : t("workflow.articleSearchPh")}
         value={display}
         onChange={(e) => { setQ(e.target.value); setOpen(true); }}
@@ -985,7 +985,7 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
               type="button"
               key={s.id}
               onMouseDown={(e) => { e.preventDefault(); pick(s.id); }}
-              className={"block w-full text-left px-1 py-0.5 hover:bg-muted " + (selected.includes(s.id) ? "bg-muted/60" : "")}
+              className={"rounded-md block w-full text-left px-1 py-0.5 hover:bg-muted " + (selected.includes(s.id) ? "bg-muted/60" : "")}
             >
               {multiple ? (selected.includes(s.id) ? "☑ " : "☐ ") : ""}{s.title || s.id}
             </button>
@@ -1010,7 +1010,7 @@ function ValuePicker({ options, value, onChange, t }: {
   return (
     <div className="flex gap-1">
       <select
-        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm shrink-0"
+        className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm shrink-0"
         value={mode}
         onChange={(e) => { setMode(e.target.value as "var" | "literal"); onChange(""); }}
       >
@@ -1019,7 +1019,7 @@ function ValuePicker({ options, value, onChange, t }: {
       </select>
       {mode === "var" ? (
         <select
-          className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
+          className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
           value={value}
           onChange={(e) => onChange(e.target.value)}
         >
@@ -1028,7 +1028,7 @@ function ValuePicker({ options, value, onChange, t }: {
         </select>
       ) : (
         <input
-          className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
+          className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="0.8 / en / …"
@@ -1061,7 +1061,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
   return (
     <div className="space-y-1">
       <select
-        className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-full"
+        className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm w-full"
         value={isExpr ? "__expr" : when}
         onChange={(e) => {
           const v = e.target.value;
@@ -1076,7 +1076,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
       </select>
       {isExpr && (
         <div className="space-y-1 border rounded p-1 bg-muted/30">
-          <select className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm w-full" value={combine}
+          <select className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm w-full" value={combine}
             onChange={(e) => update(e.target.value as "&&" | "||", rows)}>
             <option value="&&">全部满足 (AND)</option>
             <option value="||">任一满足 (OR)</option>
@@ -1084,7 +1084,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
           {rows.map((r, i) => (
             <div key={i} className="space-y-1">
               <div className="flex gap-1 items-center">
-                <select className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
+                <select className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm flex-1 min-w-0"
                   value={r.field ? `\${${r.field}}` : ""}
                   onChange={(e) => {
                     const m = e.target.value.match(/^\$\{([^}]+)\}$/);
@@ -1093,7 +1093,7 @@ function ConditionRows({ when, refOptions, onChange, t, defaultExpr = false }: {
                   <option value="">— 字段 —</option>
                   {refOptions.map((o) => <option key={o.ref} value={o.ref}>{o.label}</option>)}
                 </select>
-                <select className="border rounded-lg px-2.5 py-1 h-9 bg-transparent text-sm" value={r.op}
+                <select className="border rounded-md px-2.5 py-1 h-9 bg-transparent text-sm" value={r.op}
                   onChange={(e) => update(combine, rows.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}>
                   {OPS.map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
@@ -1250,7 +1250,7 @@ export function SchemaForm({
               // and M6 form values alike) rejects. A tri-state select emits
               // true/false; "" means unset (serialized away).
               <select
-                className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
+                className="border rounded-md px-2.5 py-1 h-9 bg-transparent w-full text-sm"
                 value={v === true ? "true" : v === false ? "false" : ""}
                 onChange={(e) => onChange({ ...values, [k]: e.target.value === "" ? undefined : e.target.value === "true" })}
               >
@@ -1260,7 +1260,7 @@ export function SchemaForm({
               </select>
             ) : p.enum ? (
               <select
-                className="border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
+                className="border rounded-md px-2.5 py-1 h-9 bg-transparent w-full text-sm"
                 value={typeof v === "string" ? v : ""}
                 onChange={(e) => onChange({ ...values, [k]: e.target.value })}
               >
@@ -1350,7 +1350,7 @@ function NodeProps({
       <label className="block">
         {t("workflow.nodeKind")}
         <select
-          className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-background text-sm"
+          className="ml-1 border rounded-md px-2.5 py-1 h-9 bg-background text-sm"
           value={node.kind}
           onChange={(e) => onEdit("kind", e.target.value)}
         >
@@ -1372,7 +1372,7 @@ function NodeProps({
           <label className="block">
             {t("workflow.tool")}
             <select
-              className="border rounded-lg px-2.5 py-1 h-9 bg-background text-sm w-full"
+              className="border rounded-md px-2.5 py-1 h-9 bg-background text-sm w-full"
               value={node.tool || ""}
               onChange={(e) => onEdit("tool", e.target.value)}
             >
@@ -1437,7 +1437,7 @@ function NodeProps({
           <label className="block">
             {t("workflow.codeLang")}
             <select
-              className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-background text-sm"
+              className="ml-1 border rounded-md px-2.5 py-1 h-9 bg-background text-sm"
               value={node.lang || "python"}
               onChange={(e) => onEdit("lang", e.target.value)}
             >
@@ -1485,7 +1485,7 @@ function NodeProps({
           <label className="block">
             {t("workflow.httpMethod")}
             <select
-              className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-background text-sm"
+              className="ml-1 border rounded-md px-2.5 py-1 h-9 bg-background text-sm"
               value={(node.input?.method as string) || "GET"}
               onChange={(e) => onEdit("input", { ...(node.input || {}), method: e.target.value })}
             >
@@ -1572,7 +1572,7 @@ function NodeProps({
       <label className="block">
         {t("workflow.sideEffect")}
         <select
-          className="ml-1 border rounded-lg px-2.5 py-1 h-9 bg-transparent w-full text-sm"
+          className="ml-1 border rounded-md px-2.5 py-1 h-9 bg-transparent w-full text-sm"
           value={node.side_effect || ""}
           onChange={(e) => onEdit("side_effect", e.target.value)}
         >
@@ -1595,7 +1595,7 @@ function NodeProps({
       <div>
         <label className="block">{t("workflow.addEdge")}</label>
         <select
-          className="border rounded-lg px-2.5 py-1 h-9 bg-background text-sm w-full"
+          className="border rounded-md px-2.5 py-1 h-9 bg-background text-sm w-full"
           value={target}
           onChange={(e) => setTarget(e.target.value)}
         >

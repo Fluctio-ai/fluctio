@@ -97,7 +97,7 @@ export default function ChannelsConfigPage() {
         {draft.type === "slack" && (
           <input type="password" value={draft.appToken} onChange={(e) => setDraft({ ...draft, appToken: e.target.value })} placeholder={tt("channelsConfig.appTokenPlaceholder")} className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" />
         )}
-        <button type="submit" className="rounded bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90">{tt("common.save")}</button>
+        <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90">{tt("common.save")}</button>
       </form>
 
       {error && <p className="mb-4 text-sm text-destructive">{error}</p>}

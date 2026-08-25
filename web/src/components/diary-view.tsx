@@ -227,7 +227,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
           <div className="flex items-center justify-between">
             <button
               type="button"
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={() => {
                 setMonth((m) => shiftMonth(m, -1));
                 setPage(0);
@@ -240,7 +240,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
             <span className="text-sm font-medium">{monthLabel(month)}</span>
             <button
               type="button"
-              className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+              className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={() => {
                 setMonth((m) => shiftMonth(m, 1));
                 setPage(0);
@@ -345,7 +345,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
                 type="button"
                 disabled={page === 0}
                 onClick={() => setPage((p) => p - 1)}
-                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
+                className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
               >
                 <ChevronLeftIcon className="h-4 w-4" />
               </button>
@@ -356,7 +356,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
                 type="button"
                 disabled={page >= totalPages - 1}
                 onClick={() => setPage((p) => p + 1)}
-                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
+                className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30"
               >
                 <ChevronRightIcon className="h-4 w-4" />
               </button>
@@ -420,7 +420,7 @@ function DetailPane({
         <button
           type="button"
           onClick={onBack}
-          className="-ml-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"
+          className="-ml-1 shrink-0 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground md:hidden"
           aria-label={t("common.back")}
         >
           <ArrowLeftIcon className="h-5 w-5" />

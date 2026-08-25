@@ -461,7 +461,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                       )}
                       <button
                         type="button"
-                        className="ml-auto shrink-0 rounded p-0.5 opacity-0 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                        className="ml-auto shrink-0 rounded-md p-0.5 opacity-0 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
                         onClick={(e) => { e.stopPropagation(); setDeleteTarget(c); }}
                         aria-label={t("common.delete")}
                       >

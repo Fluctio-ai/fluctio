@@ -52,7 +52,7 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
             placeholder={t("login.usernamePlaceholder")}
             autoFocus
             autoComplete="username"
-            className="w-full rounded-lg border border-input bg-input/30 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+            className="w-full rounded-md border border-input bg-input/30 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring"
           />
           <input
             type="password"
@@ -60,13 +60,13 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
             onChange={(e) => setPassword(e.target.value)}
             placeholder={t("login.passwordPlaceholder")}
             autoComplete="current-password"
-            className="w-full rounded-lg border border-input bg-input/30 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring"
+            className="w-full rounded-md border border-input bg-input/30 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring"
           />
           {error && <p className="text-sm text-destructive">{error}</p>}
           <button
             type="submit"
             disabled={loading || !loginField.trim() || !password}
-            className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full rounded-md bg-primary px-4 py-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? t("login.submitting") : t("login.submit")}
           </button>

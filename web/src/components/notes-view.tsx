@@ -608,14 +608,14 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                     )}
                     <div className="absolute inset-x-0 bottom-0 flex justify-end gap-0.5 bg-background/80 p-1 opacity-0 transition-opacity group-hover:opacity-100">
                       {a.mime.startsWith("image/") && (
-                        <button type="button" className="rounded p-1 hover:bg-accent" title={t("knowledge.notes.insertImage")} onClick={() => insertImageRef(a)}>
+                        <button type="button" className="rounded-md p-1 hover:bg-accent" title={t("knowledge.notes.insertImage")} onClick={() => insertImageRef(a)}>
                           <ImagePlusIcon className="size-3" />
                         </button>
                       )}
                       <a href={fileUrl(agentId ?? "", a.file_path, true)} download={a.file_name} className="rounded p-1 hover:bg-accent" title={t("knowledge.notes.download")}>
                         <DownloadIcon className="size-3" />
                       </a>
-                      <button type="button" className="rounded p-1 text-destructive hover:bg-accent" title={t("knowledge.notes.deleteFile")} onClick={() => {
+                      <button type="button" className="rounded-md p-1 text-destructive hover:bg-accent" title={t("knowledge.notes.deleteFile")} onClick={() => {
                         if (!agentId || !selectedId) return;
                         deleteNoteAttachment(agentId, selectedId, a.id)
                           .then(() => setAttachments((prev) => prev.filter((x) => x.id !== a.id)))

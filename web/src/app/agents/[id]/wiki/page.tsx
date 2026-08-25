@@ -568,7 +568,7 @@ export default function WikiPage() {
                         return (
                           <button
                             type="button"
-                            className="text-primary underline hover:text-primary/80 cursor-pointer inline bg-transparent border-0 p-0 font-inherit"
+                            className="rounded-md text-primary underline hover:text-primary/80 cursor-pointer inline bg-transparent border-0 p-0 font-inherit"
                             onClick={() =>
                               handleSelectPage(href.slice("/wiki-link/".length))
                             }

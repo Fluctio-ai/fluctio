@@ -289,7 +289,7 @@ export default function AgentsPage() {
           <div className="flex gap-1 border-b border-border overflow-x-auto">
             <button
               onClick={() => setActiveTab("own")}
-              className={`px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+              className={`rounded-md px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
                 activeTab === "own"
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -302,7 +302,7 @@ export default function AgentsPage() {
             </button>
             <button
               onClick={() => setActiveTab("others")}
-              className={`px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+              className={`rounded-md px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
                 activeTab === "others"
                   ? "border-primary text-primary"
                   : "border-transparent text-muted-foreground hover:text-foreground"

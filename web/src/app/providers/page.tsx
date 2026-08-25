@@ -91,7 +91,7 @@ export default function ProvidersPage() {
             <option value="api-key">API Key Header</option>
           </select>
         </div>
-        <button type="submit" className="rounded bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90">{tt("common.save")}</button>
+        <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90">{tt("common.save")}</button>
       </form>
 
       {error && <p className="mb-4 text-sm text-destructive">{error}</p>}

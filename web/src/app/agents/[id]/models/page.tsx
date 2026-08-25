@@ -955,7 +955,7 @@ export default function AgentModelsPage() {
                         key={fm.id}
                         type="button"
                         onClick={() => handlePickFetchedModel(fm.id, fm.contextWindow, fm.maxTokens)}
-                        className="flex items-center justify-between w-full px-2.5 py-1.5 rounded text-xs hover:bg-accent font-mono"
+                        className="flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs hover:bg-accent font-mono"
                       >
                         <span>{fm.id}</span>
                         <span className="text-muted-foreground text-[10px]">
