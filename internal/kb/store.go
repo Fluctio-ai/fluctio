@@ -1071,7 +1071,11 @@ func (s *KBStore) ListAllEntries(ctx context.Context, agentID, query string, lim
 	return entries, total, nil
 }
 
-func formatResults(results []KBResult, query string, ids []string) string {
+// formatResults renders KB results for the LLM. verbatim=true (the
+// knowledgebase_search_raw path) returns full chunk content with no clipping —
+// the whole point of that tool is exact original wording; summary search
+// paths keep the 500-char soft clip.
+func formatResults(results []KBResult, query string, ids []string, verbatim bool) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Found %d results for %q:\n\n", len(results), query))
 	for i, r := range results {
@@ -1080,7 +1084,7 @@ func formatResults(results []KBResult, query string, ids []string) string {
 			sb.WriteString(r.Snippet)
 		} else {
 			content := r.Content
-			if len(content) > 500 {
+			if !verbatim && len(content) > 500 {
 				content = softClipUTF8(content, 500) + "..."
 			}
 			sb.WriteString(content)

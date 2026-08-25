@@ -82,21 +82,26 @@ func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceR
 		if len(deduped) == 0 {
 			return "All matching sources were already cited earlier; no new results.", nil
 		}
-		return formatResults(deduped, args.Query, ids), nil
+		return formatResults(deduped, args.Query, ids, false), nil
 	})
 }
 
-// numberAndAccumulate dedups results by title against the ctx accumulator: a
-// source already cited earlier this turn (by auto-query or a prior tool call)
-// is dropped — NOT re-fed to the LLM — so wiki/raw overlap doesn't bloat the
-// context with repeated content. Fresh sources get continuing [K#] ids
+// numberAndAccumulate dedups results by title+kind+chunk against the ctx
+// accumulator: a chunk already cited earlier this turn (by auto-query or a
+// prior tool call) is dropped — NOT re-fed to the LLM — so repeated searches
+// don't bloat the context with identical content. A NOT-yet-cited chunk of an
+// already-cited source passes through: that is exactly what
+// knowledgebase_search_raw exists for (pulling the verbatim chunks of a
+// source the summary search already surfaced). Kind is part of the key so
+// wiki chunk numbers and kb_entries chunk numbers (two different index
+// spaces) don't shadow each other. Fresh chunks get continuing [K#] ids
 // (len(acc)+1) and are appended. Returns the deduped results + their ids.
 func numberAndAccumulate(ctx context.Context, results []KBResult) ([]KBResult, []string) {
 	acc := SourcesFromCtx(ctx)
 	cited := map[string]bool{}
 	if acc != nil {
 		for _, s := range *acc {
-			cited[s.File] = true
+			cited[s.File+"|"+s.Kind+"|"+fmt.Sprint(s.Chunk)] = true
 		}
 	}
 	nextID := 1
@@ -107,10 +112,11 @@ func numberAndAccumulate(ctx context.Context, results []KBResult) ([]KBResult, [
 	var ids []string
 	seen := map[string]bool{} // dedup within this batch too
 	for _, r := range results {
-		if seen[r.SourceTitle] || cited[r.SourceTitle] {
+		key := r.SourceTitle + "|" + r.SourceKind + "|" + fmt.Sprint(r.ChunkIndex)
+		if seen[key] || cited[key] {
 			continue
 		}
-		seen[r.SourceTitle] = true
+		seen[key] = true
 		id := fmt.Sprintf("K%d", nextID)
 		nextID++
 		deduped = append(deduped, r)
@@ -191,7 +197,7 @@ func registerKBSearchRaw(r *tools.Registry, store *KBStore, agentID string) {
 		if len(deduped) == 0 {
 			return "All matching sources were already cited earlier; no new results.", nil
 		}
-		return formatResults(deduped, args.Query, ids), nil
+		return formatResults(deduped, args.Query, ids, true), nil
 	})
 }
 
@@ -337,8 +343,10 @@ func registerKBList(r *tools.Registry, store *KBStore, agentID string) {
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("Knowledge base (%d sources):\n\n", len(sources)))
 		for _, s := range sources {
+			// Full UUID — the id is what other tools (search_raw/delete/
+			// insights) take as source_id; a truncated one never matches.
 			sb.WriteString(fmt.Sprintf("- %s (id: %s, type: %s, entries: %d, chars: %d)\n",
-				s.Title, s.ID[:12], s.SourceType, s.EntryCount, s.TotalChars))
+				s.Title, s.ID, s.SourceType, s.EntryCount, s.TotalChars))
 		}
 		return sb.String(), nil
 	})

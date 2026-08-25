@@ -251,3 +251,84 @@ func TestNoteAttachmentTool(t *testing.T) {
 		t.Fatalf("bad note not refused: %s", out)
 	}
 }
+
+// TestSearchRawAfterCitedSource guards the s-1787620042895 regression: a
+// source already cited by an earlier knowledgebase_search hit (accumulator
+// holds its title) must still be fetchable via knowledgebase_search_raw —
+// that tool exists exactly for pulling verbatim chunks of an already-surfaced
+// source. The old title-level dedup dropped every raw chunk ("All matching
+// sources were already cited earlier"), and formatResults' 500-char clip
+// hid the verbatim tail even when chunks came through.
+func TestSearchRawAfterCitedSource(t *testing.T) {
+	db := setupKBVectorTestDB(t)
+	store := NewKBStore(db, "sqlite")
+	r := tools.NewRegistry("", "")
+	RegisterKBTools(r, store, "agt_test", nil, nil, nil, "", 0)
+	ctx := context.Background()
+
+	// Two paragraphs so the second chunk starts ~800 and runs ~700 chars,
+	// placing the marker past the 500-char clip point of its chunk.
+	p1 := strings.Repeat("备", 600)
+	p2 := strings.Repeat("考", 800) + "简历投递专用邮箱RESUME-MAIL-MARKER"
+	id, err := store.IngestText(ctx, "agt_test", "重庆小升初速查手册", p1+"\n\n"+p2, "text", "manual")
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	// Simulate the earlier search hit: the accumulator already cites this
+	// source (wiki-channel shape, chunk 0).
+	var acc []KnowledgeSource
+	acc = append(acc, KnowledgeSource{ID: "K1", File: "重庆小升初速查手册", Kind: "wiki", Chunk: 0})
+	actx := WithSourcesAccumulator(ctx, &acc)
+
+	args := fmt.Sprintf(`{"source_ids":[%q],"limit":10}`, id)
+	out, err := r.Execute(actx, "knowledgebase_search_raw", args)
+	if err != nil {
+		t.Fatalf("search_raw: %v", err)
+	}
+	if strings.Contains(out, "already cited") {
+		t.Fatalf("raw blocked by already-cited dedup: %s", clipTestOut(out))
+	}
+	if !strings.Contains(out, "RESUME-MAIL-MARKER") {
+		t.Fatalf("raw missing verbatim tail marker (500-char clip?): %s", clipTestOut(out))
+	}
+
+	// Re-fetching the exact same chunks still dedups — the anti-bloat
+	// intent is preserved, per chunk instead of per source.
+	out2, err := r.Execute(actx, "knowledgebase_search_raw", args)
+	if err != nil {
+		t.Fatalf("search_raw second call: %v", err)
+	}
+	if !strings.Contains(out2, "already cited") {
+		t.Fatalf("identical raw chunks should be deduped on re-fetch: %s", clipTestOut(out2))
+	}
+}
+
+// TestKnowledgebaseListFullID: knowledgebase_list's id must be the complete
+// UUID — other tools (search_raw/delete/generate_insights) take it verbatim
+// as source_id, so a 12-char display truncation makes the id unusable.
+func TestKnowledgebaseListFullID(t *testing.T) {
+	db := setupKBVectorTestDB(t)
+	store := NewKBStore(db, "sqlite")
+	r := tools.NewRegistry("", "")
+	RegisterKBTools(r, store, "agt_test", nil, nil, nil, "", 0)
+
+	id, err := store.IngestText(context.Background(), "agt_test", "完整ID测试", "内容", "text", "manual")
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	out, err := r.Execute(context.Background(), "knowledgebase_list", `{}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(out, "id: "+id) {
+		t.Fatalf("list must expose the full source id %q: %s", id, clipTestOut(out))
+	}
+}
+
+func clipTestOut(s string) string {
+	if len(s) > 160 {
+		return s[:160] + "..."
+	}
+	return s
+}
