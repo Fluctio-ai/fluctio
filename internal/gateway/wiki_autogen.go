@@ -20,6 +20,26 @@ import (
 // workday" without re-running the pipeline every tick on busy agents.
 const wikiAutoGenDefaultInterval = 6 * time.Hour
 
+// wikiTypeAllowed reports whether a kb source content type participates in
+// wiki generation. Empty include = all types (configs saved before the
+// per-type setting existed keep processing everything). A source row whose
+// type column is empty predates the content-type columns — treat it as an
+// article, the historical default.
+func wikiTypeAllowed(include []string, typ string) bool {
+	if len(include) == 0 {
+		return true
+	}
+	if typ == "" {
+		typ = "article"
+	}
+	for _, t := range include {
+		if t == typ {
+			return true
+		}
+	}
+	return false
+}
+
 // runWikiAutoGenForAgent runs one wiki-generation sweep for one agent:
 // resolve the agent's LLM provider/model, list KB sources whose
 // wiki_generated_at is NULL, and run the two-step wiki pipeline on each.
@@ -36,7 +56,7 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	prov, model := resolveWikiProvider(st, agentID, cfg.Model)
 	if prov == nil {
 		slog.Warn("wiki autogen: no provider/model resolvable, skipping", "agent", agentID)
-		pending, _ := st.CountPendingKBSources(ctx, agentID)
+		pending, _ := st.CountPendingKBSources(ctx, agentID, cfg.IncludeTypes)
 		_ = st.SetWikiAutoGenResult(ctx, agentID, time.Now(), "no_provider", "", pending)
 		return
 	}
@@ -53,6 +73,12 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 
 	var toProcess []kb.KBSource
 	for _, s := range sources {
+		// Per-type selection: excluded types stay untouched (no
+		// wiki_generated_at stamp), so re-enabling a type later picks up
+		// the backlog instead of silently skipping it.
+		if !wikiTypeAllowed(cfg.IncludeTypes, s.Type) {
+			continue
+		}
 		if s.WikiGeneratedAt == nil {
 			toProcess = append(toProcess, s)
 			continue
@@ -117,7 +143,7 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	} else if failed > 0 {
 		status = "partial"
 	}
-	pending, _ := st.CountPendingKBSources(ctx, agentID)
+	pending, _ := st.CountPendingKBSources(ctx, agentID, cfg.IncludeTypes)
 	_ = st.SetWikiAutoGenResult(ctx, agentID, time.Now(), status, firstErr, pending)
 	slog.Info("wiki autogen sweep done", "agent", agentID, "processed", created, "failed", failed, "elapsed_sources", len(toProcess))
 }

@@ -1274,6 +1274,7 @@ const en: Record<string, string> = {
   "wiki.pageStats": "{pages} pages · {links} links",
   "wiki.sourcesProcessed": "{done} of {total} sources processed, ",
   "wiki.autoGen": "Auto-generate",
+  "wiki.includeTypes": "Content sources",
   "wiki.autoGenInterval": "Scan every",
   "wiki.autoGenHours": "hours",
   "wiki.autoGenMaxTokens": "Max tokens",

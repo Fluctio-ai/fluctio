@@ -290,6 +290,10 @@ type WikiAutoGenCfg struct {
 	Interval  time.Duration `json:"interval,omitempty"`  // default 6h
 	Model     string        `json:"model,omitempty"`     // empty = agent default
 	MaxTokens int           `json:"maxTokens,omitempty"` // 0 = default 8192; caps LLM output for the analysis + page-generation steps
+	// IncludeTypes selects which kb source content types feed wiki
+	// generation: "article" / "flash" / "todo". Empty = all types
+	// (pre-setting configs keep their old behavior).
+	IncludeTypes []string `json:"includeTypes,omitempty"`
 }
 
 // AutoTitleCfg configures the PostTurn hook that asks the LLM to

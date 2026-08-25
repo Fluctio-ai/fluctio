@@ -236,8 +236,8 @@ func (s *Server) handleWikiAutogenStatus(w http.ResponseWriter, r *http.Request)
 	ctx := r.Context()
 
 	enabled := false
+	var mem config.MemoryCfg
 	if s.dataStore != nil {
-		var mem config.MemoryCfg
 		_ = scope.SettingInto(ctx, s.dataStore, "memory", "", agentID, &mem)
 		enabled = mem.WikiAutoGen.Enabled
 	}
@@ -257,7 +257,9 @@ func (s *Server) handleWikiAutogenStatus(w http.ResponseWriter, r *http.Request)
 				resp["last_error"] = st.LastError
 			}
 		}
-		if pending, err := dbs.CountPendingKBSources(ctx, agentID); err == nil {
+		// Pending count follows the per-type selection so the status line
+		// matches what the sweep will actually process.
+		if pending, err := dbs.CountPendingKBSources(ctx, agentID, mem.WikiAutoGen.IncludeTypes); err == nil {
 			resp["pending"] = pending
 		}
 	}

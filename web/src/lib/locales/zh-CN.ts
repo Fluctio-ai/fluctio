@@ -1274,6 +1274,7 @@ const zhCN: Record<string, string> = {
   "wiki.pageStats": "{pages} 页 · {links} 链接",
   "wiki.sourcesProcessed": "{done} 个源已处理，共 {total} 个",
   "wiki.autoGen": "自动生成",
+  "wiki.includeTypes": "整理内容源",
   "wiki.autoGenInterval": "扫描间隔",
   "wiki.autoGenHours": "小时",
   "wiki.autoGenMaxTokens": "最大 Token",

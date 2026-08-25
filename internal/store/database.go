@@ -437,11 +437,20 @@ func (d *DBStore) SetWikiAutoGenResult(ctx context.Context, agentID string, t ti
 }
 
 // CountPendingKBSources returns KB sources for the agent whose wiki_generated_at is NULL.
-func (d *DBStore) CountPendingKBSources(ctx context.Context, agentID string) (int, error) {
+// includeTypes restricts the count to those content types (article/flash/todo);
+// empty = all types, mirroring the wiki autogen IncludeTypes semantics.
+func (d *DBStore) CountPendingKBSources(ctx context.Context, agentID string, includeTypes []string) (int, error) {
+	where := fmt.Sprintf(`agent_id = %s AND wiki_generated_at IS NULL`, d.ph(1))
+	args := []any{agentID}
+	for _, t := range includeTypes {
+		n := len(args) + 1
+		where += fmt.Sprintf(` AND type = %s`, d.ph(n))
+		args = append(args, t)
+	}
 	var n int
-	err := d.db.QueryRowContext(ctx, fmt.Sprintf(
-		`SELECT COUNT(*) FROM kb_sources WHERE agent_id = %s AND wiki_generated_at IS NULL`, d.ph(1)),
-		agentID).Scan(&n)
+	err := d.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COUNT(*) FROM kb_sources WHERE %s`, where),
+		args...).Scan(&n)
 	if err != nil {
 		return 0, err
 	}

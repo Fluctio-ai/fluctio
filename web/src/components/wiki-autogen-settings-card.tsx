@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
@@ -30,6 +30,16 @@ import { useT } from "@/lib/i18n";
 // flight. The done-transition does NOT refresh a wiki list from here
 // (the browser page re-fetches on visit), so the card only resets its
 // own progress state.
+// Content types selectable for wiki processing; mirrors the backend's
+// kb_sources.type values. Empty includeTypes = all (never store an empty
+// array — the toggle keeps one row on, matching the backend's
+// "empty = all" back-compat semantics).
+const WIKI_CONTENT_TYPES = [
+  { id: "article", labelKey: "knowledge.articles" },
+  { id: "flash", labelKey: "knowledge.flashes" },
+  { id: "todo", labelKey: "knowledge.todos" },
+] as const;
+
 export function WikiAutoGenSettingsCard() {
   const t = useT();
   const agentId = useAgentIdFromURL();
@@ -94,15 +104,41 @@ export function WikiAutoGenSettingsCard() {
     }
   };
 
+  // Sources visible to the generate actions / pending count, filtered by
+  // the per-type selection (missing/empty includeTypes = all). Mirrors the
+  // backend sweep filter so the button state matches what would run.
+  const includedSources = useMemo(() => {
+    const inc = wikiCfg.includeTypes;
+    if (!inc || inc.length === 0) return kbSources;
+    return kbSources.filter((s) => inc.includes(s.type || "article"));
+  }, [kbSources, wikiCfg.includeTypes]);
+
+  const typeSelected = (id: string) => {
+    const inc = wikiCfg.includeTypes;
+    return !inc || inc.length === 0 ? true : inc.includes(id);
+  };
+
+  const toggleType = (id: string, checked: boolean) => {
+    const cur =
+      wikiCfg.includeTypes && wikiCfg.includeTypes.length > 0
+        ? wikiCfg.includeTypes
+        : WIKI_CONTENT_TYPES.map((t) => t.id);
+    const next = checked ? [...cur, id] : cur.filter((t) => t !== id);
+    // At least one type must stay on — an empty array would read as
+    // "all" on reload (omitempty + back-compat), flipping the meaning.
+    if (next.length === 0) return;
+    saveWikiCfg({ ...wikiCfg, includeTypes: next });
+  };
+
   const handleGenerate = useCallback(
     async (force?: boolean) => {
-      if (!agentId || kbSources.length === 0) return;
+      if (!agentId || includedSources.length === 0) return;
       setGenerating(true);
-      setProgress({ done: 0, total: kbSources.length, status: "running" });
+      setProgress({ done: 0, total: includedSources.length, status: "running" });
       try {
         await generateWiki(
           agentId,
-          kbSources.map((s) => s.id),
+          includedSources.map((s) => s.id),
           force,
         );
       } catch {
@@ -110,7 +146,7 @@ export function WikiAutoGenSettingsCard() {
         setProgress(null);
       }
     },
-    [agentId, kbSources],
+    [agentId, includedSources],
   );
 
   // Poll generation progress while a run is in flight.
@@ -148,7 +184,9 @@ export function WikiAutoGenSettingsCard() {
     handleGenerate(true);
   }, [handleGenerate, t]);
 
-  const unprocessedCount = kbSources.filter((s) => !s.wiki_generated_at).length;
+  const unprocessedCount = includedSources.filter(
+    (s) => !s.wiki_generated_at,
+  ).length;
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-5">
@@ -167,6 +205,26 @@ export function WikiAutoGenSettingsCard() {
 
       {wikiCfg.enabled && (
         <div className="space-y-2 pt-1">
+          <div className="space-y-1.5">
+            <label className="text-xs text-muted-foreground">
+              {t("wiki.includeTypes")}
+            </label>
+            <div className="flex flex-wrap gap-x-6 gap-y-2">
+              {WIKI_CONTENT_TYPES.map((ct) => (
+                <label
+                  key={ct.id}
+                  className="flex items-center gap-2 text-xs cursor-pointer select-none"
+                >
+                  <Switch
+                    checked={typeSelected(ct.id)}
+                    onCheckedChange={(v) => toggleType(ct.id, v)}
+                    disabled={wikiSaving}
+                  />
+                  <span>{t(ct.labelKey)}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="flex items-center justify-between gap-2">
             <label className="text-xs text-muted-foreground">
               {t("wiki.autoGenInterval")}
@@ -276,7 +334,7 @@ export function WikiAutoGenSettingsCard() {
             size="sm"
             className="h-8 text-xs"
             onClick={handleForceGenerate}
-            disabled={generating || kbSources.length === 0}
+            disabled={generating || includedSources.length === 0}
             title={t("wiki.forceRegenAll")}
           >
             <RefreshCwIcon className="h-3.5 w-3.5 mr-1" />

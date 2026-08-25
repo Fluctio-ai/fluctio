@@ -89,7 +89,8 @@ type Store interface {
 	// SetWikiAutoGenResult UPSERTs the agent's last sweep outcome + timestamp.
 	SetWikiAutoGenResult(ctx context.Context, agentID string, t time.Time, status, errMsg string, pending int) error
 	// CountPendingKBSources returns KB sources whose wiki_generated_at is NULL.
-	CountPendingKBSources(ctx context.Context, agentID string) (int, error)
+	// includeTypes filters by content type (article/flash/todo); empty = all.
+	CountPendingKBSources(ctx context.Context, agentID string, includeTypes []string) (int, error)
 	// InsertDailyDiary upserts one generated daily-diary entry (keyed agent+date).
 	InsertDailyDiary(ctx context.Context, dia DailyDiary) error
 	// GetDailyDiary reads one entry; returns nil when absent.
