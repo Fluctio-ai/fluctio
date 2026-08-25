@@ -7,6 +7,7 @@
 // 可在预览区拖拽换位。正文 1.2s 防抖自动保存。
 
 import * as React from "react";
+import dynamic from "next/dynamic";
 import {
   ArrowLeftIcon,
   DownloadIcon,
@@ -43,6 +44,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+
+// The CodeMirror markdown editor chunk loads on demand (Whiteboard
+// precedent): browsing the notes list never pulls it.
+const MarkdownEditor = dynamic(
+  () => import("@/components/markdown-codemirror").then((m) => m.MarkdownCodeMirror),
+  { ssr: false },
+);
 
 type SaveState = "saved" | "saving" | "dirty";
 
@@ -563,13 +571,13 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                 <div className="hidden min-w-0 flex-1 overflow-y-auto p-4 md:block md:h-full">
                   {previewBody}
                 </div>
-                <textarea
-                  value={draft.content_md}
-                  onChange={(e) => setDraft((d) => ({ ...d, content_md: e.target.value }))}
-                  placeholder={t("knowledge.notes.bodyPlaceholder")}
-                  spellCheck={false}
-                  className="h-full w-full shrink-0 resize-none border-t bg-transparent p-4 font-mono text-[13.5px] leading-normal outline-none placeholder:text-muted-foreground md:w-1/2 md:border-t-0 md:border-r"
-                />
+                <div className="h-full min-h-0 w-full shrink-0 border-t md:w-1/2 md:border-t-0 md:border-r">
+                  <MarkdownEditor
+                    value={draft.content_md}
+                    onChange={(v) => setDraft((d) => ({ ...d, content_md: v }))}
+                    placeholder={t("knowledge.notes.bodyPlaceholder")}
+                  />
+                </div>
               </div>
               {/* mobile: floating preview entry, chat-file-preview shaped */}
               <button
