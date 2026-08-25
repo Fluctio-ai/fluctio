@@ -10,7 +10,6 @@ package cardsgen
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -237,7 +236,7 @@ func callLLM(ctx context.Context, prov provider.Provider, model string, sources 
 	var parsed struct {
 		Cards []llmCard `json:"cards"`
 	}
-	if err := parseJSONLoose(resp.Content, &parsed); err != nil {
+	if err := llmjson.UnmarshalLLM(resp.Content, &parsed); err != nil {
 		return nil, fmt.Errorf("parse cards: %w", err)
 	}
 	return parsed.Cards, nil
@@ -273,21 +272,6 @@ func HasRunFor(ctx context.Context, dbs *store.DBStore, agentID, date string) bo
 		`SELECT 1 FROM kb_card_gen_runs WHERE agent_id = `+ph(1)+` AND date = `+ph(2),
 		agentID, date).Scan(&one)
 	return err == nil
-}
-
-// parseJSONLoose strips a ```json fence if present then unmarshals. On
-// strict-parse failure it repairs bare quotes inside string values (models
-// ignoring the JSON-mode hint) and retries once before giving up.
-func parseJSONLoose(s string, v any) error {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	s = strings.TrimSuffix(s, "```")
-	s = strings.TrimSpace(s)
-	if err := json.Unmarshal([]byte(s), v); err != nil {
-		return json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(s)), v)
-	}
-	return nil
 }
 
 // clip truncates s to at most max runes on a rune boundary.

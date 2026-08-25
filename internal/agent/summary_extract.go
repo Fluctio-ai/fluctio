@@ -146,36 +146,18 @@ func callExtractTopics(
 	return parseTopicsBody(content)
 }
 
-// parseTopicsBody decodes the LLM's topics output. The prompt (and JSON mode)
-// asks for {"topics":[...]}, but some models drop the wrapper and emit the
-// bare array — accept both, each with a one-shot bare-quote repair fallback,
-// so a drift like this doesn't fail the same window on every idle sweep.
+// parseTopicsBody decodes the LLM's topics output via the shared llmjson
+// entry point — the prompt (and JSON mode) asks for {"topics":[...]}, but
+// models have been observed dropping the wrapper (bare array) and/or
+// emitting bare quotes inside summaries; llmjson.UnmarshalLLM tolerates
+// both plus fences, so a drift doesn't fail the same window on every idle
+// sweep.
 func parseTopicsBody(content string) ([]ExtractedTopic, error) {
 	var parsed struct {
 		Topics []ExtractedTopic `json:"topics"`
 	}
-	if err := json.Unmarshal([]byte(content), &parsed); err != nil {
-		// Bare top-level array: "cannot unmarshal array into Go value of
-		// type struct { Topics []agent.ExtractedTopic }".
-		trimmed := strings.TrimSpace(content)
-		if strings.HasPrefix(trimmed, "[") {
-			var topics []ExtractedTopic
-			if json.Unmarshal([]byte(trimmed), &topics) == nil {
-				return topics, nil
-			}
-			if json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(trimmed)), &topics) == nil {
-				return topics, nil
-			}
-		}
-		// Some models ignore or get degraded off the JSON-mode hint and emit
-		// bare quotes inside string values (e.g. 常见的"中午随便"习惯), which
-		// Unmarshal rejects with "invalid character ... after object
-		// key:value pair". Escape the bare quotes once and retry before
-		// giving up — re-asking the model would likely reproduce the same
-		// output, and this window would keep failing every idle sweep.
-		if err2 := json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(content)), &parsed); err2 != nil {
-			return nil, fmt.Errorf("parse topics JSON: %w (raw=%q)", err, content)
-		}
+	if err := llmjson.UnmarshalLLM(content, &parsed); err != nil {
+		return nil, fmt.Errorf("parse topics JSON: %w (raw=%q)", err, content)
 	}
 	return parsed.Topics, nil
 }

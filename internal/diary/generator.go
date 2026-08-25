@@ -320,7 +320,7 @@ func aggregateThemes(ctx context.Context, prov provider.Provider, model, transcr
 	var parsed struct {
 		Themes []llmTheme `json:"themes"`
 	}
-	if err := parseJSONLoose(resp, &parsed); err != nil {
+	if err := llmjson.UnmarshalLLM(resp, &parsed); err != nil {
 		return nil, fmt.Errorf("parse themes: %w", err)
 	}
 	return parsed.Themes, nil
@@ -354,7 +354,7 @@ func findBlindspots(ctx context.Context, prov provider.Provider, model, transcri
 	var parsed struct {
 		Blindspots []llmBlindspot `json:"blindspots"`
 	}
-	if err := parseJSONLoose(resp, &parsed); err != nil {
+	if err := llmjson.UnmarshalLLM(resp, &parsed); err != nil {
 		return nil, fmt.Errorf("parse blindspots: %w", err)
 	}
 	out := make([]store.DiaryBlindspot, 0, len(parsed.Blindspots))
@@ -383,17 +383,3 @@ func callLLM(ctx context.Context, prov provider.Provider, model, prompt string, 
 	return resp.Content, nil
 }
 
-// parseJSONLoose strips a ```json fence if present then unmarshals. On
-// strict-parse failure it repairs bare quotes inside string values (models
-// ignoring the JSON-mode hint) and retries once before giving up.
-func parseJSONLoose(s string, v any) error {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	s = strings.TrimSuffix(s, "```")
-	s = strings.TrimSpace(s)
-	if err := json.Unmarshal([]byte(s), v); err != nil {
-		return json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(s)), v)
-	}
-	return nil
-}

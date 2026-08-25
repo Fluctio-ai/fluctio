@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -227,16 +226,12 @@ func (sl *SkillsLearner) extractSkill(ctx context.Context, messages []provider.M
 	}
 
 	var result extractionResponse
-	// Try to parse response as JSON
-	content := strings.TrimSpace(resp.Content)
-	if err := json.Unmarshal([]byte(content), &result); err != nil {
-		// Bare quotes inside values (models ignoring the JSON-mode hint) —
-		// repair once and retry. Failure here stays a silent skip: the
-		// learner is opportunistic by design.
-		if json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(content)), &result) != nil {
-			slog.Debug("skill extraction: LLM response not valid JSON", "error", err)
-			return nil, nil
-		}
+	// Shared LLM-JSON tolerance: ```json fences, bare quotes inside values
+	// (llmjson.UnmarshalLLM; valid JSON passes through untouched). Failure
+	// here stays a silent skip: the learner is opportunistic by design.
+	if err := llmjson.UnmarshalLLM(resp.Content, &result); err != nil {
+		slog.Debug("skill extraction: LLM response not valid JSON", "error", err)
+		return nil, nil
 	}
 
 	if !result.Extract || result.Skill.Slug == "" || result.Skill.Content == "" {

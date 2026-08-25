@@ -2,6 +2,7 @@ package llmjson
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -76,5 +77,58 @@ func TestRepairUnescapedQuotesRoundTrip(t *testing.T) {
 	}
 	if parsed.Topics[1].Summary != `核心观点：早餐要吃好、晚餐要少吃，颠覆了常见的"中午随便、晚上大餐"习惯。` {
 		t.Errorf("summary mangled: %q", parsed.Topics[1].Summary)
+	}
+}
+
+// TestUnmarshalLLMCoversAllTolerancePaths walks UnmarshalLLM through every
+// failure mode it claims to tolerate, using the shapes actually observed in
+// production logs (bare array, fence, bare quotes, and combinations).
+func TestUnmarshalLLMCoversAllTolerancePaths(t *testing.T) {
+	type card struct {
+		Front string `json:"front"`
+		Back  string `json:"back"`
+	}
+	newTarget := func() any {
+		return &struct {
+			Cards []card `json:"cards"`
+		}{}
+	}
+	strict := `[{"front":"Q1","back":"A1"},{"front":"Q2","back":"A2"}]`
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"valid wrapped object", `{"cards":[{"front":"Q","back":"A"}]}`},
+		{"valid bare array", strict},
+		{"fenced object", "```json\n{\"cards\":[{\"front\":\"Q\",\"back\":\"A\"}]}\n```"},
+		{"fenced bare array", "```json\n" + strict + "\n```"},
+		{"bare array with bare quotes", `[{"front":"Q","back":"说"漏了"两个字"}]`},
+		{"wrapped with bare quotes", `{"cards":[{"front":"Q","back":"说"漏了"两个字"}]}`},
+	}
+	for _, tc := range cases {
+		v := newTarget()
+		if err := UnmarshalLLM(tc.raw, v); err != nil {
+			t.Errorf("%s: UnmarshalLLM: %v", tc.name, err)
+			continue
+		}
+		pv := v.(*struct {
+			Cards []card `json:"cards"`
+		})
+		if len(pv.Cards) == 0 {
+			t.Errorf("%s: parsed but zero cards", tc.name)
+		}
+	}
+
+	// Structs with no (or several) slice fields must not take the bare-array
+	// path — they fall through to the object path and fail on an array.
+	if err := UnmarshalLLM(strict, &struct{ Name string `json:"name"` }{}); err == nil {
+		t.Error("non-slice struct must reject a bare array")
+	}
+	if err := UnmarshalLLM(`not json`, newTarget()); err == nil {
+		t.Error("garbage must error")
+	}
+	// UnmarshalLLM surfaces the strict-parse error for logging context.
+	if err := UnmarshalLLM(`not json`, newTarget()); err == nil || !strings.Contains(err.Error(), "invalid character") {
+		t.Errorf("want the original strict error, got %v", err)
 	}
 }

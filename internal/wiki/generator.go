@@ -2,7 +2,6 @@ package wiki
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -722,13 +721,10 @@ var jsonBlockRe = regexp.MustCompile("(?s)\\{.*\\}")
 var codeFenceRe = regexp.MustCompile("(?s)^```\\w*\\n?|\\n?```$")
 
 func extractPlan(text string) *wikiPlan {
-	// tryUnmarshal parses s, repairing bare quotes inside string values
-	// (models ignoring the JSON hint) and retrying once on failure.
+	// tryUnmarshal goes through the shared llmjson tolerance chain (fences,
+	// bare quotes, bare-array wrapper drop); valid JSON parses untouched.
 	tryUnmarshal := func(s string, plan *wikiPlan) bool {
-		if err := json.Unmarshal([]byte(s), plan); err != nil {
-			return json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(s)), plan) == nil
-		}
-		return true
+		return llmjson.UnmarshalLLM(s, plan) == nil
 	}
 	// Try multiple extraction strategies in order.
 	tryParse := func(s string) (*wikiPlan, bool) {

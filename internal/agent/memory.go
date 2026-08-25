@@ -358,24 +358,19 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
 		MemoryFacts []string `json:"memory_facts"`
 		UserNotes   []string `json:"user_notes"`
 	}
-	// Strip markdown code fences before parsing — many tuned models
-	// (Sonnet 4.x, Opus, …) reflexively wrap structured output in
-	// ```json … ``` even when the prompt asks for "no markdown fences".
-	cleaned := stripJSONFence(resp.Content)
-	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-		// Bare quotes inside values (models ignoring the JSON-mode hint) —
-		// repair once and retry before giving up on this extraction.
-		if err2 := json.Unmarshal([]byte(llmjson.RepairUnescapedQuotes(cleaned)), &result); err2 != nil {
-			// Same Warn upgrade as above — silent skip here was hiding
-			// "Sonnet returned wrapped JSON, parse failed" in the wild.
-			preview := cleaned
-			if len(preview) > 200 {
-				preview = preview[:200] + "…"
-			}
-			slog.Warn("auto-persist: failed to parse LLM response",
-				"error", err, "model", model, "preview", preview)
-			return
+	// Shared LLM-JSON tolerance: ```json fences, bare quotes inside values,
+	// dropped wrappers (llmjson.UnmarshalLLM handles all three; valid JSON
+	// passes through untouched).
+	if err := llmjson.UnmarshalLLM(resp.Content, &result); err != nil {
+		// Same Warn upgrade as above — silent skip here was hiding
+		// "Sonnet returned wrapped JSON, parse failed" in the wild.
+		preview := resp.Content
+		if len(preview) > 200 {
+			preview = preview[:200] + "…"
 		}
+		slog.Warn("auto-persist: failed to parse LLM response",
+			"error", err, "model", model, "preview", preview)
+		return
 	}
 	slog.Info("auto-persist: extracted",
 		"model", model,
