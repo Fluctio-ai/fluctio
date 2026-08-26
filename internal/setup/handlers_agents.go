@@ -1523,6 +1523,44 @@ func imageMimeByExt(ext string) string {
 	return ""
 }
 
+// handleAgentFileDelete removes a single workspace file. Owner-only
+// (same gate as upload — deletion is destructive, viewers of a public
+// agent must not be able to erase the owner's artifacts). Path shape is
+// agent-relative, exactly what the file list / tree hands the client.
+// Directories aren't a store concept (the tree is synthesized from file
+// paths), so the client expands a folder delete into one request per
+// leaf file — keeps LocalFS and S3 backends behaving identically.
+func (s *Server) handleAgentFileDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	rel := r.PathValue("path")
+	if rel == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "path required"})
+		return
+	}
+	if s.requireAgentOwner(w, r, id) == nil {
+		return
+	}
+	if s.workspaceStore == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "no workspace store"})
+		return
+	}
+	// Same session_key → chat_id translation the GET path does for IM
+	// sessions; no-op for webchat.
+	rel = s.remapSessionPath(r.Context(), id, rel)
+	// Same skill-manifest guard as downloads — deletion would otherwise be
+	// a shortcut around the "never downloadable" rule.
+	if strings.EqualFold(filepath.Base(filepath.Clean(rel)), "SKILL.md") {
+		jsonResponse(w, http.StatusForbidden, map[string]any{"error": "refused: skill manifests are not workspace artifacts"})
+		return
+	}
+	if err := s.workspaceStore.Delete(r.Context(), id, "", "", rel); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	slog.Info("workspace file deleted", "agent", id, "path", rel, "user", config.UserIDFromContext(r.Context()))
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleAgentFileUpload(w http.ResponseWriter, r *http.Request) {
 	if !s.requireWritable(w, r) {
 		return

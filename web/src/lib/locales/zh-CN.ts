@@ -1324,6 +1324,10 @@ const zhCN: Record<string, string> = {
   "chat.undoTurn": "撤销上一轮",
   "chat.greeting": "有什么可以帮助你的？",
   "chat.attachFiles": "添加附件",
+  "chat.files.delete": "删除",
+  "chat.files.deleteConfirmFile": "确定删除「{name}」？删除后无法恢复。",
+  "chat.files.deleteConfirmDir": "确定删除文件夹「{name}」及其 {count} 个文件？删除后无法恢复。",
+  "chat.files.deleteFailed": "删除失败：{error}",
   "chat.stopGenerating": "停止生成",
   "chat.sendMessage": "发送消息",
 

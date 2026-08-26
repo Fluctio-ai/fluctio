@@ -6,8 +6,8 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, forkChatSession, revealAgentWorkspace, sendChatStream, steerChat, stopChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
-import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus } from "lucide-react";
+import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, deleteAgentFile, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, forkChatSession, revealAgentWorkspace, sendChatStream, steerChat, stopChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
+import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
 
@@ -3962,6 +3962,13 @@ const FILES_PANEL_MIN = 280;
 const FILES_PANEL_MAX = 1000; // wide enough to view a desktop preview iframe
 const FILES_PANEL_DEFAULT = 280;
 const FILES_PANEL_KEY = "chat:filesPanelWidth";
+// Inner file-tree column (left of the viewer). 224 = the old w-56 fixed
+// width; the floor keeps long filenames readable, the ceiling leaves the
+// viewer at least ~300px inside the default panel.
+const FILES_TREE_DEFAULT = 224;
+const FILES_TREE_MIN = 150;
+const FILES_TREE_MAX = 520;
+const FILES_TREE_KEY = "chat:filesTreeWidth";
 // When the user switches to the Preview tab and the panel is still narrow,
 // auto-grow to this so the embedded site isn't cramped. Transient (not
 // persisted), so the Code tab keeps its own saved width.
@@ -4040,12 +4047,16 @@ function FileTreeView({
   rootPrefixes,
   selectedPath,
   onSelect,
+  onDelete,
   defaultExpandDepth = 1,
 }: {
   files: WorkspaceFile[];
   rootPrefixes: string[];
   selectedPath?: string;
   onSelect: (f: ProducedFile) => void;
+  // Optional per-row delete affordance (owner-only server-side). Called
+  // with the row's node — folders included; the handler expands them.
+  onDelete?: (node: FileTreeNode) => void;
   // Folders shallower than this are open on first load (1 = open the root
   // folders only) so the user sees the top entries without a deep dump.
   defaultExpandDepth?: number;
@@ -4090,6 +4101,7 @@ function FileTreeView({
           toggle={toggle}
           selectedPath={selectedPath}
           onSelect={onSelect}
+          onDelete={onDelete}
         />
       ))}
     </div>
@@ -4103,6 +4115,7 @@ function FileTreeRow({
   toggle,
   selectedPath,
   onSelect,
+  onDelete,
 }: {
   node: FileTreeNode;
   depth: number;
@@ -4110,25 +4123,38 @@ function FileTreeRow({
   toggle: (p: string) => void;
   selectedPath?: string;
   onSelect: (f: ProducedFile) => void;
+  onDelete?: (node: FileTreeNode) => void;
 }) {
+  const t = useT();
   const pad = { paddingLeft: 8 + depth * 14 };
+  const delBtn = onDelete && (
+    <button
+      onClick={(e) => { e.stopPropagation(); onDelete(node); }}
+      className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:bg-muted hover:text-destructive group-hover/row:opacity-100"
+      title={t("chat.files.delete")}
+    >
+      <Trash2 className="h-3.5 w-3.5" />
+    </button>
+  );
   if (node.isDir) {
     const open = expanded.has(node.path);
     return (
       <>
-        <button
-          onClick={() => toggle(node.path)}
-          style={pad}
-          className="flex w-full items-center gap-1.5 py-1 pr-2 rounded-md text-left hover:bg-muted/40"
-        >
-          {open ? (
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          )}
-          <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate text-foreground">{node.name}</span>
-        </button>
+        <div className="group/row flex items-center" style={pad}>
+          <button
+            onClick={() => toggle(node.path)}
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pr-1 text-left hover:bg-muted/40"
+          >
+            {open ? (
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            )}
+            <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate text-foreground">{node.name}</span>
+          </button>
+          {delBtn}
+        </div>
         {open &&
           node.children.map((c) => (
             <FileTreeRow
@@ -4139,6 +4165,7 @@ function FileTreeRow({
               toggle={toggle}
               selectedPath={selectedPath}
               onSelect={onSelect}
+              onDelete={onDelete}
             />
           ))}
       </>
@@ -4147,16 +4174,21 @@ function FileTreeRow({
   const { icon: Icon } = fileKind(node.path);
   const active = selectedPath === node.path;
   return (
-    <button
-      onClick={() => onSelect({ path: node.path, size: node.size })}
+    <div
+      className={`group/row flex items-center rounded-md ${active ? "bg-muted" : "hover:bg-muted/40"}`}
       style={pad}
-      className={`flex w-full items-center gap-1.5 py-1 pr-2 rounded-md text-left ${active ? "bg-muted" : "hover:bg-muted/40"}`}
       title={node.path}
     >
-      <span className="w-3.5 shrink-0" />
-      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="truncate text-foreground">{node.name}</span>
-    </button>
+      <button
+        onClick={() => onSelect({ path: node.path, size: node.size })}
+        className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-1 text-left"
+      >
+        <span className="w-3.5 shrink-0" />
+        <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="truncate text-foreground">{node.name}</span>
+      </button>
+      {delBtn}
+    </div>
   );
 }
 
@@ -4206,6 +4238,18 @@ function WorkspacePanel({
   const [tab, setTab] = useState<"code" | "preview">("code");
   // Collapse the left file tree to give the viewer the full width.
   const [treeCollapsed, setTreeCollapsed] = useState(false);
+  // Inner splitter: draggable width of the file-tree column (left of the
+  // viewer). Persisted across sessions like the outer panel width; capped
+  // so the viewer keeps a usable share even when the panel is narrow.
+  const [treeW, setTreeW] = useState<number>(() => {
+    if (typeof window === "undefined") return FILES_TREE_DEFAULT;
+    const stored = Number(window.localStorage.getItem(FILES_TREE_KEY));
+    if (Number.isFinite(stored) && stored >= FILES_TREE_MIN && stored <= FILES_TREE_MAX) {
+      return stored;
+    }
+    return FILES_TREE_DEFAULT;
+  });
+  const [treeResizing, setTreeResizing] = useState(false);
   // Files the agent changed vs the template baseline (so the tree can show
   // just this task's output), and whether to show all files instead.
   const [changed, setChanged] = useState<{ files: WorkspaceFile[]; available: boolean }>({ files: [], available: false });
@@ -4285,6 +4329,32 @@ function WorkspacePanel({
     };
   }, [resizing, width]);
 
+  // Inner splitter drag: clamp against the panel's own left edge so the
+  // tree can never eat the whole panel (viewer keeps the remainder).
+  useEffect(() => {
+    if (!treeResizing) return;
+    const handleMove = (e: MouseEvent) => {
+      const left = asideRef.current?.getBoundingClientRect().left ?? 0;
+      setTreeW(Math.min(FILES_TREE_MAX, Math.max(FILES_TREE_MIN, e.clientX - left)));
+    };
+    const handleUp = () => {
+      setTreeResizing(false);
+      try {
+        window.localStorage.setItem(FILES_TREE_KEY, String(treeW));
+      } catch { /* ignore quota errors */ }
+    };
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [treeResizing, treeW]);
+
   const handleReveal = useCallback(async () => {
     if (!agentId || (!sessionId && !projectId)) return;
     setRevealing(true);
@@ -4336,6 +4406,37 @@ function WorkspacePanel({
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Delete a tree row (file or folder). Folders expand to their leaf
+  // files client-side — the store has no directory concept and this
+  // keeps LocalFS and S3 backends behaving identically. The 403 path
+  // (public-agent viewer) surfaces the server's error via alert, same
+  // best-effort UX as the reveal button.
+  const [deleting, setDeleting] = useState(false);
+  const handleDeleteNode = useCallback(async (node: FileTreeNode) => {
+    if (deleting) return;
+    const paths: string[] = [];
+    const collect = (n: FileTreeNode) => {
+      if (n.isDir) n.children.forEach(collect);
+      else paths.push(n.path);
+    };
+    collect(node);
+    if (paths.length === 0) return;
+    const msg = node.isDir
+      ? t("chat.files.deleteConfirmDir", { name: node.name, count: paths.length })
+      : t("chat.files.deleteConfirmFile", { name: node.name });
+    if (!window.confirm(msg)) return;
+    setDeleting(true);
+    try {
+      for (const p of paths) await deleteAgentFile(agentId, p);
+      if (previewing && paths.includes(previewing.path)) setPreviewing(null);
+      await refresh();
+    } catch (err) {
+      alert(t("chat.files.deleteFailed", { error: err instanceof Error ? err.message : "unknown" }));
+    } finally {
+      setDeleting(false);
+    }
+  }, [agentId, deleting, previewing, refresh, t]);
 
   // Strip prefixes for the tree: backend-provided when it resolved the
   // scope (it knows which project a chat belongs to — the URL doesn't);
@@ -4596,7 +4697,17 @@ function WorkspacePanel({
           <div className="flex min-h-0 flex-1">
             {/* Left: file tree (collapsible). */}
             {!treeCollapsed && (
-            <div className="flex w-56 shrink-0 flex-col border-r border-border">
+            <div
+              className="relative flex shrink-0 flex-col border-r border-border"
+              style={{ width: treeW }}
+            >
+              {/* Inner splitter: drag to resize the tree column against
+                  the viewer. Mirrors the outer panel edge handle. */}
+              <div
+                onMouseDown={(e) => { e.preventDefault(); setTreeResizing(true); }}
+                className="absolute right-0 top-0 bottom-0 z-10 w-1.5 cursor-col-resize hover:bg-border/60"
+                title={t("preview.dragResize")}
+              />
               {/* When there's a template baseline, default to showing only the
                   files THIS task changed; let the user flip to the full tree. */}
               {changed.available && (
@@ -4638,6 +4749,7 @@ function WorkspacePanel({
                     <FileTreeView
                       files={list}
                       rootPrefixes={treePrefixes}
+                      onDelete={handleDeleteNode}
                       selectedPath={previewing?.path}
                       onSelect={(f) => setPreviewing(f)}
                     />
@@ -4776,6 +4888,7 @@ function WorkspacePanel({
                 <FileTreeView
                   files={list}
                   rootPrefixes={treePrefixes}
+                  onDelete={handleDeleteNode}
                   onSelect={(f) => setPreviewing(f)}
                 />
               );

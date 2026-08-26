@@ -1324,6 +1324,10 @@ const en: Record<string, string> = {
   "chat.undoTurn": "Undo last turn",
   "chat.greeting": "What can I help with?",
   "chat.attachFiles": "Attach files",
+  "chat.files.delete": "Delete",
+  "chat.files.deleteConfirmFile": "Delete \"{name}\"? This cannot be undone.",
+  "chat.files.deleteConfirmDir": "Delete folder \"{name}\" and its {count} files? This cannot be undone.",
+  "chat.files.deleteFailed": "Delete failed: {error}",
   "chat.stopGenerating": "Stop generating",
   "chat.sendMessage": "Send message",
 

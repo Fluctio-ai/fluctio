@@ -369,6 +369,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/files", auth(s.handleAgentFileList))
 	mux.HandleFunc("GET /api/agents/{id}/files.zip", auth(s.handleAgentFilesZip))
 	mux.HandleFunc("GET /api/agents/{id}/files/{path...}", auth(s.handleAgentFile))
+	mux.HandleFunc("DELETE /api/agents/{id}/files/{path...}", auth(s.handleAgentFileDelete))
 	mux.HandleFunc("POST /api/agents/{id}/files", auth(s.handleAgentFileUpload))
 	// Self-hosted-only: opens the workspace dir in the operator's
 	// native file browser (Finder/Explorer/xdg-open). Hosted

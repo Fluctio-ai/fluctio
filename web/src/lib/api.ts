@@ -1434,6 +1434,20 @@ export async function uploadAgentFiles(
   return (data.files || []) as UploadedFile[];
 }
 
+// deleteAgentFile removes one workspace file (owner-only server-side).
+// Folders aren't a store concept — the caller expands a folder delete
+// into one request per contained file so LocalFS and S3 behave alike.
+export async function deleteAgentFile(agentId: string, path: string): Promise<void> {
+  const res = await apiFetch(
+    `/api/agents/${encodeURIComponent(agentId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || `delete failed: ${res.status}`);
+  }
+}
+
 // Agents
 export async function getAgents(): Promise<AgentDetail[]> {
   const res = await apiFetch("/api/agents");
