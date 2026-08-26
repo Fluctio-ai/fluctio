@@ -157,10 +157,14 @@ func TestLifecycle_IdleEviction(t *testing.T) {
 type fakeWorkspace struct {
 	mu      sync.Mutex
 	objects map[string]map[string][]byte // agentID → path → bytes
+	// putScopes records the (projectID, sessionID) each path was Put
+	// under, so tests can assert the SCOPE a flush targeted — the bucket
+	// key collapses project chats to one bucket, hiding wrong scoping.
+	putScopes map[string]string // path → "pid|sid"
 }
 
 func newFakeWorkspace() *fakeWorkspace {
-	return &fakeWorkspace{objects: map[string]map[string][]byte{}}
+	return &fakeWorkspace{objects: map[string]map[string][]byte{}, putScopes: map[string]string{}}
 }
 
 func (w *fakeWorkspace) put(agentID, path string, data []byte) {
@@ -184,7 +188,15 @@ func wsScopeKey(agentID, sessionID string) string {
 
 func (w *fakeWorkspace) Put(ctx context.Context, agentID, projectID, sessionID, p string, r io.Reader, _ int64, _ string) error {
 	buf, _ := io.ReadAll(r)
-	w.put(wsScopeKey(agentID, scopeForKey(projectID, sessionID)), p, buf)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.putScopes[p] = projectID + "|" + sessionID
+	// Inline rather than w.put — that helper takes the same lock.
+	key := wsScopeKey(agentID, scopeForKey(projectID, sessionID))
+	if _, ok := w.objects[key]; !ok {
+		w.objects[key] = map[string][]byte{}
+	}
+	w.objects[key][p] = buf
 	return nil
 }
 
@@ -407,4 +419,56 @@ func TestLifecycle_CloseAll(t *testing.T) {
 
 	// Safe to call twice.
 	lp.CloseAll()
+}
+
+// TestLifecycle_ProjectFlushTargetsMountRoot pins the project-chat flush
+// scope: snapshot paths are MOUNT-ROOT relative (projects/<pid>/, sid
+// dirs included), so the evict flush must Put them at the project scope,
+// not the per-chat scope. The pre-fix behavior copied the whole project
+// tree into projects/<pid>/<sid>/ on every eviction — each flush nesting
+// another <sid>/ layer (s-1/s-1/s-1/… exponential duplication).
+func TestLifecycle_ProjectFlushTargetsMountRoot(t *testing.T) {
+	ws := newFakeWorkspace()
+	// What SnapshotWorkspace returns for a project chat: the mounted
+	// project root, sibling sid dirs included.
+	files := map[string][]byte{
+		"s-1/report.md":  []byte("chat 1 report"),
+		"s-2/notes.md":   []byte("chat 2 notes"),
+		"math-course/x.md": []byte("shared"),
+	}
+	pool := newSnappingPool(files)
+
+	// Short TTL + fast sweep so the test evicts deterministically.
+	lp := NewLifecyclePool(pool, 40*time.Millisecond, 15*time.Millisecond)
+	lp.SetWorkspace(ws)
+	lp.Start()
+	defer lp.CloseAll()
+
+	ex, _ := lp.Get(context.Background(), "dave", "p1", "s-1")
+	ex.Exec(context.Background(), "ls /workspace", time.Second)
+	time.Sleep(150 * time.Millisecond) // past idle TTL → evict → flush
+
+	// 1) Files landed at the PROJECT scope (mount root), paths intact.
+	for path, want := range files {
+		got, err := ws.Get(context.Background(), "dave", "p1", "", path)
+		if err != nil {
+			t.Fatalf("expected %q at project scope: %v", path, err)
+		}
+		data, _ := io.ReadAll(got)
+		got.Close()
+		if string(data) != string(want) {
+			t.Fatalf("flushed %q content mismatch", path)
+		}
+	}
+	// 2) The flush targeted the PROJECT scope, not the per-chat one —
+	// Put(pid, sid, …) is the pre-fix duplication (it copies the mounted
+	// project tree into this chat's dir). The fake's bucket key collapses
+	// both scopes, so assert on the recorded Put scope instead.
+	ws.mu.Lock()
+	for path, scope := range ws.putScopes {
+		if scope != "p1|" {
+			t.Fatalf("flush wrote %q under per-chat scope %q (duplication bug); want project scope", path, scope)
+		}
+	}
+	ws.mu.Unlock()
 }

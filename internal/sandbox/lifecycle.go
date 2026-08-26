@@ -203,16 +203,27 @@ func (p *LifecyclePool) syncSnapshot(ctx context.Context, sc sandboxScope, ex Ex
 		slog.Warn("sandbox sync: snapshot failed", "agent", sc.agentID, "session", sc.sessionID, "cause", cause, "error", err)
 		return
 	}
+	// Snapshot paths are relative to the sandbox's MOUNT ROOT — the
+	// project root projects/<pid>/ for project chats (paths keep their
+	// <sid>/ prefix), the session dir for loose chats. Write back at the
+	// same scope or a project chat's snapshot lands under projects/<pid>/
+	// <sid>/… — copying every sibling sid dir INTO this chat's dir, and
+	// each eviction nests another <sid>/ layer on top (exponential
+	// duplication: s-1/s-1/s-1/…). Same folding as hydrateWorkspace.
+	putProject, putSession := sc.projectID, sc.sessionID
+	if sc.projectID != "" {
+		putSession = ""
+	}
 	written := 0
 	for path, data := range files {
 		// Skip files that the store already has with identical size —
 		// avoids rewriting every file every sync when nothing changed.
 		// Content equality would be stricter but requires a full
 		// round-trip per file; size is usually enough.
-		if info, err := p.workspace.Stat(ctx, sc.agentID, sc.projectID, sc.sessionID, path); err == nil && info.Size == int64(len(data)) {
+		if info, err := p.workspace.Stat(ctx, sc.agentID, putProject, putSession, path); err == nil && info.Size == int64(len(data)) {
 			continue
 		}
-		if err := p.workspace.Put(ctx, sc.agentID, sc.projectID, sc.sessionID, path, bytesReader(data), int64(len(data)), ""); err != nil {
+		if err := p.workspace.Put(ctx, sc.agentID, putProject, putSession, path, bytesReader(data), int64(len(data)), ""); err != nil {
 			slog.Warn("sandbox sync: put failed", "agent", sc.agentID, "session", sc.sessionID, "cause", cause, "path", path, "error", err)
 			continue
 		}
@@ -363,7 +374,7 @@ func (l *lazyExecutor) WriteFile(ctx context.Context, path, content string) (str
 
 // mirrorSandboxWrite copies a single sandbox-side write into the durable
 // workspace.Store. Skips paths outside /workspace (e.g. /tmp/, /home/user/)
-// since those have no store mapping. Mirrors the sessionID-scoped Put that
+// since those have no store mapping. Mirrors the mount-root-scoped Put that
 // syncSnapshot uses, so write_file and exec-generated files land in the
 // same store location.
 func (p *LifecyclePool) mirrorSandboxWrite(ctx context.Context, sc sandboxScope, sandboxPath, content string) {
@@ -378,7 +389,15 @@ func (p *LifecyclePool) mirrorSandboxWrite(ctx context.Context, sc sandboxScope,
 	if key == "" {
 		return
 	}
-	if err := p.workspace.Put(ctx, sc.agentID, sc.projectID, sc.sessionID, key,
+	// /workspace is the MOUNT ROOT: the project root for project chats,
+	// the session dir for loose ones (see syncSnapshot). Same folding so
+	// a project chat's /workspace/<file> lands at projects/<pid>/<file>,
+	// not nested under its own sid dir.
+	putProject, putSession := sc.projectID, sc.sessionID
+	if sc.projectID != "" {
+		putSession = ""
+	}
+	if err := p.workspace.Put(ctx, sc.agentID, putProject, putSession, key,
 		bytesReader([]byte(content)), int64(len(content)), ""); err != nil {
 		slog.Warn("sandbox sync: write_file mirror failed",
 			"agent", sc.agentID, "project", sc.projectID, "session", sc.sessionID,
