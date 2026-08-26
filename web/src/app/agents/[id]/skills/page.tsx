@@ -34,10 +34,12 @@ import {
   Upload,
   Files,
   Info,
+  Eye,
 } from "lucide-react";
 import {
   getAgentSkills,
   deleteAgentSkill,
+  getAgentSkillManifest,
   installSkill,
   uploadSkill,
   searchSkills,
@@ -45,6 +47,7 @@ import {
   type SkillInfo,
   type SkillSearchResult,
 } from "@/lib/api";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { ConfigureSkillDialog, type SkillEntryView } from "@/components/configure-skill-dialog";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
@@ -57,6 +60,10 @@ export default function AgentSkillsPage() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  // SKILL.md preview state (lazy-loaded via handleView).
+  const [viewTarget, setViewTarget] = useState<SkillInfo | null>(null);
+  const [viewContent, setViewContent] = useState<string | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
   const [configureTarget, setConfigureTarget] = useState<SkillInfo | null>(null);
   // Skill env entries are GLOBAL (keyed by skill name), so the same
@@ -111,6 +118,19 @@ export default function AgentSkillsPage() {
     await deleteAgentSkill(agentId, deleteTarget);
     setDeleteTarget(null);
     fetchSkills();
+  };
+
+  // SKILL.md preview — lazy-loaded on open (see the global skills page).
+  const handleView = async (skill: SkillInfo) => {
+    setViewTarget(skill);
+    setViewContent(null);
+    setViewError(null);
+    try {
+      const { content } = await getAgentSkillManifest(agentId, skill.name);
+      setViewContent(content);
+    } catch (e) {
+      setViewError(e instanceof Error ? e.message : t("skills.viewFailed"));
+    }
   };
 
   const handleUploadConfirm = async () => {
@@ -233,6 +253,15 @@ export default function AgentSkillsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    onClick={() => handleView(skill)}
+                    title={t("skills.view")}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -424,6 +453,27 @@ export default function AgentSkillsPage() {
           fetchSkills();
         }}
       />
+
+      {/* SKILL.md preview — mirrors the global skills page's dialog. */}
+      <Dialog open={!!viewTarget} onOpenChange={(open) => { if (!open) { setViewTarget(null); setViewContent(null); setViewError(null); } }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="font-mono">{viewTarget?.name}</DialogTitle>
+            <DialogDescription className="font-mono text-[11px] truncate">{viewTarget?.location}</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] overflow-y-auto -mx-1 px-1">
+            {viewError ? (
+              <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive break-words">{viewError}</p>
+            ) : viewContent === null ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/60" />
+              </div>
+            ) : (
+              <div className="text-sm"><ChatMarkdown text={viewContent} bareCode /></div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

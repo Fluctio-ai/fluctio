@@ -2639,6 +2639,17 @@ export async function getSkills(): Promise<SkillInfo[]> {
   return res.json();
 }
 
+// getSkillManifest returns the raw SKILL.md content for a global skill —
+// backs the admin UI's "view skill" preview dialog.
+export async function getSkillManifest(name: string): Promise<{ name: string; content: string }> {
+  const res = await apiFetch(`/api/skills/${encodeURIComponent(name)}/manifest`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function deleteSkill(name: string) {
   const res = await apiFetch(`/api/skills/${name}`, {
     method: "DELETE",
@@ -2650,6 +2661,19 @@ export async function deleteSkill(name: string) {
 // Agent-scoped skills shadow global ones with the same name.
 export async function getAgentSkills(agentId: string): Promise<SkillInfo[]> {
   const res = await apiFetch(`/api/agents/${encodeURIComponent(agentId)}/skills`);
+  return res.json();
+}
+
+// getAgentSkillManifest returns the raw SKILL.md of a skill installed in
+// the agent's own home dir (owner-only server-side).
+export async function getAgentSkillManifest(agentId: string, name: string): Promise<{ name: string; content: string }> {
+  const res = await apiFetch(
+    `/api/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(name)}/manifest`,
+  );
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  }
   return res.json();
 }
 

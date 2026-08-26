@@ -501,11 +501,13 @@ func (s *Server) Run(ctx context.Context) error {
 
 	// Skills
 	mux.HandleFunc("GET /api/skills", auth(s.handleListSkills))
+	mux.HandleFunc("GET /api/skills/{name}/manifest", auth(s.handleGetSkillManifest))
 	mux.HandleFunc("GET /api/skills/search", auth(s.handleSearchSkills))
 	mux.HandleFunc("POST /api/skills/install", auth(s.handleInstallSkill))
 	mux.HandleFunc("POST /api/skills/upload", auth(s.handleUploadSkill))
 	mux.HandleFunc("DELETE /api/skills/{name}", admin(s.handleDeleteSkill))
 	mux.HandleFunc("GET /api/agents/{id}/skills", auth(s.handleListAgentSkills))
+	mux.HandleFunc("GET /api/agents/{id}/skills/{name}/manifest", auth(s.handleGetAgentSkillManifest))
 	mux.HandleFunc("DELETE /api/agents/{id}/skills/{name}", auth(s.handleDeleteAgentSkill))
 	mux.HandleFunc("POST /api/agents/{id}/skills/reload", auth(s.handleReloadAgentSkills))
 

@@ -23,10 +23,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Sparkles, Trash2, Download, Search, Loader2, Check, ExternalLink, Settings, Upload, Files, Info } from "lucide-react";
+import { Sparkles, Trash2, Download, Search, Loader2, Check, ExternalLink, Settings, Upload, Files, Info, Eye } from "lucide-react";
 import {
   getSkills,
   deleteSkill,
+  getSkillManifest,
   searchSkills,
   installSkill,
   uploadSkill,
@@ -34,6 +35,7 @@ import {
   type SkillInfo,
   type SkillSearchResult,
 } from "@/lib/api";
+import { ChatMarkdown } from "@/components/chat-markdown";
 import { ConfigureSkillDialog, type SkillEntryView } from "@/components/configure-skill-dialog";
 
 export default function SkillsPage() {
@@ -44,6 +46,10 @@ export default function SkillsPage() {
   const [installOpen, setInstallOpen] = useState(false);
   const [configureTarget, setConfigureTarget] = useState<SkillInfo | null>(null);
   const [skillEntries, setSkillEntries] = useState<Record<string, SkillEntryView>>({});
+  // SKILL.md preview: set while loading, content once fetched.
+  const [viewTarget, setViewTarget] = useState<SkillInfo | null>(null);
+  const [viewContent, setViewContent] = useState<string | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -72,6 +78,20 @@ export default function SkillsPage() {
     await deleteSkill(deleteTarget);
     setDeleteTarget(null);
     fetchSkills();
+  };
+
+  // Lazy-load the SKILL.md on open so the list page pays nothing until
+  // the user actually peeks at a skill.
+  const handleView = async (skill: SkillInfo) => {
+    setViewTarget(skill);
+    setViewContent(null);
+    setViewError(null);
+    try {
+      const { content } = await getSkillManifest(skill.name);
+      setViewContent(content);
+    } catch (e) {
+      setViewError(e instanceof Error ? e.message : tt("skills.viewFailed"));
+    }
   };
 
   const handleUploadOpenChange = (open: boolean) => {
@@ -151,6 +171,9 @@ export default function SkillsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => handleView(skill)} title={tt("skills.view")}>
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
                   <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => setConfigureTarget(skill)} title={tt("skills.configure")}>
                     <Settings className="h-3.5 w-3.5" />
                   </Button>
@@ -257,6 +280,28 @@ export default function SkillsPage() {
         onClose={() => setConfigureTarget(null)}
         onSaved={() => { setConfigureTarget(null); fetchSkills(); }}
       />
+
+      {/* SKILL.md preview: rendered markdown, raw frontmatter included —
+          it's the contract the loader parses, so show it verbatim. */}
+      <Dialog open={!!viewTarget} onOpenChange={(open) => { if (!open) { setViewTarget(null); setViewContent(null); setViewError(null); } }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="font-mono">{viewTarget?.name}</DialogTitle>
+            <DialogDescription className="font-mono text-[11px] truncate">{viewTarget?.location}</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] overflow-y-auto -mx-1 px-1">
+            {viewError ? (
+              <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive break-words">{viewError}</p>
+            ) : viewContent === null ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/60" />
+              </div>
+            ) : (
+              <div className="text-sm"><ChatMarkdown text={viewContent} bareCode /></div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

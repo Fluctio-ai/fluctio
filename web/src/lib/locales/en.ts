@@ -558,6 +558,8 @@ const en: Record<string, string> = {
   "skills.install": "Install",
   "skills.installFor": "Install Skill for {name}",
   "skills.configure": "Configure env / API keys",
+  "skills.view": "View SKILL.md",
+  "skills.viewFailed": "Failed to load SKILL.md",
   "skills.dropOne": "Please drop only one .zip file at a time.",
   "skills.mustBeZip": "File must be a .zip archive.",
   "skills.saveFailed": "Save failed",

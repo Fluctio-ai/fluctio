@@ -558,6 +558,8 @@ const zhCN: Record<string, string> = {
   "skills.install": "安装",
   "skills.installFor": "为 {name} 安装技能",
   "skills.configure": "配置环境变量 / API 密钥",
+  "skills.view": "查看 SKILL.md",
+  "skills.viewFailed": "读取 SKILL.md 失败",
   "skills.dropOne": "请一次只拖入一个 .zip 文件。",
   "skills.mustBeZip": "文件必须是 .zip 压缩包。",
   "skills.saveFailed": "保存失败",
