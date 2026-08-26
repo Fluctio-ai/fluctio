@@ -26,7 +26,19 @@ func hydrateWorkspace(ctx context.Context, ws workspace.Store, ex Executor, agen
 	if ws == nil || ex == nil {
 		return
 	}
-	objs, err := ws.List(ctx, agentID, projectID, sessionID)
+	// For project chats, hydrate the whole project (List with session=""),
+	// so paths keep their <sid>/ prefix and land exactly where the docker
+	// bind mount already exposes them (/workspace/<sid>/...). Listing the
+	// per-chat subdir instead FLATTENS its files onto the project root —
+	// a duplicate of every file the mount already shows, and old-layout
+	// per-chat files resurface at the root as apparent new files. Mirrors
+	// E2BExecutor.Hydrate's listProject/listSession folding; LocalFS
+	// deployments no-op through the size-skip below.
+	listProject, listSession := projectID, sessionID
+	if projectID != "" {
+		listSession = ""
+	}
+	objs, err := ws.List(ctx, agentID, listProject, listSession)
 	if err != nil {
 		slog.Warn("workspace hydrate: list failed", "agent", agentID, "project", projectID, "session", sessionID, "error", err)
 		return
@@ -38,7 +50,7 @@ func hydrateWorkspace(ctx context.Context, ws workspace.Store, ex Executor, agen
 	skipped := 0
 	for _, obj := range objs {
 		target := path.Join(sandboxRoot, obj.Path)
-		rc, getErr := ws.Get(ctx, agentID, projectID, sessionID, obj.Path)
+		rc, getErr := ws.Get(ctx, agentID, listProject, listSession, obj.Path)
 		if getErr != nil {
 			slog.Warn("workspace hydrate: get failed", "agent", agentID, "project", projectID, "session", sessionID, "path", obj.Path, "error", getErr)
 			continue
