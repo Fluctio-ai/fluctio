@@ -1047,7 +1047,15 @@ func (s *Server) handleAgentFileList(w http.ResponseWriter, r *http.Request) {
 			"modTime": o.ModTime.UnixMilli(),
 		})
 	}
-	jsonResponse(w, http.StatusOK, map[string]any{"files": files})
+	// scopePrefixes tells the client which directory prefixes to peel
+	// off before rendering the tree — it can't derive the project a
+	// session belongs to from the chat URL alone, so the scope (which
+	// just resolved it) hands it over. nil (agent-wide) serializes as
+	// null; the client treats that as "strip nothing".
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"files":         files,
+		"scopePrefixes": scope.stripPrefixes,
+	})
 }
 
 // fileScope describes which agent-relative paths to surface for the
@@ -1056,21 +1064,29 @@ func (s *Server) handleAgentFileList(w http.ResponseWriter, r *http.Request) {
 //
 //	loose chat:  paths under sessions/<chat_id>/
 //	project chat: paths under projects/<pid>/<chat_id>/ (the chat's
-//	              own files), PLUS files directly at projects/<pid>/
-//	              (project-root "shared/legacy" files — pre-subdir
-//	              layout still lives there, and operators may
-//	              deliberately drop shared files at the root). Other
-//	              chats' subdirs (projects/<pid>/<other-sid>/...)
-//	              are excluded — those belong to that chat's panel.
+//	              own files), PLUS entries directly at projects/<pid>/
+//	              that aren't another chat's subtree — root-level
+//	              "shared/legacy" files AND shared subdirectories
+//	              (projects/<pid>/math-course/…) the agent or operator
+//	              dropped at the project root. Other chats' subtrees
+//	              (projects/<pid>/<other-sid>/...) are excluded —
+//	              those belong to that chat's panel.
 //	no session:  everything (admin browser).
 //
 // archiveSuffix returns the human-readable scope id used in the zip
 // filename — chat_id for loose chats, "<pid>-<chat_id>" for project
 // chats so a download names "agent-pid-sid.zip" instead of
 // disambiguating by chat_id alone.
+//
+// stripPrefixes (most specific first) are the scope directory prefixes
+// the frontend peels off before rendering the file tree, so a project
+// chat shows its own files bare and shared ones relative to the
+// project root instead of as nested projects/<pid>/… folders. Empty
+// for the agent-wide browser (paths are already rootless there).
 type fileScope struct {
 	acceptPath    func(string) bool
 	archiveSuffix string
+	stripPrefixes []string
 }
 
 // stripScopePrefix removes the deepest known scope prefix from an
@@ -1129,6 +1145,7 @@ func (s *Server) fileScopeForRequest(r *http.Request, agentID string) fileScope 
 		return fileScope{
 			acceptPath:    func(p string) bool { return strings.HasPrefix(p, prefix) },
 			archiveSuffix: rawProject,
+			stripPrefixes: []string{prefix},
 		}
 	}
 	if rawSession == "" {
@@ -1158,21 +1175,37 @@ func (s *Server) fileScopeForRequest(r *http.Request, agentID string) fileScope 
 				if strings.HasPrefix(p, ownPrefix) {
 					return true
 				}
-				// Top-level file at projects/<pid>/<file> (no further
-				// "/" — i.e. not in any sid subdir).
+				// Entry directly under the project root. Other chats'
+				// subtrees (first segment a session key "s-…") stay out —
+				// those belong to that chat's panel — but shared
+				// subdirectories (projects/<pid>/math-course/…) belong to
+				// the whole project and surface here too, not just legacy
+				// root-level files.
 				if strings.HasPrefix(p, rootPrefix) {
 					rest := p[len(rootPrefix):]
-					return rest != "" && !strings.Contains(rest, "/")
+					if rest == "" {
+						return false
+					}
+					first := rest
+					if i := strings.IndexByte(rest, '/'); i >= 0 {
+						first = rest[:i]
+					}
+					return !strings.HasPrefix(first, "s-")
 				}
 				return false
 			},
 			archiveSuffix: pid + "-" + scopeKey,
+			// Own subdir first so its files render bare; shared entries
+			// fall through to the project-root strip and keep their
+			// subdirectory structure (math-course/…).
+			stripPrefixes: []string{ownPrefix, rootPrefix},
 		}
 	}
 	prefix := "sessions/" + scopeKey + "/"
 	return fileScope{
 		acceptPath:    func(p string) bool { return strings.HasPrefix(p, prefix) },
 		archiveSuffix: scopeKey,
+		stripPrefixes: []string{prefix},
 	}
 }
 

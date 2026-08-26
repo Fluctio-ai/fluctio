@@ -1477,7 +1477,7 @@ export function ChatScreen() {
           // tool claims (exec-script output, etc.) get no bubble — they
           // stay visible in the workspace browser (FilesSheet), which
           // lists listAgentFiles independently of bubble attribution.
-          const listed = await listAgentFiles(selectedAgent, sessionId);
+          const listed = (await listAgentFiles(selectedAgent, sessionId)).files;
           const sizeByPath = new Map(listed.map((f) => [f.path, f.size]));
           // Ordinary agents scope project-chat writes to projects/<pid>/<sid>/
           // while coding-root agents land at the project root — try the
@@ -1789,7 +1789,7 @@ export function ChatScreen() {
     // final reply. Fire-and-forget; if the snapshot fails we just won't
     // surface files this turn. `path → size|modTime` key.
     const preTurnFilesPromise = listAgentFiles(selectedAgent)
-      .then((items) => {
+      .then(({ files: items }) => {
         const m = new Map<string, string>();
         for (const f of items) m.set(f.path, `${f.size}|${f.modTime}`);
         return m;
@@ -2152,7 +2152,7 @@ export function ChatScreen() {
       // independently. We still compute the diff for the diagnostic log
       // below (it tells us whether a missing bubble is because the file
       // wasn't produced vs. the tool record didn't capture it).
-      const postTurnFiles = await listAgentFiles(selectedAgent).catch(() => []);
+      const postTurnFiles = (await listAgentFiles(selectedAgent).catch(() => null))?.files ?? [];
       const preSnap = await preTurnFilesPromise;
       const diffFiles: ProducedFile[] = [];
       for (const f of postTurnFiles) {
@@ -3939,17 +3939,24 @@ type FileTreeNode = {
   children: FileTreeNode[];
 };
 
-// buildFileTree turns the flat file list into a nested tree. stripPrefix (e.g.
-// "sessions/<sid>/") is removed for the tree STRUCTURE so the session/project
-// folder is the implicit root — but file leaves keep their FULL path, which the
-// preview/download URLs need. Folders are synthesized from the remaining
+// buildFileTree turns the flat file list into a nested tree. stripPrefixes
+// (e.g. ["projects/<pid>/<sid>/", "projects/<pid>/"]) are tried in order and
+// the first one the path starts with is removed for the tree STRUCTURE —
+// for a project chat that renders its own files bare while shared entries
+// keep their subdirectory structure (math-course/…) instead of nesting under
+// a redundant projects/<pid>/ folder. File leaves keep their FULL path, which
+// the preview/download URLs need. Folders are synthesized from the remaining
 // segments; their `path` is the relative path (a stable, unique toggle key).
-function buildFileTree(files: WorkspaceFile[], stripPrefix: string): FileTreeNode[] {
+function buildFileTree(files: WorkspaceFile[], stripPrefixes: string[]): FileTreeNode[] {
   const root: FileTreeNode = { name: "", path: "", isDir: true, children: [] };
   for (const f of files) {
-    const rel = stripPrefix && f.path.startsWith(stripPrefix)
-      ? f.path.slice(stripPrefix.length)
-      : f.path;
+    let rel = f.path;
+    for (const p of stripPrefixes) {
+      if (p && rel.startsWith(p)) {
+        rel = rel.slice(p.length);
+        break;
+      }
+    }
     const parts = rel.split("/").filter(Boolean);
     if (parts.length === 0) continue;
     let node = root;
@@ -3980,20 +3987,20 @@ function sortFileTree(nodes: FileTreeNode[]) {
 
 function FileTreeView({
   files,
-  rootPrefix,
+  rootPrefixes,
   selectedPath,
   onSelect,
   defaultExpandDepth = 1,
 }: {
   files: WorkspaceFile[];
-  rootPrefix: string;
+  rootPrefixes: string[];
   selectedPath?: string;
   onSelect: (f: ProducedFile) => void;
   // Folders shallower than this are open on first load (1 = open the root
   // folders only) so the user sees the top entries without a deep dump.
   defaultExpandDepth?: number;
 }) {
-  const tree = useMemo(() => buildFileTree(files, rootPrefix), [files, rootPrefix]);
+  const tree = useMemo(() => buildFileTree(files, rootPrefixes), [files, rootPrefixes]);
   // Expansion state keys on stable relative paths, so it survives refreshes.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   // Auto-expand the first `defaultExpandDepth` folder levels once, when the
@@ -4133,6 +4140,11 @@ function WorkspacePanel({
 }) {
   const t = useT();
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
+  // Scope directory prefixes the backend says to strip before building
+  // the tree (e.g. ["projects/<pid>/<sid>/", "projects/<pid>/"] for a
+  // project chat). Falls back to a client-side guess below until the
+  // listing arrives / when the backend omits it (agent-wide view).
+  const [scopePrefixes, setScopePrefixes] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState<ProducedFile | null>(null);
   // Live dev-server preview for this chat scope (from start_app_preview).
@@ -4253,10 +4265,11 @@ function WorkspacePanel({
       const list = projectId
         ? await listAgentFiles(agentId, undefined, projectId)
         : await listAgentFiles(agentId, sessionId);
-      const cleaned = list
+      const cleaned = list.files
         .filter((f) => !isSystemFile(f.path))
         .sort((a, b) => (b.modTime || 0) - (a.modTime || 0));
       setFiles(cleaned);
+      setScopePrefixes(list.scopePrefixes);
       // Best-effort: is there a live app preview for this scope?
       getScopePreview(agentId, projectId ? undefined : sessionId, projectId)
         .then(setAppPreview)
@@ -4273,6 +4286,15 @@ function WorkspacePanel({
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Strip prefixes for the tree: backend-provided when it resolved the
+  // scope (it knows which project a chat belongs to — the URL doesn't);
+  // client-side guess otherwise (agent-wide views, listing failure).
+  const treePrefixes = scopePrefixes.length
+    ? scopePrefixes
+    : projectId
+      ? [`projects/${projectId}/`]
+      : [`sessions/${sessionId}/`];
 
   // Switching conversations swaps the file tree to the new scope — clear the
   // selected file too, so the viewer never shows a file from the previous
@@ -4565,7 +4587,7 @@ function WorkspacePanel({
                   return (
                     <FileTreeView
                       files={list}
-                      rootPrefix={projectId ? `projects/${projectId}/` : `sessions/${sessionId}/`}
+                      rootPrefixes={treePrefixes}
                       selectedPath={previewing?.path}
                       onSelect={(f) => setPreviewing(f)}
                     />
@@ -4703,7 +4725,7 @@ function WorkspacePanel({
               return (
                 <FileTreeView
                   files={list}
-                  rootPrefix={projectId ? `projects/${projectId}/` : `sessions/${sessionId}/`}
+                  rootPrefixes={treePrefixes}
                   onSelect={(f) => setPreviewing(f)}
                 />
               );

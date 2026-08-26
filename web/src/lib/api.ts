@@ -769,11 +769,15 @@ export async function listAgentFiles(
   agentId: string,
   sessionId?: string,
   projectId?: string,
-): Promise<WorkspaceFile[]> {
+): Promise<{ files: WorkspaceFile[]; scopePrefixes: string[] }> {
   // sessionId scopes to a single chat; projectId (used on the project
   // landing page when no chat is selected) scopes to the whole project
   // tree (every chat under it + root-level shared files). Caller passes
   // one or the other — both empty means agent-wide (admin browser).
+  // scopePrefixes (most specific first) are the directory prefixes to
+  // strip before rendering the tree — the client can't derive which
+  // project a chat belongs to from its URL, so the backend's scope
+  // resolution hands it over. Empty = strip nothing (agent-wide).
   const params = new URLSearchParams();
   if (sessionId) params.set("sessionId", sessionId);
   if (projectId) params.set("projectId", projectId);
@@ -781,9 +785,12 @@ export async function listAgentFiles(
   const res = await apiFetch(
     `/api/agents/${encodeURIComponent(agentId)}/files${qs ? "?" + qs : ""}`,
   );
-  if (!res.ok) return [];
+  if (!res.ok) return { files: [], scopePrefixes: [] };
   const data = await res.json();
-  return (data.files || []) as WorkspaceFile[];
+  return {
+    files: (data.files || []) as WorkspaceFile[],
+    scopePrefixes: (data.scopePrefixes || []) as string[],
+  };
 }
 
 // getScopePreview returns the live dev-server preview for the current chat
