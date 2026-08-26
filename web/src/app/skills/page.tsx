@@ -287,7 +287,7 @@ export default function SkillsPage() {
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle className="font-mono">{viewTarget?.name}</DialogTitle>
-            <DialogDescription className="font-mono text-[11px] truncate">{viewTarget?.location}</DialogDescription>
+            <DialogDescription className="font-mono text-[11px] break-all">{viewTarget?.location}</DialogDescription>
           </DialogHeader>
           <div className="max-h-[65vh] overflow-y-auto -mx-1 px-1">
             {viewError ? (
