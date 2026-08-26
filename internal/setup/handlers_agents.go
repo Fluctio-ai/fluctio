@@ -1549,25 +1549,34 @@ func (s *Server) handleAgentFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// sessionId scopes the upload to the sandbox mount the agent actually
-	// sees. We resolve the session to find its project_id so uploads in
-	// a project chat land in projects/<pid>/ alongside the agent's own
-	// writes; loose chats keep the legacy sessions/<chat>/ subdir.
-	// Scope the upload to the exact directory the sandbox will mount, using
-	// the IDs the client already has in hand (urlToken sessionKey + optional
-	// projectId hint) instead of reverse-looking them up from the session
-	// record. That lookup failed when the upload fired before the session
-	// was minted — the web client uploads attachments BEFORE sending the
-	// first message, so the session row didn't exist yet and files landed
-	// in the agent root while the sandbox later mounted sessions/<sid>/ or
-	// projects/<pid>/. Web's session_key equals the urlToken (see
-	// resolveOrMintKey), so this matches the sandbox view without needing
-	// the session to exist first.
+	// sees: projects/<pid>/ for project chats (alongside the agent's own
+	// writes), sessions/<sid>/ for loose chats. The client's explicit
+	// projectId hint wins (a project chat's very first send fires before
+	// the session row exists, so no lookup could resolve it); afterwards
+	// the server resolves the session's project. Web's session_key equals
+	// the urlToken (see resolveOrMintKey), so both paths land in the dir
+	// the sandbox mounts.
 	projectID := r.URL.Query().Get("projectId")
 	sessionID := ""
 	if projectID == "" {
 		// Loose chat: the mount target is sessions/<sessionKey>/, and for
 		// web the sessionKey IS the urlToken the client just sent.
 		sessionID = r.URL.Query().Get("sessionId")
+		// A project chat's sandbox mounts projects/<pid>/, not
+		// sessions/<sid>/. The chat URL carries no projectId (the client
+		// only has it on a project page's first send), so attachments
+		// uploaded from inside an existing project chat used to land in
+		// the loose-chat dir — the upload "succeeded" but the agent's
+		// /workspace couldn't see the file and the chat file panel
+		// filtered it out. Resolve the session's project server-side and
+		// redirect the upload there; falls through to the loose scope
+		// when the session has no project or isn't minted yet.
+		if sessionID != "" {
+			if pid := s.resolveSessionProject(r.Context(), r, id, sessionID); pid != "" {
+				projectID = pid
+				sessionID = ""
+			}
+		}
 	}
 	saved := make([]map[string]any, 0, len(headers))
 	for _, h := range headers {
