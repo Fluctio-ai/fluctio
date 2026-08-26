@@ -108,12 +108,14 @@ export default function WikiPage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!initialWiki);
 
-  // Dynamic loading: the left pane renders the first `visibleCount`
-  // pages and loads more as the user scrolls to the bottom. A continuous
-  // list (not pagination) keeps the three-pane interlink intact — the
-  // selected page never disappears onto another page.
-  const [visibleCount, setVisibleCount] = useState(20);
-  const sentinelRef = useRef<HTMLDivElement>(null);
+  // Manual progressive loading: each left-pane section renders its first
+  // `visibleByType[type]` (default 20) pages and grows only when that
+  // section's own "load more" is clicked — a shared window would force
+  // the (large) concept list to fully load before the source group below
+  // becomes reachable. A continuous list (not pagination) keeps the
+  // three-pane interlink intact — the selected page never disappears
+  // onto another page.
+  const [visibleByType, setVisibleByType] = useState<Record<string, number>>({});
 
   // Resizable panes + right-pane collapse (Step B). Widths in px; the
   // drag handlers clamp to min/max so a pane can't be sized off-screen.
@@ -260,25 +262,34 @@ export default function WikiPage() {
     document.body.style.userSelect = "none";
   };
 
-  // Group the first `visibleCount` pages by type for the left-pane
-  // sections. Slicing BEFORE grouping keeps per-type counts consistent
-  // with what's actually shown. titleMap still uses the full list so
+  // Group the (title-filtered while searching) pages by type for the
+  // left-pane sections, then window each group independently — one
+  // "load more" per section grows only that type. Slicing per type (not
+  // across the whole list) is what keeps the counts consistent with
+  // what's shown in each section. titleMap still uses the full list so
   // in-body [[wiki links]] resolve to the target page's title even when
   // that page is outside the visible window. While searching, the title
   // filter replaces the window (no slice) so every match is reachable.
-  const visiblePages = useMemo(() => {
+  const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
     const matched = q ? pages.filter((p) => p.title.toLowerCase().includes(q)) : pages;
-    return q ? matched : matched.slice(0, visibleCount);
-  }, [pages, visibleCount, query]);
-  const grouped = useMemo(() => {
     const m: Record<string, WikiPage[]> = {};
-    for (const p of visiblePages) {
+    for (const p of matched) {
       if (!m[p.page_type]) m[p.page_type] = [];
       m[p.page_type].push(p);
     }
+    if (!q) {
+      for (const t of Object.keys(m)) m[t] = m[t].slice(0, visibleByType[t] ?? 20);
+    }
     return m;
-  }, [visiblePages]);
+  }, [pages, visibleByType, query]);
+  // Full per-type totals (independent of the window) for the section
+  // headers and the per-section load-more guard.
+  const typeTotals = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const p of pages) m[p.page_type] = (m[p.page_type] || 0) + 1;
+    return m;
+  }, [pages]);
 
   // titleMap resolves a wiki-link target ("page_type:slug") to its
   // display title so rendered links read as the target page's name.
@@ -388,21 +399,6 @@ export default function WikiPage() {
     return () => window.removeEventListener("fluctio:nav-reselect", onReselect);
   }, []);
 
-  // Infinite-scroll: when the sentinel at the bottom of the left pane
-  // enters the viewport, reveal the next batch. No-op once everything is
-  // visible (the sentinel unmounts in that case).
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting) {
-        setVisibleCount((c) => Math.min(c + 30, pages.length));
-      }
-    });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [pages.length]);
-
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       {/* Left: page list grouped by type */}
@@ -457,13 +453,16 @@ export default function WikiPage() {
               PAGE_TYPE_SECTIONS(t).map((section) => {
                 const sectionPages = grouped[section.type] || [];
                 if (sectionPages.length === 0) return null;
+                // While searching the group holds every match; otherwise
+                // it's windowed, so show the full total from typeTotals.
+                const sectionTotal = query.trim() ? sectionPages.length : (typeTotals[section.type] ?? 0);
                 return (
                   <div key={section.type} className="mb-2">
                     <div className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-muted-foreground">
                       <section.icon className="h-3 w-3" />
                       {section.label}
-                      {sectionPages.length > 0 && (
-                        <span className="ml-auto">{sectionPages.length}</span>
+                      {sectionTotal > 0 && (
+                        <span className="ml-auto">{sectionTotal}</span>
                       )}
                     </div>
                     {sectionPages.map((page) => (
@@ -492,6 +491,21 @@ export default function WikiPage() {
                         </button>
                       </div>
                     ))}
+                    {!query.trim() && sectionPages.length < sectionTotal && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="mt-1 w-full text-xs text-muted-foreground"
+                        onClick={() =>
+                          setVisibleByType((s) => ({
+                            ...s,
+                            [section.type]: (s[section.type] ?? 20) + 20,
+                          }))
+                        }
+                      >
+                        {t("wiki.loadMore")}
+                      </Button>
+                    )}
                   </div>
                 );
               })
@@ -500,18 +514,6 @@ export default function WikiPage() {
               <p className="px-2 py-1.5 text-xs text-muted-foreground">
                 {t("knowledge.noSearchResult")}
               </p>
-            )}
-            {!query.trim() && visibleCount < pages.length && (
-              <div ref={sentinelRef} className="py-2 flex justify-center">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs text-muted-foreground"
-                  onClick={() => setVisibleCount((c) => Math.min(c + 20, pages.length))}
-                >
-                  {t("wiki.loadMore")}
-                </Button>
-              </div>
             )}
           </div>
         </ScrollArea>
