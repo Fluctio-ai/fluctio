@@ -90,6 +90,7 @@ function renderContentWithDataImages(
   agentId?: string,
   sessionId?: string,
   knowledgeSources?: KnowledgeSource[],
+  workspaceRoot?: string,
 ): React.ReactNode | null {
   const parts = splitDataImages(content);
   if (!parts.some((p) => p.type === "image")) return null;
@@ -103,7 +104,7 @@ function renderContentWithDataImages(
             <img key={i} src={p.src} alt={p.alt} className="rounded-lg max-w-full h-auto my-2" />
           );
         }
-        return <ChatMarkdown key={i} text={p.text} agentId={agentId} sessionId={sessionId} knowledgeSources={knowledgeSources} />;
+        return <ChatMarkdown key={i} text={p.text} agentId={agentId} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={knowledgeSources} />;
       })}
     </>
   );
@@ -650,6 +651,32 @@ export function ChatScreen() {
   const [sessionId, setSessionId] = useState<string>(
     () => urlSessionId || generateSessionId(),
   );
+  // Scope directory prefixes for THIS chat, as resolved by the backend
+  // (listAgentFiles → scopePrefixes): loose chat ["sessions/<sid>/"],
+  // project chat ["projects/<pid>/<sid>/", "projects/<pid>/"]. Drives
+  // workspace-link resolution (/workspace/rel → projects/<pid>/rel),
+  // produced-file chip path candidates, and the turn-end reconcile —
+  // the chat URL has no project segment, so the client can't derive the
+  // project a chat belongs to on its own. Empty until the listing lands
+  // (or on failure); consumers fall back to a client-side guess.
+  const [wsScopePrefixes, setWsScopePrefixes] = useState<string[]>([]);
+  // Mirror for the sendChatStream callback: streaming closures capture
+  // state at call time, so the turn's chip builder needs a ref to see
+  // prefixes fetched by the loadSession that already ran.
+  const wsPrefixesRef = useRef<string[]>([]);
+  useEffect(() => {
+    wsPrefixesRef.current = wsScopePrefixes;
+  }, [wsScopePrefixes]);
+  // The sandbox mounts this directory at /workspace: the SHALLOWEST scope
+  // prefix (project root for project chats, the session dir for loose
+  // chats). Passed to ChatMarkdown so `/workspace/<rel>` links and
+  // images resolve correctly; client-side guesses cover the pre-listing
+  // window (a brand-new project chat still carries urlProjectId).
+  const workspaceRoot = useMemo(() => {
+    if (wsScopePrefixes.length > 0) return wsScopePrefixes[wsScopePrefixes.length - 1];
+    if (urlProjectId) return `projects/${urlProjectId}/`;
+    return sessionId ? `sessions/${sessionId}/` : "";
+  }, [wsScopePrefixes, urlProjectId, sessionId]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Timestamp taken after first mount. Bubbles whose msg.timestamp is
@@ -1477,15 +1504,22 @@ export function ChatScreen() {
           // tool claims (exec-script output, etc.) get no bubble — they
           // stay visible in the workspace browser (FilesSheet), which
           // lists listAgentFiles independently of bubble attribution.
-          const listed = (await listAgentFiles(selectedAgent, sessionId)).files;
+          const listedRes = await listAgentFiles(selectedAgent, sessionId);
+          const listed = listedRes.files;
+          // The backend's scope resolution knows which project this chat
+          // belongs to (the URL doesn't) — prefer its prefixes so shared
+          // project-root files (math-course/…) attribute correctly too.
+          setWsScopePrefixes(listedRes.scopePrefixes);
           const sizeByPath = new Map(listed.map((f) => [f.path, f.size]));
           // Ordinary agents scope project-chat writes to projects/<pid>/<sid>/
           // while coding-root agents land at the project root — try the
           // per-chat subdir first, fall back to the root (see
           // extractProducedFiles). Loose chats have a single layout.
-          const scopePrefixes = urlProjectId
-            ? [`projects/${urlProjectId}/${sessionId}/`, `projects/${urlProjectId}/`]
-            : [`sessions/${sessionId}/`];
+          const scopePrefixes = listedRes.scopePrefixes.length
+            ? listedRes.scopePrefixes
+            : urlProjectId
+              ? [`projects/${urlProjectId}/${sessionId}/`, `projects/${urlProjectId}/`]
+              : [`sessions/${sessionId}/`];
           for (let idx = 0; idx < built.length; idx++) {
             const m = built[idx];
             if (m.role !== "tool-group" || !m.toolCalls || m.toolCalls.length === 0) continue;
@@ -2012,13 +2046,15 @@ export function ChatScreen() {
             // bubbles (diffFiles below) and surfaces only in the workspace
             // browser.
             if (tc) {
-              // Same two-layout candidates as the history-reload path; no
-              // listing oracle mid-stream, so the first (per-chat subdir)
-              // wins and the turn-end reconcile below corrects coding-root
-              // agents whose files land at the project root instead.
-              const prefixes = projectIdHint
-                ? [`projects/${projectIdHint}/${sessionId}/`, `projects/${projectIdHint}/`]
-                : [`sessions/${sessionId}/`];
+              // Prefer the backend-resolved scope prefixes (ref — the
+              // streaming closure predates the listing state); fall back
+              // to the URL hint / loose-chat guess. The turn-end
+              // reconcile below corrects any remaining miss.
+              const prefixes = wsPrefixesRef.current.length
+                ? wsPrefixesRef.current
+                : projectIdHint
+                  ? [`projects/${projectIdHint}/${sessionId}/`, `projects/${projectIdHint}/`]
+                  : [`sessions/${sessionId}/`];
               for (const f of extractProducedFiles([tc], prefixes)) {
                 if (!seenPaths.has(f.path)) {
                   seenPaths.add(f.path);
@@ -2179,6 +2215,12 @@ export function ChatScreen() {
         const sessPrefix = `sessions/${sessionId}/`;
         const projChat = projectIdHint ? `projects/${projectIdHint}/${sessionId}/` : "";
         const projRoot = projectIdHint ? `projects/${projectIdHint}/` : "";
+        // The chat's actual workspace root (backend-resolved) — covers
+        // shared project-root files that carry no /<sid>/ segment, which
+        // the sid-suffix scan below can never match.
+        const wsRoot = wsPrefixesRef.current.length
+          ? wsPrefixesRef.current[wsPrefixesRef.current.length - 1]
+          : "";
         if (projChat && p.startsWith(projChat)) rel = p.slice(projChat.length);
         else if (projRoot && p.startsWith(projRoot)) rel = p.slice(projRoot.length);
         else if (p.startsWith(sessPrefix)) rel = p.slice(sessPrefix.length);
@@ -2186,13 +2228,15 @@ export function ChatScreen() {
         // Candidates across every layout this chat could write to: the
         // loose-chat session dir, this chat's subdir under any project
         // (listing is agent-wide, so the pid comes from the match itself),
-        // and the hinted project's root (coding-root agents).
+        // the hinted project's root (coding-root agents), and the
+        // backend-resolved workspace root (shared project files).
         const cands = [sessPrefix + rel];
         for (const lp of listedByPath.keys()) {
           const i = lp.indexOf(`/${sessionId}/`);
           if (i >= 0 && lp.slice(i + 1 + sessionId.length + 1) === rel) cands.push(lp);
         }
         if (projRoot) cands.push(projRoot + rel);
+        if (wsRoot) cands.push(wsRoot + rel);
         for (const c of cands) if (listedByPath.has(c)) return c;
         return p;
       };
@@ -2698,6 +2742,7 @@ export function ChatScreen() {
                           surfacedSrcs={surfacedSrcs}
                           agentId={selectedAgent}
                           sessionId={sessionId}
+                          workspaceRoot={workspaceRoot}
                           subagentProgress={subagentProgress}
                         />
                         {filePanels}
@@ -2711,6 +2756,7 @@ export function ChatScreen() {
                           surfacedSrcs={surfacedSrcs}
                           agentId={selectedAgent}
                           sessionId={sessionId}
+                          workspaceRoot={workspaceRoot}
                           subagentProgress={subagentProgress}
                         />
                         {filePanels}
@@ -2858,8 +2904,9 @@ export function ChatScreen() {
                           selectedAgent,
                           sessionId,
                           msg.metadata?.knowledgeSources,
+                          workspaceRoot,
                         ) ?? (
-                          <ChatMarkdown text={msg.content} agentId={selectedAgent} sessionId={sessionId} knowledgeSources={msg.metadata?.knowledgeSources} />
+                          <ChatMarkdown text={msg.content} agentId={selectedAgent} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={msg.metadata?.knowledgeSources} />
                         )
                       )}
                       {msg.role === "agent" && msg.metadata?.knowledgeSources && msg.metadata.knowledgeSources.length > 0 && (
@@ -3500,7 +3547,7 @@ function familyOf(name: string): ToolFamily {
  *  `nested`, the outer flex/max-width wrappers are dropped so a parent
  *  container (ToolRoundsBundle) can stack rounds without each one
  *  re-imposing its own bubble alignment. */
-function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, roundIndex, subagentProgress }: { msg: ChatMessage; surfacedSrcs?: ReadonlySet<string>; agentId: string; sessionId: string; nested?: boolean; roundIndex?: number; subagentProgress?: { iteration?: number; max?: number; phase?: "thinking" | "running" | "final-delivery" | "done"; tools?: string[] } | null }) {
+function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, nested = false, roundIndex, subagentProgress }: { msg: ChatMessage; surfacedSrcs?: ReadonlySet<string>; agentId: string; sessionId: string; workspaceRoot?: string; nested?: boolean; roundIndex?: number; subagentProgress?: { iteration?: number; max?: number; phase?: "thinking" | "running" | "final-delivery" | "done"; tools?: string[] } | null }) {
   const t = useT();
   const [groupOpen, setGroupOpen] = useState(false);
   const [expandedTool, setExpandedTool] = useState<Record<string, boolean>>({});
@@ -3546,8 +3593,8 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, nested = false, 
       {/* Content before tools */}
       {msg.content && (
         <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-2.5">
-          {renderContentWithDataImages(msg.content, surfacedSrcs, false, agentId, sessionId, msg.metadata?.knowledgeSources) ?? (
-            <ChatMarkdown text={msg.content} agentId={agentId} sessionId={sessionId} knowledgeSources={msg.metadata?.knowledgeSources} />
+          {renderContentWithDataImages(msg.content, surfacedSrcs, false, agentId, sessionId, msg.metadata?.knowledgeSources, workspaceRoot) ?? (
+            <ChatMarkdown text={msg.content} agentId={agentId} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={msg.metadata?.knowledgeSources} />
           )}
         </div>
       )}
@@ -3725,12 +3772,14 @@ function ToolRoundsBundle({
   surfacedSrcs,
   agentId,
   sessionId,
+  workspaceRoot,
   subagentProgress,
 }: {
   rounds: ChatMessage[];
   surfacedSrcs?: ReadonlySet<string>;
   agentId: string;
   sessionId: string;
+  workspaceRoot?: string;
   subagentProgress?: { iteration?: number; max?: number; phase?: "thinking" | "running" | "final-delivery" | "done"; tools?: string[] } | null;
 }) {
   const [open, setOpen] = useState(false);
@@ -3772,6 +3821,7 @@ function ToolRoundsBundle({
                   surfacedSrcs={surfacedSrcs}
                   agentId={agentId}
                   sessionId={sessionId}
+                  workspaceRoot={workspaceRoot}
                   nested
                   roundIndex={idx + 1}
                   subagentProgress={subagentProgress}

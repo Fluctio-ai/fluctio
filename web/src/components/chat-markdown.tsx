@@ -106,6 +106,7 @@ export function ChatMarkdown({
   text,
   agentId,
   sessionId,
+  workspaceRoot,
   baseDir,
   bareCode = false,
   knowledgeSources,
@@ -114,6 +115,14 @@ export function ChatMarkdown({
   text: string;
   agentId?: string;
   sessionId?: string;
+  // Agent-relative directory (with trailing slash) the sandbox mounts at
+  // /workspace for THIS chat: "sessions/<sid>/" for a loose chat,
+  // "projects/<pid>/" for a project chat (the container mounts the
+  // project ROOT and cwds into the per-chat subdir — see
+  // localfs.go scopeDir). The model's `/workspace/<rel>` links and
+  // images resolve against it. Falls back to the legacy loose-chat
+  // guess sessions/<sid>/ when omitted.
+  workspaceRoot?: string;
   // Workspace directory (relative to the agent root, e.g.
   // "sessions/<sid>" or "sessions/<sid>/sub") that relative URLs in the
   // markdown should resolve against. Used by the file previewer where an
@@ -137,12 +146,16 @@ export function ChatMarkdown({
       // Inline base64 images pass through (the default transform strips data:).
       if (key === "src" && url.startsWith("data:image/")) return url;
       // Remap sandbox `/workspace/<name>` (image src + link href) to the
-      // authenticated file API. The docker bind-mount is session-scoped, so
-      // prepend sessions/<sid>/ or the file API resolves against the agent root
+      // authenticated file API. The docker bind-mount is scoped to the
+      // chat's workspace — sessions/<sid>/ for loose chats, the project
+      // ROOT projects/<pid>/ for project chats (the container mounts the
+      // whole project and cwds into its per-chat subdir) — so prepend
+      // that directory or the file API resolves against the agent root
       // and 404s.
       if (agentId && (key === "src" || key === "href") && url.startsWith("/workspace/")) {
         const rel = url.slice("/workspace/".length);
-        return fileUrl(agentId, sessionId ? `sessions/${sessionId}/${rel}` : rel);
+        const base = workspaceRoot || (sessionId ? `sessions/${sessionId}/` : "");
+        return fileUrl(agentId, base + rel);
       }
       // NOTE: bare relative URLs (e.g. "cover.png") CANNOT be handled here.
       // Streamdown runs rehype-harden BEFORE urlTransform, and harden's
@@ -152,7 +165,7 @@ export function ChatMarkdown({
       // are pre-resolved in processedText below instead.
       return defaultUrlTransform(url, key, node);
     };
-  }, [agentId, sessionId]);
+  }, [agentId, sessionId, workspaceRoot]);
 
   // Pre-resolve bare relative image/link URLs in the markdown SOURCE so
   // they become root-absolute /api/... paths before Streamdown parses and
