@@ -388,3 +388,106 @@ func TestLooksTruncated(t *testing.T) {
 		})
 	}
 }
+
+// TestHTTPErrorRetryAfterSeconds covers the Retry-After parsing added for
+// server-paced 429 backoff: seconds form parses (clamped to 60), missing /
+// date-form / malformed values report ok=false.
+func TestHTTPErrorRetryAfterSeconds(t *testing.T) {
+	h := func(v string) *provider.HTTPError {
+		return &provider.HTTPError{
+			StatusCode: http.StatusTooManyRequests,
+			Headers:    http.Header{"Retry-After": []string{v}},
+		}
+	}
+	if secs, ok := h("5").RetryAfterSeconds(); !ok || secs != 5 {
+		t.Errorf("Retry-After: 5 → (%d, %v), want (5, true)", secs, ok)
+	}
+	if secs, ok := h("120").RetryAfterSeconds(); !ok || secs != 60 {
+		t.Errorf("Retry-After: 120 should clamp to 60, got (%d, %v)", secs, ok)
+	}
+	for _, raw := range []string{"", "Wed, 21 Oct 2015 07:28:00 GMT", "soon", "-3"} {
+		if _, ok := h(raw).RetryAfterSeconds(); ok {
+			t.Errorf("Retry-After: %q should not parse, got ok=true", raw)
+		}
+	}
+	if _, ok := (&provider.HTTPError{StatusCode: 429}).RetryAfterSeconds(); ok {
+		t.Error("nil Headers should not parse")
+	}
+}
+
+// TestRetryAfterDelay pins the jitter and asserts the server-paced
+// backoff window: 5s directive → [5s, 7.5s], oversized directive clamps
+// to 30s, and errors without a directive fall through (ok=false).
+func TestRetryAfterDelay(t *testing.T) {
+	orig := retryAfterJitter
+	t.Cleanup(func() { retryAfterJitter = orig })
+
+	rateLimited := func(secs string) *provider.HTTPError {
+		return &provider.HTTPError{
+			StatusCode: http.StatusTooManyRequests,
+			Headers:    http.Header{"Retry-After": []string{secs}},
+		}
+	}
+
+	retryAfterJitter = func() float64 { return 0 }
+	if d, ok := retryAfterDelay(rateLimited("5")); !ok || d != 5*time.Second {
+		t.Errorf("jitter=0: 5s directive → (%v, %v), want (5s, true)", d, ok)
+	}
+	retryAfterJitter = func() float64 { return 0.4999 }
+	if d, ok := retryAfterDelay(rateLimited("5")); !ok || d < 5*time.Second || d > 7500*time.Millisecond {
+		t.Errorf("jitter≈0.5: 5s directive → %v, want within [5s, 7.5s]", d)
+	}
+	retryAfterJitter = func() float64 { return 1 } // beyond the real [0,1) range, worst case
+	if d, ok := retryAfterDelay(rateLimited("60")); !ok || d != 30*time.Second {
+		t.Errorf("60s directive must clamp to 30s, got %v", d)
+	}
+	// Retry-After: 0 means "retry immediately is fine" — no pacing
+	// directive worth honoring, fall through to the normal ladder.
+	if _, ok := retryAfterDelay(rateLimited("0")); ok {
+		t.Error("Retry-After: 0 should fall through to normal backoff")
+	}
+	// Non-HTTP errors (connection tier) and HTTP errors without the
+	// header never take the server-paced path.
+	if _, ok := retryAfterDelay(fmt.Errorf("send request: %w", &url.Error{Op: "Post", URL: "x", Err: io.EOF})); ok {
+		t.Error("connection-tier error should not be server-paced")
+	}
+	if _, ok := retryAfterDelay(&provider.HTTPError{StatusCode: 429, Body: "no header"}); ok {
+		t.Error("429 without Retry-After should not be server-paced")
+	}
+}
+
+// TestLLMRetryServerPacedRetries verifies llmRetry honors the server's
+// Retry-After instead of the squared ladder on a 429: with jitter pinned
+// to 0 and a 1s directive, the retry waits ~1s (not the ladder's 1s — the
+// observable assertion is recovery + delay ≥ directive).
+func TestLLMRetryServerPacedRetries(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping backoff-duration test in short mode")
+	}
+	orig := retryAfterJitter
+	retryAfterJitter = func() float64 { return 0 }
+	t.Cleanup(func() { retryAfterJitter = orig })
+
+	rateLimited := &provider.HTTPError{
+		StatusCode: http.StatusTooManyRequests,
+		Headers:    http.Header{"Retry-After": []string{"1"}},
+	}
+	calls := 0
+	start := time.Now()
+	_, err := llmRetry(context.Background(), "test", func(ctx context.Context) (*provider.Response, error) {
+		calls++
+		if calls == 1 {
+			return nil, rateLimited
+		}
+		return &provider.Response{Content: "ok"}, nil
+	})
+	if err != nil {
+		t.Fatalf("expected recovery after server-paced retry, got %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected 2 calls, got %d", calls)
+	}
+	if elapsed := time.Since(start); elapsed < time.Second {
+		t.Errorf("retry should honor the 1s directive, retried after %v", elapsed)
+	}
+}

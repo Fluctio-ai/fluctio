@@ -441,7 +441,11 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 	}
 	taskTimeoutSec := taskCfg.TaskTimeoutSec
 	if taskTimeoutSec <= 0 {
-		taskTimeoutSec = 300
+		// Must stay comfortably above subagentDefaultTimeout (15m): a
+		// delegate_task fan-out on IM routinely runs 10-20m, and the old
+		// 300s default killed the whole task mid-subagent while the same
+		// turn on web chat survived on its 45m agentTurnTimeout budget.
+		taskTimeoutSec = 1800
 	}
 	taskTimeout := time.Duration(taskTimeoutSec) * time.Second
 

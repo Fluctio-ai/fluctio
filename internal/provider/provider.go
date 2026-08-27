@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -321,8 +322,35 @@ func NewProvider(apiKey, apiBase, apiType string) Provider {
 type HTTPError struct {
 	StatusCode int
 	Body       string
+	// Headers carries the response headers on non-2xx replies so callers
+	// can honor server pacing directives — today just Retry-After on 429/
+	// 5xx (llmRetry switches to server-paced backoff when present). Nil
+	// for HTTPErrors built outside a real HTTP response.
+	Headers http.Header
 }
 
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("API error %d: %s", e.StatusCode, e.Body)
+}
+
+// RetryAfterSeconds returns the Retry-After pacing directive when the
+// provider sent one in seconds form, clamped to [0, 60]. The HTTP-date
+// form (rare on LLM APIs) and malformed values report ok=false so the
+// caller falls back to its normal backoff.
+func (e *HTTPError) RetryAfterSeconds() (int, bool) {
+	if e.Headers == nil {
+		return 0, false
+	}
+	raw := strings.TrimSpace(e.Headers.Get("Retry-After"))
+	if raw == "" {
+		return 0, false
+	}
+	secs, err := strconv.Atoi(raw)
+	if err != nil || secs < 0 {
+		return 0, false
+	}
+	if secs > 60 {
+		secs = 60
+	}
+	return secs, true
 }

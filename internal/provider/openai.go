@@ -565,7 +565,7 @@ func (p *OpenAIProvider) doChatRequest(ctx context.Context, messages []Message, 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		body := string(respBody)
-		lastErr = &HTTPError{StatusCode: resp.StatusCode, Body: body}
+		lastErr = &HTTPError{StatusCode: resp.StatusCode, Body: body, Headers: resp.Header}
 
 		if !mode.maxCompletionTokens && shouldRetryWithMaxCompletionTokens(resp.StatusCode, body) {
 			mode.maxCompletionTokens = true

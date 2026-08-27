@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -2648,6 +2649,33 @@ var connRetryBackoff = func(attempt int) time.Duration {
 	return d
 }
 
+// retryAfterJitter returns the fractional jitter layered on top of a
+// server-provided Retry-After delay (result ∈ [0, 0.5) → up to +50%,
+// matching sand's computeServerPacedDelayMs). A var so tests can pin it.
+var retryAfterJitter = rand.Float64
+
+// retryAfterDelay converts a Retry-After header on a retryable HTTPError
+// (429/5xx) into the backoff the server asked for, jittered by up to +50%
+// and clamped to 30s so a hostile or broken value can't stall the turn.
+// ok=false means no usable directive — the caller falls back to its
+// normal backoff ladder.
+func retryAfterDelay(err error) (time.Duration, bool) {
+	var he *provider.HTTPError
+	if !errors.As(err, &he) {
+		return 0, false
+	}
+	secs, ok := he.RetryAfterSeconds()
+	if !ok || secs <= 0 {
+		return 0, false
+	}
+	d := time.Duration(secs) * time.Second
+	d += time.Duration(float64(d) * 0.5 * retryAfterJitter())
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d, true
+}
+
 func llmRetry(ctx context.Context, label string, fn func(context.Context) (*provider.Response, error)) (*provider.Response, error) {
 	for attempt := 1; ; attempt++ {
 		resp, err := fn(ctx)
@@ -2688,7 +2716,17 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 		}
 
 		var backoff time.Duration
-		if connection {
+		serverPaced := false
+		if paced, ok := retryAfterDelay(err); ok {
+			// The server explicitly told us when to come back (429/5xx
+			// with Retry-After). Honor it instead of the fixed ladder —
+			// hammering an overloaded provider on our own schedule
+			// amplifies the 429s. Checked before the connection tier
+			// because a Retry-After can only ride on an HTTP response,
+			// which by definition means the request DID reach the
+			// provider (connection-tier errors carry no HTTPError).
+			backoff, serverPaced = paced, true
+		} else if connection {
 			backoff = connRetryBackoff(attempt)
 			if attempt >= 2 {
 				// Surface from the 2nd retry on (the 1st is usually a
@@ -2706,7 +2744,7 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 		}
 		slog.Warn("LLM call failed, retrying",
 			"agent", label, "attempt", attempt,
-			"category", category, "backoff", backoff, "error", err)
+			"category", category, "backoff", backoff, "server_paced", serverPaced, "error", err)
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
@@ -3139,6 +3177,11 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// turn so a model that keeps hitting the cap can't loop forever asking
 	// itself to "continue". Phase 3 (see looksTruncated + the nudge below).
 	truncationRetried := false
+	// emptyRetried caps the empty-response nudge at one retry per turn —
+	// same shape as truncationRetried. Without it, a model that keeps
+	// returning empty responses would burn every remaining iteration on
+	// nudges and the user would still get the error string at the end.
+	emptyRetried := false
 
 	// replyParts accumulates every non-empty assistant text segment
 	// emitted across iterations (preamble lines before tool calls + the
@@ -3289,6 +3332,22 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 
 		if !resp.HasToolCalls() {
 			if strings.TrimSpace(resp.Content) == "" {
+				// Empty-response nudge (borrowed from Cursor sand's reply
+				// nudge): the model produced nothing — no text, no tool
+				// calls. Rather than deliver the raw error string to the
+				// IM user ("model returned an empty response"), give the
+				// model one hidden chance to answer with what it already
+				// has, tools off. The nudge is transient (messages only,
+				// never appended to the session) and capped at one retry
+				// by emptyRetried; a second empty response falls through
+				// to the error delivery below.
+				if !emptyRetried {
+					emptyRetried = true
+					slog.Warn("model returned an empty response, nudging once for a real answer",
+						"agent", a.name, "iteration", i+1)
+					messages = append(messages, emptyResponseNudge())
+					continue
+				}
 				// Auto-title only needs the opening turns — fire even
 				// when the turn itself failed (e.g. context too long →
 				// empty response), or long sessions that pre-date
@@ -4564,6 +4623,19 @@ func continuationNudge() provider.Message {
 	return provider.Message{
 		Role: "system",
 		Content: "Your previous response appears to have been cut off by the maximum output length. Continue exactly where you left off — do not repeat what you already wrote, just complete the remaining content and finish the answer.",
+	}
+}
+
+// emptyResponseNudge is the system message appended when the model returns
+// a completely empty response (no text, no tool calls). The empty turn is
+// deliberately NOT recorded in `messages` — there is nothing to continue
+// from — so the nudge asks for a direct answer from what the model already
+// gathered this turn. Mirrors continuationNudge's transient lifecycle
+// (messages-only, never persisted to the session).
+func emptyResponseNudge() provider.Message {
+	return provider.Message{
+		Role: "system",
+		Content: "Your previous response came back completely empty (no text and no tool calls), so the user received nothing and is still waiting. Answer the user's latest message now in plain text using the information you already have from this turn. Do not call any more tools unless the answer is impossible without one, and do not return an empty response again.",
 	}
 }
 
