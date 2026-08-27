@@ -154,7 +154,16 @@ func buildToolChainFromResolved(resolved config.ResolvedAgent, category string) 
 		AutoFallback: cat.FallbackEnabled(),
 		Registry:     toolProviderRegistry,
 		GetConfig: func(name string) toolproviders.ProviderConfig {
-			pc := providers[name]
+			// Per-category entries ("image_gen|openai") win so one provider
+			// shared across categories (openai backs image_gen, tts and
+			// vision) can carry a different key/endpoint/model per use. A
+			// bare provider-name entry ("openai") is the legacy shared form
+			// and still resolves, keeping hand-edited configs and the CLI
+			// working.
+			pc, ok := providers[category+"|"+name]
+			if !ok {
+				pc = providers[name]
+			}
 			return toolproviders.ProviderConfig{
 				APIKey:   pc.APIKey,
 				Endpoint: pc.Endpoint,

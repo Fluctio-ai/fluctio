@@ -154,6 +154,7 @@ func (s *Server) handleGetTools(w http.ResponseWriter, r *http.Request) {
 	for name, pc := range cfg.ToolProviders {
 		providers[name] = pc
 	}
+	expandLegacyToolProviders(cats, providers)
 	tools := map[string]config.ToolCategoryCfg{}
 	for name, cc := range cfg.Tools {
 		tools[name] = cc
@@ -163,6 +164,34 @@ func (s *Server) handleGetTools(w http.ResponseWriter, r *http.Request) {
 		"toolProviders": providers,
 		"tools":         tools,
 	})
+}
+
+// expandLegacyToolProviders rewrites legacy shared entries (keyed by bare
+// provider name, e.g. "openai") into per-category entries ("image_gen|openai",
+// "tts|openai", "vision|openai") for every provider in the catalog. The admin
+// UI keys its forms by category so image_gen, tts and vision each get their
+// own key/endpoint/model instead of one shared entry. A category that already
+// has its own entry keeps it (only missing ones are filled from the bare
+// entry). Bare entries that got expanded are dropped from the view so the next
+// save persists the split form — the stored config converges without a
+// migration step. Entries matching no catalog provider pass through untouched.
+func expandLegacyToolProviders(cats []categoryCatalog, providers map[string]config.ToolProviderCfg) {
+	expanded := map[string]bool{}
+	for _, c := range cats {
+		for _, p := range c.Providers {
+			key := c.Name + "|" + p.Name
+			if _, ok := providers[key]; ok {
+				continue
+			}
+			if bare, ok := providers[p.Name]; ok {
+				providers[key] = bare
+				expanded[p.Name] = true
+			}
+		}
+	}
+	for name := range expanded {
+		delete(providers, name)
+	}
 }
 
 // handleSaveTools atomically updates the toolProviders and tools sections of

@@ -193,8 +193,12 @@ function CategoryPanel({
   saveButton?: React.ReactNode;
 }) {
   const tt = useT();
+  // Provider settings are keyed per category ("image_gen|openai") so one
+  // provider shared across categories keeps a separate key/endpoint/model
+  // for each form. The backend expands legacy bare-name entries on GET.
+  const provKey = (p: string) => `${catalog.name}|${p}`;
   const firstConfigured = catalog.providers.find((p) => {
-    const s = providers[p.name];
+    const s = providers[provKey(p.name)];
     return (s?.apiKey && s.apiKey.trim()) || (s?.endpoint && s.endpoint.trim());
   });
   const [selectedProvider, setSelectedProvider] = useState<string>(
@@ -233,7 +237,7 @@ function CategoryPanel({
             {selected && selected.name === "none" ? (
               <p className="text-xs text-muted-foreground pt-1">{tt("tools.noneBackendDesc", { name: catalog.name })}</p>
             ) : selected && (
-              <ProviderFields provider={selected} settings={providers[selected.name] || {}} onChange={(patch) => setProvider(selected.name, patch)} category={catalog.name} />
+              <ProviderFields provider={selected} settings={providers[provKey(selected.name)] || {}} onChange={(patch) => setProvider(provKey(selected.name), patch)} category={catalog.name} />
             )}
           </div>
         </div>
@@ -420,10 +424,11 @@ function ChainEditor({
   setTools: (patch: Partial<ToolCategorySettings>) => void;
 }) {
   const tt = useT();
+  const provKey = (p: string) => `${catalog.name}|${p}`;
   const refOptions = useMemo(() => {
     const opts: { value: string; label: string }[] = [];
     for (const p of catalog.providers) {
-      const typed = providers[p.name]?.options?.model?.trim();
+      const typed = providers[provKey(p.name)]?.options?.model?.trim();
       let model = "";
       if (typed) model = typed;
       else if (p.models.length === 1) model = p.models[0];
