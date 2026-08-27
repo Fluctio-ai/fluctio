@@ -25,7 +25,7 @@ export default function GeneralSettingsPage() {
       <div className="rounded-lg border border-border bg-card p-5">
         <h4 className="font-medium mb-1">{t("general.theme")}</h4>
         <p className="text-sm text-muted-foreground mb-4">{t("general.themeDesc")}</p>
-        <div className="grid grid-cols-3 gap-3 max-w-md">
+        <div className="grid grid-cols-3 gap-3">
           {choices.map((c) => {
             const active = theme === c.value;
             const Icon = c.icon;
@@ -52,7 +52,7 @@ export default function GeneralSettingsPage() {
       <div className="rounded-lg border border-border bg-card p-5">
         <h4 className="font-medium mb-1">{t("general.language")}</h4>
         <p className="text-sm text-muted-foreground mb-4">{t("general.languageDesc")}</p>
-        <div className="grid grid-cols-2 gap-3 max-w-md">
+        <div className="grid grid-cols-2 gap-3">
           {LOCALES.map((l) => {
             const active = locale === l.value;
             return (
