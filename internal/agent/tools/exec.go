@@ -28,6 +28,76 @@ type execArgs struct {
 // Uses the ASCII Unit Separator so it never collides with shell output.
 const MetaSandboxPrefix = "\x1fFC_META:sandbox\x1f\n"
 
+// execProgressNoticeAfter is how long a foreground exec may run before the
+// user gets a one-shot out-of-band "still running" bubble on IM channels.
+// Without it, a 10-minute camoufox/ffmpeg build looks like a dead bot from
+// the chatter's side — the turn produces no IM traffic at all until it
+// finishes. sand's guidance calls this cadence "meaningful beats"; this is
+// the harness-enforced floor for the longest tool in the turn. A var so
+// tests can shrink it.
+var execProgressNoticeAfter = 3 * time.Minute
+
+// TurnProgressNotice describes an out-of-band progress event inside the
+// current turn. Tools report facts; the loop-side notifier owns wording
+// and localization (it knows msg.Lang).
+type TurnProgressNotice struct {
+	Kind    string        // "long_exec" today
+	Command string        // length-capped one-line preview
+	Elapsed time.Duration // how long it has been running
+}
+
+// ProgressNoticeFunc pushes a turn-scoped progress notice to the user's
+// chat surface. Attached to ctx by the agent loop for user-driven IM
+// turns only — web already shows live tool_call state via SSE, and
+// cron/heartbeat turns must not send unsolicited bubbles.
+type ProgressNoticeFunc func(n TurnProgressNotice)
+
+type progressNoticeKey struct{}
+
+// WithProgressNotice attaches a ProgressNoticeFunc to ctx.
+func WithProgressNotice(ctx context.Context, fn ProgressNoticeFunc) context.Context {
+	return context.WithValue(ctx, progressNoticeKey{}, fn)
+}
+
+// ProgressNoticeFromContext extracts the notifier, or nil when this turn
+// carries no chat surface to notify (web / cron / background callers).
+func ProgressNoticeFromContext(ctx context.Context) ProgressNoticeFunc {
+	fn, _ := ctx.Value(progressNoticeKey{}).(ProgressNoticeFunc)
+	return fn
+}
+
+// commandPreview renders a one-line, length-capped preview of a command
+// for progress notices. Truncates on rune boundaries — commands are
+// routinely CJK-heavy and a byte-level cut would emit invalid UTF-8 into
+// the IM bubble.
+func commandPreview(command string) string {
+	first := strings.TrimSpace(command)
+	if i := strings.IndexAny(first, "\r\n"); i >= 0 {
+		first = first[:i]
+	}
+	if runes := []rune(first); len(runes) > 80 {
+		first = string(runes[:80]) + "…"
+	}
+	return first
+}
+
+// armExecProgressNotice schedules the one-shot "still running" notice for
+// a foreground exec and returns a stop func the caller defers. No timer is
+// armed when the turn has no notifier (web/cron) or the exec's own timeout
+// can't outlive the threshold — a default 120s exec can never pass a
+// 3-minute notice, so short calls pay nothing.
+func armExecProgressNotice(ctx context.Context, command string, execTimeout time.Duration) (stop func()) {
+	notify := ProgressNoticeFromContext(ctx)
+	if notify == nil || execTimeout <= execProgressNoticeAfter {
+		return func() {}
+	}
+	preview := commandPreview(command)
+	timer := time.AfterFunc(execProgressNoticeAfter, func() {
+		notify(TurnProgressNotice{Kind: "long_exec", Command: preview, Elapsed: execProgressNoticeAfter})
+	})
+	return func() { timer.Stop() }
+}
+
 var dangerousCommands = []string{
 	"rm -rf /",
 	"mkfs",
@@ -177,6 +247,8 @@ func makeExecToolFull(r *Registry, sbCfg *SandboxConfig, envProvider SkillEnvPro
 		}
 
 		if useSandbox && sbCfg != nil && sbCfg.Pool != nil {
+			stopProgressNotice := armExecProgressNotice(ctx, args.Command, time.Duration(timeout)*time.Second)
+			defer stopProgressNotice()
 			sb := sbCfg.Pool.Get(sbCfg.AgentID, sbCfg.Image, sbCfg.Workspace, sbCfg.Policy)
 			out, err := sb.Exec(execCtx, command, "/workspace")
 			return MetaSandboxPrefix + out, err
@@ -200,6 +272,8 @@ func makeExecToolFull(r *Registry, sbCfg *SandboxConfig, envProvider SkillEnvPro
 		if dir := r.hostWorkspaceDir(); dir != "" {
 			cmd.Dir = dir
 		}
+		stopProgressNotice := armExecProgressNotice(ctx, args.Command, time.Duration(timeout)*time.Second)
+		defer stopProgressNotice()
 
 		// Always set cmd.Env explicitly. Default Go behavior is to
 		// inherit the parent's full env, which leaks daemon secrets

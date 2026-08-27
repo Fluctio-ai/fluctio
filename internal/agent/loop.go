@@ -3060,6 +3060,27 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// continue to list "all sessions on my bots"; chatter_user_id
 	// records the actual participant for per-chatter queries.
 	ctx = store.WithChannel(ctx, msg.Channel)
+	// Long-exec progress notice for IM turns: foreground execs granted a
+	// timeout beyond tools' execProgressNoticeAfter push one out-of-band
+	// "still running" bubble so a 10-minute build doesn't read as a dead
+	// bot (the turn emits no IM traffic at all until it finishes). Only
+	// user-driven IM turns — web shows live tool_call state via SSE, and
+	// cron/heartbeat turns must not send unsolicited bubbles. Non-blocking
+	// push, same drop-not-stall contract as the compaction notice.
+	if msg.Channel != "web" && isIMChannel(msg.Channel) && a.messageBus != nil && allowedContinuationSources[msg.Source] {
+		channel, accountID, chatID, lang := msg.Channel, msg.AccountID, msg.ChatID, msg.Lang
+		ctx = tools.WithProgressNotice(ctx, func(n tools.TurnProgressNotice) {
+			text := fmt.Sprintf("⏳ 命令已运行 %s：%s —— 完成后我会把结果发给你。", n.Elapsed, n.Command)
+			if lang == "en" {
+				text = fmt.Sprintf("⏳ A command has been running for %s: %s — I'll send you the result as soon as it finishes.", n.Elapsed, n.Command)
+			}
+			select {
+			case a.messageBus.Outbound <- bus.OutboundMessage{Channel: channel, AccountID: accountID, ChatID: chatID, Text: text}:
+			default:
+				slog.Warn("outbound channel full, dropping exec progress notice", "agent", a.name)
+			}
+		})
+	}
 	// Per-turn channel context for the skill-refresh diagnostic. Lets
 	// us correlate the "skills summary refreshed" log emitted inside
 	// refreshSkillsFromStore with the channel the request arrived on,
