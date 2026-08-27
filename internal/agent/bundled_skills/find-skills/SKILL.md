@@ -111,13 +111,13 @@ The 20-install case is FINE — it's a niche request, the skill is on-topic, tha
 
 ### Step 6: Install AND Use the Skill
 
-Install with `-g -y` — the Fluctio sandbox bind-mounts the global install location (`/root/.agents/skills` inside the container) RW to THIS AGENT's dedicated skill directory on host — the same place `write_file('skills/<name>/')` writes — so a `-g` install lands in the agent layer and is visible to the next chat turn (this agent only, just like a written skill).
+Install with `-g -y` — the Fluctio sandbox bind-mounts the global install location to the chatter's host skill bucket, so a `-g` install lands in `~/.fluctio/users/<uid>/skills/<name>/` on host and is visible to the next chat turn.
 
 ```bash
 npx skills add <owner/repo@skill> -g -y
 ```
 
-`-g` = global (the CLI's term for its user-level install, which Fluctio bind-mounts to the agent's own skill dir), `-y` = skip prompts.
+`-g` = global (user-level skill dir, which is bind-mounted), `-y` = skip prompts.
 
 ### Step 7 (CRITICAL): Read the skill, then USE it — don't reimplement
 
