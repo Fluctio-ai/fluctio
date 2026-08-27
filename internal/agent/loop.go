@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1045,11 +1046,80 @@ func (a *Agent) Complete(ctx context.Context, messages []provider.Message, maxTo
 	return resp.Content, nil
 }
 
+// firstTokenStallError marks a stream that produced zero chunks within the
+// first-token deadline — the request WAS accepted (headers 200, SSE open)
+// but the provider never started generating. Distinct from
+// context.Canceled on purpose: a user Stop must end the turn silently,
+// while a stall means the caller is still waiting and llmRetry should
+// back off and re-send (nothing was delivered, so a retry is safe).
+// sand (Cursor Grok Bot) carries the same shape as FirstTokenStallError.
+type firstTokenStallError struct{ waited time.Duration }
+
+func (e *firstTokenStallError) Error() string {
+	return fmt.Sprintf("provider stream produced no first token within %s (first-token stall watchdog)", e.waited)
+}
+
+// firstTokenStallDeadline bounds how long a streaming LLM call may sit with
+// an open stream and zero chunks. ResponseHeaderTimeout (120s, provider.go)
+// already bounds "connected but no headers"; this bounds the next wedge —
+// headers fine, SSE open, then silence, which previously blocked Next()
+// forever and serialized the whole per-chat queue behind the dead request.
+// Overridable via FLUCTIO_FIRST_TOKEN_STALL_MS (min 1000ms; sand uses the
+// same 150s default via SAND_FIRST_TOKEN_STALL_DEADLINE_MS). A var so
+// tests can shrink it.
+var firstTokenStallDeadline = resolveFirstTokenStallDeadline()
+
+func resolveFirstTokenStallDeadline() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("FLUCTIO_FIRST_TOKEN_STALL_MS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1000 {
+			return time.Duration(n) * time.Millisecond
+		}
+	}
+	return 150 * time.Second
+}
+
+// firstTokenWatchdog arms the stall timer around one streaming call. mark()
+// is called on the first received chunk (timer stops, watchdog disarmed);
+// if the deadline passes with no chunk, the callback cancels the
+// stream-scoped ctx — never the turn ctx — so the producer goroutine's
+// body read errors out, the chunk channel closes, and the consumer's
+// stallFired check surfaces firstTokenStallError instead of the
+// context.Canceled the cancel would otherwise masquerade as.
+type firstTokenWatchdog struct {
+	got   atomic.Bool
+	fired atomic.Bool
+	timer *time.Timer
+}
+
+func newFirstTokenWatchdog(deadline time.Duration, cancel context.CancelFunc) *firstTokenWatchdog {
+	w := &firstTokenWatchdog{}
+	w.timer = time.AfterFunc(deadline, func() {
+		if !w.got.Load() {
+			w.fired.Store(true)
+			cancel()
+		}
+	})
+	return w
+}
+
+// mark records the first chunk and disarms the timer. Safe to call on
+// every chunk (only the first transition matters).
+func (w *firstTokenWatchdog) mark() {
+	w.got.Store(true)
+	w.timer.Stop()
+}
+
+func (w *firstTokenWatchdog) stop() { w.timer.Stop() }
+
 func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []provider.Message, tools []provider.Tool, emitDeltas bool) (*provider.Response, error) {
 	start := time.Now()
 	msgCount := len(messages)
 	hasImg := requestHasImage(messages)
-	sr, err := a.provider.ChatStream(ctx, messages, tools, a.model, a.maxTokens, a.temperature)
+	// Stream-scoped cancel so the stall watchdog (and only it) can abort
+	// the dead stream without touching the caller's turn ctx.
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+	sr, err := a.provider.ChatStream(streamCtx, messages, tools, a.model, a.maxTokens, a.temperature)
 	if err != nil {
 		a.recordLLMCallDiag(ctx, time.Since(start), llmDiagInfo{
 			status: classifyCallError(err), httpStatus: extractHTTPStatus(err),
@@ -1057,6 +1127,8 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 		})
 		return nil, err
 	}
+	watchdog := newFirstTokenWatchdog(firstTokenStallDeadline, cancelStream)
+	defer watchdog.stop()
 	var (
 		contentBuilder strings.Builder
 		toolCalls      []provider.ToolCall
@@ -1070,6 +1142,7 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 		if !ok {
 			break
 		}
+		watchdog.mark()
 		if chunk.Content != "" {
 			contentBuilder.WriteString(chunk.Content)
 			if emitDeltas {
@@ -1100,6 +1173,17 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 				streamUsage = chunk.Usage
 			}
 		}
+	}
+	if stallFired := watchdog.fired.Load(); stallFired {
+		// Override BEFORE the sr.Err() branch below: the watchdog's cancel
+		// makes the stream error read as context.Canceled, which the loop's
+		// error path would silently swallow as a user Stop. A stall is not
+		// a Stop — surface the distinct retryable error so llmRetry re-sends.
+		a.recordLLMCallDiag(ctx, time.Since(start), llmDiagInfo{
+			status: "first_token_stall", errMsg: "no first chunk within " + firstTokenStallDeadline.String(),
+			msgCount: msgCount, hasImage: hasImg,
+		})
+		return nil, &firstTokenStallError{waited: firstTokenStallDeadline}
 	}
 	if err := sr.Err(); err != nil {
 		a.recordLLMCallDiag(ctx, time.Since(start), llmDiagInfo{
@@ -1187,6 +1271,10 @@ func (a *Agent) recordLLMCallDiag(ctx context.Context, dur time.Duration, info l
 // diagnostic trail. context.Canceled (user stopped) and DeadlineExceeded
 // (timeout) get their own buckets; everything else is a generic "error".
 func classifyCallError(err error) string {
+	var stall *firstTokenStallError
+	if errors.As(err, &stall) {
+		return "first_token_stall"
+	}
 	if errors.Is(err, context.Canceled) {
 		return "canceled"
 	}
@@ -2565,6 +2653,14 @@ var ErrContextTooLong = errors.New("context length exceeded")
 func classifyLLMError(err error) string {
 	if err == nil {
 		return ""
+	}
+	// Stall check BEFORE the context checks: the watchdog's cancel makes
+	// the surfaced error chain contain context.Canceled, but a stall is a
+	// provider failure the caller is still waiting on — retryable, not a
+	// terminal user Stop.
+	var stall *firstTokenStallError
+	if errors.As(err, &stall) {
+		return "retryable"
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "terminal"

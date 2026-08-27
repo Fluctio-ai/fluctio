@@ -491,3 +491,91 @@ func TestLLMRetryServerPacedRetries(t *testing.T) {
 		t.Errorf("retry should honor the 1s directive, retried after %v", elapsed)
 	}
 }
+
+// TestClassifyLLMErrorFirstTokenStall pins the stall classification: a
+// firstTokenStallError must classify as retryable EVEN THOUGH its cause
+// chain contains context.Canceled (the watchdog cancels the stream ctx to
+// break the dead read) — the context checks alone would brand it terminal
+// and the loop would swallow it as a user Stop.
+func TestClassifyLLMErrorFirstTokenStall(t *testing.T) {
+	stall := &firstTokenStallError{waited: firstTokenStallDeadline}
+	if got := classifyLLMError(stall); got != "retryable" {
+		t.Errorf("classifyLLMError(stall) = %q, want retryable", got)
+	}
+	if got := classifyCallError(stall); got != "first_token_stall" {
+		t.Errorf("classifyCallError(stall) = %q, want first_token_stall", got)
+	}
+	// A stall WRAPPING a context.Canceled (as sr.Err() would produce when
+	// the watchdog's cancel propagates) must still classify retryable.
+	wrapped := fmt.Errorf("read stream: %w: %w", context.Canceled, stall)
+	if got := classifyLLMError(wrapped); got != "retryable" {
+		t.Errorf("classifyLLMError(wrapped stall) = %q, want retryable", got)
+	}
+}
+
+// TestFirstTokenWatchdog covers the three outcomes: no chunk in time →
+// fires and cancels; chunk before deadline → disarmed; stop() without a
+// chunk → never fires.
+func TestFirstTokenWatchdog(t *testing.T) {
+	t.Run("fires without first chunk", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		w := newFirstTokenWatchdog(5*time.Millisecond, cancel)
+		defer w.stop()
+		<-ctx.Done()
+		if !w.fired.Load() {
+			t.Error("watchdog should report fired after deadline with no chunk")
+		}
+	})
+	t.Run("disarmed by first chunk", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		w := newFirstTokenWatchdog(20*time.Millisecond, cancel)
+		w.mark()
+		time.Sleep(40 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Fatal("disarmed watchdog must not cancel")
+		default:
+		}
+		if w.fired.Load() {
+			t.Error("watchdog should not fire after mark()")
+		}
+	})
+	t.Run("stop without chunk never fires", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		w := newFirstTokenWatchdog(10*time.Millisecond, cancel)
+		w.stop()
+		time.Sleep(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Fatal("stopped watchdog must not cancel")
+		default:
+		}
+		if w.fired.Load() {
+			t.Error("stopped watchdog must not report fired")
+		}
+	})
+}
+
+// TestResolveFirstTokenStallDeadline pins the env parsing: bare default
+// 150s, valid override honored, junk/too-small values fall back.
+func TestResolveFirstTokenStallDeadline(t *testing.T) {
+	t.Setenv("FLUCTIO_FIRST_TOKEN_STALL_MS", "")
+	if d := resolveFirstTokenStallDeadline(); d != 150*time.Second {
+		t.Errorf("default = %v, want 150s", d)
+	}
+	t.Setenv("FLUCTIO_FIRST_TOKEN_STALL_MS", "5000")
+	if d := resolveFirstTokenStallDeadline(); d != 5*time.Second {
+		t.Errorf("override 5000 = %v, want 5s", d)
+	}
+	t.Setenv("FLUCTIO_FIRST_TOKEN_STALL_MS", "500") // below 1000ms floor
+	if d := resolveFirstTokenStallDeadline(); d != 150*time.Second {
+		t.Errorf("sub-floor override = %v, want 150s fallback", d)
+	}
+	t.Setenv("FLUCTIO_FIRST_TOKEN_STALL_MS", "abc")
+	if d := resolveFirstTokenStallDeadline(); d != 150*time.Second {
+		t.Errorf("junk override = %v, want 150s fallback", d)
+	}
+}
