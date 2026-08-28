@@ -1,9 +1,9 @@
 package kb
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime"
 	"net/http"
@@ -13,8 +13,6 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
 	"github.com/fluctio-ai/fluctio/internal/config"
-	"github.com/fluctio-ai/fluctio/internal/safename"
-	"github.com/google/uuid"
 )
 
 // tools_notes.go exposes the 笔记 (personal notes) view to the harness.
@@ -267,23 +265,18 @@ func registerKBAttachFile(r *tools.Registry, store *KBStore, agentID string) {
 			if int64(len(data)) > 64<<20 {
 				return fmt.Sprintf("文件 %s 超过 64MB 上限（%d MB），未附加。", filepath.Base(abs), len(data)>>20), nil
 			}
-			name := safename.SanitizeFileName(filepath.Base(abs), 120)
-			if name == "" {
-				return fmt.Sprintf("无法从路径 %q 推导出安全的文件名，未附加。", p), nil
-			}
-			mimeType := mime.TypeByExtension(filepath.Ext(name))
+			mimeType := mime.TypeByExtension(filepath.Ext(filepath.Base(abs)))
 			if mimeType == "" || mimeType == "application/octet-stream" {
 				mimeType = http.DetectContentType(data)
 			}
-			wsPath := fmt.Sprintf("notes/%s/%s-%s", args.NoteID, uuid.NewString()[:8], name)
-			if err := ws.Put(ctx, agentID, "", "", wsPath, bytes.NewReader(data), int64(len(data)), mimeType); err != nil {
+			att, err := store.SaveNoteAttachmentBytes(ctx, ws, agentID, args.NoteID, filepath.Base(abs), mimeType, data)
+			if err != nil {
+				if errors.Is(err, ErrUnsafeFileName) {
+					return fmt.Sprintf("无法从路径 %q 推导出安全的文件名，未附加。", p), nil
+				}
 				return "", err
 			}
-			if _, err := store.AddAttachment(ctx, agentID, args.NoteID, name, wsPath, mimeType, int64(len(data))); err != nil {
-				_ = ws.Delete(ctx, agentID, "", "", wsPath)
-				return "", err
-			}
-			saved = append(saved, fmt.Sprintf("%s (%d KB)", name, len(data)/1024))
+			saved = append(saved, fmt.Sprintf("%s (%d KB)", att.FileName, len(data)/1024))
 		}
 		return fmt.Sprintf("已附加 %d 个文件到笔记（note_id=%s）：%s。附件在笔记页与手动上传一样展示。", len(saved), args.NoteID, strings.Join(saved, "、")), nil
 	})

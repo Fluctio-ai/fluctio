@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,14 +13,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
-	"github.com/fluctio-ai/fluctio/internal/safename"
 	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/wiki"
@@ -956,10 +952,6 @@ func (s *Server) handleKBNoteUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	saved := make([]kb.KBNoteAttachment, 0, len(headers))
 	for _, h := range headers {
-		name := safename.SanitizeFileName(h.Filename, 120)
-		if name == "" {
-			continue
-		}
 		fh, err := h.Open()
 		if err != nil {
 			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -973,26 +965,19 @@ func (s *Server) handleKBNoteUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		mimeType := h.Header.Get("Content-Type")
 		if mimeType == "" || strings.HasPrefix(mimeType, "application/octet-stream") {
-			if guessed := mime.TypeByExtension(filepath.Ext(name)); guessed != "" {
+			if guessed := mime.TypeByExtension(filepath.Ext(h.Filename)); guessed != "" {
 				mimeType = guessed
 			}
 		}
-		wsPath := fmt.Sprintf("notes/%s/%s-%s", noteID, uuid.NewString()[:8], name)
-		if err := s.workspaceStore.Put(r.Context(), agentID, "", "", wsPath, bytes.NewReader(data), int64(len(data)), mimeType); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
-		attID, err := kbStore.AddAttachment(r.Context(), agentID, noteID, name, wsPath, mimeType, int64(len(data)))
+		att, err := kbStore.SaveNoteAttachmentBytes(r.Context(), s.workspaceStore, agentID, noteID, h.Filename, mimeType, data)
 		if err != nil {
-			_ = s.workspaceStore.Delete(r.Context(), agentID, "", "", wsPath)
+			if errors.Is(err, kb.ErrUnsafeFileName) {
+				continue // same skip as before: nothing usable in the name
+			}
 			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
-		saved = append(saved, kb.KBNoteAttachment{
-			ID: attID, NoteID: noteID, AgentID: agentID,
-			FileName: name, FilePath: wsPath, Mime: mimeType, Size: int64(len(data)),
-			CreatedAt: time.Now(),
-		})
+		saved = append(saved, att)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"attachments": saved})
 }

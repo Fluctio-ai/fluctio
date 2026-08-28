@@ -74,6 +74,7 @@ type VectorSearcher interface {
 	SearchConversationSummariesVector(ctx context.Context, embedding []float32, limit int) ([]int64, error)
 	SearchConversationSummariesVectorScored(ctx context.Context, embedding []float32, limit int) ([]store.VecSummaryHit, error)
 	GetConversationSummariesByIDs(ctx context.Context, ids []int64) ([]store.ConversationSummary, error)
+	GetActiveSummariesByIDs(ctx context.Context, agentID string, ids []int64) ([]store.ConversationSummary, error)
 	GetConversationSummaryEmbeddings(ctx context.Context, ids []int64) (map[int64][]float32, error)
 }
 
@@ -226,18 +227,13 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 								scopedIDs = append(scopedIDs, sh.ID)
 							}
 							if len(scopedIDs) > 0 {
-								vecHits, fetchErr := r.vecDB.GetConversationSummariesByIDs(ctx, scopedIDs)
+								// Active-only fetch (agent + superseded filters live
+								// in the store now): a state flip (installed→removed)
+								// must not surface both sides as equally valid
+								// memories.
+								vecHits, fetchErr := r.vecDB.GetActiveSummariesByIDs(ctx, r.agentID, scopedIDs)
 								if fetchErr == nil {
-									scoped := make([]store.ConversationSummary, 0, len(vecHits))
-									for _, h := range vecHits {
-										// Superseded rows drop out of recall — a state
-										// flip (installed→removed) must not surface both
-										// sides as equally valid memories.
-										if h.AgentID == r.agentID && h.SupersededBy == 0 {
-											scoped = append(scoped, h)
-										}
-									}
-									hits = mergeSummaryResults(hits, scoped, poolSize)
+									hits = mergeSummaryResults(hits, vecHits, poolSize)
 								}
 							}
 						}

@@ -1,13 +1,16 @@
 package kb
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/safename"
 	"github.com/google/uuid"
 )
 
@@ -174,6 +177,46 @@ func (s *KBStore) ListNoteAttachments(ctx context.Context, agentID, noteID strin
 		out = append(out, a)
 	}
 	return out, nil
+}
+
+// WorkspacePutter is the workspace-store surface note attachment writes
+// need (satisfied by the workspace.Store implementations both call sites
+// already hold).
+type WorkspacePutter interface {
+	Put(ctx context.Context, agentID, projectID, sessionID, path string, r io.Reader, size int64, mime string) error
+	Delete(ctx context.Context, agentID, projectID, sessionID, path string) error
+}
+
+// ErrUnsafeFileName is returned by SaveNoteAttachmentBytes when the
+// caller-supplied name sanitizes to nothing usable.
+var ErrUnsafeFileName = errors.New("no safe filename derivable")
+
+// SaveNoteAttachmentBytes persists one note attachment end to end:
+// sanitize the name, write the bytes into the workspace store under
+// notes/<noteID>/<uuid8>-<name>, and row it into kb_note_attachments —
+// rolling the written bytes back when the row insert fails. The single
+// write path shared by the HTTP upload handler and the agent's
+// knowledgebase_attach_file tool, so path layout, name sanitation, and
+// rollback semantics can't drift between the two entry points.
+func (s *KBStore) SaveNoteAttachmentBytes(ctx context.Context, ws WorkspacePutter, agentID, noteID, name, mimeType string, data []byte) (KBNoteAttachment, error) {
+	name = safename.SanitizeFileName(name, 120)
+	if name == "" {
+		return KBNoteAttachment{}, ErrUnsafeFileName
+	}
+	wsPath := fmt.Sprintf("notes/%s/%s-%s", noteID, uuid.NewString()[:8], name)
+	if err := ws.Put(ctx, agentID, "", "", wsPath, bytes.NewReader(data), int64(len(data)), mimeType); err != nil {
+		return KBNoteAttachment{}, err
+	}
+	attID, err := s.AddAttachment(ctx, agentID, noteID, name, wsPath, mimeType, int64(len(data)))
+	if err != nil {
+		_ = ws.Delete(ctx, agentID, "", "", wsPath)
+		return KBNoteAttachment{}, err
+	}
+	return KBNoteAttachment{
+		ID: attID, NoteID: noteID, AgentID: agentID,
+		FileName: name, FilePath: wsPath, Mime: mimeType, Size: int64(len(data)),
+		CreatedAt: time.Now(),
+	}, nil
 }
 
 // AddAttachment records one uploaded file. filePath is the workspace-

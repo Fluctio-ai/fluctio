@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 type memoryFetchArgs struct {
@@ -53,17 +52,12 @@ func makeMemoryFetch(r *Registry) ToolFunc {
 			return "", fmt.Errorf("memory_fetch not available: store not wired")
 		}
 
-		hits, err := r.vecDB.GetConversationSummariesByIDs(ctx, args.IDs)
+		// Active-only fetch: the agent + superseded predicates live in
+		// the store (GetActiveSummariesByIDs) — ids are LLM input
+		// and must not leak other agents' memories or stale state.
+		scoped, err := r.vecDB.GetActiveSummariesByIDs(ctx, r.agentID, args.IDs)
 		if err != nil {
 			return "", fmt.Errorf("fetch memories: %w", err)
-		}
-		// Re-scope to this agent and drop superseded rows — ids are LLM
-		// input and must not leak other agents' memories or stale state.
-		scoped := make([]store.ConversationSummary, 0, len(hits))
-		for _, h := range hits {
-			if h.AgentID == r.agentID && h.SupersededBy == 0 {
-				scoped = append(scoped, h)
-			}
 		}
 		if len(scoped) == 0 {
 			return "No memories found for the requested ids (wrong agent scope or superseded).", nil

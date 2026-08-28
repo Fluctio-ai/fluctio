@@ -1286,6 +1286,35 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 	return scanConversationSummaries(rows)
 }
 
+// GetActiveSummariesByIDs fetches summaries by primary key, keeping only
+// this agent's rows that are still active (superseded_by = 0) — the
+// authoritative recall-time predicate. The vector lane and memory_fetch
+// used to apply it caller-side; a future recall entry point that forgets
+// it would surface both sides of a state flip (installed→removed) as
+// equally valid memories.
+func (d *DBStore) GetActiveSummariesByIDs(ctx context.Context, agentID string, ids []int64) ([]ConversationSummary, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, agentID)
+	for i, id := range ids {
+		placeholders[i] = d.ph(i + 2)
+		args = append(args, id)
+	}
+	q := fmt.Sprintf(`SELECT `+summaryCols+`
+	FROM conversation_summaries
+	WHERE agent_id = %s AND superseded_by = 0 AND id IN (%s)
+	ORDER BY created_at DESC`, d.ph(1), strings.Join(placeholders, ","))
+	rows, err := d.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanConversationSummaries(rows)
+}
+
 // GetConversationSummariesByIDs fetches summaries by primary key.
 // Used by memory_search after vector KNN returns matching IDs.
 func (d *DBStore) GetConversationSummariesByIDs(ctx context.Context, ids []int64) ([]ConversationSummary, error) {
