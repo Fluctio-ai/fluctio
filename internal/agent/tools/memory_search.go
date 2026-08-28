@@ -54,6 +54,16 @@ func markRecallConsumed(ctx context.Context, recallID string) {
 	}
 }
 
+// flushRecallConsumed promotes the turn's pending recall ids to consumed
+// on the summary DB — the tools that can surface recalled memories after a
+// search call this once their output is actually delivered. Best-effort;
+// no-op without ids or a DB.
+func flushRecallConsumed(ctx context.Context, r *Registry) {
+	if ids := consumedRecallIDsFromCtx(ctx); ids != nil && len(*ids) > 0 && r.summaryDB != nil {
+		_ = r.summaryDB.MarkRecallEventsConsumed(ctx, *ids)
+	}
+}
+
 // FTSSearcher is the interface for FTS5-based memory search.
 type FTSSearcher interface {
 	Search(query string, limit int) ([]store.FTSResult, error)

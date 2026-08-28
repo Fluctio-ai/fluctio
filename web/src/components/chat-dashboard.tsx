@@ -100,19 +100,6 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
     return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" });
   };
 
-  // Cron fire times are future-facing — "in 3h" math reads worse than a
-  // plain clock time, so same-day fires show HH:mm and later ones a
-  // short date+time. Empty string for missing/unparseable.
-  const nextRunLabel = (iso?: string): string => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
-    const sameDay = nowTs !== 0 && new Date(nowTs).toDateString() === d.toDateString();
-    return sameDay
-      ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  };
-
   return (
     // max-w-6xl: four panes need more room than the composer's max-w-2xl,
     // but stay centered under the hero for visual kinship. items-start
@@ -264,7 +251,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground" title={j.schedule}>
                     {j.nextRun
-                      ? t("dashboard.cron.next", { time: nextRunLabel(j.nextRun) })
+                      ? t("dashboard.cron.next", { time: shortDateTime(j.nextRun ?? "", nowTs) })
                       : t("dashboard.cron.notScheduled")}
                   </span>
                 </li>
@@ -283,11 +270,6 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
   );
 }
 
-// TodoRow renders one open KB todo: a hollow bullet for pending, the
-// warning ring for in_progress (matching the TodoCard status colors),
-// title text, and the due time — destructive-styled once past. nowTs is
-// the stamped "now" from the data load (render-time Date.now() trips
-// the purity lint); 0 suppresses the time label.
 // shortDateTime renders an ISO timestamp for the todo/cron due labels:
 // HH:mm on the stamped "today", else a short date + time. nowTs is the
 // load-time stamp (0 → best-effort with the parsed date only).

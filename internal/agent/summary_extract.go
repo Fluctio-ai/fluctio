@@ -234,11 +234,7 @@ func renderRecentMemories(recent []store.ConversationSummary) string {
 	}
 	rows := make([]row, 0, len(recent))
 	for _, r := range recent {
-		s := r.Summary
-		if len(s) > 160 {
-			s = s[:160] + "..."
-		}
-		rows = append(rows, row{ID: r.ID, Topic: r.Topic, Summary: s})
+		rows = append(rows, row{ID: r.ID, Topic: r.Topic, Summary: truncateStr(r.Summary, 160)})
 	}
 	b, err := json.Marshal(rows)
 	if err != nil {

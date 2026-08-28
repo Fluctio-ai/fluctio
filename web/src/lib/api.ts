@@ -2114,16 +2114,6 @@ export async function deleteNote(agentId: string, noteId: string): Promise<{ ok?
   if (!res.ok) return { error: `HTTP ${res.status}` };
   return res.json();
 }
-// reorderNotes persists the manual list order written by the notes
-// sidebar drag. ids is the full desired top-to-bottom order.
-export async function reorderNotes(agentId: string, ids: string[]): Promise<{ ok?: boolean; error?: string }> {
-  const res = await apiFetch(`/api/agents/${agentId}/kb/notes/reorder`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ids }),
-  });
-  if (!res.ok) return { error: `HTTP ${res.status}` };
-  return res.json();
-}
 export async function listNoteAttachments(agentId: string, noteId: string): Promise<KBNoteAttachment[]> {
   const res = await apiFetch(`/api/agents/${agentId}/kb/notes/${noteId}/attachments`);
   if (!res.ok) return [];

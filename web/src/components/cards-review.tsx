@@ -37,6 +37,7 @@ export function CardDeck({
   agentId,
   variant,
   practice,
+  limit: limitProp,
   onFinish,
 }: {
   agentId: string;
@@ -46,6 +47,10 @@ export function CardDeck({
   // sent to the API — a re-run never advances/resets the Ebbinghaus
   // schedule. Backs the 再练一轮 button once today's due set is cleared.
   practice?: boolean;
+  // limit supplies the review-queue cap directly when the host already
+  // fetched the agent config (CardsView does, for its header CTA count) —
+  // omit it and the deck fetches cards.reviewLimit itself (dashboard).
+  limit?: number;
   onFinish: (result: CardDeckResult) => void;
 }) {
   const t = useT();
@@ -75,11 +80,15 @@ export function CardDeck({
     // one capped fetch replaces the old pull-everything-then-reverse.)
     (async () => {
       let limit = 20;
-      try {
-        const cfg = await getAgentConfig(agentId);
-        const n = cfg?.cards?.reviewLimit ?? 0;
-        if (n > 0) limit = n;
-      } catch { /* cfg read failed — default cap */ }
+      if (limitProp && limitProp > 0) {
+        limit = limitProp;
+      } else {
+        try {
+          const cfg = await getAgentConfig(agentId);
+          const n = cfg?.cards?.reviewLimit ?? 0;
+          if (n > 0) limit = n;
+        } catch { /* cfg read failed — default cap */ }
+      }
       const opts = practice
         ? { filter: "active", limit: 50 } // practice pool: everything in rotation
         : { queue: true, limit }; // review feed: most-overdue first, capped
@@ -87,7 +96,7 @@ export function CardDeck({
       if (alive && !closedRef.current) setQueue(cards);
     })();
     return () => { alive = false; closedRef.current = true; };
-  }, [agentId, practice]);
+  }, [agentId, practice, limitProp]);
 
   const finished = queue !== null && idx >= queue.length;
 

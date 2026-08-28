@@ -5,7 +5,7 @@
 // pinned back to its source (diary date or wiki page id) via a
 // source_index map so the card can deep-link its origin. Candidates are
 // deduped against existing cards (keyword + vector legs, see
-// kb.KBStore.CheckCardDuplicate) before insert.
+// kb.KBStore.CheckCardDuplicatesBatch) before insert.
 package cardsgen
 
 import (
@@ -108,9 +108,35 @@ func Run(
 		slog.Warn("cardsgen: mark wiki pages carded failed", "agent", agentID, "error", err)
 	}
 
+	// Batch the dedup checks: one embedding call and one embedding-table
+	// scan cover the whole candidate set (CheckCardDuplicatesBatch) instead
+	// of a round trip per card. Only candidates that survive the empty-q/a
+	// filter are checked; same-batch repeats still fall to `seen`.
+	type cand struct {
+		idx int
+		q   string
+	}
+	var cands []cand
+	for i, c := range cards {
+		if q := strings.TrimSpace(c.Question); q != "" && strings.TrimSpace(c.Answer) != "" {
+			cands = append(cands, cand{idx: i, q: q})
+		}
+	}
+	dup := make(map[int]bool, len(cands))
+	if len(cands) > 0 {
+		qs := make([]string, len(cands))
+		for j, cd := range cands {
+			qs[j] = cd.q
+		}
+		res := ks.CheckCardDuplicatesBatch(ctx, agentID, qs)
+		for j, cd := range cands {
+			dup[cd.idx] = res[j]
+		}
+	}
+
 	created, skipped := 0, 0
 	seen := map[string]bool{}
-	for _, c := range cards {
+	for i, c := range cards {
 		q := strings.TrimSpace(c.Question)
 		a := strings.TrimSpace(c.Answer)
 		if q == "" || a == "" {
@@ -121,7 +147,7 @@ func Run(
 		}
 		// Dedup against existing cards AND within this batch.
 		key := strings.ToLower(q)
-		if seen[key] || ks.CheckCardDuplicate(ctx, agentID, q) != nil {
+		if seen[key] || dup[i] {
 			skipped++
 			continue
 		}
@@ -245,14 +271,8 @@ func callLLM(ctx context.Context, prov provider.Provider, model string, sources 
 // stampRun upserts the (agent, date) generation marker — idempotency for
 // the nightly sweep plus a creation log.
 func stampRun(ctx context.Context, dbs *store.DBStore, agentID, date string, created int, model string) error {
-	ph := func(n int) string {
-		if dbs.Dialect() == "postgres" {
-			return fmt.Sprintf("$%d", n)
-		}
-		return "?"
-	}
 	q := `INSERT INTO kb_card_gen_runs (agent_id, date, created, model, created_at)
-		VALUES (` + ph(1) + `,` + ph(2) + `,` + ph(3) + `,` + ph(4) + `,CURRENT_TIMESTAMP)
+		VALUES (` + dbs.Ph(1) + `,` + dbs.Ph(2) + `,` + dbs.Ph(3) + `,` + dbs.Ph(4) + `,CURRENT_TIMESTAMP)
 		ON CONFLICT(agent_id, date) DO UPDATE SET created=excluded.created, model=excluded.model, created_at=CURRENT_TIMESTAMP`
 	_, err := dbs.DB().ExecContext(ctx, q, agentID, date, created, model)
 	return err
@@ -261,15 +281,9 @@ func stampRun(ctx context.Context, dbs *store.DBStore, agentID, date string, cre
 // HasRunFor reports whether a generation pass already stamped (agent,
 // date) — the nightly sweep's skip condition.
 func HasRunFor(ctx context.Context, dbs *store.DBStore, agentID, date string) bool {
-	ph := func(n int) string {
-		if dbs.Dialect() == "postgres" {
-			return fmt.Sprintf("$%d", n)
-		}
-		return "?"
-	}
 	var one int
 	err := dbs.DB().QueryRowContext(ctx,
-		`SELECT 1 FROM kb_card_gen_runs WHERE agent_id = `+ph(1)+` AND date = `+ph(2),
+		`SELECT 1 FROM kb_card_gen_runs WHERE agent_id = `+dbs.Ph(1)+` AND date = `+dbs.Ph(2),
 		agentID, date).Scan(&one)
 	return err == nil
 }

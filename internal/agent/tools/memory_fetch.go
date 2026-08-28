@@ -71,9 +71,7 @@ func makeMemoryFetch(r *Registry) ToolFunc {
 
 		// recall.consumed: the LLM pulled detail on recalled ids — that
 		// recall was adopted, not just surfaced. Best-effort.
-		if ids := consumedRecallIDsFromCtx(ctx); ids != nil && len(*ids) > 0 && r.summaryDB != nil {
-			_ = r.summaryDB.MarkRecallEventsConsumed(ctx, *ids)
-		}
+		flushRecallConsumed(ctx, r)
 
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "Fetched %d memories:\n\n", len(scoped))

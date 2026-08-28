@@ -450,7 +450,6 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/agents/{id}/kb/bookmarks/{bookmarkId}/promote", auth(s.handleKBPromoteBookmark))
 	mux.HandleFunc("GET /api/agents/{id}/kb/notes", auth(s.handleKBListNotes))
 	mux.HandleFunc("POST /api/agents/{id}/kb/notes", auth(s.handleKBSaveNote))
-	mux.HandleFunc("POST /api/agents/{id}/kb/notes/reorder", auth(s.handleKBReorderNotes))
 	mux.HandleFunc("DELETE /api/agents/{id}/kb/notes/{noteId}", auth(s.handleKBDeleteNote))
 	mux.HandleFunc("GET /api/agents/{id}/kb/notes/{noteId}/attachments", auth(s.handleKBNoteAttachments))
 	mux.HandleFunc("POST /api/agents/{id}/kb/notes/{noteId}/attachments", auth(s.handleKBNoteUpload))

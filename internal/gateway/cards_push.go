@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -19,18 +18,7 @@ import (
 // kb_card_push_runs row for today gates the push, so the half-hourly tick
 // retries a failed push but never double-sends a delivered one.
 func (g *Gateway) runCardsPushSweep(ctx context.Context) {
-	const interval = 30 * time.Minute
-	g.cardsPushCycle(ctx)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			g.cardsPushCycle(ctx)
-		}
-	}
+	g.runEvery(ctx, 30*time.Minute, g.cardsPushCycle)
 }
 
 // cardsPushCycle walks every agent with cards.pushEnabled whose pushTime
@@ -143,7 +131,7 @@ func formatCardsDigest(agentID string, due []kb.KBCard, st kb.KBCardStats) strin
 		b.WriteString(" · 连续 " + strconv.Itoa(st.StreakDays) + " 天")
 	}
 	b.WriteString("）")
-	todayStart := time.Now().In(cardsPushCST).Format("2006-01-02")
+	todayStart := time.Now().In(diaryCST).Format("2006-01-02")
 	carry := 0
 	const maxList = 12
 	for i, c := range due {
@@ -160,7 +148,7 @@ func formatCardsDigest(agentID string, due []kb.KBCard, st kb.KBCardStats) strin
 		b.WriteString("\n…")
 	}
 	for _, c := range due {
-		if c.DueAt != nil && c.DueAt.In(cardsPushCST).Format("2006-01-02") != todayStart {
+		if c.DueAt != nil && c.DueAt.In(diaryCST).Format("2006-01-02") != todayStart {
 			carry++
 		}
 	}
@@ -173,35 +161,19 @@ func formatCardsDigest(agentID string, due []kb.KBCard, st kb.KBCardStats) strin
 	return b.String()
 }
 
-// cardsPushCST is the UTC+8 zone the digest's carry-over check groups
-// days by (same boundary as the card scheduler).
-var cardsPushCST = time.FixedZone("CST", 8*3600)
-
 // cardsPushedToday reports whether the agent already got its digest today.
 func cardsPushedToday(ctx context.Context, dbs *store.DBStore, agentID, date string) bool {
-	ph := func(n int) string {
-		if dbs.Dialect() == "postgres" {
-			return fmt.Sprintf("$%d", n)
-		}
-		return "?"
-	}
 	var one int
 	err := dbs.DB().QueryRowContext(ctx,
-		`SELECT 1 FROM kb_card_push_runs WHERE agent_id = `+ph(1)+` AND date = `+ph(2),
+		`SELECT 1 FROM kb_card_push_runs WHERE agent_id = `+dbs.Ph(1)+` AND date = `+dbs.Ph(2),
 		agentID, date).Scan(&one)
 	return err == nil
 }
 
 // stampCardsPush records today's delivered digest (the once-a-day gate).
 func stampCardsPush(ctx context.Context, dbs *store.DBStore, agentID, date string, count int, channel string) error {
-	ph := func(n int) string {
-		if dbs.Dialect() == "postgres" {
-			return fmt.Sprintf("$%d", n)
-		}
-		return "?"
-	}
 	q := `INSERT INTO kb_card_push_runs (agent_id, date, pushed_count, channel, pushed_at)
-		VALUES (` + ph(1) + `,` + ph(2) + `,` + ph(3) + `,` + ph(4) + `,CURRENT_TIMESTAMP)
+		VALUES (` + dbs.Ph(1) + `,` + dbs.Ph(2) + `,` + dbs.Ph(3) + `,` + dbs.Ph(4) + `,CURRENT_TIMESTAMP)
 		ON CONFLICT(agent_id, date) DO UPDATE SET pushed_count=excluded.pushed_count,
 			channel=excluded.channel, pushed_at=CURRENT_TIMESTAMP`
 	_, err := dbs.DB().ExecContext(ctx, q, agentID, date, count, channel)

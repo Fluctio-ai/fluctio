@@ -67,29 +67,34 @@ func (s *Server) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleGetSkillManifest returns the raw SKILL.md content of a global
-// skill so the admin UI can preview what a skill instructs the agent to
-// do before trusting it. Login-gated like the list endpoint — env
-// values aren't included, only the manifest the loader parses anyway.
-func (s *Server) handleGetSkillManifest(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	// The route pattern already constrains name to a single path segment;
-	// this guards against %-encoding tricks smuggling a traversal.
+// skillManifestResponse validates the skill name (single path segment, no
+// traversal) and streams back the raw SKILL.md from
+// <baseDir>/skills/<name>/SKILL.md. Shared by the global and per-agent
+// manifest endpoints so the read/response shape has one definition.
+func skillManifestResponse(w http.ResponseWriter, baseDir, name string) {
 	if name == "" || filepath.Base(filepath.Clean(name)) != name {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid skill name"})
 		return
 	}
-	homeDir, err := config.HomeDir()
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	data, err := os.ReadFile(filepath.Join(homeDir, "skills", name, "SKILL.md"))
+	data, err := os.ReadFile(filepath.Join(baseDir, "skills", name, "SKILL.md"))
 	if err != nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "skill manifest not found"})
 		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"name": name, "content": string(data)})
+}
+
+// handleGetSkillManifest returns the raw SKILL.md content of a global
+// skill so the admin UI can preview what a skill instructs the agent to
+// do before trusting it. Login-gated like the list endpoint — env
+// values aren't included, only the manifest the loader parses anyway.
+func (s *Server) handleGetSkillManifest(w http.ResponseWriter, r *http.Request) {
+	homeDir, err := config.HomeDir()
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	skillManifestResponse(w, homeDir, r.PathValue("name"))
 }
 
 // handleGetAgentSkillManifest mirrors handleGetSkillManifest for a
@@ -98,11 +103,6 @@ func (s *Server) handleGetSkillManifest(w http.ResponseWriter, r *http.Request) 
 // endpoints.
 func (s *Server) handleGetAgentSkillManifest(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	name := r.PathValue("name")
-	if name == "" || filepath.Base(filepath.Clean(name)) != name {
-		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid skill name"})
-		return
-	}
 	if s.requireAgentOwner(w, r, id) == nil {
 		return
 	}
@@ -111,12 +111,7 @@ func (s *Server) handleGetAgentSkillManifest(w http.ResponseWriter, r *http.Requ
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(homePath, "skills", name, "SKILL.md"))
-	if err != nil {
-		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "skill manifest not found"})
-		return
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{"name": name, "content": string(data)})
+	skillManifestResponse(w, homePath, r.PathValue("name"))
 }
 
 // handleListAgentSkills lists skills installed into an agent's own home

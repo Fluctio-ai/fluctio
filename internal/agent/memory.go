@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -352,18 +353,10 @@ Empty arrays when nothing survives.`,
 		return persistExtraction{}, fmt.Errorf("audit parse: %w", err)
 	}
 	// Intersect with the proposal set: the auditor filters, it never adds.
-	inSet := func(item string, set []string) bool {
-		for _, s := range set {
-			if s == item {
-				return true
-			}
-		}
-		return false
-	}
 	filter := func(items, allowed []string) []string {
 		out := make([]string, 0, len(items))
 		for _, item := range items {
-			if inSet(item, allowed) {
+			if slices.Contains(allowed, item) {
 				out = append(out, item)
 			}
 		}

@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,7 +28,6 @@ import {
   PlayIcon,
   PlusIcon,
   RotateCcwIcon,
-  SearchIcon,
   SendIcon,
   SparklesIcon,
   TrashIcon,
@@ -366,17 +366,13 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
       >
         <div className="border-b p-3 pb-2">
           <div className="flex items-center gap-2">
-            <div className="relative min-w-0 flex-1">
-              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => { setQuery(e.target.value); }}
-                onBlur={() => load(0, true)}
-                onKeyDown={(e) => { if (e.key === "Enter") load(0, true); }}
-                placeholder={t("cards.search")}
-                className="h-7 w-full rounded-md pl-8 text-xs"
-              />
-            </div>
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              onBlur={() => load(0, true)}
+              onKeyDown={(e) => { if (e.key === "Enter") load(0, true); }}
+              placeholder={t("cards.search")}
+            />
             <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={() => setAddOpen(true)}>
               <PlusIcon className="mr-1 size-3" /> {t("cards.add")}
             </Button>
@@ -624,7 +620,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
               center — the swipe group. Mobile keeps the list-first
               master-detail; its deck opens via 开始复习 (full-screen). */}
           {stats && stats.due_today > 0 ? (
-            <CardDeck agentId={agentId!} variant="inline" onFinish={endReview} />
+            <CardDeck agentId={agentId!} variant="inline" limit={reviewLimit} onFinish={endReview} />
           ) : (
             <div className="flex w-full items-center justify-center">
               <p className="text-sm text-muted-foreground">{t("cards.selectHint")}</p>

@@ -4,6 +4,7 @@ import { useLocale, useT } from "@/lib/i18n";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -29,7 +30,6 @@ import {
   PencilIcon,
   PlusIcon,
   QuoteIcon,
-  SearchIcon,
   SparklesIcon,
   SproutIcon,
   TrashIcon,
@@ -402,15 +402,11 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
       >
         <div className="border-b">
           <div className="flex items-center gap-2 p-3 pb-2">
-            <div className="relative min-w-0 flex-1">
-              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t("knowledge.searchArticles")}
-                className="h-7 w-full rounded-md pl-8 text-xs"
-              />
-            </div>
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              placeholder={t("knowledge.searchArticles")}
+            />
             <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={() => setTextDialogOpen(true)}>
               <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.text")}
             </Button>
@@ -887,10 +883,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <div className="relative min-w-0 flex-1">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchFlashes")} className="h-7 w-full rounded-md pl-8 text-xs" />
-        </div>
+        <SearchInput value={query} onChange={setQuery} placeholder={t("knowledge.searchFlashes")} />
         <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setSortNew((v) => !v)}>
           {sortNew ? t("knowledge.sortNewest") : t("knowledge.sortOldest")}
         </Button>
@@ -1097,10 +1090,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <div className="relative min-w-0 flex-1">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchBookmarks")} className="h-7 w-full rounded-md pl-8 text-xs" />
-        </div>
+        <SearchInput value={query} onChange={setQuery} placeholder={t("knowledge.searchBookmarks")} />
         <Button size="sm" className="h-7 shrink-0" onClick={() => setAddOpen(true)}>
           <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.bookmarks")}
         </Button>
@@ -1401,10 +1391,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-2">
-        <div className="relative min-w-0 flex-1">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("knowledge.searchTodos")} className="h-7 w-full rounded-md pl-8 text-xs" />
-        </div>
+        <SearchInput value={query} onChange={setQuery} placeholder={t("knowledge.searchTodos")} />
         <div className="flex shrink-0 items-center rounded-md border p-0.5">
           <button type="button" onClick={() => setView("board")} className={cn("rounded px-2 py-1 text-xs", view === "board" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewBoard")}</button>
           <button type="button" onClick={() => setView("calendar")} className={cn("rounded px-2 py-1 text-xs", view === "calendar" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewCalendar")}</button>

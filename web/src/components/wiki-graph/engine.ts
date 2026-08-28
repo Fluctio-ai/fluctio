@@ -114,7 +114,7 @@ interface LinkRenderData {
   active: boolean;
 }
 
-type TweenHandle = { update: (time: number) => void; stop: () => void };
+type TweenHandle = { update: (time: number) => boolean; stop: () => void };
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
@@ -212,6 +212,12 @@ export class WikiGraphEngine {
   private hasFitFirstLayout = false;
   private refitTimer: ReturnType<typeof setTimeout> | null = null;
   private rafId = 0;
+  /**
+   * Set whenever rendered state changed outside the frame loop
+   * (transform, hover/focus, resize, data) — gates the heavy rebuilds in
+   * renderFrame so a settled graph stops rebuilding geometry every frame.
+   */
+  private renderDirty = true;
   private dragging = false;
   private dragStartTime = 0;
   private dragStartXY: { x: number; y: number } | null = null;
@@ -276,6 +282,7 @@ export class WikiGraphEngine {
       this.width = this.container.clientWidth;
       this.height = this.container.clientHeight;
       this.app.renderer.resize(this.width, this.height);
+      this.renderDirty = true;
     });
     this.resizeObserver.observe(this.container);
   }
@@ -417,6 +424,7 @@ export class WikiGraphEngine {
   private rebuild(simLinks: SimLink[]): void {
     this.sim?.stop();
     this.lastLabelK = 0;
+    this.renderDirty = true;
     this.nodeRenderData = [];
     this.linkRenderData = [];
     this.tweens.forEach((t) => t.stop());
@@ -583,7 +591,7 @@ export class WikiGraphEngine {
     linkGroup.getAll().forEach((tw) => tw.start());
     this.tweens.set("link", this.wrapTween(linkGroup));
 
-    this.syncLabels();
+    this.renderDirty = true;
   }
 
   /**
@@ -681,8 +689,9 @@ export class WikiGraphEngine {
     this.currentTransform = t;
     this.app.stage.scale.set(t.k, t.k);
     this.app.stage.position.set(t.x, t.y);
-    this.syncLabels();
-    this.syncSelectionRing();
+    // Label layout and the selection ring are screen-space (they depend on
+    // k), so a transform change always schedules the next-frame rebuild.
+    this.renderDirty = true;
   }
 
   private animateToViewport(tx: number, ty: number, k: number, durationMs: number): void {
@@ -814,32 +823,53 @@ export class WikiGraphEngine {
   private readonly renderFrame = (time: number): void => {
     if (this.destroyed) return;
     this.advanceViewport();
-    for (const t of this.tweens.values()) t.update(time);
+    let tweenAlive = false;
+    for (const t of this.tweens.values()) tweenAlive = t.update(time) || tweenAlive;
 
-    const cx = this.width / 2;
-    const cy = this.height / 2;
-    for (const rd of this.nodeRenderData) {
-      const d = rd.simulationData;
-      if (d.x == null || d.y == null) continue;
-      const x = d.x + cx;
-      const y = d.y + cy;
-      rd.gfx.position.set(x, y);
-      rd.label.position.set(x, y - d.radius - LABEL_GAP_SCREEN / this.currentTransform.k);
-    }
-    for (const rd of this.linkRenderData) {
-      const d = rd.simulationData;
-      const s = d.source as SimNode;
-      const t = d.target as SimNode;
-      if (s.x == null || s.y == null || t.x == null || t.y == null) continue;
-      rd.gfx.clear();
-      rd.gfx
-        .moveTo(s.x + cx, s.y + cy)
-        .lineTo(t.x + cx, t.y + cy)
-        .stroke({ alpha: rd.alpha, width: 1, color: rd.color });
-    }
+    // Idle gate: the heavy rebuilds (node positions, link geometry, label
+    // collision layout, selection ring) only run while something is
+    // actually moving — the physics sim, a viewport or alpha-tween
+    // animation, a drag, or an explicit dirty flag (transform / hover /
+    // focus / resize changes). A settled graph skips straight to the GPU
+    // submit instead of rebuilding ~N links and running the O(budget²)
+    // label layout 60×/s while idle.
+    // d3-force has no "is running" accessor: while the internal timer is
+    // alive alpha() sits at/above alphaMin(); once it cools below, tick
+    // timers stop and positions are settled.
+    const simAlive = this.sim != null && this.sim.alpha() >= this.sim.alphaMin();
+    const busy =
+      this.renderDirty ||
+      tweenAlive ||
+      this.viewportAnim !== null ||
+      this.dragging ||
+      simAlive;
+    if (busy) {
+      this.renderDirty = false;
+      const cx = this.width / 2;
+      const cy = this.height / 2;
+      for (const rd of this.nodeRenderData) {
+        const d = rd.simulationData;
+        if (d.x == null || d.y == null) continue;
+        const x = d.x + cx;
+        const y = d.y + cy;
+        rd.gfx.position.set(x, y);
+        rd.label.position.set(x, y - d.radius - LABEL_GAP_SCREEN / this.currentTransform.k);
+      }
+      for (const rd of this.linkRenderData) {
+        const d = rd.simulationData;
+        const s = d.source as SimNode;
+        const t = d.target as SimNode;
+        if (s.x == null || s.y == null || t.x == null || t.y == null) continue;
+        rd.gfx.clear();
+        rd.gfx
+          .moveTo(s.x + cx, s.y + cy)
+          .lineTo(t.x + cx, t.y + cy)
+          .stroke({ alpha: rd.alpha, width: 1, color: rd.color });
+      }
 
-    this.syncLabels();
-    this.syncSelectionRing();
+      this.syncLabels();
+      this.syncSelectionRing();
+    }
 
     this.app.renderer.render(this.app.stage);
     this.rafId = requestAnimationFrame(this.renderFrame);
@@ -847,7 +877,12 @@ export class WikiGraphEngine {
 
   private wrapTween(group: Group): TweenHandle {
     return {
-      update: (time: number) => group.update(time),
+      // Older tween.js Group.update returns void — probe the tweens for
+      // liveness instead (any still playing keeps the render loop busy).
+      update: (time: number) => {
+        group.update(time);
+        return group.getAll().some((tw) => tw.isPlaying());
+      },
       stop() {
         group.getAll().forEach((tw) => tw.stop());
       },

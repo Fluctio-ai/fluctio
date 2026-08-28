@@ -202,8 +202,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 		}
 		args = append(args, fetchLimit)
 		rows, err := d.db.QueryContext(ctx, `
-			SELECT id, agent_id, session_key,
-			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			SELECT `+summaryCols+`
 			FROM conversation_summaries
 			WHERE agent_id = $1
 			  AND (`+strings.Join(clauses, " OR ")+`)
@@ -229,8 +228,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 	}
 	args = append(args, fetchLimit)
 	rows, err := d.db.QueryContext(ctx, `
-		SELECT id, agent_id, session_key,
-		       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+		SELECT `+summaryCols+`
 		FROM conversation_summaries
 		WHERE agent_id = ?
 		  AND superseded_by = 0
@@ -247,6 +245,14 @@ func (d *DBStore) SearchConversationSummariesFTS(
 	}
 	return reRankSummaries(candidates, query, limit), nil
 }
+
+// summaryCols is the single source of truth for the conversation_summaries
+// column list — it must stay aligned with scanConversationSummaries. A
+// doubled append here once made every memory recall return empty in
+// production (see TestSearchConversationSummariesFTSScanShape), so every
+// SELECT must build from this constant instead of hand-copying columns.
+const summaryCols = `id, agent_id, session_key,
+	summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by`
 
 func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 	var out []ConversationSummary
@@ -288,17 +294,18 @@ func scanConversationSummaries(rows *sql.Rows) ([]ConversationSummary, error) {
 // Used by the daily-diary generator to gather one day's topics. from/to
 // are UTC instants; callers convert the UTC+8 day boundaries to UTC.
 func (d *DBStore) ListConversationSummariesByDateRange(ctx context.Context, agentID string, from, to time.Time) ([]ConversationSummary, error) {
-	const cols = `id, agent_id, session_key,
-			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by`
 	var rows *sql.Rows
 	var err error
 	if d.dialect == "postgres" {
-		rows, err = d.db.QueryContext(ctx,
-			`SELECT `+cols+` FROM conversation_summaries WHERE agent_id = $1 AND created_at >= $2 AND created_at < $3 ORDER BY created_at ASC`,
-			agentID, from, to)
+	rows, err = d.db.QueryContext(ctx,
+		`SELECT `+summaryCols+`
+		 FROM conversation_summaries
+		 WHERE agent_id = $1 AND created_at >= $2 AND created_at < $3 ORDER BY created_at ASC`,
+		agentID, from, to)
 	} else {
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT `+cols+` FROM conversation_summaries WHERE agent_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC`,
+			`SELECT `+summaryCols+`
+		 FROM conversation_summaries WHERE agent_id = ? AND created_at >= ? AND created_at < ? ORDER BY created_at ASC`,
 			agentID, from, to)
 	}
 	if err != nil {
@@ -320,16 +327,14 @@ func (d *DBStore) ListRecentSummariesForSupersede(ctx context.Context, agentID, 
 	var err error
 	if d.dialect == "postgres" {
 		rows, err = d.db.QueryContext(ctx, `
-			SELECT id, agent_id, session_key,
-			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			SELECT `+summaryCols+`
 			FROM conversation_summaries
 			WHERE agent_id = $1 AND superseded_by = 0 AND session_key <> $2
 			ORDER BY created_at DESC LIMIT $3`,
 			agentID, excludeSession, limit)
 	} else {
 		rows, err = d.db.QueryContext(ctx, `
-			SELECT id, agent_id, session_key,
-			       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			SELECT `+summaryCols+`
 			FROM conversation_summaries
 			WHERE agent_id = ? AND superseded_by = 0 AND session_key <> ?
 			ORDER BY created_at DESC LIMIT ?`,
@@ -347,16 +352,9 @@ func (d *DBStore) ListRecentSummariesForSupersede(ctx context.Context, agentID, 
 // already replaced is not re-pointed at a later successor; the chain
 // resolves through the newest active row.
 func (d *DBStore) MarkSummarySuperseded(ctx context.Context, agentID string, oldID, newID int64) error {
-	var q string
-	if d.dialect == "postgres" {
-		q = `UPDATE conversation_summaries SET superseded_by = $1
-			WHERE id = $2 AND agent_id = $3 AND superseded_by = 0`
-		_, err := d.db.ExecContext(ctx, q, newID, oldID, agentID)
-		return err
-	}
-	q = `UPDATE conversation_summaries SET superseded_by = ?
-		WHERE id = ? AND agent_id = ? AND superseded_by = 0`
-	_, err := d.db.ExecContext(ctx, q, newID, oldID, agentID)
+	_, err := d.db.ExecContext(ctx, fmt.Sprintf(`UPDATE conversation_summaries SET superseded_by = %s
+		WHERE id = %s AND agent_id = %s AND superseded_by = 0`,
+		d.ph(1), d.ph(2), d.ph(3)), newID, oldID, agentID)
 	return err
 }
 
@@ -422,11 +420,7 @@ func (d *DBStore) PruneConversationSummaries(ctx context.Context, cfg MemoryCons
 		ph := make([]string, 0, len(ids))
 		args := make([]any, 0, len(ids))
 		for i, id := range ids {
-			if d.dialect == "postgres" {
-				ph = append(ph, fmt.Sprintf("$%d", i+1))
-			} else {
-				ph = append(ph, "?")
-			}
+			ph = append(ph, d.ph(i+1))
 			args = append(args, id)
 		}
 		in := "(" + strings.Join(ph, ",") + ")"
@@ -465,11 +459,9 @@ func (d *DBStore) PruneConversationSummaries(ctx context.Context, cfg MemoryCons
 
 	// 1. Purge superseded rows past the grace window.
 	supCutoff := time.Now().AddDate(0, 0, -cfg.SupersededGraceDays)
-	supWhere := `SELECT id FROM conversation_summaries WHERE superseded_by != 0 AND created_at < ? LIMIT ?`
-	if d.dialect == "postgres" {
-		supWhere = `SELECT id FROM conversation_summaries WHERE superseded_by != 0 AND created_at < $1 LIMIT $2`
-	}
-	ids, err := collect(supWhere, supCutoff, cfg.BatchLimit)
+	ids, err := collect(fmt.Sprintf(
+		`SELECT id FROM conversation_summaries WHERE superseded_by != 0 AND created_at < %s LIMIT %s`,
+		d.ph(1), d.ph(2)), supCutoff, cfg.BatchLimit)
 	if err != nil {
 		return stats, err
 	}
@@ -480,15 +472,10 @@ func (d *DBStore) PruneConversationSummaries(ctx context.Context, cfg MemoryCons
 
 	// 2. Evict stale never-recalled episodic rows. Durable rows are exempt.
 	staleCutoff := time.Now().AddDate(0, 0, -cfg.StaleEpisodicDays)
-	staleWhere := `SELECT id FROM conversation_summaries
+	ids, err = collect(fmt.Sprintf(`SELECT id FROM conversation_summaries
 		WHERE superseded_by = 0 AND (kind = 'episodic' OR kind = '')
-		  AND created_at < ? AND access_count = 0 LIMIT ?`
-	if d.dialect == "postgres" {
-		staleWhere = `SELECT id FROM conversation_summaries
-			WHERE superseded_by = 0 AND (kind = 'episodic' OR kind = '')
-			  AND created_at < $1 AND access_count = 0 LIMIT $2`
-	}
-	ids, err = collect(staleWhere, staleCutoff, cfg.BatchLimit)
+		  AND created_at < %s AND access_count = 0 LIMIT %s`,
+		d.ph(1), d.ph(2)), staleCutoff, cfg.BatchLimit)
 	if err != nil {
 		return stats, err
 	}
@@ -499,12 +486,9 @@ func (d *DBStore) PruneConversationSummaries(ctx context.Context, cfg MemoryCons
 
 	// 3. Per-agent quota on ACTIVE rows: over cap, oldest episodic first.
 	var overAgents []string
-	q := `SELECT agent_id FROM conversation_summaries WHERE superseded_by = 0 GROUP BY agent_id HAVING COUNT(*) > ?`
-	args := []any{cfg.QuotaCap}
-	if d.dialect == "postgres" {
-		q = `SELECT agent_id FROM conversation_summaries WHERE superseded_by = 0 GROUP BY agent_id HAVING COUNT(*) > $1`
-	}
-	rows, err := d.db.QueryContext(ctx, q, args...)
+	rows, err := d.db.QueryContext(ctx, fmt.Sprintf(
+		`SELECT agent_id FROM conversation_summaries WHERE superseded_by = 0 GROUP BY agent_id HAVING COUNT(*) > %s`,
+		d.ph(1)), cfg.QuotaCap)
 	if err != nil {
 		return stats, err
 	}
@@ -527,27 +511,19 @@ func (d *DBStore) PruneConversationSummaries(ctx context.Context, cfg MemoryCons
 		// agent exceeds cap with durable-only rows — left alone; durable
 		// eviction is a human decision, not a sweep's).
 		var active int
-		countQ := `SELECT COUNT(*) FROM conversation_summaries WHERE agent_id = ? AND superseded_by = 0`
-		if d.dialect == "postgres" {
-			countQ = `SELECT COUNT(*) FROM conversation_summaries WHERE agent_id = $1 AND superseded_by = 0`
-		}
-		if err := d.db.QueryRowContext(ctx, countQ, agentID).Scan(&active); err != nil {
+		if err := d.db.QueryRowContext(ctx, fmt.Sprintf(
+			`SELECT COUNT(*) FROM conversation_summaries WHERE agent_id = %s AND superseded_by = 0`,
+			d.ph(1)), agentID).Scan(&active); err != nil {
 			return stats, err
 		}
 		overflow := active - cfg.QuotaCap
 		if overflow <= 0 {
 			continue
 		}
-		over := `SELECT id FROM conversation_summaries
-			WHERE agent_id = ? AND superseded_by = 0 AND (kind = 'episodic' OR kind = '')
-			ORDER BY created_at ASC LIMIT ?`
-		overArgs := []any{agentID, overflow}
-		if d.dialect == "postgres" {
-			over = `SELECT id FROM conversation_summaries
-				WHERE agent_id = $1 AND superseded_by = 0 AND (kind = 'episodic' OR kind = '')
-				ORDER BY created_at ASC LIMIT $2`
-		}
-		ids, err = collect(over, overArgs...)
+		ids, err = collect(fmt.Sprintf(`SELECT id FROM conversation_summaries
+			WHERE agent_id = %s AND superseded_by = 0 AND (kind = 'episodic' OR kind = '')
+			ORDER BY created_at ASC LIMIT %s`,
+			d.ph(1), d.ph(2)), agentID, overflow)
 		if err != nil {
 			return stats, err
 		}
@@ -1179,16 +1155,14 @@ func (d *DBStore) ListConversationSummariesByAgent(ctx context.Context, agentID 
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			`SELECT `+summaryCols+`
 			 FROM conversation_summaries
 			 WHERE agent_id = $1
 			 ORDER BY created_at
 			 LIMIT $2`, agentID, limit)
 	default:
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			`SELECT `+summaryCols+`
 			 FROM conversation_summaries
 			 WHERE agent_id = ?
 			 ORDER BY created_at
@@ -1211,15 +1185,13 @@ func (d *DBStore) ListConversationSummariesBySession(ctx context.Context, agentI
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			`SELECT `+summaryCols+`
 			 FROM conversation_summaries
 			 WHERE agent_id = $1 AND session_key = $2
 			 ORDER BY created_at`, agentID, sessionKey)
 	default:
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			`SELECT `+summaryCols+`
 			 FROM conversation_summaries
 			 WHERE agent_id = ? AND session_key = ?
 			 ORDER BY created_at`, agentID, sessionKey)
@@ -1291,8 +1263,7 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 	switch d.dialect {
 	case "postgres":
 		rows, err = d.db.QueryContext(ctx,
-			`SELECT id, agent_id, session_key,
-			        summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+			`SELECT `+summaryCols+`
 			 FROM conversation_summaries
 			 WHERE embedding IS NULL OR ($1 != '' AND (embedding_model IS NULL OR embedding_model != $1))
 			 ORDER BY created_at
@@ -1330,8 +1301,7 @@ func (d *DBStore) GetConversationSummariesByIDs(ctx context.Context, ids []int64
 		args[i] = id
 	}
 
-	q := fmt.Sprintf(`SELECT id, agent_id, session_key,
-	       summary, keywords, seq_start, seq_end, embedding_model, importance, access_count, access_time_sum, last_accessed_at, created_at, topic, segments, kind, superseded_by
+	q := fmt.Sprintf(`SELECT `+summaryCols+`
 	FROM conversation_summaries
 	WHERE id IN (%s)
 	ORDER BY created_at DESC`, strings.Join(placeholders, ","))

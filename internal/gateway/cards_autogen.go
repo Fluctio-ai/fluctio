@@ -110,15 +110,5 @@ func cardsCfgFromMap(cfg map[string]interface{}) *config.AgentCardsCfg {
 // half-hourly tick (mirrors diaryTicker), boot pass included so a
 // freshly-enabled agent catches up immediately.
 func (g *Gateway) cardsTicker(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Minute)
-	defer ticker.Stop()
-	g.runCardsCycle(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			g.runCardsCycle(ctx)
-		}
-	}
+	g.runEvery(ctx, 30*time.Minute, g.runCardsCycle)
 }

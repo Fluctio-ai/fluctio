@@ -119,9 +119,7 @@ func makeFetchMessages(r *Registry) ToolFunc {
 
 		// recall.consumed: the LLM followed a memory_search pointer —
 		// that recall was adopted, not just surfaced. Best-effort.
-		if ids := consumedRecallIDsFromCtx(ctx); ids != nil && len(*ids) > 0 && r.summaryDB != nil {
-			_ = r.summaryDB.MarkRecallEventsConsumed(ctx, *ids)
-		}
+		flushRecallConsumed(ctx, r)
 
 		return formatFetchedMessages(msgs, args.SessionKey, ranges), nil
 	}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/safename"
 	"github.com/google/uuid"
 )
 
@@ -32,19 +33,10 @@ func registerKBNotes(r *tools.Registry, store *KBStore, agentID string) {
 	registerKBAttachFile(r, store, agentID)
 }
 
-// findNote loads one note by id. Notes are few and ListNotes already returns
-// full content, so a filter beats a dedicated store method.
+// findNote loads one note by id via the single-row store fetch (the old
+// ListNotes-and-filter dragged every note's full content per tool call).
 func findNote(ctx context.Context, store *KBStore, agentID, id string) (KBNote, bool, error) {
-	notes, err := store.ListNotes(ctx, agentID)
-	if err != nil {
-		return KBNote{}, false, err
-	}
-	for _, n := range notes {
-		if n.ID == id {
-			return n, true, nil
-		}
-	}
-	return KBNote{}, false, nil
+	return store.GetNote(ctx, agentID, id)
 }
 
 // registerKBListNotes adds knowledgebase_list_notes — the agent's view of the
@@ -263,6 +255,11 @@ func registerKBAttachFile(r *tools.Registry, store *KBStore, agentID string) {
 			if !pathWithinWorkspace(abs, root) {
 				return fmt.Sprintf("拒绝 %s：只支持本 agent 工作区内的文件（%s 子树）。sandbox 里 /workspace 之外的文件（如 /tmp）请先用文件工具复制到 /workspace 下再附加。", p, root), nil
 			}
+			// Reject oversized files on metadata before reading them into
+			// memory — the read-time check below stays as the race backstop.
+			if fi, err := os.Stat(abs); err == nil && fi.Size() > 64<<20 {
+				return fmt.Sprintf("文件 %s 超过 64MB 上限（%d MB），未附加。", filepath.Base(abs), fi.Size()>>20), nil
+			}
 			data, err := os.ReadFile(abs)
 			if err != nil {
 				return "", fmt.Errorf("read %q: %w", p, err)
@@ -270,7 +267,7 @@ func registerKBAttachFile(r *tools.Registry, store *KBStore, agentID string) {
 			if int64(len(data)) > 64<<20 {
 				return fmt.Sprintf("文件 %s 超过 64MB 上限（%d MB），未附加。", filepath.Base(abs), len(data)>>20), nil
 			}
-			name := sanitizeNoteFileName(filepath.Base(abs))
+			name := safename.SanitizeFileName(filepath.Base(abs), 120)
 			if name == "" {
 				return fmt.Sprintf("无法从路径 %q 推导出安全的文件名，未附加。", p), nil
 			}
@@ -313,26 +310,4 @@ func pathWithinWorkspace(abs, root string) bool {
 	}
 	return len(abs) > len(absRoot) && abs[len(absRoot)] == filepath.Separator &&
 		strings.EqualFold(abs[:len(absRoot)], absRoot)
-}
-
-// sanitizeNoteFileName reduces a path's base name to a safe single path
-// component. Mirrors the copies in setup/handlers_kb.go and
-// agent/attachments.go (both unexported; local copy keeps the kb package
-// self-contained, same rationale as those two).
-func sanitizeNoteFileName(raw string) string {
-	raw = strings.ReplaceAll(raw, `\`, "/")
-	if i := strings.LastIndexByte(raw, '/'); i >= 0 {
-		raw = raw[i+1:]
-	}
-	if raw == "." || raw == ".." {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range raw {
-		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' || r == ':' {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return strings.TrimSpace(b.String())
 }

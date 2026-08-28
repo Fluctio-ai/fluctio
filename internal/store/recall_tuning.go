@@ -364,11 +364,7 @@ func (d *DBStore) MarkRecallEventsConsumed(ctx context.Context, recallIDs []stri
 	placeholders := make([]string, 0, len(recallIDs))
 	args := make([]any, 0, len(recallIDs))
 	for i, id := range recallIDs {
-		if d.dialect == "postgres" {
-			placeholders = append(placeholders, fmt.Sprintf("$%d", i+1))
-		} else {
-			placeholders = append(placeholders, "?")
-		}
+		placeholders = append(placeholders, d.ph(i+1))
 		args = append(args, id)
 	}
 	q := `UPDATE memory_recall_events SET consumed = 1 WHERE recall_id IN (` + strings.Join(placeholders, ",") + `)`

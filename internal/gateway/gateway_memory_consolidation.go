@@ -27,19 +27,8 @@ func (g *Gateway) runMemoryConsolidation(ctx context.Context) {
 		slog.Info("memory consolidation disabled")
 		return
 	}
-	interval := time.Duration(hours) * time.Hour
 	slog.Info("memory consolidation started", "interval_hours", hours)
-	g.consolidateMemoriesOnce(ctx)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			g.consolidateMemoriesOnce(ctx)
-		}
-	}
+	g.runEvery(ctx, time.Duration(hours)*time.Hour, g.consolidateMemoriesOnce)
 }
 
 // consolidateMemoriesOnce runs one consolidation pass and logs the

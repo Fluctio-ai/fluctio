@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -22,6 +21,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/safename"
 	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/wiki"
@@ -811,41 +811,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // --- 笔记 ---
 
-// sanitizeNoteFileName reduces an upload's original filename to a safe
-// single path component: base name, separators/control chars dropped,
-// capped length. Mirrors agent/attachments.go's sanitizer (unexported
-// there, so a local copy keeps the KB package self-contained).
-func sanitizeNoteFileName(raw string) string {
-	raw = strings.ReplaceAll(raw, `\`, "/")
-	if i := strings.LastIndexByte(raw, '/'); i >= 0 {
-		raw = raw[i+1:]
-	}
-	if raw == "." || raw == ".." {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range raw {
-		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' || r == ':' || r == 0 {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	out := strings.TrimSpace(b.String())
-	out = strings.TrimLeft(out, ".")
-	if len(out) > 120 {
-		ext := filepath.Ext(out)
-		stem := strings.TrimSuffix(out, ext)
-		keep := 120 - len(ext)
-		for keep > 0 && !utf8.RuneStart(out[keep]) {
-			keep--
-		}
-		if stem[:keep] != "" {
-			out = stem[:keep] + ext
-		}
-	}
-	return out
-}
-
 // handleKBListNotes returns the agent's notes (full body + whiteboard —
 // notes are few, so the editor loads the selected note from the list
 // without a second fetch).
@@ -902,37 +867,6 @@ func (s *Server) handleKBSaveNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
-}
-
-// handleKBReorderNotes persists the manual note list order written by the
-// sidebar drag. Body: {"ids": [...]} in the desired top-to-bottom order.
-func (s *Server) handleKBReorderNotes(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("id")
-	if agentID == "" {
-		http.Error(w, "missing agent id", http.StatusBadRequest)
-		return
-	}
-	var req struct {
-		IDs []string `json:"ids"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if len(req.IDs) == 0 {
-		http.Error(w, "ids is required", http.StatusBadRequest)
-		return
-	}
-	kbStore := s.kbStoreFor(agentID)
-	if kbStore == nil {
-		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
-		return
-	}
-	if err := kbStore.ReorderNotes(r.Context(), agentID, req.IDs); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // handleKBDeleteNote drops a note, its attachment rows, and the attachment
@@ -1024,7 +958,7 @@ func (s *Server) handleKBNoteUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	saved := make([]kb.KBNoteAttachment, 0, len(headers))
 	for _, h := range headers {
-		name := sanitizeNoteFileName(h.Filename)
+		name := safename.SanitizeFileName(h.Filename, 120)
 		if name == "" {
 			continue
 		}

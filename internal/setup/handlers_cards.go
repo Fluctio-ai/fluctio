@@ -18,6 +18,25 @@ import (
 // the page header (due today, status counts, streak); /generate is the
 // manual trigger for the nightly cardsgen pass (debug/补跑).
 
+// cardsKBStore resolves the agent id and per-agent KB store shared by the
+// card endpoints: 400 when the agent id is missing, 503 when the KB is
+// unavailable. Handlers that also take a cardId keep their own check for
+// it; the list/stats endpoints keep their nil-store-is-empty-response
+// behavior and don't use this.
+func (s *Server) cardsKBStore(w http.ResponseWriter, r *http.Request) (*kb.KBStore, string, bool) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return nil, "", false
+	}
+	ks := s.kbStoreFor(agentID)
+	if ks == nil {
+		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+		return nil, "", false
+	}
+	return ks, agentID, true
+}
+
 // handleKBListCards pages the card library. Query params:
 // filter=due|all|active|mastered|archived|new (default all), source=
 // diary|wiki|manual, q=question/answer substring, limit/offset.
@@ -73,15 +92,13 @@ func (s *Server) handleKBListCards(w http.ResponseWriter, r *http.Request) {
 
 // handleKBGetCard returns one card plus its review timeline.
 func (s *Server) handleKBGetCard(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("id")
 	cardID := r.PathValue("cardId")
-	if agentID == "" || cardID == "" {
-		http.Error(w, "missing id", http.StatusBadRequest)
+	kbStore, agentID, ok := s.cardsKBStore(w, r)
+	if !ok {
 		return
 	}
-	kbStore := s.kbStoreFor(agentID)
-	if kbStore == nil {
-		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+	if cardID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
 	card, err := kbStore.GetCard(r.Context(), agentID, cardID)
@@ -98,9 +115,8 @@ func (s *Server) handleKBGetCard(w http.ResponseWriter, r *http.Request) {
 
 // handleKBSaveCard hand-writes one card ("manual" source). Returns its id.
 func (s *Server) handleKBSaveCard(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("id")
-	if agentID == "" {
-		http.Error(w, "missing agent id", http.StatusBadRequest)
+	kbStore, agentID, ok := s.cardsKBStore(w, r)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -115,11 +131,6 @@ func (s *Server) handleKBSaveCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "question is required", http.StatusBadRequest)
 		return
 	}
-	kbStore := s.kbStoreFor(agentID)
-	if kbStore == nil {
-		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
-		return
-	}
 	id, err := kbStore.SaveCard(r.Context(), agentID, req.Question, req.Answer, "manual", "", "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -131,9 +142,12 @@ func (s *Server) handleKBSaveCard(w http.ResponseWriter, r *http.Request) {
 // handleKBUpdateCard edits question and/or answer without touching the
 // review state.
 func (s *Server) handleKBUpdateCard(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("id")
 	cardID := r.PathValue("cardId")
-	if agentID == "" || cardID == "" {
+	kbStore, agentID, ok := s.cardsKBStore(w, r)
+	if !ok {
+		return
+	}
+	if cardID == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
@@ -145,11 +159,6 @@ func (s *Server) handleKBUpdateCard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	kbStore := s.kbStoreFor(agentID)
-	if kbStore == nil {
-		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
-		return
-	}
 	if err := kbStore.UpdateCard(r.Context(), agentID, cardID, req.Question, req.Answer); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
@@ -159,15 +168,13 @@ func (s *Server) handleKBUpdateCard(w http.ResponseWriter, r *http.Request) {
 
 // handleKBDeleteCard removes one card (plus reviews + embedding).
 func (s *Server) handleKBDeleteCard(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("id")
 	cardID := r.PathValue("cardId")
-	if agentID == "" || cardID == "" {
-		http.Error(w, "missing id", http.StatusBadRequest)
+	kbStore, agentID, ok := s.cardsKBStore(w, r)
+	if !ok {
 		return
 	}
-	kbStore := s.kbStoreFor(agentID)
-	if kbStore == nil {
-		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+	if cardID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
 	if err := kbStore.DeleteCard(r.Context(), agentID, cardID); err != nil {
@@ -180,9 +187,12 @@ func (s *Server) handleKBDeleteCard(w http.ResponseWriter, r *http.Request) {
 // handleKBReviewCard applies one grade (forgot|fuzzy|remembered) and
 // returns the updated card so the client can refresh counts live.
 func (s *Server) handleKBReviewCard(w http.ResponseWriter, r *http.Request) {
-	agentID := r.PathValue("id")
 	cardID := r.PathValue("cardId")
-	if agentID == "" || cardID == "" {
+	kbStore, agentID, ok := s.cardsKBStore(w, r)
+	if !ok {
+		return
+	}
+	if cardID == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
@@ -191,11 +201,6 @@ func (s *Server) handleKBReviewCard(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	kbStore := s.kbStoreFor(agentID)
-	if kbStore == nil {
-		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
 		return
 	}
 	card, err := kbStore.ReviewCard(r.Context(), agentID, cardID, req.Grade)
@@ -216,15 +221,13 @@ func (s *Server) handleKBCardRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleKBCardSetStatus(w http.ResponseWriter, r *http.Request, status string) {
-	agentID := r.PathValue("id")
 	cardID := r.PathValue("cardId")
-	if agentID == "" || cardID == "" {
-		http.Error(w, "missing id", http.StatusBadRequest)
+	kbStore, agentID, ok := s.cardsKBStore(w, r)
+	if !ok {
 		return
 	}
-	kbStore := s.kbStoreFor(agentID)
-	if kbStore == nil {
-		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
+	if cardID == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
 		return
 	}
 	var err error
@@ -280,10 +283,9 @@ func (s *Server) handleKBCardsGenerate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cst := time.FixedZone("CST", 8*3600)
 	date := req.Date
 	if date == "" {
-		date = time.Now().In(cst).AddDate(0, 0, -1).Format("2006-01-02")
+		date = time.Now().In(diaryCST).AddDate(0, 0, -1).Format("2006-01-02")
 	}
 	dbs, ok := s.dataStore.(*store.DBStore)
 	if !ok || dbs == nil {

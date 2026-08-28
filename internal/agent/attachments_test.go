@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/fluctio-ai/fluctio/internal/safename"
 )
 
 func TestSanitizeAttachmentName(t *testing.T) {
@@ -26,7 +28,7 @@ func TestSanitizeAttachmentName(t *testing.T) {
 		{"", ""},
 	}
 	for _, c := range cases {
-		if got := sanitizeAttachmentName(c.in); got != c.want {
+		if got := safename.SanitizeFileName(c.in, maxAttachmentNameLen); got != c.want {
 			t.Errorf("sanitize(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
@@ -34,7 +36,7 @@ func TestSanitizeAttachmentName(t *testing.T) {
 
 func TestSanitizeAttachmentNameTruncates(t *testing.T) {
 	long := strings.Repeat("a", 200) + ".pdf"
-	got := sanitizeAttachmentName(long)
+	got := safename.SanitizeFileName(long, maxAttachmentNameLen)
 	if len(got) > maxAttachmentNameLen {
 		t.Fatalf("len = %d, want <= %d", len(got), maxAttachmentNameLen)
 	}
@@ -48,7 +50,7 @@ func TestSanitizeAttachmentNameTruncates(t *testing.T) {
 // UTF-8 on disk. Truncation must back off to a rune boundary.
 func TestSanitizeAttachmentNameUTF8Safe(t *testing.T) {
 	stem := strings.Repeat("中", 40) // 120 bytes, well over the 96 cap
-	got := sanitizeAttachmentName(stem + ".pdf")
+	got := safename.SanitizeFileName(stem+".pdf", maxAttachmentNameLen)
 	if !utf8.ValidString(got) {
 		t.Errorf("invalid UTF-8 after truncate: %q", got)
 	}

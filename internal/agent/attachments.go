@@ -15,9 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/fluctio-ai/fluctio/internal/httpclient"
+	"github.com/fluctio-ai/fluctio/internal/safename"
 )
 
 // maxAttachmentBytes caps a single attachment regardless of whether it
@@ -336,7 +336,7 @@ func extFromMIME(ct string) string {
 // (sanitized), append the MIME-derived ext when the user omitted one,
 // and disambiguate within-batch duplicates by suffixing `-<i>`.
 func buildAttachmentName(raw, token string, idx int, ext string, used map[string]struct{}) string {
-	clean := sanitizeAttachmentName(raw)
+	clean := safename.SanitizeFileName(raw, maxAttachmentNameLen)
 	if clean == "" {
 		return fmt.Sprintf("image_%s_%d%s", token, idx, ext)
 	}
@@ -360,58 +360,6 @@ func buildAttachmentName(raw, token string, idx int, ext string, used map[string
 	// per WriteSessionAttachments call, so `<stem>-<token>-<idx><ext>`
 	// is collision-free within the batch.
 	return fmt.Sprintf("%s-%s-%d%s", stem, token, idx, tail)
-}
-
-// sanitizeAttachmentName strips path separators, parent-dir tokens,
-// control characters, and leading dots from a caller-supplied filename.
-// Returns "" if nothing usable remains so the caller can fall back.
-// Uses path.Base (not filepath.Base) so Windows-style paths from the
-// browser are handled identically on a Linux gateway.
-func sanitizeAttachmentName(raw string) string {
-	if raw == "" {
-		return ""
-	}
-	// Normalize Windows separators to / so path.Base reliably extracts
-	// the last component regardless of which side of the wire we run on.
-	raw = strings.ReplaceAll(raw, `\`, "/")
-	raw = path.Base(raw)
-	// `path.Base("..") == ".."`; reject explicitly.
-	if raw == "." || raw == ".." {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range raw {
-		switch {
-		case r < 0x20, r == 0x7f:
-			// control char — drop
-		case r == '/', r == '\\', r == ':', r == 0:
-			// path separator / drive prefix / NUL — drop
-		default:
-			b.WriteRune(r)
-		}
-	}
-	out := strings.TrimSpace(b.String())
-	out = strings.TrimLeft(out, ".") // hidden-dotfile prefix is rarely intended
-	if len(out) > maxAttachmentNameLen {
-		// Truncate from the stem so we preserve the extension. Byte-
-		// slicing on UTF-8 would chop multi-byte runes (CJK filenames
-		// are 3 bytes/char) and yield invalid UTF-8 on disk, so back
-		// off to the nearest rune boundary at or below the byte budget.
-		ext := path.Ext(out)
-		stem := strings.TrimSuffix(out, ext)
-		keep := maxAttachmentNameLen - len(ext)
-		if keep < 1 {
-			keep = 1
-		}
-		if len(stem) > keep {
-			for keep > 0 && !utf8.RuneStart(stem[keep]) {
-				keep--
-			}
-			stem = stem[:keep]
-		}
-		out = stem + ext
-	}
-	return out
 }
 
 func contentTypeFromExt(ext string) string {

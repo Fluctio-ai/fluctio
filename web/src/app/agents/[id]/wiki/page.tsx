@@ -4,7 +4,7 @@ import { usePageHeader } from "@/components/sidebar";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -27,7 +27,6 @@ import {
   NetworkIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
-  SearchIcon,
   TrashIcon,
   XIcon,
 } from "lucide-react";
@@ -411,15 +410,11 @@ export default function WikiPage() {
       >
         <div className="space-y-2 border-b p-3">
           <div className="flex items-center gap-2">
-            <div className="relative min-w-0 flex-1">
-              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t("wiki.search")}
-                className="h-7 w-full rounded-md pl-8 text-xs"
-              />
-            </div>
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              placeholder={t("wiki.search")}
+            />
             <Button
               variant="ghost"
               size="icon"

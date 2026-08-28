@@ -264,9 +264,10 @@ func (s *KBStore) CardStats(ctx context.Context, agentID string) (KBCardStats, e
 	// Streak: distinct CST review dates, newest-first, counted back from
 	// today (or yesterday). reviewed_at rows carry RFC3339 UTC timestamps;
 	// grouping in SQL over a text column is dialect-fragile, so the walk
-	// happens here — review rows are bounded (a few per card per day).
+	// happens here — review rows are bounded (a few per card per day), and
+	// LIMIT caps the scan well past any plausible streak length.
 	rows, err := s.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT reviewed_at FROM kb_card_reviews WHERE agent_id = %s ORDER BY reviewed_at DESC`, s.ph(1)),
+		fmt.Sprintf(`SELECT reviewed_at FROM kb_card_reviews WHERE agent_id = %s ORDER BY reviewed_at DESC LIMIT 400`, s.ph(1)),
 		agentID)
 	if err != nil {
 		return st, nil // streak is best-effort
@@ -558,6 +559,76 @@ func (s *KBStore) CheckCardDuplicate(ctx context.Context, agentID, question stri
 		}
 	}
 	return nil
+}
+
+// CheckCardDuplicatesBatch answers, for each question, whether it
+// duplicates an existing active/mastered card — the keyword leg
+// (normalized question equality) and the vector leg (>0.90 cosine) share
+// ONE embedding call and ONE embedding-table scan for the whole batch, so
+// the nightly generator doesn't pay an embedding round trip and a full
+// table scan per candidate. Degrades to the keyword leg without an
+// embedder; an empty question never counts as a duplicate.
+func (s *KBStore) CheckCardDuplicatesBatch(ctx context.Context, agentID string, questions []string) []bool {
+	out := make([]bool, len(questions))
+	if len(questions) == 0 {
+		return out
+	}
+	// Keyword leg: the agent's non-archived questions, loaded once.
+	keyed := map[string]bool{}
+	if rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT question FROM kb_cards WHERE agent_id = %s AND status != 'archived'`, s.ph(1)),
+		agentID); err == nil {
+		for rows.Next() {
+			var q sql.NullString
+			if rows.Scan(&q) == nil && q.Valid {
+				keyed[strings.ToLower(strings.TrimSpace(q.String))] = true
+			}
+		}
+		rows.Close()
+	}
+	// Vector leg: one batched embed + one table scan, cosine per question.
+	if s.embedder != nil && s.embedder.Available() {
+		if vecs, err := s.embedder.Embed(ctx, questions); err == nil && len(vecs) == len(questions) {
+			var pool [][]float32
+			if erows, err := s.db.QueryContext(ctx,
+				`SELECT e.embedding FROM kb_card_embeddings e
+				 JOIN kb_cards c ON c.id = e.card_id
+				 WHERE e.agent_id = `+s.ph(1)+` AND c.status != 'archived'`, agentID); err == nil {
+				for erows.Next() {
+					var blob []byte
+					if erows.Scan(&blob) == nil {
+						pool = append(pool, kbFloat32FromBlob(blob))
+					}
+				}
+				erows.Close()
+			}
+			for i, q := range vecs {
+				if len(q) == 0 {
+					continue
+				}
+				for _, v := range pool {
+					if len(v) != len(q) {
+						continue
+					}
+					if kbCosine(q, v) > 0.90 {
+						slog.Debug("kb card dup: vector leg hit", "agent", agentID)
+						out[i] = true
+						break
+					}
+				}
+			}
+		}
+	}
+	for i, q := range questions {
+		if out[i] {
+			continue
+		}
+		q = strings.TrimSpace(q)
+		if q != "" && keyed[strings.ToLower(q)] {
+			out[i] = true
+		}
+	}
+	return out
 }
 
 func boolInt(b bool) int {

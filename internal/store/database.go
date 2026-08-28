@@ -3227,6 +3227,11 @@ func (d *DBStore) ph(n int) string {
 	return "?"
 }
 
+// Ph is the exported form of ph for packages that build their own SQL
+// against a DBStore (cardsgen run markers, gateway card-push markers) —
+// one dialect dispatcher instead of per-caller closures.
+func (d *DBStore) Ph(n int) string { return d.ph(n) }
+
 // scanErr wraps sql.ErrNoRows in our public ErrNotFound.
 func scanErr(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {

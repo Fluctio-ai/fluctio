@@ -18,7 +18,6 @@ import {
   PaperclipIcon,
   PenLineIcon,
   PlusIcon,
-  SearchIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -42,6 +41,7 @@ import { ChatMarkdown } from "@/components/chat-markdown";
 import { Whiteboard } from "@/components/whiteboard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchInput } from "@/components/ui/search-input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -397,15 +397,11 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
       >
         <div className="border-b">
           <div className="flex items-center gap-2 p-3 pb-2">
-            <div className="relative min-w-0 flex-1">
-              <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t("knowledge.notes.search")}
-                className="h-7 w-full rounded-md pl-8 text-xs"
-              />
-            </div>
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              placeholder={t("knowledge.notes.search")}
+            />
             <Button variant="outline" size="sm" className="h-7 shrink-0 text-xs" onClick={newNote}>
               <PlusIcon className="mr-1 size-3" /> {t("knowledge.notes.new")}
             </Button>

@@ -40,9 +40,7 @@ func (s *Server) HandleGetUsage(w http.ResponseWriter, r *http.Request) {
 	targetUser := ident.UserID
 	if quid := r.URL.Query().Get("user_id"); quid != "" && quid != ident.UserID {
 		if !s.authorizeTargetUser(r, ident, quid) {
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
-			})
+			s.forbidForeignUser(w)
 			return
 		}
 		targetUser = quid
@@ -129,9 +127,7 @@ func (s *Server) HandleSetQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	ident, _ := auth.FromContext(r.Context())
 	if ident.UserID != "" && req.UserID != ident.UserID && !s.authorizeTargetUser(r, ident, req.UserID) {
-		writeJSON(w, http.StatusForbidden, map[string]any{
-			"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
-		})
+		s.forbidForeignUser(w)
 		return
 	}
 	if req.ResetDay < 1 || req.ResetDay > 28 {
@@ -154,6 +150,14 @@ func (s *Server) HandleSetQuota(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":    true,
 		"quota": q,
+	})
+}
+
+// forbidForeignUser writes the 403 shared by the billing endpoints for a
+// user_id that names a tenant not owned by the caller's api key.
+func (s *Server) forbidForeignUser(w http.ResponseWriter) {
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
 	})
 }
 
@@ -197,9 +201,7 @@ func (s *Server) HandleGetQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	ident, _ := auth.FromContext(r.Context())
 	if ident.UserID != "" && userID != ident.UserID && !s.authorizeTargetUser(r, ident, userID) {
-		writeJSON(w, http.StatusForbidden, map[string]any{
-			"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
-		})
+		s.forbidForeignUser(w)
 		return
 	}
 
@@ -255,9 +257,7 @@ func (s *Server) HandleDeleteQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	ident, _ := auth.FromContext(r.Context())
 	if ident.UserID != "" && userID != ident.UserID && !s.authorizeTargetUser(r, ident, userID) {
-		writeJSON(w, http.StatusForbidden, map[string]any{
-			"error": map[string]string{"message": "user_id does not belong to this api key", "type": "invalid_request_error"},
-		})
+		s.forbidForeignUser(w)
 		return
 	}
 

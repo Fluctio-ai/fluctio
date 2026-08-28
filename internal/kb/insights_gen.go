@@ -82,7 +82,7 @@ func (s *KBStore) GenerateInsights(ctx context.Context, agentID, sourceID string
 	// whole parse. Shared llmjson chain covers fences and bare quotes
 	// (quotes are literal article excerpts here, so the model trips on
 	// them often).
-	cleaned := stripInsightJSONFence(strings.TrimSpace(raw))
+	cleaned := strings.TrimSpace(raw)
 	var doc map[string]json.RawMessage
 	if err := llmjson.UnmarshalLLM(cleaned, &doc); err != nil {
 		preview := cleaned
@@ -176,17 +176,4 @@ func buildInsightPrompt(title, content string, truncated bool) string {
 - 所有文本字段必须是字符串（不能是数组），需要分段时用 \n
 - 不要使用中文引号，以免与 JSON 的双引号冲突
 - 只输出上述 JSON 对象，不要任何前后缀文字`, title, truncNote, content)
-}
-
-// stripInsightJSONFence trims an optional ```json … ``` fence many tuned
-// models wrap around structured output despite the prompt asking for raw JSON.
-func stripInsightJSONFence(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, "```") {
-		if idx := strings.IndexByte(s, '\n'); idx >= 0 {
-			s = s[idx+1:]
-		}
-		s = strings.TrimSpace(s)
-	}
-	return strings.TrimSpace(strings.TrimSuffix(s, "```"))
 }

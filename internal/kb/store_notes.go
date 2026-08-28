@@ -3,6 +3,7 @@ package kb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -23,11 +24,11 @@ type noteScanner interface {
 	Scan(dest ...interface{}) error
 }
 
-func scanNote(row noteScanner) (KBNote, bool) {
+func scanNote(row noteScanner) (KBNote, error) {
 	var n KBNote
 	var createdAt, updatedAt sql.NullString
 	if err := row.Scan(&n.ID, &n.AgentID, &n.Title, &n.ContentMD, &n.Whiteboard, &createdAt, &updatedAt); err != nil {
-		return KBNote{}, false
+		return KBNote{}, err
 	}
 	if createdAt.Valid {
 		n.CreatedAt, _ = time.Parse(time.RFC3339, createdAt.String)
@@ -35,12 +36,13 @@ func scanNote(row noteScanner) (KBNote, bool) {
 	if updatedAt.Valid {
 		n.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
 	}
-	return n, true
+	return n, nil
 }
 
 // ListNotes returns the agent's notes in display order: manual drag order
-// (sort_order ASC, 1-based, written by ReorderNotes) first, then un-ordered
-// notes newest-first (sort_order 0). A fresh note therefore sits on top
+// (sort_order ASC, 1-based — legacy: manual reorder shipped with the drag
+// UI and no longer has a writer, but old rows keep their positions) first,
+// then un-ordered notes newest-first (sort_order 0). A fresh note therefore sits on top
 // until the user drags anything; after the first drag every note carries
 // an explicit position and manual order wins. Content and whiteboard ride
 // along: notes are few and the editor loads the selected note in full,
@@ -56,8 +58,8 @@ func (s *KBStore) ListNotes(ctx context.Context, agentID string) ([]KBNote, erro
 	defer rows.Close()
 	var out []KBNote
 	for rows.Next() {
-		n, ok := scanNote(rows)
-		if !ok {
+		n, err := scanNote(rows)
+		if err != nil {
 			continue
 		}
 		out = append(out, n)
@@ -65,20 +67,22 @@ func (s *KBStore) ListNotes(ctx context.Context, agentID string) ([]KBNote, erro
 	return out, nil
 }
 
-// ReorderNotes writes the manual list order: ids[0] gets sort_order 1,
-// ids[1] gets 2, … . Notes absent from the list keep sort_order 0 (they
-// sort after the manual block, newest-first). Idempotent — the client
-// sends the full visible order after each drag.
-func (s *KBStore) ReorderNotes(ctx context.Context, agentID string, ids []string) error {
-	for i, id := range ids {
-		if _, err := s.db.ExecContext(ctx,
-			fmt.Sprintf(`UPDATE kb_notes SET sort_order = %s WHERE id = %s AND agent_id = %s`,
-				s.ph(1), s.ph(2), s.ph(3)),
-			float64(i+1), id, agentID); err != nil {
-			return fmt.Errorf("reorder notes: %w", err)
-		}
+// GetNote loads one note by id — the single-row fetch the agent tools use
+// (read/save by note_id), so they don't drag every note's full content
+// over the wire to find one. Returns (note, false, nil) when no row
+// matches the id.
+func (s *KBStore) GetNote(ctx context.Context, agentID, id string) (KBNote, bool, error) {
+	n, err := scanNote(s.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT %s FROM kb_notes WHERE id = %s AND agent_id = %s`,
+			noteColumns, s.ph(1), s.ph(2)),
+		id, agentID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return KBNote{}, false, nil
 	}
-	return nil
+	if err != nil {
+		return KBNote{}, false, fmt.Errorf("get note: %w", err)
+	}
+	return n, true, nil
 }
 
 // SaveNote upserts one note. Empty id creates; otherwise the caller's id
