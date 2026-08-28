@@ -7,6 +7,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/backup"
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/diary"
 	"github.com/fluctio-ai/fluctio/internal/scope"
 )
 
@@ -59,8 +60,7 @@ func (s *Server) handleBackupNow(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "store unavailable"})
 		return
 	}
-	cst := time.FixedZone("CST", 8*3600)
-	name, size, err := backup.Create(r.Context(), s.dataStore, time.Now().In(cst))
+	name, size, err := backup.Create(r.Context(), s.dataStore, time.Now().In(diary.CST))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

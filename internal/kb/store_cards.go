@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/diary"
 	"github.com/google/uuid"
 )
 
@@ -19,9 +20,11 @@ import (
 var CardIntervals = [6]int{1, 2, 4, 7, 15, 30}
 
 // cardsCST is the UTC+8 zone card days are grouped by — same day boundary
+// as the diary: an alias of diary.CST (the single source of truth), kept
+// as a local name for call-site readability.
 // as the daily diary, so "due today" and the streak align with the day the
 // user actually perceives.
-var cardsCST = time.FixedZone("CST", 8*3600)
+var cardsCST = diary.CST
 
 // cardDayBound returns the end of the given clock day in cardsCST (i.e.
 // the instant "due today" is measured against: due_at <= bound).

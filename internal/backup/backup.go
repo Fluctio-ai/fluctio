@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/diary"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
@@ -223,8 +224,7 @@ func FullPath(name string) (string, error) {
 // date (UTC+8). Used by the scheduler for once-per-day idempotency —
 // if today's snapshot already exists (auto or manual), the ticker skips.
 func TodayHasBackup() bool {
-	cst := time.FixedZone("CST", 8*3600)
-	today := time.Now().In(cst).Format("20060102")
+	today := time.Now().In(diary.CST).Format("20060102")
 	items, err := List()
 	if err != nil {
 		return false

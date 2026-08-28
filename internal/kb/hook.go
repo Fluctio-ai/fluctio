@@ -122,8 +122,8 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 		// Cache hit: same query already processed AND the injection it
 		// produced is still in hc.Messages. Per-lane caches: a KB lane
 		// checks its [KB] injection, the memory lane its [MEM] one.
-		kbDone := !wikiOn && !ftOn || lastQuery == query && messagesContainKBContext(hc.Messages)
-		memDone := !memOn || lastMemQuery == query && messagesContainMEMContext(hc.Messages)
+		kbDone := !wikiOn && !ftOn || lastQuery == query && messagesContainPrefixed(hc.Messages, "[KB]")
+		memDone := !memOn || lastMemQuery == query && messagesContainPrefixed(hc.Messages, "[MEM]")
 		if kbDone && memDone {
 			return
 		}
@@ -275,29 +275,39 @@ func extractLastUserMessage(msgs []provider.Message) string {
 	return ""
 }
 
-// messagesContainKBContext reports whether any message in msgs carries
-// an injected KB context block. injectKBContext prefixes every injection
-// with "[KB]" (or the custom IndicatorFound text), so a simple prefix
-// scan is enough. Used by the cache-hit check to confirm the previously
-// cached injection is still in scope for the current conversation.
-func messagesContainKBContext(msgs []provider.Message) bool {
+// messagesContainPrefixed reports whether any message in msgs starts with
+// the given lane marker ("[KB]" / "[MEM]"). injectKBContext and
+// injectMEMContext prefix every injection with their marker, so a prefix
+// scan is enough to confirm the previously injected context is still in
+// scope for the current conversation.
+func messagesContainPrefixed(msgs []provider.Message, prefix string) bool {
 	for _, m := range msgs {
-		if strings.HasPrefix(m.Content, "[KB]") {
+		if strings.HasPrefix(m.Content, prefix) {
 			return true
 		}
 	}
 	return false
 }
 
-// messagesContainMEMContext is the memory lane's counterpart of
-// messagesContainKBContext — [MEM]-prefixed injections.
-func messagesContainMEMContext(msgs []provider.Message) bool {
-	for _, m := range msgs {
-		if strings.HasPrefix(m.Content, "[MEM]") {
-			return true
+// insertContextMessage places msg right after a leading system message
+// (or first when there is none), replacing any previous injection carrying
+// the same marker — context blocks never stack across ReAct iterations.
+func insertContextMessage(hc *HookContext, marker string, msg provider.Message) {
+	insertAt := 0
+	if len(hc.Messages) > 0 && hc.Messages[0].Role == "system" {
+		insertAt = 1
+	}
+	var filtered []provider.Message
+	filtered = append(filtered, hc.Messages[:insertAt]...)
+	for _, m := range hc.Messages[insertAt:] {
+		if !strings.HasPrefix(m.Content, marker) {
+			filtered = append(filtered, m)
 		}
 	}
-	return false
+	tail := make([]provider.Message, len(filtered)-insertAt)
+	copy(tail, filtered[insertAt:])
+	hc.Messages = append(filtered[:insertAt:insertAt], msg)
+	hc.Messages = append(hc.Messages, tail...)
 }
 
 // injectMEMContext inserts a [MEM]-prefixed context message carrying the
@@ -321,22 +331,7 @@ func injectMEMContext(hc *HookContext, hits []MemoryRecallHit) {
 		Content: sb.String(),
 	}
 
-	insertAt := 0
-	if len(hc.Messages) > 0 && hc.Messages[0].Role == "system" {
-		insertAt = 1
-	}
-
-	var filtered []provider.Message
-	filtered = append(filtered, hc.Messages[:insertAt]...)
-	for _, m := range hc.Messages[insertAt:] {
-		if !strings.HasPrefix(m.Content, "[MEM]") {
-			filtered = append(filtered, m)
-		}
-	}
-	tail := make([]provider.Message, len(filtered)-insertAt)
-	copy(tail, filtered[insertAt:])
-	hc.Messages = append(filtered[:insertAt:insertAt], memMsg)
-	hc.Messages = append(hc.Messages, tail...)
+	insertContextMessage(hc, "[MEM]", memMsg)
 }
 
 // buildMemoryResultSummary renders the memory lane's synthetic
@@ -415,23 +410,7 @@ func injectKBContext(hc *HookContext, results []KBResult, citations []string) {
 		Content: sb.String(),
 	}
 
-	insertAt := 0
-	if len(hc.Messages) > 0 && hc.Messages[0].Role == "system" {
-		insertAt = 1
-	}
-
-	// Remove any previous KB context messages to avoid stacking across ReAct iterations.
-	var filtered []provider.Message
-	filtered = append(filtered, hc.Messages[:insertAt]...)
-	for _, m := range hc.Messages[insertAt:] {
-		if !strings.HasPrefix(m.Content, "[KB]") {
-			filtered = append(filtered, m)
-		}
-	}
-	tail := make([]provider.Message, len(filtered)-insertAt)
-	copy(tail, filtered[insertAt:])
-	hc.Messages = append(filtered[:insertAt:insertAt], kbMsg)
-	hc.Messages = append(hc.Messages, tail...)
+	insertContextMessage(hc, "[KB]", kbMsg)
 }
 
 func indicatorNotFoundMsg() string {

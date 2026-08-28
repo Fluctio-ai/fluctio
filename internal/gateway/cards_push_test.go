@@ -26,20 +26,23 @@ func TestCardsPushStampAndDigest(t *testing.T) {
 	ctx := context.Background()
 	today := time.Now().In(diaryCST).Format("2006-01-02")
 
-	if cardsPushedToday(ctx, dbs, "a1", today) {
+	if dbs.HasDailyRun(ctx, "kb_card_push_runs", "a1", today) {
 		t.Fatalf("nothing pushed yet but flagged pushed")
 	}
-	if err := stampCardsPush(ctx, dbs, "a1", today, 5, "telegram"); err != nil {
+	if err := dbs.StampCardPushRun(ctx, "a1", today, 5, "telegram"); err != nil {
 		t.Fatalf("stamp: %v", err)
 	}
-	if !cardsPushedToday(ctx, dbs, "a1", today) {
+	if !dbs.HasDailyRun(ctx, "kb_card_push_runs", "a1", today) {
 		t.Fatalf("stamp not readable back")
 	}
-	if cardsPushedToday(ctx, dbs, "a2", today) {
+	if dbs.HasDailyRun(ctx, "kb_card_push_runs", "a2", today) {
 		t.Fatalf("stamp leaked across agents")
 	}
-	if cardsPushedToday(ctx, dbs, "a1", "2020-01-01") {
+	if dbs.HasDailyRun(ctx, "kb_card_push_runs", "a1", "2020-01-01") {
 		t.Fatalf("stamp leaked across dates")
+	}
+	if dbs.HasDailyRun(ctx, "kb_cards", "a1", today) {
+		t.Fatalf("non-whitelisted table must never report a run")
 	}
 
 	due := []kb.KBCard{

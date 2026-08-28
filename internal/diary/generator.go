@@ -28,8 +28,11 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
-// cst is UTC+8 — the day boundary the diary groups by.
-var cst = time.FixedZone("CST", 8*3600)
+// CST is UTC+8 — the day boundary the diary groups by. It is the single
+// source of truth for the product's CST day cut: kb cards, cardsgen, the
+// gateway sweeps, and backups all alias this value (their local vars
+// exist for call-site readability, not as second definitions).
+var CST = time.FixedZone("CST", 8*3600)
 
 // thinkingOff reports whether a pass should run with thinking disabled,
 // per AgentDiaryCfg.ThinkingMode.
@@ -79,7 +82,7 @@ func Generate(
 	prov provider.Provider,
 	model, thinkingMode string,
 ) (*store.DailyDiary, error) {
-	day, err := time.ParseInLocation("2006-01-02", date, cst)
+	day, err := time.ParseInLocation("2006-01-02", date, CST)
 	if err != nil {
 		return nil, fmt.Errorf("diary: parse date %q: %w", date, err)
 	}

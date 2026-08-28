@@ -13,8 +13,9 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
-// diaryCST is the UTC+8 zone for default date framing.
-var diaryCST = time.FixedZone("CST", 8*3600)
+// diaryCST is the UTC+8 zone for default date framing (an alias of
+// diary.CST, the single source of truth).
+var diaryCST = diary.CST
 
 // diaryGenLocks prevents two concurrent manual generations for the same
 // (agent, date). Keyed "agentID:date".

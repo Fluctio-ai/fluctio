@@ -436,8 +436,12 @@ func persistConversationSummary(
 	)
 	// Recent cross-session memories: shown to the LLM for dedup + the
 	// supersedes chain (state flips like install→remove). Best-effort —
-	// extraction proceeds without it when the lookup fails.
-	recent, rerr := db.ListRecentSummariesForSupersede(ctx, agentID, sessionKey, 40)
+	// extraction proceeds without it when the lookup fails. Capped at 15:
+	// each entry costs ~160B of summary in BOTH the full and incremental
+	// prompt, and an out-of-date memory the LLM should supersede is nearly
+	// always among the newest ones — rows 16-40 almost never earn their
+	// per-extraction token tax.
+	recent, rerr := db.ListRecentSummariesForSupersede(ctx, agentID, sessionKey, 15)
 	if rerr != nil {
 		slog.Debug("conversation summary: recent memories lookup failed",
 			"agent", agentID, "error", rerr)

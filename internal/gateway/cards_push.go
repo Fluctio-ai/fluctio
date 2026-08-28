@@ -49,7 +49,7 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 		if cfg == nil || !cfg.PushEnabled {
 			continue
 		}
-		if cardsPushedToday(ctx, dbs, ag.ID, today) {
+		if dbs.HasDailyRun(ctx, "kb_card_push_runs", ag.ID, today) {
 			continue
 		}
 		// Gate: only push after today's PushTime (default 09:00) so the
@@ -103,7 +103,7 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 			// just log: losing the web-side bubble beats double-sending.
 			slog.Warn("cards push: archive digest", "agent", ag.ID, "error", err)
 		}
-		if err := stampCardsPush(ctx, dbs, ag.ID, today, len(due), channel); err != nil {
+		if err := dbs.StampCardPushRun(ctx, ag.ID, today, len(due), channel); err != nil {
 			slog.Warn("cards push: stamp", "agent", ag.ID, "error", err)
 		}
 		slog.Info("cards digest pushed", "agent", ag.ID, "due", len(due), "channel", channel, "chat", chatID)
@@ -159,23 +159,4 @@ func formatCardsDigest(agentID string, due []kb.KBCard, st kb.KBCardStats) strin
 		b.WriteString("\n开始复习：" + base + "/agents/" + agentID + "/knowledge/cards?review=1")
 	}
 	return b.String()
-}
-
-// cardsPushedToday reports whether the agent already got its digest today.
-func cardsPushedToday(ctx context.Context, dbs *store.DBStore, agentID, date string) bool {
-	var one int
-	err := dbs.DB().QueryRowContext(ctx,
-		`SELECT 1 FROM kb_card_push_runs WHERE agent_id = `+dbs.Ph(1)+` AND date = `+dbs.Ph(2),
-		agentID, date).Scan(&one)
-	return err == nil
-}
-
-// stampCardsPush records today's delivered digest (the once-a-day gate).
-func stampCardsPush(ctx context.Context, dbs *store.DBStore, agentID, date string, count int, channel string) error {
-	q := `INSERT INTO kb_card_push_runs (agent_id, date, pushed_count, channel, pushed_at)
-		VALUES (` + dbs.Ph(1) + `,` + dbs.Ph(2) + `,` + dbs.Ph(3) + `,` + dbs.Ph(4) + `,CURRENT_TIMESTAMP)
-		ON CONFLICT(agent_id, date) DO UPDATE SET pushed_count=excluded.pushed_count,
-			channel=excluded.channel, pushed_at=CURRENT_TIMESTAMP`
-	_, err := dbs.DB().ExecContext(ctx, q, agentID, date, count, channel)
-	return err
 }

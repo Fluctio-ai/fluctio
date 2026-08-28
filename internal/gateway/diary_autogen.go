@@ -13,8 +13,8 @@ import (
 )
 
 // diaryCST is the UTC+8 zone the diary groups days by and the CronTime
-// gate is expressed in.
-var diaryCST = time.FixedZone("CST", 8*3600)
+// gate is expressed in (an alias of diary.CST, the single source of truth).
+var diaryCST = diary.CST
 
 // runDiaryForAgent generates one day's diary for an agent. Resolves the
 // agent's provider/model (reusing the wiki path — same scope merge),

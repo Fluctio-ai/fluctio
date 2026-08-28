@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/diary"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -23,8 +24,8 @@ import (
 )
 
 // cst is UTC+8 — the day boundary generation windows are cut on, matching
-// the diary generator.
-var cst = time.FixedZone("CST", 8*3600)
+// the diary generator (an alias of diary.CST, the single source of truth).
+var cst = diary.CST
 
 // DefaultDailyLimit caps cards per nightly run when cfg.DailyLimit is 0.
 const DefaultDailyLimit = 10
@@ -86,7 +87,7 @@ func Run(
 	}
 	if len(sources) == 0 {
 		slog.Info("cardsgen: no material for day", "agent", agentID, "date", date)
-		return 0, stampRun(ctx, dbs, agentID, date, 0, model)
+		return 0, dbs.StampCardGenRun(ctx, agentID, date, 0, model)
 	}
 
 	cards, err := callLLM(ctx, prov, model, sources, dailyLimit)
@@ -159,7 +160,7 @@ func Run(
 		seen[key] = true
 		created++
 	}
-	if err := stampRun(ctx, dbs, agentID, date, created, model); err != nil {
+	if err := dbs.StampCardGenRun(ctx, agentID, date, created, model); err != nil {
 		slog.Warn("cardsgen: stamp run failed", "agent", agentID, "date", date, "error", err)
 	}
 	slog.Info("cardsgen: done", "agent", agentID, "date", date,
@@ -268,24 +269,10 @@ func callLLM(ctx context.Context, prov provider.Provider, model string, sources 
 	return parsed.Cards, nil
 }
 
-// stampRun upserts the (agent, date) generation marker — idempotency for
-// the nightly sweep plus a creation log.
-func stampRun(ctx context.Context, dbs *store.DBStore, agentID, date string, created int, model string) error {
-	q := `INSERT INTO kb_card_gen_runs (agent_id, date, created, model, created_at)
-		VALUES (` + dbs.Ph(1) + `,` + dbs.Ph(2) + `,` + dbs.Ph(3) + `,` + dbs.Ph(4) + `,CURRENT_TIMESTAMP)
-		ON CONFLICT(agent_id, date) DO UPDATE SET created=excluded.created, model=excluded.model, created_at=CURRENT_TIMESTAMP`
-	_, err := dbs.DB().ExecContext(ctx, q, agentID, date, created, model)
-	return err
-}
-
 // HasRunFor reports whether a generation pass already stamped (agent,
 // date) — the nightly sweep's skip condition.
 func HasRunFor(ctx context.Context, dbs *store.DBStore, agentID, date string) bool {
-	var one int
-	err := dbs.DB().QueryRowContext(ctx,
-		`SELECT 1 FROM kb_card_gen_runs WHERE agent_id = `+dbs.Ph(1)+` AND date = `+dbs.Ph(2),
-		agentID, date).Scan(&one)
-	return err == nil
+	return dbs.HasDailyRun(ctx, "kb_card_gen_runs", agentID, date)
 }
 
 // clip truncates s to at most max runes on a rune boundary.
