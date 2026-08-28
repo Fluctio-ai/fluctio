@@ -46,9 +46,10 @@ import {
   generateCards,
   getCardStats,
   getAgentConfig,
-  getWikiPage,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
+import { useWikiTitle } from "@/hooks/use-wiki-title";
+import { endOfToday } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
@@ -75,11 +76,6 @@ function isDueSoon(c: KBCard, now: number): "overdue" | "today" | null {
   if (due <= endOfToday(now)) return "today";
   return null;
 }
-function endOfToday(now: number): number {
-  const d = new Date(now);
-  d.setHours(23, 59, 59, 999);
-  return d.getTime();
-}
 
 export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
@@ -102,7 +98,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   // wikiTitle resolves the selected card's wiki source_ref (a "type:slug"
   // page id) into the page's title, so the source shows a name instead of
   // the raw id/link.
-  const [wikiTitle, setWikiTitle] = useState<string | null>(null);
+  const wikiTitle = useWikiTitle(agentId, selected?.id ?? "", selected?.source_type, selected?.source_ref);
 
   const [addOpen, setAddOpen] = useState(false);
   const [addQ, setAddQ] = useState("");
@@ -217,18 +213,12 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   }, [agentId, startReview, router]);
 
   // Selecting a card fetches its review timeline; the flip resets. Wiki
-  // sources also resolve their page title for the source displays.
+  // sources resolve their page title via the useWikiTitle hook above.
   const openCard = useCallback(
     async (c: KBCard) => {
       setSelected(c);
       setFlipped(false);
       setReviews([]);
-      setWikiTitle(null);
-      if (agentId && c.source_type === "wiki" && c.source_ref) {
-        getWikiPage(agentId, c.source_ref)
-          .then((p) => setWikiTitle(p?.title || null))
-          .catch(() => {});
-      }
       setDetailLoading(true);
       try {
         const d = agentId ? await getCard(agentId, c.id) : null;

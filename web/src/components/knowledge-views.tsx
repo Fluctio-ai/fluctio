@@ -67,6 +67,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
+import { dayKey, endOfToday, pad2 } from "@/lib/time";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import ReactMarkdown from "react-markdown";
@@ -113,8 +114,7 @@ function datetimeLocalValue(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 // KnowledgePage is the shared shell for the four KB sub-pages
@@ -1352,7 +1352,6 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
   // for the urgency summary above the board.
   const { overdue: overdueTodos, today: dueToday } = useMemo(() => {
     const now = Date.now();
-    const eod = new Date(); eod.setHours(23, 59, 59, 999);
     const overdue: FlashItem[] = [];
     const today: FlashItem[] = [];
     for (const it of visibleTodos) {
@@ -1360,7 +1359,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
       if (!it.src.end_at) continue;
       const due = new Date(it.src.end_at).getTime();
       if (due < now) overdue.push(it);
-      else if (due <= eod.getTime()) today.push(it);
+      else if (due <= endOfToday(now)) today.push(it);
     }
     return { overdue, today };
   }, [visibleTodos]);
@@ -1654,7 +1653,7 @@ function todoOverdue(src: KBSource): boolean {
 // dueBounds returns the current-time bucket edges for the list view.
 function dueBounds() {
   const now = Date.now();
-  const eod = new Date(); eod.setHours(23, 59, 59, 999);
+  const eod = new Date(endOfToday(now));
   const eodTomorrow = new Date(eod); eodTomorrow.setDate(eod.getDate() + 1);
   const eodWeek = new Date(eod); eodWeek.setDate(eod.getDate() + 7);
   return { now, eod, eodTomorrow, eodWeek };
@@ -1667,12 +1666,8 @@ function todoFirstLine(content: string): string {
   return (line ?? "").replace(/^#{1,6}\s*/, "").trim();
 }
 
-// dayKey formats a local date as "YYYY-MM-DD" — the join key between todo
-// timestamps and calendar cells (calendar days, not instants).
-function dayKey(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
+// dayKey lives in lib/time.ts — the join key between todo timestamps and
+// calendar cells (calendar days, not instants).
 
 // monthGrid returns the 42 days (6 weeks, Monday-first) covering anchor's
 // month so a todo spanning a week boundary still renders as aligned bars.

@@ -3,7 +3,9 @@
 // ConfirmDeleteDialog — the shared KB delete confirmation. Mirrors the wiki
 // page's AlertDialog flow (deleteTarget + confirm) so every knowledge view
 // asks before destroying data. `name` identifies the item in the body copy;
-// long names (flash/todo bodies) are truncated here so callers pass raw text.
+// long names (flash/todo bodies) are truncated here so callers pass raw
+// text. `description` overrides the default body wholesale — for callers
+// whose copy carries extra structure (e.g. a folder's file count).
 
 import { useT } from "@/lib/i18n";
 import {
@@ -20,11 +22,13 @@ import {
 export function ConfirmDeleteDialog({
   open,
   name,
+  description,
   onOpenChange,
   onConfirm,
 }: {
   open: boolean;
   name: string;
+  description?: string;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => void | Promise<void>;
 }) {
@@ -36,7 +40,7 @@ export function ConfirmDeleteDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>{t("common.deleteConfirmTitle")}</AlertDialogTitle>
           <AlertDialogDescription>
-            {t("common.deleteConfirmBody", { name: shown })}
+            {description ?? t("common.deleteConfirmBody", { name: shown })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

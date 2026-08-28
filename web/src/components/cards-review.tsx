@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CalendarIcon, ExternalLinkIcon, FileTextIcon, Loader2Icon, XIcon } from "lucide-react";
-import { type KBCard, getAgentConfig, getWikiPage, listCards, reviewCard } from "@/lib/api";
+import { type KBCard, getAgentConfig, listCards, reviewCard } from "@/lib/api";
+import { useWikiTitle } from "@/hooks/use-wiki-title";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -100,22 +101,13 @@ export function CardDeck({
 
   const finished = queue !== null && idx >= queue.length;
 
-  // wikiTitle resolves the current card's wiki source_ref (a "type:slug"
-  // page id) into the page's title so the flip-side deep link reads as the
-  // page's name, not the generic "查看 Wiki 原文". Diary links already
-  // carry their date. Stashed with the card id it was fetched for — the
-  // render only trusts it while that card is still front, so an advancing
-  // deck never flashes the previous card's title.
-  const [wikiTitle, setWikiTitle] = useState<{ id: string; title: string } | null>(null);
-  useEffect(() => {
-    const c = queue !== null && idx < queue.length ? queue[idx] : null;
-    if (!c || c.source_type !== "wiki" || !c.source_ref) return;
-    let alive = true;
-    getWikiPage(agentId, c.source_ref)
-      .then((p) => { if (alive && p?.title) setWikiTitle({ id: c.id, title: p.title }); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [agentId, queue, idx]);
+  // wikiTitle resolves the current card's wiki source_ref into the page's
+  // title so the flip-side deep link reads as the page's name, not the
+  // generic "查看 Wiki 原文". Diary links already carry their date. The
+  // hook keys on the card id — an advancing deck never flashes the
+  // previous card's title.
+  const cur = queue !== null && idx < queue.length ? queue[idx] : null;
+  const wikiTitle = useWikiTitle(agentId, cur?.id ?? "", cur?.source_type, cur?.source_ref);
 
   const grade = useCallback(
     async (g: Grade, via: "swipe" | "button" | "key") => {
@@ -354,9 +346,7 @@ export function CardDeck({
                         )}
                         {card.source_type === "diary"
                           ? t("cards.fromDiary", { date: card.source_ref })
-                          : wikiTitle?.id === card.id
-                            ? wikiTitle.title
-                            : t("cards.viewWiki")}
+                          : wikiTitle ?? t("cards.viewWiki")}
                         <ExternalLinkIcon className="size-3" />
                       </a>
                     )}

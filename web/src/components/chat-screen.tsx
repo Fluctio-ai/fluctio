@@ -10,6 +10,8 @@ import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSe
 import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { usePersistedDragWidth } from "@/hooks/use-drag-width";
 
 // Split a string on `![alt](data:image/...;base64,...)` markdown.
 //
@@ -4241,15 +4243,18 @@ function WorkspacePanel({
   // Inner splitter: draggable width of the file-tree column (left of the
   // viewer). Persisted across sessions like the outer panel width; capped
   // so the viewer keeps a usable share even when the panel is narrow.
-  const [treeW, setTreeW] = useState<number>(() => {
-    if (typeof window === "undefined") return FILES_TREE_DEFAULT;
-    const stored = Number(window.localStorage.getItem(FILES_TREE_KEY));
-    if (Number.isFinite(stored) && stored >= FILES_TREE_MIN && stored <= FILES_TREE_MAX) {
-      return stored;
-    }
-    return FILES_TREE_DEFAULT;
+  // Inner file-tree splitter: clamp against the panel's own left edge so
+  // the tree can never eat the whole panel (viewer keeps the remainder).
+  const {
+    width: treeW,
+    startResize: startTreeResize,
+  } = usePersistedDragWidth({
+    storageKey: FILES_TREE_KEY,
+    initial: FILES_TREE_DEFAULT,
+    min: FILES_TREE_MIN,
+    max: FILES_TREE_MAX,
+    compute: (clientX) => clientX - (asideRef.current?.getBoundingClientRect().left ?? 0),
   });
-  const [treeResizing, setTreeResizing] = useState(false);
   // Files the agent changed vs the template baseline (so the tree can show
   // just this task's output), and whether to show all files instead.
   const [changed, setChanged] = useState<{ files: WorkspaceFile[]; available: boolean }>({ files: [], available: false });
@@ -4274,16 +4279,19 @@ function WorkspacePanel({
       cancelled = true;
     };
   }, []);
-  const [width, setWidth] = useState<number>(() => {
-    if (typeof window === "undefined") return FILES_PANEL_DEFAULT;
-    const stored = Number(window.localStorage.getItem(FILES_PANEL_KEY));
-    if (Number.isFinite(stored) && stored >= FILES_PANEL_MIN && stored <= FILES_PANEL_MAX) {
-      return stored;
-    }
-    return FILES_PANEL_DEFAULT;
+  // Outer panel splitter (right-anchored: width = viewport right − pointer).
+  const {
+    width,
+    setWidth,
+    resizing,
+    startResize,
+  } = usePersistedDragWidth({
+    storageKey: FILES_PANEL_KEY,
+    initial: FILES_PANEL_DEFAULT,
+    min: FILES_PANEL_MIN,
+    max: FILES_PANEL_MAX,
+    compute: (clientX) => window.innerWidth - clientX,
   });
-  const [resizing, setResizing] = useState(false);
-
   // Measure the panel's ACTUAL rendered width (not the `width` state, which
   // the CSS maxWidth cap can shrink below on small viewports) so the header
   // can collapse its toolbar before it overflows and pushes a page scroll.
@@ -4302,58 +4310,8 @@ function WorkspacePanel({
   // "Files" label drops, so the header always fits the narrow panel.
   const compactHeader = panelW < 480;
 
-  useEffect(() => {
-    if (!resizing) return;
-    const handleMove = (e: MouseEvent) => {
-      const next = Math.min(
-        FILES_PANEL_MAX,
-        Math.max(FILES_PANEL_MIN, window.innerWidth - e.clientX),
-      );
-      setWidth(next);
-    };
-    const handleUp = () => {
-      setResizing(false);
-      try {
-        window.localStorage.setItem(FILES_PANEL_KEY, String(width));
-      } catch { /* ignore quota errors */ }
-    };
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-  }, [resizing, width]);
-
-  // Inner splitter drag: clamp against the panel's own left edge so the
-  // tree can never eat the whole panel (viewer keeps the remainder).
-  useEffect(() => {
-    if (!treeResizing) return;
-    const handleMove = (e: MouseEvent) => {
-      const left = asideRef.current?.getBoundingClientRect().left ?? 0;
-      setTreeW(Math.min(FILES_TREE_MAX, Math.max(FILES_TREE_MIN, e.clientX - left)));
-    };
-    const handleUp = () => {
-      setTreeResizing(false);
-      try {
-        window.localStorage.setItem(FILES_TREE_KEY, String(treeW));
-      } catch { /* ignore quota errors */ }
-    };
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    return () => {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-  }, [treeResizing, treeW]);
+  // Inner splitter drag now lives in the usePersistedDragWidth hook above
+  // (storageKey FILES_TREE_KEY); this effect is gone.
 
   const handleReveal = useCallback(async () => {
     if (!agentId || (!sessionId && !projectId)) return;
@@ -4409,12 +4367,23 @@ function WorkspacePanel({
 
   // Delete a tree row (file or folder). Folders expand to their leaf
   // files client-side — the store has no directory concept and this
-  // keeps LocalFS and S3 backends behaving identically. The 403 path
-  // (public-agent viewer) surfaces the server's error via alert, same
-  // best-effort UX as the reveal button.
+  // keeps LocalFS and S3 backends behaving identically. The shared
+  // ConfirmDeleteDialog asks first (count-aware copy for folders); the
+  // 403 path (public-agent viewer) surfaces the server's error via alert,
+  // same best-effort UX as the reveal button.
   const [deleting, setDeleting] = useState(false);
-  const handleDeleteNode = useCallback(async (node: FileTreeNode) => {
-    if (deleting) return;
+  const [deleteTarget, setDeleteTarget] = useState<FileTreeNode | null>(null);
+  const handleDeleteNode = useCallback(
+    (node: FileTreeNode) => {
+      if (deleting) return;
+      setDeleteTarget(node);
+    },
+    [deleting],
+  );
+  const confirmDeleteNode = useCallback(async () => {
+    const node = deleteTarget;
+    if (!node || deleting) return;
+    setDeleteTarget(null);
     const paths: string[] = [];
     const collect = (n: FileTreeNode) => {
       if (n.isDir) n.children.forEach(collect);
@@ -4422,10 +4391,6 @@ function WorkspacePanel({
     };
     collect(node);
     if (paths.length === 0) return;
-    const msg = node.isDir
-      ? t("chat.files.deleteConfirmDir", { name: node.name, count: paths.length })
-      : t("chat.files.deleteConfirmFile", { name: node.name });
-    if (!window.confirm(msg)) return;
     setDeleting(true);
     try {
       for (const p of paths) await deleteAgentFile(agentId, p);
@@ -4436,7 +4401,17 @@ function WorkspacePanel({
     } finally {
       setDeleting(false);
     }
-  }, [agentId, deleting, previewing, refresh, t]);
+  }, [agentId, deleting, deleteTarget, previewing, refresh, t]);
+  const deleteTargetCount = useMemo(() => {
+    if (!deleteTarget) return 0;
+    let n = 0;
+    const collect = (x: FileTreeNode) => {
+      if (x.isDir) x.children.forEach(collect);
+      else n++;
+    };
+    collect(deleteTarget);
+    return n;
+  }, [deleteTarget]);
 
   // Strip prefixes for the tree: backend-provided when it resolved the
   // scope (it knows which project a chat belongs to — the URL doesn't);
@@ -4526,7 +4501,7 @@ function WorkspacePanel({
         className="relative z-30 hidden md:flex shrink-0 flex-col overflow-hidden border-l border-border bg-background -mt-12 h-screen"
       >
         <div
-          onMouseDown={(e) => { e.preventDefault(); setResizing(true); }}
+          onMouseDown={(e) => { e.preventDefault(); startResize(); }}
           className={`absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-10 group ${resizing ? "" : ""}`}
           title={t("preview.dragResize")}
         >
@@ -4704,7 +4679,7 @@ function WorkspacePanel({
               {/* Inner splitter: drag to resize the tree column against
                   the viewer. Mirrors the outer panel edge handle. */}
               <div
-                onMouseDown={(e) => { e.preventDefault(); setTreeResizing(true); }}
+                onMouseDown={(e) => { e.preventDefault(); startTreeResize(); }}
                 className="absolute right-0 top-0 bottom-0 z-10 w-1.5 cursor-col-resize hover:bg-border/60"
                 title={t("preview.dragResize")}
               />
@@ -4819,6 +4794,25 @@ function WorkspacePanel({
           </div>
         )}
       </aside>
+
+      {/* Shared delete confirmation for workspace tree rows — count-aware
+          copy for folders (deleteConfirmDir) replaces the old native
+          window.confirm. */}
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        name={deleteTarget?.name ?? ""}
+        description={
+          deleteTarget
+            ? deleteTarget.isDir
+              ? t("chat.files.deleteConfirmDir", { name: deleteTarget.name, count: deleteTargetCount })
+              : t("chat.files.deleteConfirmFile", { name: deleteTarget.name })
+            : undefined
+        }
+        onOpenChange={(o) => {
+          if (!o) setDeleteTarget(null);
+        }}
+        onConfirm={confirmDeleteNode}
+      />
 
       {/* Mobile full-screen workspace sheet (md:hidden). The desktop
           aside above is `hidden md:flex`, so without this branch the
