@@ -62,3 +62,41 @@ func firstTopicOr(hits []ConversationSummary) string {
 	}
 	return hits[0].Topic
 }
+
+// TestListConversationSummariesNeedingVectorScanShape guards the sqlite
+// JOIN branch of the vector-backfill picker the same way the FTS test
+// above guards the search: its s.-prefixed column list must carry
+// kind + superseded_by too. The 2026-08 migration added those columns to
+// every other SELECT but this one, so every sqlite backfill pass died on
+// Scan with 15 columns vs 17 destinations instead of picking up rows.
+func TestListConversationSummariesNeedingVectorScanShape(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	id, err := db.InsertConversationSummary(ctx, ConversationSummary{
+		AgentID: "a1", SessionKey: "s1", Topic: "回填目标",
+		Summary: "无向量的摘要应被向量回填选中", Keywords: []string{"vec"},
+		SeqStart: 1, SeqEnd: 2, Kind: "durable",
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	pending, err := db.ListConversationSummariesNeedingVector(ctx, "", 10)
+	if err != nil {
+		t.Fatalf("needing vector: %v", err)
+	}
+	found := false
+	for _, p := range pending {
+		if p.ID == id {
+			found = true
+			if p.Kind != "durable" || p.Topic != "回填目标" {
+				t.Fatalf("misaligned scan: kind=%q topic=%q", p.Kind, p.Topic)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("inserted summary not returned by the backfill picker")
+	}
+}

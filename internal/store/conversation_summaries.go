@@ -1271,7 +1271,7 @@ func (d *DBStore) ListConversationSummariesNeedingVector(ctx context.Context, mo
 	default:
 		rows, err = d.db.QueryContext(ctx,
 			`SELECT s.id, s.agent_id, s.session_key,
-			        s.summary, s.keywords, s.seq_start, s.seq_end, s.embedding_model, s.importance, s.access_count, s.access_time_sum, s.last_accessed_at, s.created_at, s.topic, s.segments
+			        s.summary, s.keywords, s.seq_start, s.seq_end, s.embedding_model, s.importance, s.access_count, s.access_time_sum, s.last_accessed_at, s.created_at, s.topic, s.segments, s.kind, s.superseded_by
 			 FROM conversation_summaries s
 			 LEFT JOIN conversation_summaries_vec v ON v.summary_id = s.id
 			 WHERE v.summary_id IS NULL OR (? != '' AND (s.embedding_model IS NULL OR s.embedding_model != ?))
