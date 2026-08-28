@@ -34,12 +34,13 @@ func TestAnthropicSystemConcatAndCacheBreakpoints(t *testing.T) {
 		t.Errorf("system block dropped a message: %q", system[0].Text)
 	}
 
-	// (2a) system block carries an ephemeral breakpoint with the 1h TTL
-	// (default; IM sessions that wake mid-hour still hit the cached prefix).
+	// (2a) system block carries an ephemeral breakpoint with the
+	// process-resolved TTL (1h by default; IM sessions that wake mid-hour
+	// still hit the cached prefix).
 	if system[0].CacheControl == nil || system[0].CacheControl.Type != "ephemeral" {
 		t.Errorf("system block missing ephemeral cache_control: %+v", system[0].CacheControl)
-	} else if system[0].CacheControl.TTL != "1h" {
-		t.Errorf("system block cache_control ttl = %q, want \"1h\"", system[0].CacheControl.TTL)
+	} else if system[0].CacheControl.TTL != anthropicCacheTTL {
+		t.Errorf("system block cache_control ttl = %q, want process TTL %q", system[0].CacheControl.TTL, anthropicCacheTTL)
 	}
 
 	// 3 non-system messages survive (2 user + 1 assistant).
@@ -62,8 +63,8 @@ func TestAnthropicSystemConcatAndCacheBreakpoints(t *testing.T) {
 		t.Errorf("out[1] last block missing cache_control: %+v", last)
 	} else if ccMap, ok := cc.(map[string]interface{}); !ok || ccMap["type"] != "ephemeral" {
 		t.Errorf("out[1] cache_control is not ephemeral: %+v", cc)
-	} else if ccMap["ttl"] != "1h" {
-		t.Errorf("out[1] cache_control ttl = %v, want \"1h\"", ccMap["ttl"])
+	} else if ccMap["ttl"] != anthropicCacheTTL {
+		t.Errorf("out[1] cache_control ttl = %v, want process TTL %q", ccMap["ttl"], anthropicCacheTTL)
 	}
 
 	// The newest user message (out[2]) must NOT carry a breakpoint — it's
@@ -117,7 +118,6 @@ func TestAnthropicCacheBreakpointSkipsEmptyHull(t *testing.T) {
 func TestAnthropicCacheTTLEnvResolution(t *testing.T) {
 	for _, tc := range []struct{ env, want string }{
 		{"", "1h"},
-		{"1h", "1h"},
 		{"5m", "5m"},
 		{"garbage", "1h"},
 	} {

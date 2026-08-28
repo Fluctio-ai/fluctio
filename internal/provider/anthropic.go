@@ -59,8 +59,8 @@ type anthropicTool struct {
 // would have expired). Providers that don't understand "ttl" ignore the
 // field and keep their own default window.
 type anthropicCacheControl struct {
-	Type string `json:"type"`    // "ephemeral"
-	TTL  string `json:"ttl,omitempty"`
+	Type string `json:"type"` // "ephemeral"
+	TTL  string `json:"ttl"`
 }
 
 // anthropicCacheTTL resolves once per process from
@@ -357,7 +357,7 @@ func addEphemeralCache(out []anthropicMessage, idx int) bool {
 	if idx < 0 || idx >= len(out) {
 		return false
 	}
-	cc := map[string]string{"type": "ephemeral", "ttl": anthropicCacheTTL}
+	cc := anthropicCacheControl{Type: "ephemeral", TTL: anthropicCacheTTL}
 	raw := out[idx].Content
 
 	var blocks []map[string]interface{}

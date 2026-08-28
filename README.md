@@ -273,6 +273,7 @@ high → low):
 | `FLUCTIO_DUMP_LLM` | empty (off) | Non-empty enables dumping every LLM request payload to disk. |
 | `FLUCTIO_DUMP_LLM_FILE` | empty | Dump file path; defaults to a file under `$FLUCTIO_HOME`. |
 | `FLUCTIO_PLUGIN_CHAT_SEND_DELAY_MS` | `50` | Delay (ms) before a plugin's `chat.send` is pushed to the outbound bus. |
+| `FLUCTIO_ANTHROPIC_CACHE_TTL` | `1h` | TTL on Anthropic prompt-cache breakpoints; `5m` restores the short default (cross-hour IM wakes then miss the cache). |
 
 Credential-bearing vars (`FLUCTIO_STORAGE_DSN`, `FLUCTIO_OBJECT_STORE_*`
 secrets, `FLUCTIO_REDIS_PASSWORD`, `E2B_API_KEY`, `BOXLITE_API_KEY`) are
