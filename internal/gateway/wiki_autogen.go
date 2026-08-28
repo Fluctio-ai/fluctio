@@ -256,14 +256,9 @@ func resolveWikiProvider(st store.Store, agentID, modelOverride string) (provide
 	// Wrap for PII scrubbing: the wiki / cards / diary pipelines this
 	// resolver feeds all consume raw conversation-derived content, and
 	// they run outside the interactive loop's scrub point. The scoped
-	// privacy row decides; missing row = off (PrivacyCfg zero value).
-	var priv config.PrivacyCfg
-	_ = scope.SettingInto(ctx, st, "privacy", ownerUserID, agentID, &priv)
-	return privacy.WrapProvider(
-		provider.NewProvider(p.APIKey, p.APIBase, p.APIType),
-		privacy.Options{Entropy: priv.PIIScrubbing.Entropy},
-		priv.PIIScrubbing.Enabled,
-	), model
+	// privacy row decides via privacy.ScopedProvider (missing row = off).
+	return privacy.ScopedProvider(ctx, st, ownerUserID, agentID,
+		provider.NewProvider(p.APIKey, p.APIBase, p.APIType)), model
 }
 
 // idleSummaryTicker is the background sweep that summarizes sessions the

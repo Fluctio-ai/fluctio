@@ -3,8 +3,23 @@ package privacy
 import (
 	"context"
 
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/scope"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
+
+// ScopedProvider reads the (owner, agent)-scoped privacy config and wraps
+// base so its calls scrub PII per that row (missing row = off, zero value).
+// The single entry point for background pipelines that consume raw
+// conversation or article content outside the interactive loop's scrub
+// point — wiki/cards autogen, KB insights/merge, skill-learner extraction
+// all route through here, so a scope-key or default change lands once.
+func ScopedProvider(ctx context.Context, st store.Store, ownerUserID, agentID string, base provider.Provider) provider.Provider {
+	var priv config.PrivacyCfg
+	_ = scope.SettingInto(ctx, st, "privacy", ownerUserID, agentID, &priv)
+	return WrapProvider(base, Options{Entropy: priv.PIIScrubbing.Entropy}, priv.PIIScrubbing.Enabled)
+}
 
 // WrapProvider returns a provider whose outgoing messages are
 // PII-scrubbed when enabled. Background LLM pipelines (auto-persist,

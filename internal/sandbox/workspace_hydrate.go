@@ -34,10 +34,7 @@ func hydrateWorkspace(ctx context.Context, ws workspace.Store, ex Executor, agen
 	// per-chat files resurface at the root as apparent new files. Mirrors
 	// E2BExecutor.Hydrate's listProject/listSession folding; LocalFS
 	// deployments no-op through the size-skip below.
-	listProject, listSession := projectID, sessionID
-	if projectID != "" {
-		listSession = ""
-	}
+	listProject, listSession := mountRootScope(projectID, sessionID)
 	objs, err := ws.List(ctx, agentID, listProject, listSession)
 	if err != nil {
 		slog.Warn("workspace hydrate: list failed", "agent", agentID, "project", projectID, "session", sessionID, "error", err)

@@ -258,11 +258,7 @@ func (e *BoxliteExecutor) Hydrate(ctx context.Context) error {
 
 	workspaceCount := 0
 	if e.workspace != nil {
-		listProject := e.projectID
-		listSession := e.sessionID
-		if e.projectID != "" {
-			listSession = ""
-		}
+		listProject, listSession := mountRootScope(e.projectID, e.sessionID)
 		objs, err := e.workspace.List(ctx, e.agentID, listProject, listSession)
 		if err != nil {
 			slog.Warn("boxlite hydrate: workspace list", "agent", e.agentID, "error", err)

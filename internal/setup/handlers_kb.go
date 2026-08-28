@@ -36,9 +36,7 @@ func (s *Server) scrubbedAgentProvider(r *http.Request, agentID string, prov pro
 	if s.dataStore == nil {
 		return prov
 	}
-	var priv config.PrivacyCfg
-	_ = scope.SettingInto(r.Context(), s.dataStore, "privacy", "", agentID, &priv)
-	return privacy.WrapProvider(prov, privacy.Options{Entropy: priv.PIIScrubbing.Entropy}, priv.PIIScrubbing.Enabled)
+	return privacy.ScopedProvider(r.Context(), s.dataStore, "", agentID, prov)
 }
 
 // handleListKBSources lists knowledge base sources for an agent.

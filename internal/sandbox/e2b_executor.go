@@ -221,11 +221,7 @@ func (e *E2BExecutor) Hydrate(ctx context.Context) error {
 		// /workspace/<other-sid>/... — same visibility docker gets
 		// from mounting projects/<pid>/ as the bind root. Loose chats
 		// stay scoped to their own session subtree.
-		listProject := e.projectID
-		listSession := e.sessionID
-		if e.projectID != "" {
-			listSession = ""
-		}
+		listProject, listSession := mountRootScope(e.projectID, e.sessionID)
 		objs, err := e.workspace.List(ctx, e.agentID, listProject, listSession)
 		if err != nil {
 			slog.Warn("e2b hydrate: workspace list", "agent", e.agentID, "project", e.projectID, "session", e.sessionID, "error", err)

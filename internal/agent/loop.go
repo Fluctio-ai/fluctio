@@ -449,9 +449,6 @@ func NewAgentWithFullCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bu
 	ag.memoryCfg = fullCfg.Memory
 	ag.piiScrubEnabled = fullCfg.Privacy.PIIScrubbing.Enabled
 	ag.piiEntropyEnabled = fullCfg.Privacy.PIIScrubbing.Entropy
-	if ag.skillsLearner != nil {
-		ag.skillsLearner.SetPIIScrub(ag.piiScrubEnabled, ag.piiEntropyEnabled)
-	}
 	// splitReplies is plumbed inside NewAgentWithSkillsCfg so foreign-
 	// attached agents also pick up the toggle; don't re-stamp here.
 
@@ -481,7 +478,13 @@ func NewAgentWithFullCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bu
 		}
 		learnerLoader := NewSkillsLoaderWithGlobal(homeDir, rc.Home, rc.Skills, fullCfg.Skills)
 		learnerLoader.agentID = rc.ID
-		ag.skillsLearner = NewSkillsLearner(rc.Home, rc.Home, prov, model, learnerLoader.AllSkillDirs()...)
+		// Wrap the learner's provider for PII scrubbing here (not via a
+		// flag on the learner): the extraction transcript embeds chatter
+		// conversation content, and a pre-wrapped provider can't be
+		// forgotten the way the old SetPIIScrub call could — the 484-line
+		// rebuild below used to drop it.
+		learnerProv := privacy.WrapProvider(prov, privacy.Options{Entropy: ag.piiEntropyEnabled}, ag.piiScrubEnabled)
+		ag.skillsLearner = NewSkillsLearner(rc.Home, rc.Home, learnerProv, model, learnerLoader.AllSkillDirs()...)
 		if fullCfg.SkillsLearner.MinToolCalls > 0 {
 			ag.skillsLearner.minToolCalls = fullCfg.SkillsLearner.MinToolCalls
 		}

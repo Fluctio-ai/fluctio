@@ -210,10 +210,7 @@ func (p *LifecyclePool) syncSnapshot(ctx context.Context, sc sandboxScope, ex Ex
 	// <sid>/… — copying every sibling sid dir INTO this chat's dir, and
 	// each eviction nests another <sid>/ layer on top (exponential
 	// duplication: s-1/s-1/s-1/…). Same folding as hydrateWorkspace.
-	putProject, putSession := sc.projectID, sc.sessionID
-	if sc.projectID != "" {
-		putSession = ""
-	}
+	putProject, putSession := mountRootScope(sc.projectID, sc.sessionID)
 	written := 0
 	for path, data := range files {
 		// Skip files that the store already has with identical size —
@@ -393,10 +390,7 @@ func (p *LifecyclePool) mirrorSandboxWrite(ctx context.Context, sc sandboxScope,
 	// the session dir for loose ones (see syncSnapshot). Same folding so
 	// a project chat's /workspace/<file> lands at projects/<pid>/<file>,
 	// not nested under its own sid dir.
-	putProject, putSession := sc.projectID, sc.sessionID
-	if sc.projectID != "" {
-		putSession = ""
-	}
+	putProject, putSession := mountRootScope(sc.projectID, sc.sessionID)
 	if err := p.workspace.Put(ctx, sc.agentID, putProject, putSession, key,
 		bytesReader([]byte(content)), int64(len(content)), ""); err != nil {
 		slog.Warn("sandbox sync: write_file mirror failed",
