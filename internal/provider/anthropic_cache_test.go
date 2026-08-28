@@ -34,9 +34,12 @@ func TestAnthropicSystemConcatAndCacheBreakpoints(t *testing.T) {
 		t.Errorf("system block dropped a message: %q", system[0].Text)
 	}
 
-	// (2a) system block carries an ephemeral breakpoint.
+	// (2a) system block carries an ephemeral breakpoint with the 1h TTL
+	// (default; IM sessions that wake mid-hour still hit the cached prefix).
 	if system[0].CacheControl == nil || system[0].CacheControl.Type != "ephemeral" {
 		t.Errorf("system block missing ephemeral cache_control: %+v", system[0].CacheControl)
+	} else if system[0].CacheControl.TTL != "1h" {
+		t.Errorf("system block cache_control ttl = %q, want \"1h\"", system[0].CacheControl.TTL)
 	}
 
 	// 3 non-system messages survive (2 user + 1 assistant).
@@ -59,6 +62,8 @@ func TestAnthropicSystemConcatAndCacheBreakpoints(t *testing.T) {
 		t.Errorf("out[1] last block missing cache_control: %+v", last)
 	} else if ccMap, ok := cc.(map[string]interface{}); !ok || ccMap["type"] != "ephemeral" {
 		t.Errorf("out[1] cache_control is not ephemeral: %+v", cc)
+	} else if ccMap["ttl"] != "1h" {
+		t.Errorf("out[1] cache_control ttl = %v, want \"1h\"", ccMap["ttl"])
 	}
 
 	// The newest user message (out[2]) must NOT carry a breakpoint — it's
@@ -103,5 +108,21 @@ func TestAnthropicCacheBreakpointSkipsEmptyHull(t *testing.T) {
 	}
 	if _, ok := blocks[len(blocks)-1]["cache_control"]; !ok {
 		t.Errorf("out[0] last block should carry cache_control after walking back: %+v", blocks[len(blocks)-1])
+	}
+}
+
+// TestAnthropicCacheTTLEnvResolution guards the FLUCTIO_ANTHROPIC_CACHE_TTL
+// escape hatch: "5m" restores the old short cache window, everything else
+// (unset included) keeps the 1h default.
+func TestAnthropicCacheTTLEnvResolution(t *testing.T) {
+	for _, tc := range []struct{ env, want string }{
+		{"", "1h"},
+		{"1h", "1h"},
+		{"5m", "5m"},
+		{"garbage", "1h"},
+	} {
+		if got := resolveAnthropicCacheTTL(tc.env); got != tc.want {
+			t.Errorf("resolveAnthropicCacheTTL(%q) = %q, want %q", tc.env, got, tc.want)
+		}
 	}
 }

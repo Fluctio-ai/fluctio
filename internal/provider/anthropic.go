@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -47,9 +48,31 @@ type anthropicTool struct {
 // Anthropic's prompt caching is EXPLICIT opt-in: without this marker on a
 // system or message content block the API does NOT cache any prefix, no
 // matter how byte-stable the body is. {type:"ephemeral"} is the only value
-// supported today (5-minute TTL, refreshed on each cache hit).
+// supported today.
+//
+// TTL defaults to "1h" (FLUCTIO_ANTHROPIC_CACHE_TTL=5m restores the old
+// short window). IM turns routinely resume 30-60+ minutes after the last
+// request; the 5-minute default expired before every one of those wakes —
+// measured 2026-08-28, cross-hour wakes are the largest cache-miss bucket
+// (~60% of all misses). z.ai's anthropic endpoint honors ttl:"1h" for real
+// (verified: +6min re-read still hits after a ttl=1h write, where a 5m TTL
+// would have expired). Providers that don't understand "ttl" ignore the
+// field and keep their own default window.
 type anthropicCacheControl struct {
-	Type string `json:"type"` // "ephemeral"
+	Type string `json:"type"`    // "ephemeral"
+	TTL  string `json:"ttl,omitempty"`
+}
+
+// anthropicCacheTTL resolves once per process from
+// FLUCTIO_ANTHROPIC_CACHE_TTL. "5m" opts back into the old short window;
+// anything else (unset included) keeps "1h".
+var anthropicCacheTTL = resolveAnthropicCacheTTL(os.Getenv("FLUCTIO_ANTHROPIC_CACHE_TTL"))
+
+func resolveAnthropicCacheTTL(env string) string {
+	if env == "5m" {
+		return "5m"
+	}
+	return "1h"
 }
 
 // anthropicSystemBlock is the array-of-blocks form of the Anthropic
@@ -286,7 +309,9 @@ func toAnthropicMessages(msgs []Message) ([]anthropicSystemBlock, []anthropicMes
 	// stable the body is). One breakpoint caps the system prompt; another
 	// caps the message just before the latest user turn, so system + tools
 	// + all prior history cache and only the newest user message (plus any
-	// tool result it produces this turn) ships uncached.
+	// tool result it produces this turn) ships uncached. Markers carry the
+	// 1h TTL (see anthropicCacheControl) so IM sessions that wake
+	// mid-hour still hit the cached prefix.
 	if n := len(out); n >= 2 {
 		lastUser := -1
 		for i := n - 1; i >= 0; i-- {
@@ -313,7 +338,7 @@ func toAnthropicMessages(msgs []Message) ([]anthropicSystemBlock, []anthropicMes
 		system = []anthropicSystemBlock{{
 			Type:         "text",
 			Text:         strings.Join(systemParts, "\n\n"),
-			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+			CacheControl: &anthropicCacheControl{Type: "ephemeral", TTL: anthropicCacheTTL},
 		}}
 	}
 	return system, out
@@ -332,7 +357,7 @@ func addEphemeralCache(out []anthropicMessage, idx int) bool {
 	if idx < 0 || idx >= len(out) {
 		return false
 	}
-	cc := map[string]string{"type": "ephemeral"}
+	cc := map[string]string{"type": "ephemeral", "ttl": anthropicCacheTTL}
 	raw := out[idx].Content
 
 	var blocks []map[string]interface{}
