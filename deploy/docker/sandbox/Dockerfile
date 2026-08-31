@@ -21,6 +21,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # `sudo` is needed because camoufox-cli's `install --with-deps` shells
 # out to `sudo apt-get …` to grab Firefox runtime libs even when the
 # caller is already root.
+# `ffmpeg` for audio/video processing (transcode/trim/mux/thumbnails) —
+# the agent exec's it directly for media tasks; Debian's build ships
+# x264/aac so no extra repos are needed.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         python3 \
@@ -30,6 +33,7 @@ RUN apt-get update \
         curl \
         git \
         sudo \
+        ffmpeg \
         fonts-noto-cjk \
         fonts-noto-color-emoji \
  && ln -sf /usr/bin/python3 /usr/local/bin/python

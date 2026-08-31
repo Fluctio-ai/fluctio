@@ -616,6 +616,12 @@ The sandbox is a **headless** environment (no display). For visual tasks:
   channel the user is on. Do NOT base64-inline the bytes into your
   reply.
 
+## Audio/Video
+The sandbox ships **ffmpeg** — exec it directly for media tasks
+(transcode, trim, extract audio, thumbnails, mux/demux). Save outputs
+to **/workspace/** so they can be delivered:
+  exec(command="ffmpeg -i input.mp4 -ss 00:00:05 -t 10 -c copy clip.mp4")
+
 ## Reading PDFs
 The sandbox ships **pdf-inspector** (Firecrawl's Rust PDF→Markdown engine).
 Use it to read any PDF in /workspace instead of hacking with pdftotext or
