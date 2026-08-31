@@ -782,10 +782,14 @@ func loadUserSpace(ctx context.Context, userID string, mb *bus.MessageBus, st st
 }
 
 // loadAgentWorkflows loads the agent's own workflow YAMLs from
-// <homePath>/workflows and, when any are present, builds a per-agent
-// workflow.Service and registers one tool per definition on the agent. A
-// missing directory is the common "no workflows yet" case and is silent;
-// other read errors are logged. dbs must be *store.DBStore (the only backend
+// <homePath>/workflows and builds the per-agent workflow.Service. It runs even
+// when the directory is missing or empty (service with zero definitions):
+// registerWorkflowTools also registers the authoring tools
+// (workflow_list/get/save, workflow_resume), and gating those on "agent has at
+// least one workflow" would make the first workflow uncreatable from chat.
+// A non-NotExist read error (e.g. a bad YAML) is logged and falls through with
+// zero definitions rather than locking the agent out of the tools it needs to
+// read and fix the broken file. dbs must be *store.DBStore (the only backend
 // implementing workflow persistence) — callers gate on that.
 func loadAgentWorkflows(ag *agent.Agent, dbs *store.DBStore) {
 	dir := filepath.Join(ag.HomePath(), "workflows")
@@ -794,10 +798,7 @@ func loadAgentWorkflows(ag *agent.Agent, dbs *store.DBStore) {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("workflow load failed", "agent", ag.ID(), "dir", dir, "error", err)
 		}
-		return
-	}
-	if len(defs) == 0 {
-		return
+		defs = nil
 	}
 	ag.SetWorkflowService(workflow.NewService(defs, dbs))
 }

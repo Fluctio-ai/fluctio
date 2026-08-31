@@ -190,10 +190,12 @@ type Agent struct {
 	// per-chat file isolation. See SetProjectRuntime.
 	projectRuntime *coderuntime.Manager
 
-	// workflowSvc, when non-nil, holds this agent's own workflows (the
-	// gateway loads them from this agent's home/workflows directory at boot)
-	// and backs the per-workflow tools registered by SetWorkflowService. Nil
-	// = this agent has no workflows. See SetWorkflowService.
+	// workflowSvc holds this agent's own workflows (the gateway loads them
+	// from this agent's home/workflows directory at boot) and backs the
+	// per-workflow tools registered by SetWorkflowService. Set at boot even
+	// with zero definitions — the authoring tools (workflow_list/get/save)
+	// must register on a fresh agent or its first workflow could never be
+	// created from chat. See SetWorkflowService.
 	workflowSvc *workflow.Service
 
 	// contextWindow is the agent's active model's context-window size

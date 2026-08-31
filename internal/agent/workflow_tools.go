@@ -37,8 +37,11 @@ func (a *Agent) ReloadWorkflows() {
 
 // SetWorkflowService wires this agent's own workflows (YAMLs the gateway loads
 // from its home/workflows directory at boot) and registers one tool per
-// definition. Passing nil is a no-op. Safe to call repeatedly — tool
-// registration overwrites by name, so a reload re-freshens the set.
+// definition. Passing nil is a no-op. A zero-definition service still registers
+// the shared authoring tools (workflow_list/get/save, workflow_resume) — that
+// is how a fresh agent gets them; per-workflow tools then appear as the first
+// save reloads the service. Safe to call repeatedly — tool registration
+// overwrites by name, so a reload re-freshens the set.
 func (a *Agent) SetWorkflowService(svc *workflow.Service) {
 	a.workflowSvc = svc
 	if svc == nil {
