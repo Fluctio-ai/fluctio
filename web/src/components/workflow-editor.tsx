@@ -476,7 +476,7 @@ export function WorkflowEditor({
               key={k}
               type="button"
               onClick={() => setTab(k)}
-              className={"rounded-md px-2 py-1 border-b-2 whitespace-nowrap shrink-0 " + (tab === k ? "border-primary font-semibold" : "border-transparent text-muted-foreground")}
+              className={"px-2 py-1 border-b-2 whitespace-nowrap shrink-0 " + (tab === k ? "border-primary font-semibold" : "border-transparent text-muted-foreground")}
             >
               {t(key)}
             </button>

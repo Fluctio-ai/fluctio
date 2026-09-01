@@ -165,7 +165,7 @@ export default function AgentCustomizePage() {
           <button
             key={f.name}
             onClick={() => setActiveTab(f.name)}
-            className={`rounded-md px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors flex items-center gap-2 ${
+            className={`px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors flex items-center gap-2 ${
               activeTab === f.name
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
