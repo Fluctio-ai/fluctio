@@ -3,22 +3,29 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Play, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  createWorkflowSchedule,
   deleteWorkflow,
   deleteWorkflowRun,
+  deleteWorkflowSchedule,
   getWorkflowRun,
   listWorkflows,
   listWorkflowRuns,
+  listWorkflowSchedules,
   resumeWorkflowStream,
   runWorkflowStream,
   saveWorkflow,
+  toggleWorkflowSchedule,
   type WorkflowNodeOutput,
   type WorkflowRunEvent,
   type WorkflowRunRow,
+  type WorkflowSchedule,
   type WorkflowSummary,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
@@ -52,6 +59,19 @@ export default function WorkflowsPage() {
   // JSON validation error for the manual-trigger input — surfaced inline
   // next to the textarea instead of a raw V8 parse dump in the result pane.
   const [inputError, setInputError] = useState("");
+  // Run-form values when the selected workflow declares an input schema
+  // (SchemaForm renders the fields); the raw JSON textarea stays the fallback
+  // for schema-less workflows.
+  const [runValues, setRunValues] = useState<Record<string, unknown>>({});
+  // Schedules (ticket 10 UI): rows for the selected workflow + the add-form's
+  // cron / fixed-input state (same schema-vs-JSON split as the run form).
+  const [scheds, setScheds] = useState<WorkflowSchedule[]>([]);
+  const [schedLoading, setSchedLoading] = useState(false);
+  const [newCron, setNewCron] = useState("");
+  const [schedValues, setSchedValues] = useState<Record<string, unknown>>({});
+  const [schedJSON, setSchedJSON] = useState("{}");
+  const [schedError, setSchedError] = useState("");
+  const [schedCreating, setSchedCreating] = useState(false);
   const [running, setRunning] = useState(false);
   const [lastResult, setLastResult] = useState<string>("");
   const [liveEvents, setLiveEvents] = useState<WorkflowRunEvent[]>([]);
@@ -127,11 +147,32 @@ export default function WorkflowsPage() {
     setRunsLoading(false);
   }, [agentId, selected]);
 
+  // selDef is the selected workflow's list summary — carries input_schema, so
+  // both the run form and the schedule form know whether to render a
+  // SchemaForm (declared fields) or fall back to the raw JSON textarea.
+  const selDef = workflows.find((w) => w.id === selected);
+  const schemaProps = selDef?.input_schema?.properties as Record<string, unknown> | undefined;
+  const hasSchema = !!schemaProps && Object.keys(schemaProps).length > 0;
+
+  const refreshScheds = useCallback(async () => {
+    if (!agentId || !selected) return;
+    setSchedLoading(true);
+    setScheds(await listWorkflowSchedules(agentId, selected));
+    setSchedLoading(false);
+  }, [agentId, selected]);
+
   useEffect(() => {
     if (!selected) return;
     setSelRun(null);
+    // Reset both input surfaces: stale values from the previously selected
+    // workflow would otherwise leak into the next one's form/JSON box.
+    setRunValues({});
+    setSchedValues({});
+    setSchedJSON("{}");
+    setSchedError("");
     refreshRuns();
-  }, [selected, refreshRuns]);
+    refreshScheds();
+  }, [selected, refreshRuns, refreshScheds]);
 
   // asWaitingResult narrows the terminal SSE "result" payload to the fields
   // the waiting path reads (status / run_id / pending_form).
@@ -142,15 +183,20 @@ export default function WorkflowsPage() {
 
   const onRun = async () => {
     if (!agentId || !selected) return;
-    // Validate before starting the run: an invalid payload would otherwise
-    // surface as an English V8 "Unexpected token" dump in the result pane,
-    // with the textarea still looking fine.
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(input || "{}");
-    } catch (e) {
-      setInputError(t("workflow.inputInvalid", { err: e instanceof Error ? e.message : String(e) }));
-      return;
+    // Schema mode takes the typed form values as-is; JSON mode validates
+    // before starting the run — an invalid payload would otherwise surface as
+    // an English V8 "Unexpected token" dump in the result pane, with the
+    // textarea still looking fine.
+    let parsed: Record<string, unknown>;
+    if (hasSchema) {
+      parsed = runValues;
+    } else {
+      try {
+        parsed = JSON.parse(input || "{}");
+      } catch (e) {
+        setInputError(t("workflow.inputInvalid", { err: e instanceof Error ? e.message : String(e) }));
+        return;
+      }
     }
     setInputError("");
     setRunning(true);
@@ -159,7 +205,6 @@ export default function WorkflowsPage() {
     setWaitingForm(null);
     setFormValues({});
     try {
-      const parsed = JSON.parse(input || "{}");
       await runWorkflowStream(agentId, selected, parsed, (e) => {
         setLiveEvents((cur) => [...cur, e]);
         if (e.type === "result") {
@@ -214,6 +259,55 @@ export default function WorkflowsPage() {
     } finally {
       setResuming(false);
     }
+  };
+
+  // Schedule management (ticket 10 UI): create/toggle/delete against the
+  // backend endpoints the gateway scheduler polls every minute (UTC+8).
+  const onAddSched = async () => {
+    if (!agentId || !selected) return;
+    if (!newCron.trim()) {
+      setSchedError(t("workflow.schedCronRequired"));
+      return;
+    }
+    let payload: Record<string, unknown>;
+    if (hasSchema) {
+      payload = schedValues;
+    } else {
+      try {
+        payload = JSON.parse(schedJSON || "{}");
+      } catch (e) {
+        setSchedError(t("workflow.inputInvalid", { err: e instanceof Error ? e.message : String(e) }));
+        return;
+      }
+    }
+    setSchedCreating(true);
+    setSchedError("");
+    try {
+      const res = await createWorkflowSchedule(agentId, selected, newCron.trim(), payload);
+      if (!res.ok || !res.schedule) {
+        setSchedError(res.error ? t("workflow.schedCreateFailed", { error: res.error }) : t("workflow.schedCreateFailed", { error: "unknown" }));
+        return;
+      }
+      setScheds((cur) => [...cur, res.schedule!]);
+      setNewCron("");
+      setSchedValues({});
+      setSchedJSON("{}");
+    } catch (e) {
+      setSchedError(t("workflow.schedCreateFailed", { error: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setSchedCreating(false);
+    }
+  };
+  const onToggleSched = async (id: string, v: boolean) => {
+    if (!agentId || !selected) return;
+    await toggleWorkflowSchedule(agentId, selected, id, v);
+    setScheds((cur) => cur.map((s) => (s.ID === id ? { ...s, Enabled: v } : s)));
+  };
+  const onDeleteSched = async (id: string) => {
+    if (!agentId || !selected) return;
+    if (!confirm(t("workflow.schedDeleteConfirm"))) return;
+    await deleteWorkflowSchedule(agentId, selected, id);
+    setScheds((cur) => cur.filter((s) => s.ID !== id));
   };
 
   // liveNodes aggregates the event stream into per-node status (M4 streaming):
@@ -344,16 +438,30 @@ export default function WorkflowsPage() {
             </section>
             <section className="space-y-2">
               <h3 className="font-semibold">{t("workflow.trigger")}</h3>
-              <p className="text-xs text-muted-foreground">{t("workflow.inputHint")}</p>
-              <Textarea
-                value={input}
-                onChange={(e) => {
-                  setInput(e.target.value);
-                  if (inputError) setInputError("");
-                }}
-                rows={3}
-                className="font-mono text-xs"
-              />
+              {hasSchema ? (
+                // Declared input schema → typed form (field names/descriptions
+                // visible instead of a blind JSON box).
+                <SchemaForm
+                  schema={selDef!.input_schema ?? undefined}
+                  values={runValues}
+                  onChange={setRunValues}
+                  agentId={agentId ?? ""}
+                  header={t("workflow.runFormHint")}
+                />
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground">{t("workflow.inputHint")}</p>
+                  <Textarea
+                    value={input}
+                    onChange={(e) => {
+                      setInput(e.target.value);
+                      if (inputError) setInputError("");
+                    }}
+                    rows={3}
+                    className="font-mono text-xs"
+                  />
+                </>
+              )}
               {inputError && (
                 <p className="text-xs text-destructive">{inputError}</p>
               )}
@@ -395,6 +503,75 @@ export default function WorkflowsPage() {
                   </Button>
                 </div>
               )}
+            </section>
+
+            <section className="space-y-2">
+              <h3 className="font-semibold">{t("workflow.schedules")}</h3>
+              {schedLoading ? (
+                <Skeleton className="h-8 w-full" />
+              ) : scheds.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t("workflow.schedEmpty")}</p>
+              ) : (
+                <div className="space-y-1">
+                  {scheds.map((s) => (
+                    <div
+                      key={s.ID}
+                      className="flex items-center gap-2 text-sm border rounded px-2 py-1.5"
+                    >
+                      <Switch
+                        size="sm"
+                        checked={s.Enabled}
+                        onCheckedChange={(v) => onToggleSched(s.ID, v)}
+                      />
+                      <span className="font-mono text-xs">{s.CronExpr}</span>
+                      <span className="text-xs text-muted-foreground truncate" title={s.NextRun}>
+                        {t("workflow.schedNext")} {formatRunTime(s.NextRun)}
+                      </span>
+                      <Button size="sm" variant="ghost" className="ml-auto" onClick={() => onDeleteSched(s.ID)}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2 border rounded-lg p-3">
+                <Input
+                  value={newCron}
+                  onChange={(e) => {
+                    setNewCron(e.target.value);
+                    if (schedError) setSchedError("");
+                  }}
+                  placeholder={t("workflow.schedCronPlaceholder")}
+                  className="font-mono text-xs"
+                />
+                {hasSchema ? (
+                  <SchemaForm
+                    schema={selDef!.input_schema ?? undefined}
+                    values={schedValues}
+                    onChange={setSchedValues}
+                    agentId={agentId ?? ""}
+                    header={t("workflow.schedFormHint")}
+                  />
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground">{t("workflow.schedInputHint")}</p>
+                    <Textarea
+                      value={schedJSON}
+                      onChange={(e) => {
+                        setSchedJSON(e.target.value);
+                        if (schedError) setSchedError("");
+                      }}
+                      rows={2}
+                      className="font-mono text-xs"
+                    />
+                  </>
+                )}
+                {schedError && <p className="text-xs text-destructive">{schedError}</p>}
+                <Button size="sm" onClick={onAddSched} disabled={schedCreating}>
+                  <Plus className="h-3.5 w-3.5" />
+                  {schedCreating ? t("workflow.schedAdding") : t("workflow.schedAdd")}
+                </Button>
+              </div>
             </section>
 
             <section className="space-y-2">

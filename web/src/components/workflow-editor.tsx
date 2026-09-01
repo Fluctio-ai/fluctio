@@ -86,7 +86,44 @@ const TYPES = ["string", "number", "integer", "boolean", "object", "array"];
 const OPS = [">", "<", ">=", "<=", "==", "!=", "contain", "not_contain"];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyNetwork = { destroy: () => void; on: (e: string, cb: (p: any) => void) => void; redraw?: () => void; fit?: () => void };
+type AnyNetwork = {
+  destroy: () => void;
+  on: (e: string, cb: (p: any) => void) => void;
+  once?: (e: string, cb: (p?: any) => void) => void;
+  redraw?: () => void;
+  fit?: () => void;
+  getPositions?: () => Record<string, { x: number; y: number }>;
+  setOptions?: (opts: Record<string, unknown>) => void;
+};
+
+// Node coordinates are editor state, not workflow semantics — persist them in
+// localStorage (per agent + workflow) instead of growing the YAML schema.
+// Without this every mount re-ran the hierarchical auto-layout: dragged
+// positions snapped back, and the synchronous fit() raced the layout engine,
+// parking the view at the top-left corner.
+const wfPosKey = (agentId: string, wfID: string) => `wfpos:${agentId}/${wfID}`;
+const loadNodePositions = (
+  agentId: string,
+  wfID: string,
+): Record<string, { x: number; y: number }> => {
+  try {
+    const raw = localStorage.getItem(wfPosKey(agentId, wfID));
+    return raw ? (JSON.parse(raw) as Record<string, { x: number; y: number }>) : {};
+  } catch {
+    return {};
+  }
+};
+const saveNodePositions = (
+  agentId: string,
+  wfID: string,
+  pos: Record<string, { x: number; y: number }>,
+) => {
+  try {
+    localStorage.setItem(wfPosKey(agentId, wfID), JSON.stringify(pos));
+  } catch {
+    // private-mode / quota — positions stay session-only
+  }
+};
 
 export function WorkflowEditor({
   agentId,
@@ -179,9 +216,30 @@ export function WorkflowEditor({
         const DataSet = (ds as any).DataSet;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const Network = (nw as any).Network;
+        // Restore saved positions when this workflow was laid out (or edited)
+        // before; seed them into the DataSet so the rebuild renders nodes where
+        // the user left them instead of re-running auto-layout. Nodes without a
+        // saved position (newly added / renamed) land near the saved centroid.
+        const saved = loadNodePositions(agentId, wfID);
+        const seeded = Object.keys(saved).length > 0;
+        let cx = 0;
+        let cy = 0;
+        if (seeded) {
+          for (const p of Object.values(saved)) {
+            cx += p.x;
+            cy += p.y;
+          }
+          cx /= Object.keys(saved).length;
+          cy /= Object.keys(saved).length;
+        }
         const nodes = new DataSet(
-          def.nodes!.map((n) => {
+          def.nodes!.map((n, i) => {
             const c = NODE_COLORS[n.kind] || NODE_FALLBACK_COLOR;
+            const pos =
+              saved[n.name] ??
+              (seeded
+                ? { x: cx + (i % 5) * 60, y: cy + Math.floor(i / 5) * 60 }
+                : undefined);
             return {
               id: n.name,
               label: `${n.name}\n(${n.kind})`,
@@ -189,6 +247,7 @@ export function WorkflowEditor({
               // Label color must be explicit: vis defaults to dark gray,
               // which fails on the darker chips and in dark mode.
               font: { size: 13, color: c.fg },
+              ...(pos ? { x: pos.x, y: pos.y } : {}),
             };
           }),
         );
@@ -202,8 +261,13 @@ export function WorkflowEditor({
             nodes: { shape: "box", margin: 12, font: { size: 13 } },
             edges: { arrows: "to", font: { size: 11, align: "middle" }, smooth: { enabled: true, type: "cubicBezier", forceDirection: "horizontal" } },
             // Left-to-right hierarchical layout with generous separation so
-            // edges run long enough for their `when` labels to render fully.
-            layout: { hierarchical: { direction: "LR", levelSeparation: 260, nodeSpacing: 150, sortMethod: "directed" } },
+            // edges run long enough for their `when` labels to render fully —
+            // first view only. With saved positions we skip auto-layout (and
+            // physics) entirely so the seeds are honored verbatim.
+            layout: seeded
+              ? { hierarchical: { enabled: false } }
+              : { hierarchical: { direction: "LR", levelSeparation: 260, nodeSpacing: 150, sortMethod: "directed" } },
+            physics: { enabled: !seeded },
             interaction: { hover: true },
           },
         );
@@ -228,9 +292,27 @@ export function WorkflowEditor({
             setSelNode(name);
           }
         });
-        // Center the graph in the viewport instead of leaving it stuck in the
-        // top-left corner on first render.
-        network.fit?.();
+        // Persist whatever the user dragged, so the next rebuild (any def edit
+        // recreates the network) keeps their arrangement.
+        network.on("dragEnd", () => {
+          const pos = network.getPositions?.();
+          if (pos) saveNodePositions(agentId, wfID, pos);
+        });
+        // Center the graph in the viewport once the first real paint has
+        // happened — fitting synchronously right after construction races the
+        // layout engine (and a hidden container reports size 0), which is what
+        // parked the view in the top-left corner.
+        network.once?.("afterDrawing", () => {
+          if (!seeded) {
+            // Freeze the auto-layout result: disable hierarchical + physics so
+            // it can't re-run, and persist these positions so every later
+            // rebuild renders the exact same arrangement.
+            network.setOptions?.({ layout: { hierarchical: { enabled: false } }, physics: { enabled: false } });
+            const pos = network.getPositions?.();
+            if (pos) saveNodePositions(agentId, wfID, pos);
+          }
+          network.fit?.();
+        });
         networkRef.current = network;
       },
     );

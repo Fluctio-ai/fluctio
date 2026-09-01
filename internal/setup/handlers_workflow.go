@@ -307,10 +307,11 @@ func (s *Server) handleWorkflowList(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(defs))
 	for _, def := range defs {
 		out = append(out, map[string]any{
-			"id":          def.ID,
-			"version":     def.Version,
-			"description": def.Description,
-			"concurrency": string(def.Concurrency),
+			"id":           def.ID,
+			"version":      def.Version,
+			"description":  def.Description,
+			"concurrency":  string(def.Concurrency),
+			"input_schema": def.Input.Schema,
 		})
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "workflows": out})
@@ -422,6 +423,10 @@ func (s *Server) handleWorkflowPut(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad request body: " + err.Error()})
+		return
+	}
+	if err := workflow.ValidateID(wfID); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	def, err := workflow.Parse(wfID, []byte(body.YAML))

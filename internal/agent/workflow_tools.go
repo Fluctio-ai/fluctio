@@ -6,11 +6,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
+	"github.com/fluctio-ai/fluctio/internal/cron"
 	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/workflow"
 )
+
+// workflowScheduleLoc is the timezone workflow schedules are interpreted in —
+// spec decision 16 mandates UTC+8. Mirrors workflowCronLoc in setup and the
+// gateway scheduler's own copy (kept separate per the minimal-change rule).
+var workflowScheduleLoc = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}()
 
 // WorkflowsDir returns this agent's workflow YAML directory (home + "workflows").
 // The web API uses it to list / read / write workflow files; loadAgentWorkflows
@@ -270,6 +284,9 @@ func (a *Agent) registerWorkflowTools() {
 			if err := json.Unmarshal(raw, &req); err != nil || req.ID == "" || req.YAML == "" {
 				return "", fmt.Errorf("workflow_save: bad args (want id + yaml)")
 			}
+			if err := workflow.ValidateID(req.ID); err != nil {
+				return "", fmt.Errorf("workflow_save: %w", err)
+			}
 			def, err := workflow.Parse(req.ID, []byte(req.YAML))
 			if err != nil {
 				return "", fmt.Errorf("workflow_save: parse: %w", err)
@@ -295,5 +312,126 @@ func (a *Agent) registerWorkflowTools() {
 			}
 			a.ReloadWorkflows()
 			return fmt.Sprintf("workflow %s saved (version %d); now available", req.ID, version), nil
+		}, tools.SourceWorkflowSys)
+
+	// Schedule tools (spec decision 16's scheduler is the executor; these let
+	// the loop's LLM manage its agent's schedules from conversation instead of
+	// forcing a dashboard trip). Owner is stamped with the agent's owner user —
+	// the scheduler resolves UserSpaceForCtx(owner) then AgentByID, so a
+	// per-turn IM chatter id would resolve a userspace that doesn't contain
+	// this agent and the schedule would never fire.
+	reg.RegisterFrom("workflow_schedule_list",
+		"List this agent's workflow schedules (id, workflow, cron, input, enabled, next_run, last_run). A schedule fires its workflow automatically on its cron expression (UTC+8).",
+		map[string]any{"type": "object", "properties": map[string]any{}},
+		func(ctx context.Context, _ json.RawMessage) (string, error) {
+			dbs, ok := a.dataStore.(*store.DBStore)
+			if !ok || dbs == nil {
+				return "", fmt.Errorf("workflow_schedule_list: store unavailable")
+			}
+			rows, err := dbs.ListWorkflowSchedules(ctx, a.ID())
+			if err != nil {
+				return "", fmt.Errorf("workflow_schedule_list: %w", err)
+			}
+			type schedRow struct {
+				ID       string         `json:"id"`
+				Workflow string         `json:"workflow"`
+				Cron     string         `json:"cron"`
+				Input    map[string]any `json:"input"`
+				Enabled  bool           `json:"enabled"`
+				NextRun  string         `json:"next_run"`
+				LastRun  string         `json:"last_run,omitempty"`
+			}
+			out := make([]schedRow, 0, len(rows))
+			for _, r := range rows {
+				out = append(out, schedRow{ID: r.ID, Workflow: r.WorkflowID, Cron: r.CronExpr, Input: r.Input, Enabled: r.Enabled, NextRun: r.NextRun, LastRun: r.LastRun})
+			}
+			b, _ := json.Marshal(out)
+			return string(b), nil
+		}, tools.SourceWorkflowSys)
+
+	reg.RegisterFrom("workflow_schedule_create",
+		"Create a cron schedule that fires one of this agent's workflows automatically. cron is a 5-field expression (\"30 7 * * *\" = daily 07:30) interpreted in UTC+8. input is the fixed entry input every fire runs with — read the workflow's input schema via workflow_get first and include every required field. Returns the created schedule including next_run.",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"workflow": map[string]any{"type": "string", "description": "workflow id (from workflow_list)"},
+				"cron":     map[string]any{"type": "string", "description": "5-field cron expression (min hour dom mon dow), UTC+8"},
+				"input":    map[string]any{"type": "object", "description": "fixed entry input for every fire (defaults to {})"},
+			},
+			"required": []any{"workflow", "cron"},
+		},
+		func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var req struct {
+				Workflow string         `json:"workflow"`
+				Cron     string         `json:"cron"`
+				Input    map[string]any `json:"input"`
+			}
+			if err := json.Unmarshal(raw, &req); err != nil || req.Workflow == "" || req.Cron == "" {
+				return "", fmt.Errorf("workflow_schedule_create: bad args (want workflow + cron)")
+			}
+			if len(strings.Fields(req.Cron)) != 5 {
+				return "", fmt.Errorf("workflow_schedule_create: cron %q must be 5 space-separated fields (min hour dom mon dow), UTC+8", req.Cron)
+			}
+			dbs, ok := a.dataStore.(*store.DBStore)
+			if !ok || dbs == nil {
+				return "", fmt.Errorf("workflow_schedule_create: store unavailable")
+			}
+			def, ok := svc.Definition(req.Workflow)
+			if !ok {
+				return "", fmt.Errorf("workflow_schedule_create: unknown workflow %q (workflow_list to see ids)", req.Workflow)
+			}
+			if req.Input == nil {
+				req.Input = map[string]any{}
+			}
+			// Catch a missing required entry field at creation time rather than
+			// on the first silent 7:30am fire failure.
+			if err := workflow.Validate(def, req.Input); err != nil {
+				return "", fmt.Errorf("workflow_schedule_create: input rejected: %w", err)
+			}
+			owner := a.OwnerUserID()
+			if owner == "" {
+				owner = reg.EffectiveUserID()
+			}
+			s := store.WorkflowScheduleRow{
+				ID:          fmt.Sprintf("wfs_%d", time.Now().UnixNano()),
+				AgentID:     a.ID(),
+				WorkflowID:  req.Workflow,
+				OwnerUserID: owner,
+				CronExpr:    req.Cron,
+				Input:       req.Input,
+				Enabled:     true,
+				NextRun:     cron.NextOccurrenceIn(req.Cron, time.Now(), workflowScheduleLoc).UTC().Format(time.RFC3339),
+			}
+			if err := dbs.CreateWorkflowSchedule(ctx, s); err != nil {
+				return "", fmt.Errorf("workflow_schedule_create: %w", err)
+			}
+			b, _ := json.Marshal(map[string]any{"id": s.ID, "workflow": s.WorkflowID, "cron": s.CronExpr, "input": s.Input, "enabled": true, "next_run": s.NextRun})
+			return string(b), nil
+		}, tools.SourceWorkflowSys)
+
+	reg.RegisterFrom("workflow_schedule_delete",
+		"Delete one of this agent's workflow schedules by id (from workflow_schedule_list). The workflow itself is untouched; deleting a schedule is how you stop its automatic fires.",
+		map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string", "description": "schedule id from workflow_schedule_list"},
+			},
+			"required": []any{"id"},
+		},
+		func(ctx context.Context, raw json.RawMessage) (string, error) {
+			var req struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &req); err != nil || req.ID == "" {
+				return "", fmt.Errorf("workflow_schedule_delete: bad args (want id)")
+			}
+			dbs, ok := a.dataStore.(*store.DBStore)
+			if !ok || dbs == nil {
+				return "", fmt.Errorf("workflow_schedule_delete: store unavailable")
+			}
+			if err := dbs.DeleteWorkflowSchedule(ctx, req.ID); err != nil {
+				return "", fmt.Errorf("workflow_schedule_delete: %w", err)
+			}
+			return fmt.Sprintf("schedule %s deleted", req.ID), nil
 		}, tools.SourceWorkflowSys)
 }

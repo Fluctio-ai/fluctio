@@ -3450,6 +3450,9 @@ export interface WorkflowSummary {
   version: number;
   description: string;
   concurrency: string;
+  /** Declared entry-input schema (same shape the model sees as tool params);
+   * null/absent when the workflow takes no input. Drives the run form. */
+  input_schema?: Record<string, unknown> | null;
 }
 export interface WorkflowRunRow {
   ID: string;
@@ -3519,6 +3522,79 @@ export async function deleteWorkflow(agentId: string, wfId: string): Promise<boo
     { method: "DELETE" },
   );
   return res.ok;
+}
+
+// --- Workflow schedules (ticket 10): backend rows have no json tags, so the
+// wire fields are PascalCase — mirrors WorkflowRunRow above. ---
+export interface WorkflowSchedule {
+  ID: string;
+  AgentID: string;
+  WorkflowID: string;
+  OwnerUserID: string;
+  CronExpr: string;
+  Input: Record<string, unknown>;
+  Enabled: boolean;
+  LastRun: string;
+  NextRun: string;
+  CreatedAt: string;
+}
+
+export async function listWorkflowSchedules(
+  agentId: string,
+  wfId: string,
+): Promise<WorkflowSchedule[]> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/schedules`,
+  );
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.schedules || [];
+}
+
+// createWorkflowSchedule returns the server's verdict verbatim — a rejected
+// cron/input surfaces as {ok:false,error} the caller shows inline.
+export async function createWorkflowSchedule(
+  agentId: string,
+  wfId: string,
+  cronExpr: string,
+  input: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string; schedule?: WorkflowSchedule }> {
+  const res = await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/schedules`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cron_expr: cronExpr, input }),
+    },
+  );
+  return res.json();
+}
+
+export async function toggleWorkflowSchedule(
+  agentId: string,
+  wfId: string,
+  schedId: string,
+  enabled: boolean,
+): Promise<void> {
+  await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/schedules/${encodeURIComponent(schedId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    },
+  );
+}
+
+export async function deleteWorkflowSchedule(
+  agentId: string,
+  wfId: string,
+  schedId: string,
+): Promise<void> {
+  await apiFetch(
+    `/api/agents/${agentId}/workflows/${encodeURIComponent(wfId)}/schedules/${encodeURIComponent(schedId)}`,
+    { method: "DELETE" },
+  );
 }
 export async function runWorkflow(
   agentId: string,

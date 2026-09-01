@@ -3,8 +3,30 @@ package workflow
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strings"
 )
+
+// idPattern is the safe workflow-id charset: ASCII letters/digits/hyphen/
+// underscore, 1–64 chars, starting with a letter or digit. The id doubles as
+// the per-workflow LLM tool name at registration, and OpenAI-compatible
+// providers reject non-ASCII / overlong function names — often rejecting the
+// whole tools array, which takes down every tool call for the agent, not just
+// this workflow. Underscore + uppercase stay allowed so pre-existing ids keep
+// saving; the rule exists to keep non-ASCII names out, not to rename history.
+var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+// ValidateID gates the save paths (the workflow_save tool and the editor PUT):
+// a bad id must be rejected before it is written to disk. Deliberately NOT
+// part of Validate — Load/Run keep accepting pre-existing workflows with
+// legacy ids, so an already-saved odd id keeps running until the operator
+// renames it.
+func ValidateID(id string) error {
+	if !idPattern.MatchString(id) {
+		return &ValidationError{Field: "id", Message: fmt.Sprintf("workflow id %q must be 1-64 chars of ASCII letters/digits/hyphen/underscore starting with a letter or digit — the id doubles as the LLM tool name and non-ASCII ids break provider tool lists", id)}
+	}
+	return nil
+}
 
 // ValidationError is a structural validation failure with a location: the node
 // it attaches to ("" for graph-level errors), the edge "from→to" ("" when not

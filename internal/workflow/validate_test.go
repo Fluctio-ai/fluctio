@@ -359,3 +359,19 @@ nodes:
 `)
 	errContains(t, workflow.Validate(def, nil), "h", "url")
 }
+
+// ValidateID gates saves (workflow_save tool + editor PUT): ASCII-slug ids
+// pass, non-ASCII / overlong / bad-start ids are rejected — the id doubles as
+// the LLM tool name and non-ASCII names break provider tool lists.
+func TestValidateID(t *testing.T) {
+	for _, id := range []string{"a", "daily-podcast", "wf_1", "Podcast42", strings.Repeat("x", 64)} {
+		if err := workflow.ValidateID(id); err != nil {
+			t.Errorf("ValidateID(%q) = %v, want nil", id, err)
+		}
+	}
+	for _, id := range []string{"", "每日播客早餐", "-lead", "_lead", "a b", strings.Repeat("x", 65), "podcast.早餐"} {
+		if err := workflow.ValidateID(id); err == nil {
+			t.Errorf("ValidateID(%q) = nil, want error", id)
+		}
+	}
+}
