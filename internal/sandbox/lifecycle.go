@@ -314,6 +314,30 @@ func (p *LifecyclePool) getInner(ctx context.Context, sc sandboxScope) (Executor
 type lazyExecutor struct {
 	pool  *LifecyclePool
 	scope sandboxScope
+	// workdir, when set, is (re-)applied to the inner executor on every
+	// call — bindSession sets it right after Get(), when the inner may
+	// not exist yet; re-applying per call keeps it correct across lazy
+	// creation and idle-evict/recreate cycles. See ExecWorkdirSetter.
+	workdir string
+}
+
+// SetExecWorkdir implements ExecWorkdirSetter for the lazy proxy: it
+// forwards to a live inner when the backend supports it and remembers
+// the value so lazily-created inners get it applied on their first use.
+func (l *lazyExecutor) SetExecWorkdir(dir string) {
+	l.workdir = dir
+}
+
+// applyWorkdir re-asserts the pending workdir on a freshly fetched inner
+// executor. Cheap no-op when none is set or the backend doesn't support
+// the capability.
+func (l *lazyExecutor) applyWorkdir(ex Executor) {
+	if l.workdir == "" {
+		return
+	}
+	if s, ok := ex.(ExecWorkdirSetter); ok {
+		s.SetExecWorkdir(l.workdir)
+	}
 }
 
 func (l *lazyExecutor) Exec(ctx context.Context, command string, timeout time.Duration) (string, error) {
@@ -321,6 +345,7 @@ func (l *lazyExecutor) Exec(ctx context.Context, command string, timeout time.Du
 	if err != nil {
 		return "", err
 	}
+	l.applyWorkdir(ex)
 	out, execErr := ex.Exec(ctx, command, timeout)
 	// Post-exec sync only for cloud sandboxes (RemoteWorkspace marker).
 	// Docker's /workspace is bind-mounted to host so files appear

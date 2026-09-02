@@ -80,6 +80,22 @@ type BoxliteExecutor struct {
 	agentID   string
 	projectID string
 	sessionID string
+
+	// execWorkdir is where relative-path commands run ("/workspace" —
+	// the mount root — by default). Redirected per session via
+	// SetExecWorkdir; file helpers always anchor to /workspace instead.
+	execWorkdir string
+}
+
+// SetExecWorkdir implements ExecWorkdirSetter.
+func (e *BoxliteExecutor) SetExecWorkdir(dir string) { e.execWorkdir = dir }
+
+// workdirOrDefault returns the cwd relative-path execs run under.
+func (e *BoxliteExecutor) workdirOrDefault() string {
+	if e.execWorkdir == "" {
+		return "/workspace"
+	}
+	return e.execWorkdir
 }
 
 func newBoxliteExecutor(ctx context.Context, baseURL, prefix, clientID, apiKey, image string, timeout time.Duration) (*BoxliteExecutor, error) {
@@ -422,6 +438,22 @@ func (b *plainTarBundle) close() error { return b.tw.Close() }
 // On 404 (box gone) we recreate and retry once — matches the E2B
 // recreate-on-stale pattern.
 func (e *BoxliteExecutor) Exec(ctx context.Context, command string, timeout time.Duration) (string, error) {
+	wrapped := "cd " + e.workdirOrDefault() + " && " + command
+	out, err := e.execOnce(ctx, wrapped, timeout)
+	if err != nil && isBoxliteGone(err) {
+		if rerr := e.recreate(ctx); rerr != nil {
+			return "", fmt.Errorf("recreate after stale box: %w (original: %v)", rerr, err)
+		}
+		return e.execOnce(ctx, wrapped, timeout)
+	}
+	return out, err
+}
+
+// execAtMountRoot runs command with cwd pinned to /workspace — the mount
+// root (see mountRootScope) — regardless of execWorkdir. The file helpers
+// (ReadFile/…) address paths relative to that root, not the chat's
+// session dir, so they must not follow the per-session exec cwd.
+func (e *BoxliteExecutor) execAtMountRoot(ctx context.Context, command string, timeout time.Duration) (string, error) {
 	wrapped := "cd /workspace && " + command
 	out, err := e.execOnce(ctx, wrapped, timeout)
 	if err != nil && isBoxliteGone(err) {
@@ -671,7 +703,7 @@ func (e *BoxliteExecutor) attachWebsocketURL(execID string) (string, error) {
 }
 
 func (e *BoxliteExecutor) ReadFile(ctx context.Context, path string) (string, error) {
-	return e.Exec(ctx, fmt.Sprintf("cat %s", shellQuote(path)), 30*time.Second)
+	return e.execAtMountRoot(ctx, fmt.Sprintf("cat %s", shellQuote(path)), 30*time.Second)
 }
 
 func (e *BoxliteExecutor) WriteFile(ctx context.Context, filePath, content string) (string, error) {

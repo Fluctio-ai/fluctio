@@ -21,6 +21,22 @@ import (
 // forwarded as docker exec commands.
 type DockerExecutor struct {
 	sb *DockerSandbox
+	// execWorkdir is where relative-path commands run ("/workspace" by
+	// default — the mount root). Redirected per session via
+	// SetExecWorkdir so ordinary project chats run in their own session
+	// subdir. Empty falls back to /workspace.
+	execWorkdir string
+}
+
+// SetExecWorkdir implements ExecWorkdirSetter.
+func (d *DockerExecutor) SetExecWorkdir(dir string) { d.execWorkdir = dir }
+
+// workdirOrDefault returns the cwd relative-path execs run under.
+func (d *DockerExecutor) workdirOrDefault() string {
+	if d.execWorkdir == "" {
+		return "/workspace"
+	}
+	return d.execWorkdir
 }
 
 // NewDockerExecutor creates a sandbox Executor backed by a Docker container.
@@ -87,7 +103,7 @@ func (d *DockerExecutor) Exec(ctx context.Context, command string, timeout time.
 	}()
 	defer close(done)
 
-	out, err := d.sb.Exec(execCtx, wrapped, "/workspace")
+	out, err := d.sb.Exec(execCtx, wrapped, d.workdirOrDefault())
 	// On normal exit, the goroutine never fires — clean the marker
 	// ourselves. On timeout, the goroutine already rm'd it.
 	if execCtx.Err() == nil {

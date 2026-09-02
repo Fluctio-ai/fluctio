@@ -47,6 +47,22 @@ type E2BExecutor struct {
 	agentID   string
 	projectID string
 	sessionID string
+
+	// execWorkdir is where relative-path commands run ("/workspace" —
+	// the mount root — by default). Redirected per session via
+	// SetExecWorkdir; the envd file helpers are path-based and unaffected.
+	execWorkdir string
+}
+
+// SetExecWorkdir implements ExecWorkdirSetter.
+func (e *E2BExecutor) SetExecWorkdir(dir string) { e.execWorkdir = dir }
+
+// workdirOrDefault returns the cwd relative-path execs run under.
+func (e *E2BExecutor) workdirOrDefault() string {
+	if e.execWorkdir == "" {
+		return "/workspace"
+	}
+	return e.execWorkdir
 }
 
 func newE2BExecutor(ctx context.Context, apiKey, template string, timeout time.Duration) (*E2BExecutor, error) {
@@ -441,8 +457,9 @@ func (e *E2BExecutor) Exec(ctx context.Context, command string, timeout time.Dur
 	// /home/user/ and never make it to the host-visible workspace.
 	// Hydrate creates /workspace before any agent Exec runs, and
 	// recreate() re-hydrates after a sandbox replacement, so `cd` is
-	// guaranteed to succeed here.
-	wrapped := "cd /workspace && " + command
+	// guaranteed to succeed here. SetExecWorkdir can point it at the
+	// chat's session subdir inside the mounted project root instead.
+	wrapped := "cd " + e.workdirOrDefault() + " && " + command
 	result, err := e.execOnce(ctx, wrapped, timeout)
 	if err != nil && strings.Contains(err.Error(), "HTTP 502") || strings.Contains(fmt.Sprint(err), "HTTP 404") {
 		if rerr := e.recreate(ctx); rerr != nil {

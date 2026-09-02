@@ -65,6 +65,19 @@ type WorkspaceSnapshotter interface {
 	SnapshotWorkspace(ctx context.Context) (map[string][]byte, error)
 }
 
+// ExecWorkdirSetter is an optional Executor capability: redirect where
+// RELATIVE-path exec commands run. bindSession uses it so ordinary
+// project chats exec from their own session dir (project chats mount the
+// project root at /workspace — see mountRootScope — so the chat's own
+// files live at /workspace/<sid>/; running there makes "./out.txt" land
+// next to this chat's files and "../" reach the shared layer), while
+// coding-root chats keep /workspace itself (the dev server serves it).
+// Executor file helpers (ReadFile/WriteFile/ListDir) always address the
+// mount root, so they are unaffected.
+type ExecWorkdirSetter interface {
+	SetExecWorkdir(dir string)
+}
+
 // RemoteWorkspace marks executors whose /workspace is NOT shared with the
 // host filesystem (no bind mount). Implementers need an explicit sync
 // after every successful exec — otherwise files the skill writes

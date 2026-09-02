@@ -177,6 +177,11 @@ type Registry struct {
 	// goes to userRoot.
 	systemRoot string
 	userRoot   string
+	// visibleRoot, when set, widens ReachabilityVerdict's visibility
+	// domain beyond userRoot (bindSession: the project root for project
+	// chats, so "../" shared-layer writes count as user-visible). See
+	// SetVisibleRoot.
+	visibleRoot string
 	// workspaceStore is the optional durable blob store for agent-generated
 	// artifacts. When set, write_file / read_file / list_dir route through
 	// it for paths that would otherwise land under userRoot. Identity files
@@ -649,6 +654,14 @@ func (r *Registry) hostWorkspaceDir() string {
 // paths back to the model (write_file etc.) — cloud stores (S3/R2) have
 // no host path, so callers fall back to the relative key.
 func (r *Registry) localFSScopeDir() string {
+	return r.localFSScopeDirFor(r.projectID, r.scopeSessionID())
+}
+
+// localFSScopeDirFor is localFSScopeDir for an explicit (projectID,
+// sessionID) tuple — wsScope callers pass the RE-SCOPED tuple so a "../"
+// write reports the project-root dir it actually landed in, not the
+// session dir the raw path started from.
+func (r *Registry) localFSScopeDirFor(projectID, sessionID string) string {
 	if r.workspaceStore == nil || r.agentID == "" {
 		return ""
 	}
@@ -656,7 +669,7 @@ func (r *Registry) localFSScopeDir() string {
 	if !ok {
 		return ""
 	}
-	dir, ok := ls.LocalScopeDir(r.agentID, r.projectID, r.scopeSessionID())
+	dir, ok := ls.LocalScopeDir(r.agentID, projectID, sessionID)
 	if !ok || dir == "" {
 		return ""
 	}
@@ -670,13 +683,27 @@ func (r *Registry) UserRoot() string {
 	return r.userRoot
 }
 
+// SetVisibleRoot overrides the visibility domain ReachabilityVerdict (and
+// only that) uses — bindSession points it at the project root for project
+// chats, where the user-root is the chat's own session dir but the
+// project-shared layer ("../" writes) is equally user-visible in the
+// Files browser. Empty keeps the verdict scoped to UserRoot.
+func (r *Registry) SetVisibleRoot(dir string) {
+	r.visibleRoot = dir
+}
+
 // ReachabilityVerdict 判定一个产物路径是否对前端用户可见，返回是否可见及可见域根。
 // 供 agent loop（agent 包）调用——使用 containment 逻辑（与 deliver_file 的 dest 校验一致），
 // 而非 isWorkspacePath 的"绝对路径=磁盘路由"语义：后者会把 deliver_file 落在可见域内的绝对
 // 产物（filepath.Join(visibleRoot, name)）误判为不可见，触发 annotateReachability 循环。
 // 语义：路径（相对或绝对）解析后落在 visibleRoot 内 → 可见；否则不可见。
+// 项目会话下可见域是项目根（SetVisibleRoot），所以 "../<shared>/x" 的共享层写入
+// 不会被误标为"用户不可见"。
 func (r *Registry) ReachabilityVerdict(path string) (visible bool, visibleRoot string) {
 	visibleRoot = r.UserRoot()
+	if r.visibleRoot != "" {
+		visibleRoot = r.visibleRoot
+	}
 	if visibleRoot == "" {
 		return false, ""
 	}
@@ -723,6 +750,109 @@ func (r *Registry) wsPath(p string) string {
 		return clean
 	}
 	return r.codingSubdir + "/" + clean
+}
+
+// wsScopePath is a tool path resolved against the active turn scope —
+// see Registry.wsScope.
+type wsScopePath struct {
+	// projectID / sessionID are the workspace.Store tuple the resolved
+	// path belongs to (after any "../" re-rooting).
+	projectID string
+	sessionID string
+	// storePath is the store key for Get/Put (and the prefix filter for
+	// List), relative to the scope dir the tuple names.
+	storePath string
+	// sandboxPath is the same file as an ABSOLUTE path inside the sandbox
+	// (/workspace/…). Project chats mount the project root at /workspace
+	// (files of the chat's own session dir carry a <sid>/ prefix there),
+	// loose chats mount their session dir — executor fallbacks must use
+	// this, not the raw tool path, or a bare "todo.md" fallback would
+	// read the project root instead of the chat's own copy. Absolute so
+	// the fallback stays correct no matter what cwd exec commands run
+	// under (ExecWorkdirSetter may move that per session).
+	sandboxPath string
+}
+
+// wsScope resolves a tool-supplied relative path against the active turn
+// scope, implementing the session-first layout for project chats:
+//
+//   - bare paths ("todo.md", "notes/x.md") land in the chat's OWN session
+//     dir — projects/<pid>/<sid>/ for project chats, sessions/<sid>/ for
+//     loose chats;
+//   - exactly one leading "../" re-roots the write into the project-shared
+//     layer (projects/<pid>/x), which every chat in the project sees and
+//     which survives across conversations ("../math-course/lesson.html");
+//   - anything else that would widen the scope is rejected: escaping in a
+//     loose chat (nothing above it but the agent root), escaping when the
+//     scope is already the project root (coding-root agents), "../../"
+//     above the project root, and paths pointing into ANOTHER chat's
+//     session dir ("../s-…-other/…") — a chat sees its own dir plus the
+//     shared layer, not its project siblings' scratch.
+//
+// Callers feed the result to workspaceStore Get/Put/List and, for
+// executor fallbacks (store miss mid-turn), to executor ReadFile/WriteFile
+// with sandboxPath. Absolute paths never get here (isWorkspacePath /
+// routeFor route them to the sandbox first).
+func (r *Registry) wsScope(p string) (wsScopePath, error) {
+	out := wsScopePath{projectID: r.projectID, sessionID: r.scopeSessionID()}
+	clean := filepath.ToSlash(filepath.Clean(p))
+	clean = strings.TrimPrefix(clean, "./")
+	if clean == "" || clean == "." {
+		return out, fmt.Errorf("path %q does not name a file or directory", p)
+	}
+	sid := r.scopeSessionID()
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		rest := strings.TrimPrefix(clean, "../")
+		switch {
+		case r.projectID == "" || sid == "":
+			return out, fmt.Errorf("%q escapes this chat's workspace; loose chats have no shared parent layer", p)
+		case r.codingRootScope, r.codingSubdir != "":
+			return out, fmt.Errorf("%q escapes the project root, which is already the working scope", p)
+		case rest == ".." || strings.HasPrefix(rest, "../"):
+			return out, fmt.Errorf("%q escapes the project root", p)
+		}
+		seg, _, _ := strings.Cut(rest, "/")
+		if seg != sid && isSessionDirName(seg) {
+			return out, fmt.Errorf("%q points into another chat's session dir; use plain paths for this chat's files or \"../\" for the project-shared layer", p)
+		}
+		out.sessionID = ""
+		out.storePath = rest
+		out.sandboxPath = "/workspace/" + rest
+		return out, nil
+	}
+	mapped := clean
+	if r.codingSubdir != "" {
+		mapped = r.wsPath(clean)
+	}
+	out.storePath = mapped
+	mountRel := mapped
+	if r.projectID != "" && sid != "" {
+		mountRel = sid + "/" + mapped
+	}
+	out.sandboxPath = "/workspace/" + mountRel
+	return out, nil
+}
+
+// isSessionDirName reports whether name looks like an internal session_key
+// directory ("s-<epoch>-<rand>", e.g. s-1787700473713-ucrayk) rather than a
+// human-named shared folder. Heuristic — the layout convention, not a
+// hard invariant — but good enough to keep one chat from wandering into a
+// project sibling's scratch dir via "../".
+func isSessionDirName(name string) bool {
+	rest, ok := strings.CutPrefix(name, "s-")
+	if !ok {
+		return false
+	}
+	digits, _, more := strings.Cut(rest, "-")
+	if !more || digits == "" {
+		return false
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // SetMessageContext records the bus address of the in-flight turn so

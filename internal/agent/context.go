@@ -63,6 +63,13 @@ type ContextBuilder struct {
 	// happen inside the once).
 	bashAvailable bool
 	bashOnce      sync.Once
+	// sessionWorkdir is the cwd sandboxed commands actually run in for the
+	// current turn — "/workspace/<sid>" for ordinary project chats (the
+	// session-first layout; "../" reaches the project root mounted at
+	// /workspace), empty otherwise. Wired per-turn by Agent.bindSession;
+	// surfaced by modAgentIntro so the prompt's "Working Directory" line
+	// matches where relative exec / file-tool paths land.
+	sessionWorkdir string
 }
 
 // ctx returns a context tagged with this builder's user, used when reading

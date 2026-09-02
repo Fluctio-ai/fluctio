@@ -243,6 +243,12 @@ func modAgentIntro(p *promptCtx) string {
 	var workdir, homeDesc string
 	if p.cb.sandboxEnabled {
 		workdir = "/workspace"
+		if p.cb.sessionWorkdir != "" {
+			// Ordinary project chat: commands run in this conversation's
+			// own dir inside the mounted project root (see
+			// ContextBuilder.sessionWorkdir).
+			workdir = p.cb.sessionWorkdir
+		}
 		homeDesc = "/workspace (identity files like SOUL.md / IDENTITY.md are managed by the runtime, not the sandbox FS — call write_file with a bare filename, never path it)"
 	} else {
 		workdir = p.cb.workspace
@@ -301,6 +307,13 @@ the right directory:
 - Every other relative path resolves against the working directory above.
 So to update your own identity, just pass "IDENTITY.md"; to save a document
 for the user, pass a meaningful filename like "report.md".
+- In a PROJECT chat the layout is session-first: a plain "report.md" lands
+  in THIS conversation's own directory, and a leading "../" (e.g.
+  "../math-course/lesson.html") addresses the project's shared layer,
+  which every chat in the project sees and which persists across
+  conversations. "../" works the same way in exec commands. Never go
+  further up ("../../") or into another "s-…" session directory — those
+  are rejected. todo.md is always the plain session-relative path.
 
 Use edit_file (not write_file) when you only need to change part of an
 existing file — it's cheaper, can't accidentally drop unrelated content,
@@ -556,7 +569,12 @@ You have access to a sandbox environment for executing code. Key rules:
 - Always show the execution output/result to the user.
 
 ## Filesystem layout INSIDE the sandbox
-- /workspace — your working dir (cd here, save outputs here).
+- /workspace — the workspace mount. In a project chat your commands start
+  in this conversation's own subdirectory under it (see "Working
+  Directory" above): relative saves land with this chat's files, and
+  "../" (or an absolute /workspace path) reaches the project's shared
+  layer. Otherwise /workspace itself is your working dir — cd there,
+  save outputs there.
 - /skills/<skill-name>/ — every skill listed below is mounted here
   read-only. Invoke with: python /skills/<name>/main.py. These mounts
   are READ-ONLY and the list is fixed when the sandbox starts; mkdir,

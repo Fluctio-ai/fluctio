@@ -278,15 +278,25 @@ function extractProducedFiles(
     // check before prefixing — a prefixed "sessions/x/todo.md" contains "/"
     // and would slip past it.
     if (!rawRel || rawRel.startsWith("/") || isSystemFile(rawRel)) return;
+    // "../x" explicitly addresses the project-shared layer (the file
+    // tools' session-first scoping): strip the escape segments and
+    // resolve against the SHALLOWEST prefix (the project root) instead
+    // of the chat's own dir.
+    const rel = rawRel.replace(/^(\.\.\/)+/, "");
     let full = "";
-    for (const p of scopePrefixes) {
-      const cand = p + rawRel;
-      if (!exists || exists(cand)) {
-        full = cand;
-        break;
+    if (rel !== rawRel) {
+      const rootPrefix = scopePrefixes[scopePrefixes.length - 1];
+      if (rootPrefix) full = rootPrefix + rel;
+    } else {
+      for (const p of scopePrefixes) {
+        const cand = p + rel;
+        if (!exists || exists(cand)) {
+          full = cand;
+          break;
+        }
       }
     }
-    if (full === "") full = scopePrefixes[0] + rawRel;
+    if (full === "") full = scopePrefixes[0] + rel;
     if (seen.has(full)) return;
     seen.add(full);
     out.push(size !== undefined ? { path: full, size } : { path: full });

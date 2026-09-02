@@ -76,7 +76,19 @@ func (a *Agent) scopedHostDir(sessionID, projectID string) string {
 	}
 	seg := "sessions/" + sessionID
 	if projectID != "" {
-		seg = "projects/" + projectID
+		// Session-first layout (mirrors the workspace store's scopeDir and
+		// bindSession's userRoot): a chat's attachments land in its own
+		// projects/<pid>/<sid>/ dir. The store write in
+		// WriteSessionAttachments always uses the (pid, sid) tuple, so the
+		// host mirror must match — including for coding-root chats, whose
+		// tools address the root but still reach attachments through the
+		// absolute /workspace/<sid>/<name> path the attachment hint
+		// carries.
+		if sessionID != "" {
+			seg = "projects/" + projectID + "/" + sessionID
+		} else {
+			seg = "projects/" + projectID
+		}
 	}
 	return filepath.Join(a.workspacePath, seg)
 }
@@ -172,16 +184,23 @@ func (a *Agent) WriteSessionAttachments(ctx context.Context, sessionID, projectI
 
 		// 3. Live sandbox (covers E2B mid-session). Best-effort; missing
 		// pool / get failure just means the next exec will pull from the
-		// store via hydrate-on-create.
+		// store via hydrate-on-create. Dest is mount-root-relative — the
+		// session dir for project chats (see scopedHostDir) — so the
+		// in-sandbox copy sits beside the store/host copies, not at the
+		// project root where a bare name wouldn't match the layout.
+		mountRel := name
+		if projectID != "" && sessionID != "" {
+			mountRel = sessionID + "/" + name
+		}
 		if a.sandboxPool != nil {
 			if ex, gErr := a.sandboxPool.Get(ctx, a.name, projectID, sessionID); gErr == nil && ex != nil {
-				if _, wErr := ex.WriteFile(ctx, "/workspace/"+name, string(data)); wErr != nil {
-					slog.Warn("attachment sandbox write failed", "agent", a.name, "session", sessionID, "path", name, "error", wErr)
+				if _, wErr := ex.WriteFile(ctx, "/workspace/"+mountRel, string(data)); wErr != nil {
+					slog.Warn("attachment sandbox write failed", "agent", a.name, "session", sessionID, "path", mountRel, "error", wErr)
 				}
 			}
 		}
 
-		paths = append(paths, name)
+		paths = append(paths, mountRel)
 	}
 	return paths
 }
@@ -449,9 +468,17 @@ func (a *Agent) persistImageGenOutput(ctx context.Context, sessionID, projectID,
 		// resolved to the latest image.
 		name := fmt.Sprintf("imagegen_%d_%d%s", time.Now().UnixMilli(), idx, ext)
 		idx++
+		// Refs are mount-root-relative: prefix the chat's own dir for
+		// project chats so the web client (which resolves /workspace/<p>
+		// against the project root) and the gateway (which folds a "<sid>/"
+		// prefix back into the session scope) both land on the same file.
+		ref := name
+		if projectID != "" && sessionID != "" {
+			ref = sessionID + "/" + name
+		}
 		a.writeWorkspaceBytes(ctx, sessionID, projectID, name, data)
-		urlToName[url] = name
-		return fmt.Sprintf("![%s](/workspace/%s)", alt, name)
+		urlToName[url] = ref
+		return fmt.Sprintf("![%s](/workspace/%s)", alt, ref)
 	})
 }
 
@@ -490,9 +517,17 @@ func (a *Agent) writeWorkspaceBytes(ctx context.Context, sessionID, projectID, n
 		}
 	}
 	if a.sandboxPool != nil {
+		// Mount-root-relative dest: the chat's session dir for project
+		// chats (see persistImageGenOutput's ref comment) — a bare name
+		// would land in the shared root and diverge from the store/host
+		// copies.
+		mountRel := name
+		if projectID != "" && sessionID != "" {
+			mountRel = sessionID + "/" + name
+		}
 		if ex, gErr := a.sandboxPool.Get(ctx, a.name, projectID, sessionID); gErr == nil && ex != nil {
-			if _, wErr := ex.WriteFile(ctx, "/workspace/"+name, string(data)); wErr != nil {
-				slog.Warn("image_gen sandbox write failed", "agent", a.name, "path", name, "error", wErr)
+			if _, wErr := ex.WriteFile(ctx, "/workspace/"+mountRel, string(data)); wErr != nil {
+				slog.Warn("image_gen sandbox write failed", "agent", a.name, "path", mountRel, "error", wErr)
 			}
 		}
 	}

@@ -1131,7 +1131,7 @@ func splitFilesFromReply(ctx context.Context, ws workspace.Store, agentID, proje
 	for _, m := range matches {
 		path := reply[m[4]:m[5]]
 		key := strings.TrimPrefix(path, "/workspace/")
-		rc, err := ws.Get(ctx, agentID, projectID, sessionID, key)
+		rc, err := getWorkspaceFile(ctx, ws, agentID, projectID, sessionID, key)
 		if err != nil {
 			slog.Warn("split file: workspace get failed", "key", key, "error", err)
 			continue
@@ -1216,7 +1216,7 @@ func splitMediaFromReply(ctx context.Context, ws workspace.Store, agentID, proje
 			key = strings.TrimPrefix(key, "workspace/")
 			key = strings.TrimPrefix(key, "/")
 			if key != "" {
-				rc, err := ws.Get(ctx, agentID, projectID, sessionID, key)
+				rc, err := getWorkspaceFile(ctx, ws, agentID, projectID, sessionID, key)
 				if err != nil {
 					slog.Warn("split media: workspace get failed", "agent", agentID, "project", projectID, "session", sessionID, "key", key, "error", err)
 				} else {
@@ -1364,15 +1364,75 @@ const maxAttachmentBytes = 25 * 1024 * 1024
 // snapshotWorkspacePaths records the paths present before an agent turn.
 // A failed snapshot disables the implicit fallback for that turn: sending
 // no inferred attachment is safer than resending every historical artifact.
+// resolveWorkspaceKey maps a /workspace-relative key from agent markdown
+// onto the (projectID, sessionID) tuple the store expects. Keys are
+// mount-root-relative in project chats (the sandbox mounts the project
+// root at /workspace): a "<sid>/" prefix names this chat's own file and
+// folds into the session scope, anything else addresses the project's
+// shared root — which is also where the web client resolves bare keys.
+// Loose chats mount the session dir, so the key is already
+// session-relative.
+func resolveWorkspaceKey(projectID, sessionID, key string) (string, string, string) {
+	if projectID != "" {
+		if sessionID != "" && strings.HasPrefix(key, sessionID+"/") {
+			return projectID, sessionID, strings.TrimPrefix(key, sessionID+"/")
+		}
+		return projectID, "", key
+	}
+	return projectID, sessionID, key
+}
+
+// getWorkspaceFile fetches a mount-root-relative workspace key, trying
+// the scope it names first and the other project scope on miss — agents
+// mix bare session-file refs (which the mount root would place in the
+// shared layer) with explicit "<sid>/…" and shared-layer refs in the
+// same reply, and the media-extraction path must not drop either.
+func getWorkspaceFile(ctx context.Context, ws workspace.Store, agentID, projectID, sessionID, key string) (io.ReadCloser, error) {
+	pid, sid, rest := resolveWorkspaceKey(projectID, sessionID, key)
+	rc, err := ws.Get(ctx, agentID, pid, sid, rest)
+	if err == nil || projectID == "" || sessionID == "" {
+		return rc, err
+	}
+	otherSid := ""
+	if sid == "" {
+		otherSid = sessionID
+	}
+	if rc2, err2 := ws.Get(ctx, agentID, projectID, otherSid, rest); err2 == nil {
+		return rc2, nil
+	}
+	return rc, err
+}
+
+// listVisibleWorkspace lists what one chat can see, keyed the way the
+// mount root lays it out: "<sid>/<p>" for the chat's own files, "<p>"
+// for the project-shared root (project chats only). Loose chats get the
+// session subtree with bare keys. Used by the pre-turn snapshot and the
+// post-turn media fallback so "../"-written shared deliverables count
+// too, and so session/shared keys can't collide.
+func listVisibleWorkspace(ctx context.Context, ws workspace.Store, agentID, projectID, sessionID string) []workspace.ObjectInfo {
+	objs, err := ws.List(ctx, agentID, projectID, sessionID)
+	if err != nil {
+		return nil
+	}
+	if projectID == "" || sessionID == "" {
+		return objs
+	}
+	out := make([]workspace.ObjectInfo, 0, len(objs)+8)
+	for _, o := range objs {
+		o.Path = sessionID + "/" + o.Path
+		out = append(out, o)
+	}
+	if rootObjs, err := ws.List(ctx, agentID, projectID, ""); err == nil {
+		out = append(out, rootObjs...)
+	}
+	return out
+}
+
 func snapshotWorkspacePaths(ctx context.Context, ws workspace.Store, agentID, projectID, sessionID string) (map[string]struct{}, bool) {
 	if ws == nil {
 		return nil, false
 	}
-	objs, err := ws.List(ctx, agentID, projectID, sessionID)
-	if err != nil {
-		slog.Warn("workspace pre-turn snapshot failed", "agent", agentID, "project", projectID, "session", sessionID, "error", err)
-		return nil, false
-	}
+	objs := listVisibleWorkspace(ctx, ws, agentID, projectID, sessionID)
 	paths := make(map[string]struct{}, len(objs))
 	for _, obj := range objs {
 		paths[obj.Path] = struct{}{}
@@ -1406,10 +1466,8 @@ func appendNewWorkspaceMedia(ctx context.Context, ws workspace.Store, agentID, p
 	if ws == nil || !snapshotOK {
 		return existing
 	}
-	objs, err := ws.List(ctx, agentID, projectID, sessionID)
-	if err != nil {
-		slog.Warn("workspace list failed for media fallback",
-			"agent", agentID, "project", projectID, "session", sessionID, "error", err)
+	objs := listVisibleWorkspace(ctx, ws, agentID, projectID, sessionID)
+	if len(objs) == 0 {
 		return existing
 	}
 
@@ -1445,7 +1503,7 @@ func appendNewWorkspaceMedia(ctx context.Context, ws workspace.Store, agentID, p
 				"path", obj.Path, "size", obj.Size, "cap", maxAttachmentBytes)
 			continue
 		}
-		rc, gerr := ws.Get(ctx, agentID, projectID, sessionID, obj.Path)
+		rc, gerr := getWorkspaceFile(ctx, ws, agentID, projectID, sessionID, obj.Path)
 		if gerr != nil {
 			slog.Warn("workspace get failed for media fallback",
 				"path", obj.Path, "error", gerr)

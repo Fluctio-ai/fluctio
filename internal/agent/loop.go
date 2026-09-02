@@ -309,19 +309,62 @@ func (a *Agent) SetSandboxPool(p sandbox.ExecutorPool) {
 func (a *Agent) bindSession(ctx context.Context, channel, accountID, chatID, sessionKey, projectID string) {
 	a.registry.SetSessionID(sessionKey)
 	a.registry.SetProjectID(projectID)
+	// Coding scope must key on the project actually HAVING a runtime
+	// record (a live app tree), not on the manager being wired: the
+	// manager is attached to every agent so they all get the preview
+	// tools, and gating on projectRuntime != nil therefore pinned every
+	// project chat's file writes to the shared root while the todo panel
+	// and the per-chat file tools read the session subdir (the
+	// workspace-store layout). Computed before the scopeDir block because
+	// the user root below depends on it.
+	hasRuntime := false
+	if a.projectRuntime != nil && projectID != "" {
+		if uid := a.registry.EffectiveUserID(); uid != "" {
+			if _, err := a.projectRuntime.Get(ctx, uid, a.name, projectID, sessionKey); err == nil {
+				hasRuntime = true
+			}
+		}
+	}
+	a.registry.SetCodingRootScope(hasRuntime)
+	// Keep the system prompt's "Working Directory" in sync with where
+	// relative paths actually land this turn (see bindSession's exec
+	// workdir below for the sandboxed side).
+	if a.ctxBuilder != nil {
+		if projectID != "" && sessionKey != "" && !hasRuntime {
+			a.ctxBuilder.sessionWorkdir = "/workspace/" + sessionKey
+		} else {
+			a.ctxBuilder.sessionWorkdir = ""
+		}
+	}
+	// Reachability/visibility domain: in a project the user sees the
+	// whole project tree in the Files browser (this chat's session dir +
+	// the shared root), so "../"-scoped writes count as visible and
+	// annotateReachability must not flag them. Outside a project the
+	// userRoot (session dir) already is the full domain.
+	if a.workspacePath != "" && projectID != "" {
+		a.registry.SetVisibleRoot(filepath.Join(a.workspacePath, "projects", projectID))
+	} else {
+		a.registry.SetVisibleRoot("")
+	}
 	// Scope the on-disk user root to this session so host-mode file tools
 	// (write_file/read_file/edit_file/list_dir via rootForPath) and host
 	// exec land in sessions/<sessionKey>/ — per-session, so a /new starts
 	// a fresh empty file set instead of inheriting the prior session's
-	// files — or projects/<pid>/ (shared across the project's chats). The
-	// session branch keys on session_key, NOT the channel chat_id; chat_id
-	// is kept separately (SetMessageContext below) for delivery addressing.
-	// Matches runtime.scopeFor and docker's per-session /workspace/<sid>.
+	// files — or projects/<pid>/<sessionKey>/ for ordinary project chats,
+	// matching the workspace store's session-first layout ("../" paths in
+	// the file tools reach the shared projects/<pid>/ layer). Only a
+	// project with a live runtime keeps the bare projects/<pid>/ root,
+	// because that's the tree the dev server serves. The session branch
+	// keys on session_key, NOT the channel chat_id; chat_id is kept
+	// separately (SetMessageContext below) for delivery addressing.
 	scopeDir := ""
 	if a.workspacePath != "" && (sessionKey != "" || projectID != "") {
 		seg := "sessions/" + sessionKey
 		if projectID != "" {
 			seg = "projects/" + projectID
+			if !hasRuntime && sessionKey != "" {
+				seg = "projects/" + projectID + "/" + sessionKey
+			}
 		}
 		scopeDir = filepath.Join(a.workspacePath, seg)
 		if err := os.MkdirAll(scopeDir, 0o755); err != nil {
@@ -372,23 +415,14 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, chatID, ses
 	// where they drop artifacts (may differ from the visible workspace).
 	// Placed after the per-session MCP rebuild so mcpSessionDir is current.
 	a.ctxBuilder.mcpServerSummary = summarizeMCPServers(a.mcpServers, a.mcpSessionDir)
-	// Coding agents (those with a project runtime wired) treat a project
-	// as ONE shared app tree: file tools address the project root so the
-	// agent's edits land where the dev server serves. Only when actually
-	// inside a project; loose chats and non-coding agents are unaffected.
-	a.registry.SetCodingRootScope(a.projectRuntime != nil && projectID != "")
 	// If this scope already has a running app (a runtime record exists),
 	// redirect file tools into its app subfolder so edits keep landing
 	// where the dev server serves — across turns, not just the turn that
-	// called start_app_preview. EffectiveUserID is the owner here
-	// (chatter is bound later), which is correct for the web-direct case.
+	// called start_app_preview. hasRuntime is computed at the top of
+	// bindSession; it also drives SetCodingRootScope and the user root.
 	a.registry.SetCodingSubdir("")
-	if a.projectRuntime != nil {
-		if uid := a.registry.EffectiveUserID(); uid != "" {
-			if _, err := a.projectRuntime.Get(ctx, uid, a.name, projectID, sessionKey); err == nil {
-				a.registry.SetCodingSubdir(coderuntime.AppSubdir)
-			}
-		}
+	if hasRuntime {
+		a.registry.SetCodingSubdir(coderuntime.AppSubdir)
 	}
 	a.registry.SetMessageContext(channel, accountID, chatID)
 	if a.sandboxPool == nil {
@@ -406,6 +440,18 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, chatID, ses
 		return
 	}
 	a.registry.SetExecutor(ex)
+	// Ordinary project chats exec from their own session dir — the same
+	// session-first layout the file tools use — so relative-path commands
+	// ("./out.txt", a script writing beside itself) land with this chat's
+	// files, and "../" reaches the project-shared root the sandbox mounts
+	// at /workspace. Coding-root chats keep /workspace (the dev server
+	// serves it). Optional capability — backends without
+	// ExecWorkdirSetter keep the previous behavior.
+	if projectID != "" && sessionKey != "" && !hasRuntime {
+		if wd, ok := ex.(sandbox.ExecWorkdirSetter); ok {
+			wd.SetExecWorkdir("/workspace/" + sessionKey)
+		}
+	}
 }
 
 // summarizeMCPServers renders a compact, human-readable digest of the MCP

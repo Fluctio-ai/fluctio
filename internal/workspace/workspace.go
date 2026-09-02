@@ -27,13 +27,15 @@ import (
 // namespacing (bucket prefix, directory tree, ...) below the agent scope.
 //
 // projectID and sessionID together name the workspace folder for one
-// chat. projectID wins when both are set: every session inside a
-// project shares the same folder, which is the whole value of project
-// (notes/files persist across the project's chats). On disk:
+// chat. Both implementations keep the session segment under a project —
+// a chat's own files live in its per-session dir, while (projectID,
+// sessionID="") names the project's shared root that every chat in the
+// project reaches (see the file tools' "../" scoping). On disk:
 //
 //	projectID="", sessionID=""   → <root>/<agentID>/<path>
 //	projectID="", sessionID="x"  → <root>/<agentID>/sessions/x/<path>
-//	projectID="p", *             → <root>/<agentID>/projects/p/<path>
+//	projectID="p", sid="x"       → <root>/<agentID>/projects/p/x/<path>
+//	projectID="p", sid=""        → <root>/<agentID>/projects/p/<path>
 //
 // List with both empty returns EVERY object under the agent regardless
 // of project/session — used by the admin file browser. List with a
