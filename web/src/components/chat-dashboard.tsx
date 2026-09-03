@@ -258,7 +258,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
               ))}
             </ul>
             <Link
-              href="/cron/"
+              href={`/agents/${agentId}/scheduler`}
               className="border-t border-border/60 px-4 py-2.5 text-xs text-primary hover:underline"
             >
               {t("dashboard.cron.manage")}
