@@ -472,6 +472,18 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
   return msgs;
 }
 
+// latestHistorySeq returns the highest session_messages seq in a history
+// page (ascending) — trailing rows may be notice entries with no seq, so
+// walk back to the last row that has one. Maintains the message-space
+// cursor lastMsgSeqRef; see syncNewer for why that cursor exists at all.
+function latestHistorySeq(history: ChatHistoryMessage[]): number {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const s = history[i].seq;
+    if (typeof s === "number") return s;
+  }
+  return -1;
+}
+
 // isPendingPlanContent recognises the closing line we instructed the
 // model to emit on plan-first turns ("Reply `go` to execute, or tell
 // me what to change." or its Chinese rendering). Used to decide
@@ -1248,6 +1260,7 @@ export function ChatScreen() {
                   if (latestEventSeq > maxSeqRef.current) maxSeqRef.current = latestEventSeq;
                   subscribeSinceRef.current = latestEventSeq;
                   setMessages(buildChatMessages(history));
+                  lastMsgSeqRef.current = latestHistorySeq(history || []);
                   earliestSeqRef.current = earliestSeq;
                   hasMoreRef.current = hasMore;
                 })
@@ -1490,6 +1503,7 @@ export function ChatScreen() {
     hasMoreRef.current = false;
     loadingMoreRef.current = false;
     setLoadingOlder(false);
+    lastMsgSeqRef.current = -1;
     let aborted = false;
     getChatHistoryWithCursor(selectedAgent, sessionId, { limit: HISTORY_PAGE })
       .then(async ({ history, latestEventSeq, earliestSeq, hasMore }) => {
@@ -1545,6 +1559,7 @@ export function ChatScreen() {
         setMessages(built);
         earliestSeqRef.current = earliestSeq;
         hasMoreRef.current = hasMore;
+        lastMsgSeqRef.current = latestHistorySeq(history);
         setLoadedSessionId(sessionId);
       })
       .catch(() => {
@@ -1608,6 +1623,64 @@ export function ChatScreen() {
       });
   }, [selectedAgent, sessionId]);
 
+  // syncNewer is the bottom-of-list mirror of loadMoreOlder: when the
+  // user scrolls back to the bottom after reading history, ask the
+  // server whether newer messages landed while we were away (SSE dead
+  // or asleep, another device/channel replied, cron push). Pulls the
+  // latest page and appends only rows beyond lastMsgSeqRef — a
+  // MESSAGE-space cursor (session_messages.seq), deliberately distinct
+  // from maxSeqRef: that one lives in the session_events counter space
+  // the SSE/POST handlers advance, and the two counters are independent
+  // (after the 7-day retention prune the event table can sit at -1
+  // while messages number in the hundreds — filtering messages against
+  // it duplicated the whole page). Skipped while a foreground turn is
+  // rendering live (POST stream or a subscribe-replay transient
+  // bubble): history would only carry half-persisted rows for that
+  // turn anyway.
+  const loadingNewerRef = useRef(false);
+  const lastNewerCheckRef = useRef(0);
+  const lastMsgSeqRef = useRef(-1);
+  const syncNewer = useCallback(() => {
+    if (loadingNewerRef.current) return;
+    if (Date.now() - lastNewerCheckRef.current < 3000) return;
+    if (!selectedAgent || !sessionId) return;
+    if (inFlightSendSessionRef.current === sessionId) return;
+    if (transientBubbleIdRef.current) return;
+    loadingNewerRef.current = true;
+    lastNewerCheckRef.current = Date.now();
+    // Cheap precheck first: one row (latestEventSeq is event-space and
+    // deliberately not used as the gate). Nothing-new is the common case
+    // — SSE alive (events already rendered) or a jitter-triggered
+    // transition — and a full page carries 50 rows of tool-result
+    // content, so only pay that when the newest row is genuinely beyond
+    // what we've rendered.
+    getChatHistoryWithCursor(selectedAgent, sessionId, { limit: 1 })
+      .then((pre) => {
+        if (latestHistorySeq(pre.history || []) <= lastMsgSeqRef.current) return null;
+        return getChatHistoryWithCursor(selectedAgent, sessionId, { limit: HISTORY_PAGE });
+      })
+      .then((res) => {
+        if (!res) return;
+        // Filter BEFORE advancing the cursor, or everything dedupes away.
+        const fresh = buildChatMessages(res.history || []).filter(
+          (m) => typeof m.seq === "number" && m.seq > lastMsgSeqRef.current,
+        );
+        const top = latestHistorySeq(res.history || []);
+        if (top > lastMsgSeqRef.current) lastMsgSeqRef.current = top;
+        // Keep the SSE resume cursor fresh too (event space) — harmless
+        // when it lags, saves a reconnecting EventSource some replay.
+        if (typeof res.latestEventSeq === "number" && res.latestEventSeq > maxSeqRef.current) {
+          maxSeqRef.current = res.latestEventSeq;
+          subscribeSinceRef.current = res.latestEventSeq;
+        }
+        if (fresh.length > 0) setMessages((prev) => [...prev, ...fresh]);
+      })
+      .catch(() => { /* offline or session gone — nothing to sync */ })
+      .finally(() => {
+        loadingNewerRef.current = false;
+      });
+  }, [selectedAgent, sessionId]);
+
   useEffect(() => {
     if (!stickToBottomRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1645,13 +1718,19 @@ export function ChatScreen() {
     if (!el) return;
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const wasSticky = stickToBottomRef.current;
       stickToBottomRef.current = distance <= 64;
       // Reverse-infinite scroll: near the top, pull an older page.
       if (el.scrollTop < 60) loadMoreOlder();
+      // Coming back to the bottom after reading history — check the
+      // server for messages missed while scrolled up. Fires only on the
+      // unsticky→sticky transition so streaming output at the bottom
+      // (sticky→sticky) can't retrigger it.
+      if (!wasSticky && stickToBottomRef.current) syncNewer();
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
-  }, [loadMoreOlder]);
+  }, [loadMoreOlder, syncNewer]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -2192,6 +2271,17 @@ export function ChatScreen() {
           }
         }
       }, abortRef.current.signal, imageDataUrls, projectIdHint, undefined, rollbackPending);
+      // The streamed turn's bubbles carry no seq (content_delta path), so
+      // the message-space cursor lastMsgSeqRef is stale until re-anchored —
+      // a scroll-to-bottom syncNewer right after would re-append the whole
+      // turn. One single-row fetch fixes that; it also covers error turns,
+      // whose only persisted row is the user message.
+      getChatHistoryWithCursor(selectedAgent, sessionId, { limit: 1 })
+        .then((res) => {
+          const top = latestHistorySeq(res.history || []);
+          if (top > lastMsgSeqRef.current) lastMsgSeqRef.current = top;
+        })
+        .catch(() => {});
       // Diff the workspace against the pre-turn snapshot to detect files
       // produced by *exec* (a Python script that saves PDFs, etc.) — these
       // have no tool-call record to anchor them to a bubble, so by design
