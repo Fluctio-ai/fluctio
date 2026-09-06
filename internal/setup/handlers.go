@@ -1279,6 +1279,17 @@ func (s *Server) handleChatStop(w http.ResponseWriter, r *http.Request) {
 // bounded so a genuine runaway loop doesn't pin a goroutine forever.
 const agentTurnTimeout = 45 * time.Minute
 
+// detachedTimeout derives a bounded context that keeps running after the
+// client connection drops. Long synchronous work (agent turns, LLM
+// rewrites, batch re-embeds, container boots) routinely outlives gateway
+// timeouts — nginx's default proxy_read_timeout is 60s — and with
+// r.Context() the disconnect cancels the work mid-flight. Call sites keep
+// one task-specific comment; the timeout cap stays the only thing that can
+// kill the work.
+func detachedTimeout(parent context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), d)
+}
+
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1333,7 +1344,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// keep running so its already-paid-for LLM call finishes and the
 	// reply lands in session_events. The 45-minute cap is the only thing
 	// that can kill it.
-	agentCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), agentTurnTimeout)
+	agentCtx, cancel := detachedTimeout(r.Context(), agentTurnTimeout)
 	// cancel lives on the handler, not the agent goroutine: when a slash
 	// queues a continuation we keep the SSE open past HandleMessage's
 	// return, and inner-scope cancel would tear down agentCtx before the

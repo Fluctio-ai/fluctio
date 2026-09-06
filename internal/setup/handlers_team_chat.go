@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -187,7 +186,7 @@ func (s *Server) runTeamAgentTurn(w http.ResponseWriter, flusher http.Flusher, r
 	sub, unsubscribe := hub.Subscribe(uid, member.AgentID, member.SessionID)
 	defer unsubscribe()
 
-	agentCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), agentTurnTimeout)
+	agentCtx, cancel := detachedTimeout(r.Context(), agentTurnTimeout)
 	defer cancel()
 	// Same discipline as handleChatStream: register the cancel so
 	// POST /api/chat/stop can end this turn explicitly, and supersede

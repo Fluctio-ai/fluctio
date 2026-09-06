@@ -1,3 +1,5 @@
+import { sleep } from "./utils";
+
 export interface StatusResponse {
   configured: boolean;
   registrationOpen?: boolean;
@@ -2184,17 +2186,43 @@ export async function listKBPending(agentId: string): Promise<KBPending[]> {
   return Array.isArray(data) ? data : [];
 }
 
+// Gateway-shaped failures mean "the connection was cut, the task may still
+// be running detached server-side" — anything else is a real error from the
+// daemon and must not be waited on. Shared by the long-task endpoints below
+// (nginx's default proxy_read_timeout is 60s; merge/reindex/insights runs
+// take longer).
+function isGatewayTimeout(status: number | null): boolean {
+  return status === null || status === 502 || status === 503 || status === 504;
+}
+
 export async function resolveKBPending(
   agentId: string,
   pendingId: string,
   action: "merge" | "create" | "skip",
 ): Promise<{ action?: string; source_id?: string; error?: string }> {
-  const res = await apiFetch(`/api/agents/${agentId}/kb/pending/${pendingId}/resolve`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action }),
-  });
-  if (!res.ok) return { error: `HTTP ${res.status}` };
-  return res.json();
+  let status: number | null = null;
+  try {
+    const res = await apiFetch(`/api/agents/${agentId}/kb/pending/${pendingId}/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action }),
+    });
+    if (res.ok) return res.json();
+    status = res.status;
+  } catch {
+    /* gateway dropped the connection — status stays null */
+  }
+  if (!isGatewayTimeout(status)) return { error: `HTTP ${status}` };
+  // The merge path runs an LLM rewrite that outlives gateway timeouts, but
+  // the server keeps it running detached from the connection. Poll the
+  // pending list until this row disappears (= merge done and persisted).
+  for (let i = 0; i < 60; i++) {
+    await sleep(4000);
+    try {
+      const remaining = await listKBPending(agentId);
+      if (!remaining.some((p) => p.id === pendingId)) return { action };
+    } catch { /* transient poll failure — keep waiting */ }
+  }
+  return { error: "merge still running after timeout" };
 }
 // --- Article deep-reading insights (深度解读): summary / quotes / actions / sprouts. ---
 export interface InsightPoint { label: string; text: string; }
@@ -2219,12 +2247,6 @@ export async function kbGetInsights(agentId: string, sourceId: string): Promise<
   if (!res.ok) return null;
   return res.json().catch(() => null);
 }
-// Gateway-shaped failures mean "the connection was cut, generation may still
-// be running detached server-side" — anything else is a real error from the
-// daemon and must not be polled.
-function isGatewayish(status: number | null): boolean {
-  return status === null || status === 502 || status === 503 || status === 504;
-}
 export async function kbGenerateInsights(agentId: string, sourceId: string): Promise<ArticleInsights | { error?: string }> {
   const startedAt = Date.now();
   let status: number | null = null;
@@ -2235,16 +2257,16 @@ export async function kbGenerateInsights(agentId: string, sourceId: string): Pro
     if (res.ok) return res.json();
     status = res.status;
   } catch {
-    status = null; // network-level failure — gateway dropped the connection
+    /* gateway dropped the connection — status stays null */
   }
-  if (!isGatewayish(status)) return { error: `HTTP ${status}` };
+  if (!isGatewayTimeout(status)) return { error: `HTTP ${status}` };
   // The synchronous POST outlives gateway timeouts (nginx cuts at 60s;
   // generation takes 1-4 min), but the server keeps running it detached
   // from the connection. Poll GET until insights land — requiring a
   // generated_at newer than this click (minus slack for clock drift) so a
   // stale row from an earlier run can't masquerade as success.
   for (let i = 0; i < 80; i++) {
-    await new Promise((r) => setTimeout(r, 4000));
+    await sleep(4000);
     try {
       const ins = await kbGetInsights(agentId, sourceId);
       if (ins) {
@@ -2586,20 +2608,35 @@ export interface VectorizationConfig {
   wikiThreshold?: number;
   [k: string]: any;
 }
+// postReindex drives one reindex endpoint. A full re-embed outlives gateway
+// timeouts (nginx cuts at 60s) but runs detached server-side — there's no
+// progress endpoint to poll, so on a gateway-shaped failure we say so instead
+// of reporting a hard error.
+async function postReindex(url: string): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {
+  let res: Response | null = null;
+  try {
+    res = await apiFetch(url, { method: "POST" });
+  } catch { /* gateway dropped the connection — see below */ }
+  if (res && res.ok) return res.json().catch(() => ({ ok: true }));
+  const status = res ? res.status : null;
+  if (isGatewayTimeout(status)) {
+    return {
+      error: (status === null ? "network error" : `HTTP ${status}`) +
+        " — reindex continues in background, re-open this page in a few minutes to verify",
+    };
+  }
+  return { error: `HTTP ${status}` };
+}
+
 export async function reindexAgentMemory(agentId: string): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {
-  const res = await apiFetch(`/api/agents/${agentId}/memory/reindex`, { method: "POST" });
-  if (!res.ok) return { error: `HTTP ${res.status}` };
-  return res.json().catch(() => ({ ok: true }));
+  return postReindex(`/api/agents/${agentId}/memory/reindex`);
 }
 
 // reindexWikiEmbeddings re-vectorizes wiki pages for an agent. By default it
 // only embeds pages that lack a vector (incremental backfill); pass force=true
 // to clear and re-embed every page (model switch).
 export async function reindexWikiEmbeddings(agentId: string, force?: boolean): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {
-  const url = `/api/agents/${agentId}/wiki/reindex-embed${force ? "?force=true" : ""}`;
-  const res = await apiFetch(url, { method: "POST" });
-  if (!res.ok) return { error: `HTTP ${res.status}` };
-  return res.json().catch(() => ({ ok: true }));
+  return postReindex(`/api/agents/${agentId}/wiki/reindex-embed${force ? "?force=true" : ""}`);
 }
 
 // testEmbedding pings /v1/embeddings with the inline credentials from the

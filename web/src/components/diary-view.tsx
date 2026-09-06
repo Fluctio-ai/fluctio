@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { sleep } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   listDiary,
@@ -178,7 +179,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
         // then refresh so the new content shows without a manual reload.
         const deadline = Date.now() + 120000;
         while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 3000));
+          await sleep(3000);
           const d = await getDiary(agentId, date);
           if (d && !d.generating && (d.generatedAt || "") !== beforeAt) break;
         }

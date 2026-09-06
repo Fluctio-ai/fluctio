@@ -150,8 +150,9 @@ func (s *Server) handleReindexAgentMemory(w http.ResponseWriter, r *http.Request
 	}
 
 	// Generous timeout — a full re-embed of many summaries + per-call
-	// pacing can take a while.
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	// pacing can take a while. Detached so the batch survives gateway
+	// timeouts; the client surfaces "continues in background" on 504.
+	ctx, cancel := detachedTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 	res, err := memoryindex.Reindex(ctx, db, emb, id, true, 200*time.Millisecond)
 	if err != nil {

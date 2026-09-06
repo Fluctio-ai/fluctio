@@ -46,7 +46,10 @@ func (s *Server) handleWikiReindexEmbed(w http.ResponseWriter, r *http.Request) 
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "wiki store not available"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	// Detached so a full re-embed of many pages (one network call + 100ms
+	// pacing each) survives gateway timeouts; the client surfaces
+	// "continues in background" on 504.
+	ctx, cancel := detachedTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	force := r.URL.Query().Get("force") == "true"
 	res, err := wiki.ReindexEmbeddings(ctx, ws, emb, id, force, 100*time.Millisecond)

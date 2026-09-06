@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -113,8 +112,10 @@ func (s *Server) handleRuntimeUp(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 	// Booting can involve scaffold + pnpm install — give it room beyond
-	// the default request deadline.
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	// the default request deadline. Detached so a gateway timeout can't
+	// cancel the scaffold half-done; the next Up/Wake re-request is
+	// idempotent against the surviving background boot.
+	ctx, cancel := detachedTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 	rec, err := s.runtimeMgr.Up(ctx, uid, id, pid, "", req.TemplateRef)
 	if err != nil {
@@ -145,7 +146,8 @@ func (s *Server) handleRuntimeWake(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	// Detached like Up: a slow cold-restore must survive gateway timeouts.
+	ctx, cancel := detachedTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 	rec, err := s.runtimeMgr.Wake(ctx, uid, id, pid, "")
 	if err != nil {

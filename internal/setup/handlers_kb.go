@@ -702,15 +702,11 @@ func (s *Server) handleKBGenerateInsights(w http.ResponseWriter, r *http.Request
 		return
 	}
 	prov = s.scrubbedAgentProvider(r, agentID, prov)
-	// The generation runs detached from the client connection: gateways in
-	// front (nginx's default proxy_read_timeout is 60s) cut the synchronous
-	// request long before the LLM finishes (1-4 min on long articles), and
-	// with r.Context() the cancel would then abort the LLM mid-stream
-	// ("read stream: context canceled" on every retry). WithoutCancel keeps
-	// the run alive to completion — the web client polls GET /insights when
-	// the POST comes back 502/504. 300s budget: 16384-token outputs on
-	// slower models can outgrow the old 180s.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 300*time.Second)
+	// The generation runs detached from the client connection so gateway
+	// timeouts can't abort it mid-stream; the web client polls GET
+	// /insights when the POST comes back 502/504. 300s budget: 16384-token
+	// outputs on slower models can outgrow the old 180s.
+	ctx, cancel := detachedTimeout(r.Context(), 300*time.Second)
 	defer cancel()
 	insightBudget := s.kbInsightMaxTokens(agentID)
 	invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
@@ -811,7 +807,9 @@ func (s *Server) handleKBResolvePending(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		prov = s.scrubbedAgentProvider(r, agentID, prov)
-		timeoutCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
+		// Detached so the merge LLM rewrite survives gateway timeouts; the
+		// web client polls the pending list until this row disappears.
+		timeoutCtx, cancel := detachedTimeout(r.Context(), 180*time.Second)
 		defer cancel()
 		invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
 			return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
@@ -826,7 +824,10 @@ func (s *Server) handleKBResolvePending(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "merge failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = kbStore.DeletePending(ctx, pendingID, agentID)
+		// Delete with the detached ctx too — with r.Context() a gateway-cut
+		// client would leave this row behind right after a successful merge,
+		// and the web client polls for its disappearance.
+		_ = kbStore.DeletePending(timeoutCtx, pendingID, agentID)
 		writeJSON(w, http.StatusOK, map[string]any{"action": "merge", "source_id": p.CandidateSourceID})
 	default:
 		http.Error(w, "unknown action (merge|create|skip)", http.StatusBadRequest)
