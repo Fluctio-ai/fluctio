@@ -702,7 +702,15 @@ func (s *Server) handleKBGenerateInsights(w http.ResponseWriter, r *http.Request
 		return
 	}
 	prov = s.scrubbedAgentProvider(r, agentID, prov)
-	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
+	// The generation runs detached from the client connection: gateways in
+	// front (nginx's default proxy_read_timeout is 60s) cut the synchronous
+	// request long before the LLM finishes (1-4 min on long articles), and
+	// with r.Context() the cancel would then abort the LLM mid-stream
+	// ("read stream: context canceled" on every retry). WithoutCancel keeps
+	// the run alive to completion — the web client polls GET /insights when
+	// the POST comes back 502/504. 300s budget: 16384-token outputs on
+	// slower models can outgrow the old 180s.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 300*time.Second)
 	defer cancel()
 	insightBudget := s.kbInsightMaxTokens(agentID)
 	invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {

@@ -2219,12 +2219,41 @@ export async function kbGetInsights(agentId: string, sourceId: string): Promise<
   if (!res.ok) return null;
   return res.json().catch(() => null);
 }
+// Gateway-shaped failures mean "the connection was cut, generation may still
+// be running detached server-side" — anything else is a real error from the
+// daemon and must not be polled.
+function isGatewayish(status: number | null): boolean {
+  return status === null || status === 502 || status === 503 || status === 504;
+}
 export async function kbGenerateInsights(agentId: string, sourceId: string): Promise<ArticleInsights | { error?: string }> {
-  const res = await apiFetch(`/api/agents/${agentId}/kb/sources/${sourceId}/insights/generate`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-  });
-  if (!res.ok) return { error: `HTTP ${res.status}` };
-  return res.json();
+  const startedAt = Date.now();
+  let status: number | null = null;
+  try {
+    const res = await apiFetch(`/api/agents/${agentId}/kb/sources/${sourceId}/insights/generate`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+    });
+    if (res.ok) return res.json();
+    status = res.status;
+  } catch {
+    status = null; // network-level failure — gateway dropped the connection
+  }
+  if (!isGatewayish(status)) return { error: `HTTP ${status}` };
+  // The synchronous POST outlives gateway timeouts (nginx cuts at 60s;
+  // generation takes 1-4 min), but the server keeps running it detached
+  // from the connection. Poll GET until insights land — requiring a
+  // generated_at newer than this click (minus slack for clock drift) so a
+  // stale row from an earlier run can't masquerade as success.
+  for (let i = 0; i < 80; i++) {
+    await new Promise((r) => setTimeout(r, 4000));
+    try {
+      const ins = await kbGetInsights(agentId, sourceId);
+      if (ins) {
+        const gen = Date.parse(ins.generated_at);
+        if (!Number.isNaN(gen) && gen >= startedAt - 120_000) return ins;
+      }
+    } catch { /* transient poll failure — keep waiting */ }
+  }
+  return { error: "insights generation timed out" };
 }
 
 export async function generateWiki(agentId: string, sourceIds: string[], force?: boolean): Promise<{ status?: string; error?: string }> {
