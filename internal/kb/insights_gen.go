@@ -23,6 +23,14 @@ type InsightInvoker func(ctx context.Context, messages []provider.Message) (stri
 // with a marker so the model knows it is seeing a prefix.
 const insightMaxContentChars = 30000
 
+// DefaultInsightMaxTokens is the default output budget for the insights
+// pass. Raised from the original hardcoded 8192 after real long-article
+// runs overflowed it: the JSON got cut mid-string and every parse attempt
+// failed with "insights: parse JSON failed" → HTTP 500 while the content
+// itself was fine. Per-agent override: kb.insightMaxTokens in the agent
+// config blob.
+const DefaultInsightMaxTokens = 16384
+
 // GenerateInsights runs the deep-reading LLM pass over one article source and
 // stores the four sections (summary / quotes / actions / sprouts). Returns the
 // parsed insights so the caller can echo them without a second DB read. Errors
@@ -34,7 +42,7 @@ func (s *KBStore) GenerateInsights(ctx context.Context, agentID, sourceID string
 	}
 	_ = model // reserved for diagnostics / future per-call routing
 	if maxTokens <= 0 {
-		maxTokens = 8192
+		maxTokens = DefaultInsightMaxTokens
 	}
 
 	// 1. Validate the source is an article owned by this agent.

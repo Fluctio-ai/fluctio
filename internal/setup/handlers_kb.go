@@ -652,6 +652,33 @@ func (s *Server) handleKBGetInsights(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ins)
 }
 
+// kbInsightMaxTokens reads the agent's kb.insightMaxTokens override from the
+// agent config blob; unset/invalid falls back to the kb package default.
+func (s *Server) kbInsightMaxTokens(agentID string) int {
+	if s.dataStore == nil || agentID == "" {
+		return kb.DefaultInsightMaxTokens
+	}
+	rec, err := s.dataStore.GetAgent(context.Background(), agentID)
+	if err != nil || rec == nil || rec.Config == nil {
+		return kb.DefaultInsightMaxTokens
+	}
+	raw, ok := rec.Config["kb"]
+	if !ok || raw == nil {
+		return kb.DefaultInsightMaxTokens
+	}
+	// The blob round-trips through JSON storage, so the value arrives as a
+	// generic map — re-serialize into the typed config to reuse its tags.
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return kb.DefaultInsightMaxTokens
+	}
+	var cfg config.AgentKBCfg
+	if err := json.Unmarshal(b, &cfg); err != nil || cfg.InsightMaxTokens <= 0 {
+		return kb.DefaultInsightMaxTokens
+	}
+	return cfg.InsightMaxTokens
+}
+
 // handleKBGenerateInsights runs the deep-reading LLM pass synchronously and
 // returns the four generated sections. The call can take tens of seconds over
 // a long article, so the ctx gets a 180s budget and the web client shows a
@@ -677,18 +704,19 @@ func (s *Server) handleKBGenerateInsights(w http.ResponseWriter, r *http.Request
 	prov = s.scrubbedAgentProvider(r, agentID, prov)
 	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
 	defer cancel()
+	insightBudget := s.kbInsightMaxTokens(agentID)
 	invoker := kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
 		return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
 			// JSON mode: the insight payload embeds article quotes, where
 			// unescaped quotes are likeliest to break the downstream parse.
-			resp, err := prov.Chat(provider.WithJSONMode(ctx), msgs, nil, model, 8192, 0.3)
+			resp, err := prov.Chat(provider.WithJSONMode(ctx), msgs, nil, model, insightBudget, 0.3)
 			if err != nil {
 				return "", err
 			}
 			return resp.Content, nil
 		}, messages, 4)
 	})
-	ins, err := kbStore.GenerateInsights(ctx, agentID, sourceID, invoker, model, 8192)
+	ins, err := kbStore.GenerateInsights(ctx, agentID, sourceID, invoker, model, insightBudget)
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusInternalServerError

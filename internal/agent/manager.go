@@ -356,6 +356,13 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				}
 			}
 			kbCfg := rc.KB
+			// Insights output budget: per-agent kb.insightMaxTokens override,
+			// else the package default (16384 — the old 8192 truncated
+			// long-article JSON mid-string and failed every parse).
+			insightMaxTokens := kb.DefaultInsightMaxTokens
+			if kbCfg != nil && kbCfg.InsightMaxTokens > 0 {
+				insightMaxTokens = kbCfg.InsightMaxTokens
+			}
 			// Memory auto-recall lane: FTS over conversation summaries
 			// (precise lexical match, superseded rows filtered in the
 			// store). Wired only when the agent has a relational store.
@@ -455,13 +462,13 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 						// content, so they must honor the PII scrubbing switch.
 						// JSON mode: insight payloads embed article quotes, where
 						// unescaped quotes are likeliest to break the parse.
-						resp, err := ag.bgProvider().Chat(provider.WithJSONMode(ctx), msgs, nil, rc.Model, 8192, 0.3)
+						resp, err := ag.bgProvider().Chat(provider.WithJSONMode(ctx), msgs, nil, rc.Model, insightMaxTokens, 0.3)
 						if err != nil {
 							return "", err
 						}
 						return resp.Content, nil
 					}, messages, 4)
-				}), rc.Model, 8192)
+				}), rc.Model, insightMaxTokens)
 			}
 		}
 		// Date line in the chatter's timezone — needs dataStore for the

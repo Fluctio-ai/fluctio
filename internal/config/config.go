@@ -808,6 +808,10 @@ type AgentKBCfg struct {
 	// ReminderChannel is the IM channel the due-todo sweep pushes to
 	// (wechat/qq/telegram/discord/slack/feishu/line). Empty = "wechat".
 	ReminderChannel string `json:"reminderChannel,omitempty"`
+	// InsightMaxTokens caps the deep-reading insights LLM output budget
+	// (tokens). 0 = kb.DefaultInsightMaxTokens. The old hardcoded 8192
+	// truncated long-article JSON mid-string ("parse JSON failed" → 500).
+	InsightMaxTokens int `json:"insightMaxTokens,omitempty"`
 }
 
 // AgentDiaryCfg is the per-agent daily-diary generation configuration.
