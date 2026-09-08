@@ -89,6 +89,8 @@ export default function AgentSchedulerPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<AgentCronJob | null>(null);
+  // Pending "turn background on" confirmation target — see handleSetSilent.
+  const [silentTarget, setSilentTarget] = useState<AgentCronJob | null>(null);
   // Track in-flight toggles by job id so the row reflects optimistic
   // state and the switch doesn't double-fire while the request is open.
   const [toggling, setToggling] = useState<Record<string, boolean>>({});
@@ -131,7 +133,7 @@ export default function AgentSchedulerPage() {
     }
   };
 
-  const handleSetSilent = async (job: AgentCronJob, silent: boolean) => {
+  const applySetSilent = async (job: AgentCronJob, silent: boolean) => {
     if (!agentId || silencing[job.id]) return;
     setSilencing((m) => ({ ...m, [job.id]: true }));
     setJobs((prev) =>
@@ -147,6 +149,18 @@ export default function AgentSchedulerPage() {
       setError(res.error || t("scheduler.updateFailed"));
       refresh();
     }
+  };
+
+  // Turning "background" ON for a job that carries a push target silently
+  // disarms the delivery: the stored (channel, chat) stays but the fire
+  // is rerouted to a read-only heartbeat session the chatter never sees.
+  // Confirm before that, so a stray tap can't quietly kill a push.
+  const handleSetSilent = (job: AgentCronJob, silent: boolean) => {
+    if (silent && job.channel) {
+      setSilentTarget(job);
+      return;
+    }
+    void applySetSilent(job, silent);
   };
 
   const handleDelete = async () => {
@@ -222,6 +236,35 @@ export default function AgentSchedulerPage() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {t("common.delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!silentTarget}
+        onOpenChange={(v) => !v && setSilentTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("scheduler.silentTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("scheduler.silentBody", {
+                name: silentTarget?.name || silentTarget?.id || "",
+                channel: silentTarget?.channel || "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                const target = silentTarget;
+                setSilentTarget(null);
+                if (target) void applySetSilent(target, true);
+              }}
+            >
+              {t("scheduler.silentConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
