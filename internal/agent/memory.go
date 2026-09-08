@@ -415,8 +415,12 @@ Recent conversation:
 Output JSON only (no markdown fences):
 {"memory_facts": ["fact1", "fact2"], "user_notes": ["note1"]}
 If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
-		truncateStr(currentMemory, 500),
-		truncateStr(currentUser, 500),
+	// Feed a wide window of the current files (not the old 500 chars):
+	// the extractor can only skip facts it can see are already stored,
+	// and a blind window is what kept duplicates accumulating. The daily
+	// tidy sweep keeps the files bounded so this window stays affordable.
+	truncateStr(currentMemory, 4000),
+	truncateStr(currentUser, 4000),
 		sb.String(),
 	)
 

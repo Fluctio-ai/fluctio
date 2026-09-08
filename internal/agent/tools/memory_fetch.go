@@ -22,7 +22,8 @@ type memoryFetchArgs struct {
 // following up on recalled ids is the recall.consumed adoption signal.
 func RegisterMemoryFetch(r *Registry) {
 	r.Register("memory_fetch",
-		"Fetch full conversation-summary memories by id. memory_search returns a compact id+topic index when it finds many matches; call this with the ids you actually need to read the full summary, keywords, and the (session_key, segments) pointer for fetch_messages.",
+		"Fetch full conversation-summary memories by id. memory_search returns a compact id+topic index when it finds many matches; call this with the ids you actually need to read the full summary, keywords, and the (session_key, segments) pointer for fetch_messages. "+
+			memoryBudgetNote,
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

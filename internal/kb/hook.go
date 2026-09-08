@@ -136,6 +136,13 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			if memLimit <= 0 {
 				memLimit = 3
 			}
+			// Hard cap: each hit injects up to ~300 bytes (per-item clip
+			// in injectMEMContext), so an unclamped config (e.g. 50)
+			// would push 15KB of [MEM] context into every qualifying
+			// turn. 10 matches the memory_search tool's own hard cap.
+			if memLimit > 10 {
+				memLimit = 10
+			}
 			memHits, memErr := memSearch(ctx, agentID, query, memLimit)
 			// Memoize BEFORE branching on results so an empty result also
 			// short-circuits later iterations (same rationale as lastQuery).
@@ -170,12 +177,21 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			if wikiLimit <= 0 {
 				wikiLimit = 5
 			}
+			// Hard cap, same rationale as the memory lane's memLimit: each
+			// KB hit injects up to ~500 bytes, so an unclamped config would
+			// push tens of KB into every qualifying turn.
+			if wikiLimit > 10 {
+				wikiLimit = 10
+			}
 		}
 		ftLimit := 0
 		if ftOn {
 			ftLimit = cfg.FlashTodoMaxResults
 			if ftLimit <= 0 {
 				ftLimit = 3
+			}
+			if ftLimit > 10 {
+				ftLimit = 10
 			}
 		}
 		wikiThreshold := cfg.Threshold
@@ -315,15 +331,24 @@ func insertContextMessage(hc *HookContext, marker string, msg provider.Message) 
 // across ReAct iterations). Parallel to injectKBContext.
 func injectMEMContext(hc *HookContext, hits []MemoryRecallHit) {
 	var sb strings.Builder
-	sb.WriteString("[MEM] The following are memories recalled from past conversations with this user (summaries, not verbatim quotes). Use them if relevant to the user's message.\n\n")
+	sb.WriteString("[MEM] The following are memories recalled from past conversations with this user (summaries, not verbatim quotes). Use them if relevant to the user's message. If you need more memories or the full text of one, call memory_search / memory_fetch.\n\n")
+	// Total budget on top of the per-item clip: even clipped, a large hit
+	// set can inject several KB into every qualifying turn. Stop at the
+	// budget (always keeping at least one hit) and tell the model how to
+	// see the rest. sb.Len()+len(item) matches fetch_messages.go's result
+	// builder idiom; the budget includes the fixed header above.
+	const memInjectBudgetBytes = 2048
 	for i, h := range hits {
-		fmt.Fprintf(&sb, "--- [M%d] %s ---\n", i+1, h.Topic)
 		content := h.Summary
 		if len(content) > 300 {
 			content = softClipUTF8(content, 300) + "..."
 		}
-		sb.WriteString(content)
-		sb.WriteString("\n\n")
+		item := fmt.Sprintf("--- [M%d] %s ---\n%s\n\n", i+1, h.Topic, content)
+		if sb.Len()+len(item) > memInjectBudgetBytes && i > 0 {
+			fmt.Fprintf(&sb, "(+%d more memories not shown — call memory_search to see them.)\n", len(hits)-i)
+			break
+		}
+		sb.WriteString(item)
 	}
 
 	memMsg := provider.Message{
@@ -339,7 +364,14 @@ func injectMEMContext(hc *HookContext, hits []MemoryRecallHit) {
 func buildMemoryResultSummary(hits []MemoryRecallHit) string {
 	var sb strings.Builder
 	for i, h := range hits {
-		fmt.Fprintf(&sb, "%d. **%s** — %s", i+1, h.Topic, h.Summary)
+		// Same 300-byte clip as the [MEM] injection: this renders into the
+		// synthetic tool_result the model also sees, and it must not be the
+		// unbounded copy of a bounded injection.
+		content := h.Summary
+		if len(content) > 300 {
+			content = softClipUTF8(content, 300) + "..."
+		}
+		fmt.Fprintf(&sb, "%d. **%s** — %s", i+1, h.Topic, content)
 		if i < len(hits)-1 {
 			sb.WriteString("\n")
 		}

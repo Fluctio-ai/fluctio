@@ -883,6 +883,15 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runMemoryConsolidation(ctx)
 	}()
+	// memory tidy: daily LLM consolidation of MEMORY.md (dedupe, prune
+	// superseded entries, tighten wording) so the append-only file — which
+	// ships in every turn's system prompt — doesn't grow unbounded.
+	// Disabled when FLUCTIO_MEMORY_TIDY_HOURS<=0.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runMemoryTidy(ctx)
+	}()
 	// workflow retention: prunes finished workflow_runs past their window
 	// (spec decision 11) — succeeded runs older than
 	// FLUCTIO_WORKFLOW_RETENTION_SUCCESS_HOURS (default 7d), failed /

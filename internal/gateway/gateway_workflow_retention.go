@@ -109,8 +109,7 @@ func readRetentionHours(env string, def int) int {
 	}
 	h, err := strconv.Atoi(v)
 	if err != nil {
-		slog.Warn("workflow retention: invalid env, disabling",
-			"env", env, "value", v)
+		slog.Warn("invalid env, disabling sweep", "env", env, "value", v)
 		return -1
 	}
 	return h

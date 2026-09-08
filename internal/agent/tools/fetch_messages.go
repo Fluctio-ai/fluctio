@@ -45,7 +45,8 @@ func RegisterFetchMessages(r *Registry) {
 	r.Register("fetch_messages",
 		"Retrieve verbatim original messages of one topic from a past conversation session, "+
 			"given a session_key and the segments pointer returned by memory_search. "+
-			"Call this after memory_search to read the exact conversation a summary refers to.",
+			"Call this after memory_search to read the exact conversation a summary refers to. "+
+			memoryBudgetNote,
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

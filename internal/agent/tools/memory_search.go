@@ -94,6 +94,10 @@ type memorySearchArgs struct {
 // need; 15 floods the context with borderline-relevant session digests.
 const memorySearchMaxLimit = 10
 
+// memoryBudgetNote is appended to all three memory-tool descriptions so
+// the per-turn call budget stays single-sourced.
+const memoryBudgetNote = "Memory tools (memory_search / memory_fetch / fetch_messages) share a combined 3-call-per-turn budget."
+
 type searchResult struct {
 	File      string  `json:"file"`
 	Line      int     `json:"line"`
@@ -146,7 +150,9 @@ func RegisterMemorySearch(r *Registry, workspace string, fts ...FTSSearcher) {
 	r.Register("memory_search",
 		"Search through summaries of past conversations with this chatter across all sessions. "+
 			"Returns each summary + keywords + a (session_key, seq_start, seq_end) pointer; "+
-			"call fetch_messages() with the pointer to retrieve verbatim original messages.",
+			"call fetch_messages() with the pointer to retrieve verbatim original messages. "+
+			memoryBudgetNote+" "+
+			"If repeated searches find nothing relevant, the information likely isn't in memory; answer from what you have.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
