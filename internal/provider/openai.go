@@ -737,21 +737,30 @@ func (p *OpenAIProvider) parseSSE(reader io.Reader) (*Response, error) {
 	return result, nil
 }
 
+// foldCachedInputTokens moves reported cached prompt tokens out of the raw
+// input count and into CacheReadTokens, so input+cache_read still sums to
+// the total prompt size. Shared by the chat and responses providers, whose
+// usage blocks differ only in field names.
+func foldCachedInputTokens(u Usage, cached int) Usage {
+	if cached <= 0 {
+		return u
+	}
+	u.CacheReadTokens = cached
+	u.InputTokens -= cached
+	if u.InputTokens < 0 {
+		u.InputTokens = 0
+	}
+	return u
+}
+
 // openaiUsageToProvider folds an OpenAI-style usage block into the
 // provider-neutral Usage. Cached prompt tokens (if reported) are
 // surfaced as CacheReadTokens, and input_tokens is the *uncached*
 // remainder so input+cache_read still sums to total prompt size.
 func openaiUsageToProvider(u *sseUsage) Usage {
-	out := Usage{
-		InputTokens:  u.PromptTokens,
-		OutputTokens: u.CompletionTokens,
+	cached := 0
+	if u.PromptTokensDetails != nil {
+		cached = u.PromptTokensDetails.CachedTokens
 	}
-	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
-		out.CacheReadTokens = u.PromptTokensDetails.CachedTokens
-		out.InputTokens -= u.PromptTokensDetails.CachedTokens
-		if out.InputTokens < 0 {
-			out.InputTokens = 0
-		}
-	}
-	return out
+	return foldCachedInputTokens(Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens}, cached)
 }

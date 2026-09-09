@@ -13,6 +13,8 @@ import (
 //
 //   - OpenAI Chat Completions: runtime appends "/chat/completions",
 //     assuming /v1 is already in the base. A bare host hits 404.
+//   - OpenAI Responses: runtime appends "/responses" with the same /v1
+//     convention as chat completions.
 //   - Anthropic Messages: runtime appends "/v1/messages", assuming /v1
 //     is NOT in the base. A trailing /v1 produces /v1/v1/messages.
 //

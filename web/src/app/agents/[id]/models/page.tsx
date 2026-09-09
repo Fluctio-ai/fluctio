@@ -41,7 +41,9 @@ import {
   testStoredProvider,
   updateAgent,
   getBuiltinModels,
-  fetchProviderModels,
+  fetchModelsByConfig,
+  API_TYPE_OPTIONS,
+  API_TYPE_LABELS,
   type ModelEntry,
   type ProviderRow,
   type BuiltinModelMeta,
@@ -82,11 +84,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: "DeepSeek",
   ollama: "Ollama",
   custom: "Custom",
-};
-
-const API_TYPE_LABELS: Record<string, string> = {
-  "openai-chat": "OpenAI Chat Completions",
-  "anthropic-messages": "Anthropic Messages",
 };
 
 const AUTH_TYPE_LABELS: Record<string, string> = {
@@ -321,14 +318,19 @@ export default function AgentModelsPage() {
     setAcMatches([]);
   };
 
-  // "获取模型列表" — calls the agent's bound provider to list upstream models.
-  // Results render as clickable items; clicking one adds a model row with the
-  // fetched id + contextWindow.
+  // "获取模型列表" — pulls from the provider currently being edited in
+  // the form (apiBase / key / apiType as typed; stored key via providerId
+  // in edit mode), NOT the agent's bound provider — a provider being
+  // added has no binding yet, and Fetch must exercise what the form
+  // says. Same semantics as the global /models page.
   const handleFetchModels = async () => {
-    if (!agentId) return;
     setFetching(true);
     try {
-      const list = await fetchProviderModels(agentId);
+      const editingRow = editingId ? providers.find((p) => p.id === editingId) : undefined;
+      const useStoredKey = !!editingRow && !formApiKey.trim();
+      const list = useStoredKey
+        ? await fetchModelsByConfig({ apiBase: formApiBase, apiType: formApiType, providerId: editingRow!.id })
+        : await fetchModelsByConfig({ apiBase: formApiBase, apiKey: formApiKey, apiType: formApiType });
       setFetchResults(list);
     } catch {
       setFetchResults(null);
@@ -897,8 +899,9 @@ export default function AgentModelsPage() {
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="openai-chat">OpenAI Chat Completions</SelectItem>
-                    <SelectItem value="anthropic-messages">Anthropic Messages</SelectItem>
+                    {API_TYPE_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

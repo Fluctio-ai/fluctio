@@ -20,6 +20,12 @@ func TestNormalizeAPIBase(t *testing.T) {
 		{"openai gateway custom path", "https://gw.example.com/openai", "openai-chat", "https://gw.example.com/openai"},
 		{"openai gateway with v1 path", "https://gw.example.com/openai/v1", "openai-chat", "https://gw.example.com/openai/v1"},
 
+		// OpenAI Responses: same /v1-in-base convention as chat
+		// completions (runtime appends /responses).
+		{"openai-responses bare host", "https://api.openai.com", "openai-responses", "https://api.openai.com/v1"},
+		{"openai-responses with v1", "https://api.openai.com/v1", "openai-responses", "https://api.openai.com/v1"},
+		{"openai-responses gateway custom path", "https://gw.example.com/openai", "openai-responses", "https://gw.example.com/openai"},
+
 		// Anthropic: bare host left alone — runtime appends /v1/messages.
 		{"anthropic bare host", "https://api.anthropic.com", "anthropic-messages", "https://api.anthropic.com"},
 		// Anthropic: trailing /v1 stripped to avoid /v1/v1/messages.

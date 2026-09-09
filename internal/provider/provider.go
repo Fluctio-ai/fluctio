@@ -304,10 +304,15 @@ func SplitProviderModel(s string) (provider, model string) {
 }
 
 // NewProvider creates a Provider based on apiType.
-// "anthropic-messages" creates an Anthropic provider, anything else creates OpenAI-compatible.
+// "anthropic-messages" creates an Anthropic provider, "openai-responses"
+// creates an OpenAI Responses API provider, anything else creates
+// OpenAI Chat Completions.
 func NewProvider(apiKey, apiBase, apiType string) Provider {
 	if apiType == "anthropic-messages" {
 		return NewAnthropic(apiKey, apiBase)
+	}
+	if apiType == "openai-responses" {
+		return NewOpenAIResponses(apiKey, apiBase)
 	}
 	return NewOpenAI(apiKey, apiBase)
 }

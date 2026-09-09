@@ -35,7 +35,7 @@ import {
   Sparkles,
   UserPlus,
 } from "lucide-react";
-import { getStatus, onboard, testProvider } from "@/lib/api";
+import { getStatus, onboard, testProvider, API_TYPE_OPTIONS, API_TYPE_LABELS } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 const STEPS = [
@@ -58,11 +58,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: "DeepSeek",
   ollama: "Ollama",
   custom: "Custom",
-};
-
-const API_TYPE_LABELS: Record<string, string> = {
-  "openai-chat": "OpenAI Chat Completions",
-  "anthropic-messages": "Anthropic Messages",
 };
 
 const AUTH_TYPE_LABELS: Record<string, string> = {
@@ -686,8 +681,9 @@ function ProviderStep(props: {
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="openai-chat">OpenAI Chat Completions</SelectItem>
-                <SelectItem value="anthropic-messages">Anthropic Messages</SelectItem>
+                {API_TYPE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

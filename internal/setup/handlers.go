@@ -842,32 +842,34 @@ func (s *Server) handleTestStoredProvider(w http.ResponseWriter, r *http.Request
 // look like a real Messages / ChatCompletion object.
 func runProviderTest(ctx context.Context, req testProviderRequest, authed bool) map[string]any {
 	base := provider.NormalizeAPIBase(req.APIBase, req.APIType)
+	model := req.Model
+	if model == "" {
+		if req.APIType == "anthropic-messages" {
+			model = "claude-sonnet-4-20250514"
+		} else {
+			model = "gpt-4o-mini"
+		}
+	}
 	var testURL string
 	var payload string
 	if req.APIType == "anthropic-messages" {
 		testURL = base + "/v1/messages"
-		model := req.Model
-		if model == "" {
-			model = "claude-sonnet-4-20250514"
-		}
 		payload = fmt.Sprintf(`{"model":"%s","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`, model)
+	} else if req.APIType == "openai-responses" {
+		testURL = base + "/responses"
+		// store:false keeps the probe stateless; max_output_tokens is the
+		// Responses name (no max_tokens/max_completion_tokens split).
+		payload = fmt.Sprintf(`{"model":"%s","max_output_tokens":16,"input":"hi","store":false}`, model)
 	} else {
 		testURL = base + "/chat/completions"
-		model := req.Model
-		if model == "" {
-			model = "gpt-4o-mini"
-		}
 		payload = openAIProviderTestPayload(model, false)
 	}
 	respBody, statusCode, err := sendProviderTestRequest(ctx, req, testURL, payload)
 	if err != nil {
 		return map[string]any{"ok": false, "error": err.Error()}
 	}
-	if req.APIType != "anthropic-messages" && statusCode >= 400 && shouldRetryProviderTestWithMaxCompletionTokens(respBody) {
-		model := req.Model
-		if model == "" {
-			model = "gpt-4o-mini"
-		}
+	// The max_completion_tokens retry only exists on the chat wire.
+	if req.APIType != "anthropic-messages" && req.APIType != "openai-responses" && statusCode >= 400 && shouldRetryProviderTestWithMaxCompletionTokens(respBody) {
 		respBody, statusCode, err = sendProviderTestRequest(ctx, req, testURL, openAIProviderTestPayload(model, true))
 		if err != nil {
 			return map[string]any{"ok": false, "error": err.Error()}
@@ -957,6 +959,15 @@ func validateProviderTestBody(apiType string, body []byte) error {
 			return nil
 		}
 		return fmt.Errorf("response missing Anthropic Messages fields (content/type=message)")
+	}
+	if apiType == "openai-responses" {
+		if o, _ := probe["object"].(string); o == "response" {
+			return nil
+		}
+		if _, ok := probe["output"].([]any); ok {
+			return nil
+		}
+		return fmt.Errorf("response missing OpenAI Responses fields (object=output)")
 	}
 	if _, ok := probe["choices"].([]any); ok {
 		return nil

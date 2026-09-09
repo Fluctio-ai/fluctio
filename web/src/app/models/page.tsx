@@ -44,6 +44,8 @@ import {
   updateProvider,
   deleteProvider,
   fetchModelsByConfig,
+  API_TYPE_OPTIONS,
+  API_TYPE_LABELS,
   type ModelEntry,
   type ProviderRow,
 } from "@/lib/api";
@@ -71,11 +73,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: "DeepSeek",
   ollama: "Ollama",
   custom: "Custom",
-};
-
-const API_TYPE_LABELS: Record<string, string> = {
-  "openai-chat": "OpenAI Chat Completions",
-  "anthropic-messages": "Anthropic Messages",
 };
 
 const AUTH_TYPE_LABELS: Record<string, string> = {
@@ -587,8 +584,9 @@ export default function ModelsPage() {
                 <Select value={formApiType} onValueChange={(v: string | null) => v && setFormApi(v)}>
                   <SelectTrigger className="w-full"><SelectValue>{(v: unknown) => API_TYPE_LABELS[v as string] ?? (v as string) ?? ""}</SelectValue></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="openai-chat">OpenAI Chat Completions</SelectItem>
-                    <SelectItem value="anthropic-messages">Anthropic Messages</SelectItem>
+                    {API_TYPE_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

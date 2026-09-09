@@ -688,6 +688,20 @@ export async function fetchProviderModels(
   return r.json();
 }
 
+// API protocol types selectable in provider forms. Single source for the
+// label maps and dropdown options across the models / agents models /
+// onboard / providers pages — adding an apiType here lights it up
+// everywhere (a previous addition missed two of the four pages).
+export const API_TYPE_OPTIONS = [
+  { value: "openai-chat", label: "OpenAI Chat Completions" },
+  { value: "openai-responses", label: "OpenAI Responses" },
+  { value: "anthropic-messages", label: "Anthropic Messages" },
+] as const;
+
+export const API_TYPE_LABELS: Record<string, string> = Object.fromEntries(
+  API_TYPE_OPTIONS.map((o) => [o.value, o.label])
+);
+
 // Fetch the live model list from a provider config (global /models page).
 // When apiKey is empty, pass providerId so the backend resolves the
 // stored key server-side (Edit dialog "useStoredKey" mode).

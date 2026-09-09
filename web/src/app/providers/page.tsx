@@ -6,6 +6,7 @@ import {
   createProvider,
   updateProvider,
   deleteProvider,
+  API_TYPE_OPTIONS,
   type ProviderRow,
   type ScopeName,
 } from "@/lib/api";
@@ -83,8 +84,9 @@ export default function ProvidersPage() {
         <input type="password" value={draft.apiKey} onChange={(e) => setDraft({ ...draft, apiKey: e.target.value })} placeholder={tt("providers.apiKeyPlaceholder")} className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" />
         <div className="grid grid-cols-2 gap-3">
           <select value={draft.apiType} onChange={(e) => setDraft({ ...draft, apiType: e.target.value })} className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm">
-            <option value="openai-chat">openai-chat</option>
-            <option value="anthropic-messages">anthropic-messages</option>
+            {API_TYPE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.value}</option>
+            ))}
           </select>
           <select value={draft.authType} onChange={(e) => setDraft({ ...draft, authType: e.target.value })} className="rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm">
             <option value="bearer-token">Bearer Token</option>
