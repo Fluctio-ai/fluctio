@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/skills"
@@ -112,18 +111,11 @@ func RegisterSkillInstall(r *Registry, agentSkillsDir string, onReload func()) {
 				return "", fmt.Errorf("%w — if the user still wants this capability, offer to build a custom skill using the skill-creator skill", err)
 			}
 
-			// Mirror to the workspace store, the source of truth on
-			// hosted deployments: every turn's HydrateSkillsDown
-			// reconcile prunes local skill dirs missing from the
-			// store, so an FS-only install here reports success and
-			// silently vanishes on the next turn. Best-effort warn,
-			// matching the setup-side installer and writeSkillToHost.
-			if owner := r.skillStoreOwner(); owner != "" && r.workspaceStore != nil {
-				if uerr := skills.SyncSkillUp(ctx, r.workspaceStore, owner, result.Name, agentSkillsDir); uerr != nil {
-					slog.Warn("failed to mirror installed skill to object store",
-						"owner", owner, "skill", result.Name, "error", uerr)
-				}
-			}
+			// Mirror to the workspace store (see mirrorSkillToStore):
+			// hosted deployments prune FS-only skills on the next
+			// turn's hydrate reconcile, so an unmirrored install
+			// would report success and silently vanish.
+			r.mirrorSkillToStore(ctx, result.Name, agentSkillsDir)
 
 			if onReload != nil {
 				onReload()

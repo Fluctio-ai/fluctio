@@ -269,6 +269,25 @@ func (r *Registry) skillStoreOwner() string {
 	return r.agentID
 }
 
+// mirrorSkillToStore uploads <skillsDir>/<skillName>/ to the workspace
+// store — the source of truth on hosted deployments. Every turn's
+// HydrateSkillsDown reconcile prunes local skill dirs missing from the
+// store, so an FS-only write would vanish on the next turn. Best-effort:
+// failures warn and never unwrite the local files.
+func (r *Registry) mirrorSkillToStore(ctx context.Context, skillName, skillsDir string) {
+	if r.workspaceStore == nil {
+		return
+	}
+	owner := r.skillStoreOwner()
+	if owner == "" {
+		return
+	}
+	if err := skills.SyncSkillUp(ctx, r.workspaceStore, owner, skillName, skillsDir); err != nil {
+		slog.Warn("skill mirror to store failed",
+			"owner", owner, "skill", skillName, "error", err)
+	}
+}
+
 // writeSkillToHost lands a chat-created `skills/<name>/<rel>` file on
 // host disk and mirrors it to the workspace store so SkillsLoader's
 // local scan and any sibling pod's hydrate both see it. Used by the
@@ -296,19 +315,10 @@ func (r *Registry) writeSkillToHost(ctx context.Context, path, content string) (
 	// Mirror to the workspace store so a sibling pod (cloud deploy)
 	// hydrates the new skill on its next turn instead of waiting for
 	// pod restart. Best-effort; failures here don't unwrite the file.
-	if r.workspaceStore != nil {
-		if owner := r.skillStoreOwner(); owner != "" {
-			rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(path)), "skills/")
-			parts := strings.SplitN(rel, "/", 2)
-			if len(parts) >= 1 && parts[0] != "" {
-				skillName := parts[0]
-				skillsDir := filepath.Join(root, "skills")
-				if err := skills.SyncSkillUp(ctx, r.workspaceStore, owner, skillName, skillsDir); err != nil {
-					slog.Warn("skill mirror to store failed",
-						"owner", owner, "skill", skillName, "error", err)
-				}
-			}
-		}
+	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(path)), "skills/")
+	parts := strings.SplitN(rel, "/", 2)
+	if len(parts) >= 1 && parts[0] != "" {
+		r.mirrorSkillToStore(ctx, parts[0], filepath.Join(root, "skills"))
 	}
 	return full, nil
 }
