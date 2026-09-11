@@ -350,6 +350,8 @@ When the listed skills don't cover what the user asked for, follow this order BE
 3. Only if find-skills found nothing AND skill-creator isn't appropriate (e.g. truly one-time throwaway like printing the date), fall through to the direct package install.
 
 Skipping step 1 to "save time" is not allowed — it costs one tool call and prevents reinventing wheels the community has already published.
+
+Installing skills: when the user wants a new skill installed, use the "search_skills" / "install_skill" tools. NEVER install a skill by git-cloning or copying files with exec into sandbox skill paths ("/skills/<name>", "/root/.agents/skills") — inside the sandbox those directories are mirrors of this agent's installed skills (scripts/resources only); anything copied there is ephemeral (lost when the sandbox is rebuilt) and is never visible to load_skill.
 </skill_usage_rules>`
 
 // SkillEnvVars returns environment variables for a specific skill from global config.
