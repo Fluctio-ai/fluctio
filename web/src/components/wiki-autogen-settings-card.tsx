@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Globe, RefreshCwIcon, SparklesIcon } from "lucide-react";
@@ -19,6 +20,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
+import { SettingsCard, CardHead, GroupLabel } from "@/components/settings-ui";
 
 // WikiAutoGenSettingsCard — wiki background generation config plus the
 // manual generate actions. Lives in the Settings dialog's Knowledge tab
@@ -189,31 +191,29 @@ export function WikiAutoGenSettingsCard() {
   ).length;
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <Globe className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("wiki.autoGen")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-3">{t("wiki.autoGenHint")}</p>
-        <Switch
-          checked={wikiCfg.enabled}
-          onCheckedChange={(v) => saveWikiCfg({ ...wikiCfg, enabled: v })}
-          disabled={wikiSaving}
-        />
-      </div>
+    <SettingsCard className="space-y-4">
+      <CardHead
+        icon={Globe}
+        title={t("wiki.autoGen")}
+        desc={t("wiki.autoGenHint")}
+        control={
+          <Switch
+            checked={wikiCfg.enabled}
+            onCheckedChange={(v) => saveWikiCfg({ ...wikiCfg, enabled: v })}
+            disabled={wikiSaving}
+          />
+        }
+      />
 
       {wikiCfg.enabled && (
-        <div className="space-y-2 pt-1">
+        <div className="space-y-4 border-t border-border pt-4">
           <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">
-              {t("wiki.includeTypes")}
-            </label>
+            <GroupLabel>{t("wiki.includeTypes")}</GroupLabel>
             <div className="flex flex-wrap gap-x-6 gap-y-2">
               {WIKI_CONTENT_TYPES.map((ct) => (
                 <label
                   key={ct.id}
-                  className="flex items-center gap-2 text-xs cursor-pointer select-none"
+                  className="flex items-center gap-2 text-sm cursor-pointer select-none"
                 >
                   <Switch
                     checked={typeSelected(ct.id)}
@@ -225,15 +225,13 @@ export function WikiAutoGenSettingsCard() {
               ))}
             </div>
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <label className="text-xs text-muted-foreground">
-              {t("wiki.autoGenInterval")}
-            </label>
-            <div className="flex items-center gap-1.5">
+          <div className="flex items-center justify-between gap-4">
+            <Label className="text-sm">{t("wiki.autoGenInterval")}</Label>
+            <div className="flex items-center gap-2">
               <Input
                 type="number"
                 min={1}
-                className="w-16 h-7 text-xs"
+                className="w-20"
                 value={
                   wikiCfg.interval
                     ? Math.round(wikiCfg.interval / 3600000000000)
@@ -250,15 +248,13 @@ export function WikiAutoGenSettingsCard() {
               </span>
             </div>
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <label className="text-xs text-muted-foreground">
-              {t("wiki.autoGenMaxTokens")}
-            </label>
+          <div className="flex items-center justify-between gap-4">
+            <Label className="text-sm">{t("wiki.autoGenMaxTokens")}</Label>
             <Input
               type="number"
               min={0}
               step={512}
-              className="w-20 h-7 text-xs"
+              className="w-24"
               value={
                 wikiCfg.maxTokens && wikiCfg.maxTokens > 0
                   ? wikiCfg.maxTokens
@@ -272,7 +268,7 @@ export function WikiAutoGenSettingsCard() {
             />
           </div>
           {autogenStatus && (
-            <div className="text-[11px] leading-tight text-muted-foreground space-y-0.5 pt-1">
+            <div className="text-xs leading-tight text-muted-foreground space-y-0.5 pt-1">
               <div>
                 {t("wiki.autoGenLastRun")}:{" "}
                 {autogenStatus.last_run
@@ -316,8 +312,6 @@ export function WikiAutoGenSettingsCard() {
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
-            size="sm"
-            className="h-8 text-xs"
             onClick={() => handleGenerate()}
             disabled={generating || unprocessedCount === 0}
             title={
@@ -326,22 +320,20 @@ export function WikiAutoGenSettingsCard() {
                 : t("wiki.generateUnprocessed")
             }
           >
-            <SparklesIcon className="h-3.5 w-3.5 mr-1" />
+            <SparklesIcon className="h-3.5 w-3.5" />
             {t("wiki.generateUnprocessed")}
           </Button>
           <Button
             variant="outline"
-            size="sm"
-            className="h-8 text-xs"
             onClick={handleForceGenerate}
             disabled={generating || includedSources.length === 0}
             title={t("wiki.forceRegenAll")}
           >
-            <RefreshCwIcon className="h-3.5 w-3.5 mr-1" />
+            <RefreshCwIcon className="h-3.5 w-3.5" />
             {t("wiki.forceRegenAll")}
           </Button>
         </div>
       </div>
-    </div>
+    </SettingsCard>
   );
 }

@@ -52,6 +52,7 @@ import { ConfigureSkillDialog, type SkillEntryView } from "@/components/configur
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
+import { PageHeader } from "@/components/settings-ui";
 
 export default function AgentSkillsPage() {
   const agentId = useAgentIdFromURL();
@@ -190,24 +191,26 @@ export default function AgentSkillsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("skills.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
+      <PageHeader
+        title={t("skills.title")}
+        desc={
+          <>
             {t("skills.agentSubtitle")} <strong>{agentName || t("skills.thisAgent")}</strong> {t("skills.agentSubtitleSuffix")}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setUploadOpen(true)}>
-            <Upload className="h-4 w-4 mr-2" />
-            {t("skills.uploadSkills")}
-          </Button>
-          <Button variant="outline" onClick={() => setInstallOpen(true)}>
-            <Download className="h-4 w-4 mr-2" />
-            {t("skills.installSkill")}
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setUploadOpen(true)}>
+              <Upload className="h-4 w-4" />
+              {t("skills.uploadSkills")}
+            </Button>
+            <Button variant="outline" onClick={() => setInstallOpen(true)}>
+              <Download className="h-4 w-4" />
+              {t("skills.installSkill")}
+            </Button>
+          </div>
+        }
+      />
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

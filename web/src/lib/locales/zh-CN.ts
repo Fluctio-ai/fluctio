@@ -518,6 +518,7 @@ const zhCN: Record<string, string> = {
   "account.email": "邮箱",
   "account.displayName": "显示名称",
   "account.displayNamePlaceholder": "你在仪表盘中显示的名称",
+  "account.profile": "个人资料",
   "account.saveProfile": "保存资料",
   "account.saving": "保存中...",
   "account.currentPassword": "当前密码",

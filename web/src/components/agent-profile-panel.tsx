@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Bot, Check, Loader2, Save } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Bot } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SaveButton } from "@/components/save-button";
+import { PageHeader, SettingsCard, CardHead } from "@/components/settings-ui";
 import { apiFetch, getAgent, updateAgent, type AgentDetail } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
@@ -24,9 +25,6 @@ export default function AgentProfilePanel() {
   const t = useT();
   const [agent, setAgent] = React.useState<AgentDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
-  const [saved, setSaved] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
 
   // Form state — independent from `agent` so users can revert with a
   // refresh and so the Save button can compare-then-write.
@@ -88,42 +86,29 @@ export default function AgentProfilePanel() {
     setAvatarBust(Date.now());
   };
 
+  // SaveButton owns the saving/saved/error visuals — throw to surface them.
   const onSave = async () => {
     if (!agentId || !agent || !isOwner) return;
-    if (!name.trim()) {
-      setError(t("profile.nameRequired"));
-      return;
+    if (!name.trim()) throw new Error(t("profile.nameRequired"));
+    const resp = await updateAgent(agentId, {
+      name: name.trim(),
+      description: description.trim(),
+    });
+    if (resp && (resp.ok === false || resp.error)) {
+      throw new Error(resp.error || t("profile.updateFailed"));
     }
-    setSaving(true);
-    setError(null);
-    try {
-      const resp = await updateAgent(agentId, {
-        name: name.trim(),
-        description: description.trim(),
-      });
-      if (resp && (resp.ok === false || resp.error)) {
-        setError(resp.error || t("profile.updateFailed"));
-        return;
+    if (avatar) {
+      try {
+        await uploadAvatar(avatar);
+      } catch {
+        // Non-fatal: text fields saved, only the avatar upload
+        // failed. The next Save can retry the image.
       }
-      if (avatar) {
-        try {
-          await uploadAvatar(avatar);
-        } catch {
-          // Non-fatal: text fields saved, only the avatar upload
-          // failed. Keep the saved-pulse so the user knows the
-          // primary write went through; the next Save can retry the
-          // image.
-        }
-        setAvatar(null);
-        if (avatarPreview) URL.revokeObjectURL(avatarPreview);
-        setAvatarPreview(null);
-      }
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-      refresh();
-    } finally {
-      setSaving(false);
+      setAvatar(null);
+      if (avatarPreview) URL.revokeObjectURL(avatarPreview);
+      setAvatarPreview(null);
     }
+    refresh();
   };
 
   if (loading) {
@@ -154,40 +139,17 @@ export default function AgentProfilePanel() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("profile.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            {isOwner
-              ? t("profile.ownerDesc")
-              : t("profile.viewerDesc")}
-          </p>
-        </div>
-        {isOwner && (
-          <Button
-            onClick={onSave}
-            disabled={saving || !dirty || !name.trim()}
-            variant={saved ? "outline" : "default"}
-            className={saved ? "border-success/30 text-success" : ""}
-          >
-            {saved ? (
-              <><Check className="h-4 w-4 mr-2" /> {t("profile.saved")}</>
-            ) : saving ? (
-              <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {t("profile.saving")}</>
-            ) : (
-              <><Save className="h-4 w-4 mr-2" /> {t("profile.save")}</>
-            )}
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title={t("profile.title")}
+        desc={isOwner ? t("profile.ownerDesc") : t("profile.viewerDesc")}
+        actions={
+          isOwner ? (
+            <SaveButton onSave={onSave} disabled={!dirty || !name.trim()} />
+          ) : undefined
+        }
+      />
 
-      {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      )}
-
-      <div className="rounded-lg border border-border bg-card p-5 space-y-5">
+      <SettingsCard className="space-y-5">
         {/* Avatar + name on the same row, mirrors the admin Edit dialog. */}
         <div className="flex items-start gap-4">
           <button
@@ -214,14 +176,13 @@ export default function AgentProfilePanel() {
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
-                setError(null);
               }}
               placeholder={t("profile.namePlaceholder")}
               disabled={!isOwner}
             />
             <p className="text-xs text-muted-foreground">
               {t("profile.idLabel")}{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
                 {agent.id}
               </code>
             </p>
@@ -239,16 +200,11 @@ export default function AgentProfilePanel() {
             disabled={!isOwner}
           />
         </div>
-      </div>
+      </SettingsCard>
 
-      <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-        <div className="space-y-1">
-          <Label className="text-sm font-medium">{t("profile.visibility")}</Label>
-          <p className="text-xs text-muted-foreground">
-            {t("profile.visibilityDesc")}
-          </p>
-        </div>
-      </div>
+      <SettingsCard>
+        <CardHead title={t("profile.visibility")} desc={t("profile.visibilityDesc")} />
+      </SettingsCard>
     </div>
   );
 }

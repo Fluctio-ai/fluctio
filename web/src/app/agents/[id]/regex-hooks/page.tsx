@@ -48,6 +48,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
+import { PageHeader, SettingsCard, CardHead, Field, SettingsError } from "@/components/settings-ui";
 
 type FormData = {
   id: string;
@@ -192,26 +193,18 @@ export default function AgentRegexHooksPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">
-            {t("regexHooks.title")}
-          </h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t("regexHooks.subtitle")}
-          </p>
-        </div>
-        <Button onClick={openCreate} size="sm">
-          <Plus className="size-4 mr-1" />
-          {t("regexHooks.create")}
-        </Button>
-      </div>
+      <PageHeader
+        title={t("regexHooks.title")}
+        desc={t("regexHooks.subtitle")}
+        actions={
+          <Button onClick={openCreate}>
+            <Plus className="size-4" />
+            {t("regexHooks.create")}
+          </Button>
+        }
+      />
 
-      {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <SettingsError>{error}</SettingsError>}
 
       {loading ? (
         <div className="space-y-2">
@@ -248,48 +241,48 @@ export default function AgentRegexHooksPage() {
 
 
       {/* Scripts Section */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Terminal className="size-5 text-muted-foreground" />
-            <h3 className="text-lg font-semibold">{t("regexHooks.scripts")}</h3>
-          </div>
-          <label className="cursor-pointer">
-            <input
-              type="file"
-              className="hidden"
-              accept=".py,.sh,.bat,.cmd,.exe,.js,.ts,.ps1"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file || !agentId) return;
-                uploadHookScript(agentId, file).then((res) => {
-                  if (res.error) setError(res.error);
-                  listHookScripts(agentId).then(setScripts);
-                  e.target.value = "";
-                });
-              }}
-            />
-            <span className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90">
-              <Plus className="size-3.5" />
-              {t("regexHooks.upload")}
-            </span>
-          </label>
-        </div>
-        <p className="text-xs text-muted-foreground mb-3">
+      <SettingsCard className="space-y-4">
+        <CardHead
+          icon={Terminal}
+          title={t("regexHooks.scripts")}
+          control={
+            <label className="cursor-pointer">
+              <input
+                type="file"
+                className="hidden"
+                accept=".py,.sh,.bat,.cmd,.exe,.js,.ts,.ps1"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file || !agentId) return;
+                  uploadHookScript(agentId, file).then((res) => {
+                    if (res.error) setError(res.error);
+                    listHookScripts(agentId).then(setScripts);
+                    e.target.value = "";
+                  });
+                }}
+              />
+              <span className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm font-medium text-primary-foreground transition hover:bg-primary/90">
+                <Plus className="size-3.5" />
+                {t("regexHooks.upload")}
+              </span>
+            </label>
+          }
+        />
+        <p className="text-xs text-muted-foreground">
           {t("regexHooks.scriptDirHint1")}{" "}
           <code className="rounded bg-muted px-1 py-0.5 font-mono">~/.fluctio/agents/{agentId}/hooks/</code>
           {t("regexHooks.scriptDirHint2")}{" "}
           <code className="rounded bg-muted px-1 py-0.5 font-mono">hooks/script_name</code>.
         </p>
         {scripts.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-card/50 p-6 text-center">
+          <div className="rounded-md border border-dashed border-border bg-card/30 p-6 text-center">
             <Terminal className="mx-auto size-6 text-muted-foreground/50 mb-2" />
             <p className="text-xs text-muted-foreground">{t("regexHooks.noScripts")}</p>
           </div>
         ) : (
           <div className="grid gap-2">
             {scripts.map((s) => (
-              <div key={s.name} className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2">
+              <div key={s.name} className="flex items-center justify-between rounded-md border border-border px-3 py-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Terminal className="size-3.5 text-muted-foreground shrink-0" />
                   <code className="text-sm font-mono truncate">{s.name}</code>
@@ -297,9 +290,7 @@ export default function AgentRegexHooksPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
-                    size="sm"
                     variant="ghost"
-                    className="text-xs h-7"
                     onClick={() => {
                       setForm((f) => ({ ...f, cliCommand: "hooks/" + s.name }));
                     }}
@@ -307,9 +298,9 @@ export default function AgentRegexHooksPage() {
                     {t("regexHooks.useScript")}
                   </Button>
                   <Button
-                    size="icon"
+                    size="icon-sm"
                     variant="ghost"
-                    className="text-destructive hover:text-destructive size-7"
+                    className="text-destructive hover:text-destructive"
                     onClick={async () => {
                       if (!agentId) return;
                       await deleteHookScript(agentId, s.name);
@@ -323,7 +314,7 @@ export default function AgentRegexHooksPage() {
             ))}
           </div>
         )}
-      </div>
+      </SettingsCard>
 
       {/* Edit / Create Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
@@ -334,8 +325,7 @@ export default function AgentRegexHooksPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div>
-              <label className="text-sm font-medium">{t("regexHooks.hookName")}</label>
+            <Field label={t("regexHooks.hookName")}>
               <Input
                 value={form.name}
                 onChange={(e) =>
@@ -343,9 +333,11 @@ export default function AgentRegexHooksPage() {
                 }
                 placeholder={t("regexHooks.namePlaceholder")}
               />
-            </div>
-            <div>
-              <label className="text-sm font-medium">{t("regexHooks.patternLabel")}</label>
+            </Field>
+            <Field
+              label={t("regexHooks.patternLabel")}
+              hint={t("regexHooks.patternHint")}
+            >
               <Input
                 value={form.pattern}
                 onChange={(e) =>
@@ -354,12 +346,11 @@ export default function AgentRegexHooksPage() {
                 placeholder={t("regexHooks.patternPlaceholder")}
                 className="font-mono"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                {t("regexHooks.patternHint")}
-              </p>
-            </div>
-            <div>
-              <label className="text-sm font-medium">{t("regexHooks.cliCommandLabel")}</label>
+            </Field>
+            <Field
+              label={t("regexHooks.cliCommandLabel")}
+              hint={t("regexHooks.cliHint")}
+            >
               <Input
                 value={form.cliCommand}
                 onChange={(e) =>
@@ -368,10 +359,7 @@ export default function AgentRegexHooksPage() {
                 placeholder={t("regexHooks.cliPlaceholder")}
                 className="font-mono"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                {t("regexHooks.cliHint")}
-              </p>
-            </div>
+            </Field>
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
                 <Switch
@@ -416,10 +404,7 @@ export default function AgentRegexHooksPage() {
               {t("regexHooks.feedToLLMHint")}
             </p>
             {form.showError && (
-              <div>
-                <label className="text-sm font-medium">
-                  {t("regexHooks.errorMessage")}
-                </label>
+              <Field label={t("regexHooks.errorMessage")}>
                 <Textarea
                   value={form.errorMessage}
                   onChange={(e) =>
@@ -428,7 +413,7 @@ export default function AgentRegexHooksPage() {
                   placeholder={t("regexHooks.errorPlaceholder")}
                   rows={2}
                 />
-              </div>
+              </Field>
             )}
           </div>
           <DialogFooter>

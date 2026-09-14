@@ -56,6 +56,7 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
 import { ImOwnerClaimSection } from "@/components/im-claim-panel";
+import { PageHeader, SettingsError } from "@/components/settings-ui";
 
 // Channels page: per-agent IM bot bindings. One card per channel type
 // in the catalog — connected types show bot info + Disconnect, others
@@ -162,23 +163,19 @@ export default function AgentChannelsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("channels.channelsTitle")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
+      <PageHeader
+        title={t("channels.channelsTitle")}
+        desc={
+          <>
             {t("channels.channelsSubtitle")} <strong>{agentName || t("channels.thisAgent")}</strong>{" "}
             {t("channels.channelsSubtitleSuffix")}
-          </p>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <ImOwnerClaimSection agentId={agentId} channels={channels} />
 
-      {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <SettingsError>{error}</SettingsError>}
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

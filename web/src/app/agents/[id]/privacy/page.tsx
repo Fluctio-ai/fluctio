@@ -2,11 +2,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useT } from "@/lib/i18n";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Loader2, Check } from "lucide-react";
+import { SaveButton } from "@/components/save-button";
+import { PageHeader, SettingsCard, ToggleRow } from "@/components/settings-ui";
 import { getAgentPrivacy, setAgentPrivacy } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 
@@ -18,9 +16,6 @@ export default function AgentPrivacyPage() {
   const agentId = useAgentIdFromURL();
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [entropy, setEntropy] = useState(false);
 
@@ -38,16 +33,8 @@ export default function AgentPrivacyPage() {
   }, [refresh]);
 
   const save = async () => {
-    setSaving(true);
-    setError(null);
     const res = await setAgentPrivacy(agentId, { piiScrubbing: { enabled, entropy } });
-    setSaving(false);
-    if (res.error) {
-      setError(res.error);
-    } else {
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-    }
+    if (res.error) throw new Error(res.error);
   };
 
   if (loading) {
@@ -56,46 +43,34 @@ export default function AgentPrivacyPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">{t("settings.privacy") || "隐私脱敏"}</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          {t("privacy.scrubDesc") ||
-            "在消息发送给 LLM 前脱敏邮箱、手机号、身份证、银行卡、API 密钥等敏感信息。"}
-        </p>
-      </div>
+      <PageHeader
+        title={t("settings.privacy") || "隐私脱敏"}
+        desc={
+          t("privacy.scrubDesc") ||
+          "在消息发送给 LLM 前脱敏邮箱、手机号、身份证、银行卡、API 密钥等敏感信息。"
+        }
+        actions={<SaveButton onSave={save} />}
+      />
 
-      <div className="flex items-center justify-between rounded-lg border p-4">
-        <div className="space-y-0.5 pr-4">
-          <Label>{t("privacy.scrubTitle") || "PII 脱敏"}</Label>
-          <p className="text-xs text-muted-foreground">
-            {t("privacy.scrubHint") || "基于正则规则脱敏已知敏感格式（推荐开启）。"}
-          </p>
-        </div>
-        <Switch checked={enabled} onCheckedChange={setEnabled} />
-      </div>
-
-      <div className="flex items-center justify-between rounded-lg border p-4">
-        <div className="space-y-0.5 pr-4">
-          <Label>{t("privacy.entropyTitle") || "高熵兜底（实验）"}</Label>
-          <p className="text-xs text-muted-foreground">
-            {t("privacy.entropyHint") ||
-              "仅在周围出现密钥语义词时才检测未知高熵随机串。可能误伤 base64 数据，默认关闭。"}
-          </p>
-        </div>
-        <Switch checked={entropy} onCheckedChange={setEntropy} disabled={!enabled} />
-      </div>
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
-
-      <Button onClick={save} disabled={saving}>
-        {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-        {saving
-          ? t("common.saving") || "保存中…"
-          : saved
-            ? t("common.saved") || "已保存"
-            : t("common.save") || "保存"}
-        {saved && !saving ? <Check className="h-4 w-4 ml-2" /> : null}
-      </Button>
+      <SettingsCard className="space-y-4">
+        <ToggleRow
+          title={t("privacy.scrubTitle") || "PII 脱敏"}
+          hint={t("privacy.scrubHint") || "基于正则规则脱敏已知敏感格式（推荐开启）。"}
+          checked={enabled}
+          onCheckedChange={setEnabled}
+        />
+        <div className="border-t border-border" />
+        <ToggleRow
+          title={t("privacy.entropyTitle") || "高熵兜底（实验）"}
+          hint={
+            t("privacy.entropyHint") ||
+            "仅在周围出现密钥语义词时才检测未知高熵随机串。可能误伤 base64 数据，默认关闭。"
+          }
+          checked={entropy}
+          onCheckedChange={setEntropy}
+          disabled={!enabled}
+        />
+      </SettingsCard>
     </div>
   );
 }

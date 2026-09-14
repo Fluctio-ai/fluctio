@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -39,6 +40,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
+import { PageHeader } from "@/components/settings-ui";
 
 type MCPEntry = { name: string } & MCPServerConfig;
 
@@ -122,28 +124,25 @@ export default function AgentMCPPage() {
           </div>
         </div>
       )}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("mcp.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t("mcp.subtitle", { name: agentName || t("mcp.thisAgent") })}
-          </p>
-        </div>
-        <Button
-          size="sm"
-          onClick={() => {
-            setEditEntry(null);
-            setEditOpen(true);
-          }}
-        >
-          <Plus className="w-4 h-4 mr-1" /> {t("mcp.addServer")}
-        </Button>
-      </div>
+      <PageHeader
+        title={t("mcp.title")}
+        desc={t("mcp.subtitle", { name: agentName || t("mcp.thisAgent") })}
+        actions={
+          <Button
+            onClick={() => {
+              setEditEntry(null);
+              setEditOpen(true);
+            }}
+          >
+            <Plus className="w-4 h-4" /> {t("mcp.addServer")}
+          </Button>
+        }
+      />
 
       {entries.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-12 text-center text-muted-foreground">
+        <div className="rounded-lg border border-dashed border-border bg-card/30 p-12 text-center text-muted-foreground">
           <Server className="w-10 h-10 mx-auto mb-3 opacity-40" />
-          <p>{t("mcp.noServers")}</p>
+          <p className="text-sm">{t("mcp.noServers")}</p>
           <p className="text-xs mt-1">
             {t("mcp.noServersHint")}
           </p>
@@ -379,12 +378,12 @@ function MCPEditDialog({
               </div>
               <div className="space-y-1.5">
                 <Label>{t("mcp.headersField")} <span className="text-muted-foreground font-normal">{t("mcp.headersHint")}</span></Label>
-                <textarea
-                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-[60px] resize-y"
+                <Textarea
                   placeholder={"Authorization=Bearer $TOKEN\nX-Custom=value"}
                   value={headersText}
                   onChange={(e) => setHeadersText(e.target.value)}
                   rows={3}
+                  className="font-mono"
                 />
               </div>
             </>
@@ -408,12 +407,12 @@ function MCPEditDialog({
               </div>
               <div className="space-y-1.5">
                 <Label>{t("mcp.environmentLabel")} <span className="text-muted-foreground font-normal">{t("mcp.environmentHint")}</span></Label>
-                <textarea
-                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 min-h-[60px] resize-y"
+                <Textarea
                   placeholder={"DATABASE_URL=postgresql://...\nAPI_KEY=$SECRET"}
                   value={envText}
                   onChange={(e) => setEnvText(e.target.value)}
                   rows={3}
+                  className="font-mono"
                 />
               </div>
             </>

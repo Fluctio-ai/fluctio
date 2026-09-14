@@ -15,6 +15,7 @@ import {
 import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle, Archive, SlidersHorizontal } from "lucide-react";
 import { getAgent, getAgentMemory, setAgentMemory, updateAgent, getCompactionPreview, type CompactionPreview, type AgentUpdatePayload } from "@/lib/api";
 import { SaveButton } from "@/components/save-button";
+import { PageHeader, SettingsCard, CardHead, Field } from "@/components/settings-ui";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
@@ -340,29 +341,25 @@ export default function AgentContextPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("context.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t("context.subtitle", { name: agentName || t("context.thisAgent") })}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {saved && (
+      <PageHeader
+        title={t("context.title")}
+        desc={t("context.subtitle", { name: agentName || t("context.thisAgent") })}
+        actions={
+          saved ? (
             <span className="inline-flex items-center gap-1.5 text-xs text-success">
               <Check className="h-3.5 w-3.5" /> {t("context.saved")}
             </span>
-          )}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
       {/* Prompt Mode */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4 text-primary" />
-            <h3 className="font-medium">{t("context.promptMode")}</h3>
-            {promptMode === "" || promptMode === "agent" ? (
+      <SettingsCard>
+        <CardHead
+          icon={MessageSquare}
+          title={t("context.promptMode")}
+          badge={
+            promptMode === "" || promptMode === "agent" ? (
               <Badge variant="outline" className="text-[10px]">
                 {t("context.default")}
               </Badge>
@@ -370,30 +367,32 @@ export default function AgentContextPage() {
               <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px]">
                 {t(MODE_LABEL_KEY[promptMode])}
               </Badge>
-            )}
-          </div>
+            )
+          }
+        />
+        <div className="mt-4">
+          <Select
+            value={promptMode || "agent"}
+            onValueChange={(v: string | null) => {
+              if (v === "agent" || v === "chatbot" || v === "customize") {
+                handlePromptModeChange(v);
+              }
+            }}
+            disabled={saving}
+          >
+            <SelectTrigger className="max-w-[240px]">
+              {/* Explicit children override SelectValue's auto-extraction
+                  from the active SelectItem — shadcn sometimes falls back
+                  to rendering the raw `value` string. */}
+              <SelectValue>{t(MODE_LABEL_KEY[promptMode || "agent"])}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="agent">{t("context.modeAgent")}</SelectItem>
+              <SelectItem value="chatbot">{t("context.modeChatbot")}</SelectItem>
+              <SelectItem value="customize">{t("context.modeCustomize")}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <Select
-          value={promptMode || "agent"}
-          onValueChange={(v: string | null) => {
-            if (v === "agent" || v === "chatbot" || v === "customize") {
-              handlePromptModeChange(v);
-            }
-          }}
-          disabled={saving}
-        >
-          <SelectTrigger className="text-sm max-w-[240px]">
-            {/* Explicit children override SelectValue's auto-extraction
-                from the active SelectItem — shadcn sometimes falls back
-                to rendering the raw `value` string. */}
-            <SelectValue>{t(MODE_LABEL_KEY[promptMode || "agent"])}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="agent">{t("context.modeAgent")}</SelectItem>
-            <SelectItem value="chatbot">{t("context.modeChatbot")}</SelectItem>
-            <SelectItem value="customize">{t("context.modeCustomize")}</SelectItem>
-          </SelectContent>
-        </Select>
         <div className="mt-3 text-xs text-muted-foreground space-y-1.5">
           <div>
             <strong>{t("context.modeAgent")}</strong> — {t("context.agentDesc")}
@@ -412,7 +411,7 @@ export default function AgentContextPage() {
             <strong>{t("context.modeCustomize")}</strong> — {t("context.customizeDesc")}
           </div>
         </div>
-        <div className="mt-4 pt-3 border-t border-border flex items-start gap-2 text-xs text-muted-foreground">
+        <div className="mt-4 flex items-start gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
           <Puzzle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span>
             {t("context.pluginToolsNote")}{" "}
@@ -422,15 +421,15 @@ export default function AgentContextPage() {
             {t("context.pluginToolsExample")}
           </span>
         </div>
-      </div>
+      </SettingsCard>
 
       {/* Guidance: autonomous vs guided operational-constraint strength */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <Brain className="h-4 w-4 text-primary" />
-            <h3 className="font-medium">{t("context.guidance")}</h3>
-            {guidance === "guided" ? (
+      <SettingsCard>
+        <CardHead
+          icon={Brain}
+          title={t("context.guidance")}
+          badge={
+            guidance === "guided" ? (
               <Badge variant="outline" className="text-[10px]">
                 {t("context.default")}
               </Badge>
@@ -438,212 +437,219 @@ export default function AgentContextPage() {
               <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px]">
                 {t("context.guidanceAutonomous")}
               </Badge>
-            )}
-          </div>
+            )
+          }
+          desc={t("context.guidanceDesc")}
+        />
+        <div className="mt-4">
+          <Select
+            value={guidance}
+            onValueChange={(v: string | null) => {
+              if (v === "autonomous" || v === "guided") {
+                handleGuidanceChange(v);
+              }
+            }}
+            disabled={saving}
+          >
+            <SelectTrigger className="max-w-[240px]">
+              <SelectValue>{t(GUIDANCE_LABEL_KEY[guidance])}</SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="guided">{t("context.guidanceGuided")}</SelectItem>
+              <SelectItem value="autonomous">{t("context.guidanceAutonomous")}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <p className="mb-3 text-sm text-muted-foreground">{t("context.guidanceDesc")}</p>
-        <Select
-          value={guidance}
-          onValueChange={(v: string | null) => {
-            if (v === "autonomous" || v === "guided") {
-              handleGuidanceChange(v);
-            }
-          }}
-          disabled={saving}
-        >
-          <SelectTrigger className="text-sm max-w-[240px]">
-            <SelectValue>{t(GUIDANCE_LABEL_KEY[guidance])}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="guided">{t("context.guidanceGuided")}</SelectItem>
-            <SelectItem value="autonomous">{t("context.guidanceAutonomous")}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      </SettingsCard>
 
       {/* Generation + loop budgets — per-agent overrides for maxTokens,
           temperature, and the ReAct tool-iteration cap. Empty = inherit
           the system default (8192 / 0.7 / 20); the agent falls back to
           agents.defaults → system when an override is cleared. */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center gap-2 mb-1">
-          <SlidersHorizontal className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("context.generation")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-4">{t("context.generationDesc")}</p>
-        <div className="grid sm:grid-cols-3 gap-4">
-          <div>
-            <label className="text-xs text-muted-foreground">{t("context.maxTokens")}</label>
+      <SettingsCard>
+        <CardHead
+          icon={SlidersHorizontal}
+          title={t("context.generation")}
+          desc={t("context.generationDesc")}
+        />
+        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+          <Field label={t("context.maxTokens")} hint={t("context.maxTokensHint")}>
             <Input
               type="number"
               value={maxTokens}
               onChange={(e) => setMaxTokens(e.target.value)}
               placeholder="8192"
-              className="mt-1 h-8"
             />
-            <p className="text-[11px] text-muted-foreground mt-1">{t("context.maxTokensHint")}</p>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">{t("context.temperature")}</label>
+          </Field>
+          <Field label={t("context.temperature")} hint={t("context.temperatureHint")}>
             <Input
               type="number"
               step="0.1"
               value={temperature}
               onChange={(e) => setTemperature(e.target.value)}
               placeholder="0.7"
-              className="mt-1 h-8"
             />
-            <p className="text-[11px] text-muted-foreground mt-1">{t("context.temperatureHint")}</p>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">{t("context.maxIter")}</label>
+          </Field>
+          <Field label={t("context.maxIter")} hint={t("context.maxIterHint")}>
             <Input
               type="number"
               value={maxToolIterations}
               onChange={(e) => setMaxIter(e.target.value)}
               placeholder="20"
-              className="mt-1 h-8"
             />
-            <p className="text-[11px] text-muted-foreground mt-1">{t("context.maxIterHint")}</p>
-          </div>
+          </Field>
         </div>
         <div className="mt-4">
-          <SaveButton onSave={saveGeneration} size="sm" />
+          <SaveButton onSave={saveGeneration} />
         </div>
-      </div>
+      </SettingsCard>
 
       {/* Reply language — IM channels can't forward the web client's
           i18n locale, so this per-agent default picks the language for
           slash-command replies (/usage /status /help …) there. */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center gap-2 mb-1">
-          <Languages className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("context.replyLanguage")}</h3>
+      <SettingsCard>
+        <CardHead
+          icon={Languages}
+          title={t("context.replyLanguage")}
+          desc={t("context.replyLanguageDesc")}
+        />
+        <div className="mt-4">
+          <Select
+            value={language || "zh-CN"}
+            onValueChange={(v: string | null) => {
+              if (v === "zh-CN" || v === "en") {
+                handleLanguageChange(v);
+              }
+            }}
+            disabled={languageSaving}
+          >
+            <SelectTrigger className="max-w-[240px]">
+              <SelectValue>
+                {language === "en" ? t("context.langEn") : t("context.langZh")}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="zh-CN">{t("context.langZh")}</SelectItem>
+              <SelectItem value="en">{t("context.langEn")}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <p className="text-sm text-muted-foreground mb-3">{t("context.replyLanguageDesc")}</p>
-        <Select
-          value={language || "zh-CN"}
-          onValueChange={(v: string | null) => {
-            if (v === "zh-CN" || v === "en") {
-              handleLanguageChange(v);
-            }
-          }}
-          disabled={languageSaving}
-        >
-          <SelectTrigger className="text-sm max-w-[240px]">
-            <SelectValue>
-              {language === "en" ? t("context.langEn") : t("context.langZh")}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="zh-CN">{t("context.langZh")}</SelectItem>
-            <SelectItem value="en">{t("context.langEn")}</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      </SettingsCard>
 
       {/* Multi-bubble replies — applies to every IM channel. Lives here
           rather than in the Channels tab because it's a property of how
           the LLM communicates, not of the channel binding. */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center gap-2 mb-1">
-          <MessagesSquare className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("context.multiBubble")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-3">{t("context.splitRepliesDesc")}</p>
-        <Switch
-          checked={splitReplies}
-          onCheckedChange={handleSplitRepliesChange}
-          disabled={splitRepliesSaving}
-          aria-label={t("context.multiBubble")}
+      <SettingsCard>
+        <CardHead
+          icon={MessagesSquare}
+          title={t("context.multiBubble")}
+          desc={t("context.splitRepliesDesc")}
+          control={
+            <Switch
+              checked={splitReplies}
+              onCheckedChange={handleSplitRepliesChange}
+              disabled={splitRepliesSaving}
+              aria-label={t("context.multiBubble")}
+            />
+          }
         />
-      </div>
+      </SettingsCard>
 
       {/* Auto-remember chatter — lives here because it's about how the
           agent retains context across turns / sessions, parallel to how
           Multi-bubble is about how it emits replies. */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center gap-2 mb-1">
-          <Brain className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("context.autoPersist")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-3">
-          {t("context.autoPersistDescP1")}{" "}
-          <code className="text-[10px]">write_file</code> /{" "}
-          <code className="text-[10px]">edit_file</code>{" "}
-          {t("context.autoPersistDescP2")}
-        </p>
-        <Switch
-          checked={autoPersist}
-          onCheckedChange={handleAutoPersistChange}
-          disabled={autoPersistSaving}
-          aria-label={t("context.autoPersist")}
+      <SettingsCard>
+        <CardHead
+          icon={Brain}
+          title={t("context.autoPersist")}
+          desc={
+            <>
+              {t("context.autoPersistDescP1")}{" "}
+              <code className="text-[10px]">write_file</code> /{" "}
+              <code className="text-[10px]">edit_file</code>{" "}
+              {t("context.autoPersistDescP2")}
+            </>
+          }
+          control={
+            <Switch
+              checked={autoPersist}
+              onCheckedChange={handleAutoPersistChange}
+              disabled={autoPersistSaving}
+              aria-label={t("context.autoPersist")}
+            />
+          }
         />
-      </div>
+      </SettingsCard>
 
       {/* Auto-title: LLM summarises opening turns into sessions.title */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center gap-2 mb-1">
-          <MessageSquare className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("context.autoTitle")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-3">{t("context.autoTitleDesc")}</p>
-        <Switch
-          checked={autoTitleEnabled}
-          onCheckedChange={(v) => saveAutoTitle({ enabled: v })}
-          disabled={autoTitleSaving}
-          aria-label={t("context.autoTitle")}
+      <SettingsCard>
+        <CardHead
+          icon={MessageSquare}
+          title={t("context.autoTitle")}
+          desc={t("context.autoTitleDesc")}
+          control={
+            <Switch
+              checked={autoTitleEnabled}
+              onCheckedChange={(v) => saveAutoTitle({ enabled: v })}
+              disabled={autoTitleSaving}
+              aria-label={t("context.autoTitle")}
+            />
+          }
         />
         {autoTitleEnabled && (
-          <div className="mt-3 space-y-1">
-            <label className="text-xs text-muted-foreground">{t("context.autoTitleModel")}</label>
-            <Input
-              placeholder={t("context.autoTitleModelPlaceholder")}
-              value={autoTitleModel}
-              onChange={(e) => setAutoTitleModel(e.target.value)}
-              onBlur={() => saveAutoTitle({ model: autoTitleModel })}
-              disabled={autoTitleSaving}
-              className="h-8"
-            />
-            <p className="text-[11px] text-muted-foreground">{t("context.autoTitleModelHint")}</p>
+          <div className="mt-4 border-t border-border pt-4">
+            <Field
+              label={t("context.autoTitleModel")}
+              htmlFor="auto-title-model"
+              hint={t("context.autoTitleModelHint")}
+            >
+              <Input
+                id="auto-title-model"
+                placeholder={t("context.autoTitleModelPlaceholder")}
+                value={autoTitleModel}
+                onChange={(e) => setAutoTitleModel(e.target.value)}
+                onBlur={() => saveAutoTitle({ model: autoTitleModel })}
+                disabled={autoTitleSaving}
+              />
+            </Field>
           </div>
         )}
-      </div>
+      </SettingsCard>
 
       {/* Shared identity across channels */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center gap-2 mb-1">
-          <Link2 className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("context.sharedIdentity")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-3">{t("context.sharedIdentityDesc")}</p>
-        <Switch
-          checked={sharedIdentity}
-          onCheckedChange={handleSharedIdentityChange}
-          disabled={sharedIdentitySaving}
-          aria-label={t("context.sharedIdentity")}
+      <SettingsCard>
+        <CardHead
+          icon={Link2}
+          title={t("context.sharedIdentity")}
+          desc={t("context.sharedIdentityDesc")}
+          control={
+            <Switch
+              checked={sharedIdentity}
+              onCheckedChange={handleSharedIdentityChange}
+              disabled={sharedIdentitySaving}
+              aria-label={t("context.sharedIdentity")}
+            />
+          }
         />
-      </div>
+      </SettingsCard>
 
       {/* Compaction threshold mode selector — three presets + custom.
           Each preset shows the estimated trigger threshold derived from
           the agent model's context window. When the model is off-table
           (contextWindow=0), thresholds are floored at 1000 and we show
           an "unknown window" hint instead of misleading large numbers. */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <Archive className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("context.compaction")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-4">
-          {t("context.compactionDesc")}
-        </p>
+      <SettingsCard>
+        <CardHead
+          icon={Archive}
+          title={t("context.compaction")}
+          desc={t("context.compactionDesc")}
+        />
         {compactionPreview?.contextWindow === 0 ? (
-          <p className="text-xs text-muted-foreground italic">
+          <p className="mt-4 text-xs italic text-muted-foreground">
             {t("context.compactionUnknownWindow")}
           </p>
         ) : (
-          <div className="space-y-2">
+          <div className="mt-4 space-y-2">
             {([
               { value: "conservative", label: t("context.compactionConservative"), desc: t("context.compactionConservativeDesc") },
               { value: "balanced", label: t("context.compactionBalanced"), desc: t("context.compactionBalancedDesc") },
@@ -722,16 +728,16 @@ export default function AgentContextPage() {
                       onChange={(e) => setCompactionManual(e.target.value)}
                       onBlur={handleCompactionManualSave}
                       disabled={compactionSaving}
-                      className="h-8 max-w-[200px]"
+                      className="max-w-[200px]"
                     />
-                    <p className="text-[11px] text-muted-foreground">{t("context.compactionManualHint")}</p>
+                    <p className="text-xs text-muted-foreground">{t("context.compactionManualHint")}</p>
                   </div>
                 )}
               </div>
             </label>
           </div>
         )}
-      </div>
+      </SettingsCard>
     </div>
   );
 }

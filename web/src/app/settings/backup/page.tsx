@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
+import { HardDrive } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
+import { PageHeader, SettingsCard, CardHead, Field } from "@/components/settings-ui";
 import {
   apiFetch,
   getSystemBackup,
@@ -116,53 +117,48 @@ export default function BackupSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-xl font-semibold tracking-tight">{t("backup.title")}</h3>
-        <p className="text-sm text-muted-foreground mt-1">{t("backup.desc")}</p>
-      </div>
+      <PageHeader
+        title={t("backup.title")}
+        desc={t("backup.desc")}
+        actions={<SaveButton onSave={handleSave} disabled={!loaded} />}
+      />
 
-      <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <Label className="text-sm font-medium">{t("backup.enabled")}</Label>
-          </div>
-          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!loaded} />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t("backup.cronTime")}</Label>
+      <SettingsCard className="space-y-4">
+        <CardHead
+          icon={HardDrive}
+          title={t("backup.enabled")}
+          control={
+            <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!loaded} />
+          }
+        />
+        <div className="grid grid-cols-2 gap-4">
+          <Field label={t("backup.cronTime")} hint={t("backup.cronTimeDesc")}>
             <Input
               type="time"
               value={cronTime}
               onChange={(e) => setCronTime(e.target.value)}
-              className="h-8 text-xs"
             />
-            <p className="text-[11px] text-muted-foreground">{t("backup.cronTimeDesc")}</p>
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs">{t("backup.maxKeep")}</Label>
+          </Field>
+          <Field label={t("backup.maxKeep")} hint={t("backup.maxKeepDesc")}>
             <Input
               type="number"
               min={1}
               value={maxKeep}
               onChange={(e) => setMaxKeep(Math.max(1, Number(e.target.value) || 1))}
-              className="h-8 text-xs"
             />
-            <p className="text-[11px] text-muted-foreground">{t("backup.maxKeepDesc")}</p>
-          </div>
+          </Field>
         </div>
-        <div className="flex justify-end pt-1">
-          <SaveButton size="sm" onSave={handleSave} disabled={!loaded} />
-        </div>
-      </div>
+      </SettingsCard>
 
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center justify-between">
-          <h4 className="font-medium">{t("backup.listTitle")}</h4>
-          <Button size="sm" variant="secondary" onClick={handleNow} disabled={busy}>
-            {busy ? t("backup.busy") : t("backup.now")}
-          </Button>
-        </div>
+      <SettingsCard>
+        <CardHead
+          title={t("backup.listTitle")}
+          control={
+            <Button variant="secondary" onClick={handleNow} disabled={busy}>
+              {busy ? t("backup.busy") : t("backup.now")}
+            </Button>
+          }
+        />
         {toast && <p className="mt-3 text-xs text-muted-foreground">{toast}</p>}
         {items.length === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">{t("backup.empty")}</p>
@@ -172,16 +168,15 @@ export default function BackupSettingsPage() {
               <li key={b.name} className="flex items-center justify-between gap-3 py-2.5">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{b.name}</p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     {formatSize(b.size)} · {formatTime(b.modified)}
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => handleDownload(b.name)}>
+                  <Button variant="ghost" onClick={() => handleDownload(b.name)}>
                     {t("backup.download")}
                   </Button>
                   <Button
-                    size="sm"
                     variant="ghost"
                     className="text-destructive"
                     onClick={() => handleDelete(b.name)}
@@ -193,7 +188,7 @@ export default function BackupSettingsPage() {
             ))}
           </ul>
         )}
-      </div>
+      </SettingsCard>
     </div>
   );
 }

@@ -18,6 +18,7 @@ import {
   type RecallEventView,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
+import { PageHeader, SettingsCard, CardHead } from "@/components/settings-ui";
 
 // Per-agent recall-tuning panel — surfaces the otherwise-black-box MMR
 // lambda bandit (current lambda, recall counts, per-lambda feedback) and
@@ -124,41 +125,46 @@ export default function AgentRecallTuningPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">{t("recallTuning.title")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("recallTuning.description")}</p>
-      </div>
+      <PageHeader
+        title={t("recallTuning.title")}
+        desc={t("recallTuning.description")}
+      />
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat
-          label={t("recallTuning.currentLambda")}
-          value={state.mmr_lambda?.toFixed(2) ?? "—"}
-          icon={<Sparkles className="h-4 w-4" />}
-        />
-        <Stat
-          label={t("recallTuning.totalRecalls")}
-          value={String(state.total_recalls ?? 0)}
-          icon={<Database className="h-4 w-4" />}
-        />
-        <Stat
-          label={t("recallTuning.consumedRate")}
-          value={
-            state.total_recalls
-              ? `${(((state.consumed_recalls ?? 0) / state.total_recalls) * 100).toFixed(0)}%`
-              : "—"
-          }
-          icon={<Sparkles className="h-4 w-4" />}
-        />
-        <Stat
-          label={t("recallTuning.exploreRate")}
-          value={`${(exploreRate * 100).toFixed(0)}%`}
-          icon={<Sparkles className="h-4 w-4" />}
-        />
-      </div>
+      {/* Stat strip — one card, four columns; dividers instead of
+          per-tile borders so it reads as a single band, not nested
+          cards. */}
+      <SettingsCard>
+        <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 sm:divide-x sm:divide-border">
+          <Stat
+            label={t("recallTuning.currentLambda")}
+            value={state.mmr_lambda?.toFixed(2) ?? "—"}
+            icon={<Sparkles className="h-4 w-4" />}
+          />
+          <Stat
+            label={t("recallTuning.totalRecalls")}
+            value={String(state.total_recalls ?? 0)}
+            icon={<Database className="h-4 w-4" />}
+          />
+          <Stat
+            label={t("recallTuning.consumedRate")}
+            value={
+              state.total_recalls
+                ? `${(((state.consumed_recalls ?? 0) / state.total_recalls) * 100).toFixed(0)}%`
+                : "—"
+            }
+            icon={<Sparkles className="h-4 w-4" />}
+          />
+          <Stat
+            label={t("recallTuning.exploreRate")}
+            value={`${(exploreRate * 100).toFixed(0)}%`}
+            icon={<Sparkles className="h-4 w-4" />}
+          />
+        </div>
+      </SettingsCard>
 
-      <div>
-        <h3 className="mb-2 text-sm font-medium">{t("recallTuning.setLambda")}</h3>
-        <div className="flex gap-2">
+      <SettingsCard>
+        <CardHead title={t("recallTuning.setLambda")} />
+        <div className="mt-4 flex gap-2">
           <Input
             value={lambdaInput}
             onChange={(e) => setLambdaInput(e.target.value)}
@@ -171,25 +177,27 @@ export default function AgentRecallTuningPage() {
             {savingLambda ? <Loader2 className="h-4 w-4 animate-spin" /> : t("recallTuning.save")}
           </Button>
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">{t("recallTuning.lambdaHint")}</p>
-        <div className="mt-2 space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground">{t("recallTuning.lambdaHint")}</p>
+        <div className="mt-3 space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
           <div className="font-mono">{t("recallTuning.formulaMmrRel")}</div>
           <div className="font-mono">{t("recallTuning.formulaMmrMaxSim")}</div>
           <div className="font-mono">{t("recallTuning.formulaMmrScore")}</div>
           <div>{t("recallTuning.formulaMmrBalance")}</div>
         </div>
-      </div>
+      </SettingsCard>
 
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-medium">{t("recallTuning.minRelevance")}</h3>
-          <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
-            {savingMinRelevance ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : null}
-            {(minRelevance * 100).toFixed(0)}%
-          </span>
-        </div>
+      <SettingsCard>
+        <CardHead
+          title={t("recallTuning.minRelevance")}
+          control={
+            <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
+              {savingMinRelevance ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : null}
+              {(minRelevance * 100).toFixed(0)}%
+            </span>
+          }
+        />
         <input
           type="range"
           min={0}
@@ -199,22 +207,22 @@ export default function AgentRecallTuningPage() {
           onChange={(e) => setMinRelevance(Number(e.target.value) / 100)}
           onPointerUp={() => saveMinRelevance(minRelevance)}
           onBlur={() => saveMinRelevance(minRelevance)}
-          className="w-full accent-primary"
+          className="mt-4 w-full accent-primary"
         />
-        <div className="mt-2 space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+        <div className="mt-3 space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
           <div className="font-mono">{t("recallTuning.formulaVec")}</div>
           <div className="font-mono">{t("recallTuning.formulaRerank")}</div>
           <div>{t("recallTuning.formulaThreshold")}</div>
         </div>
-        <p className="mt-1 text-xs text-muted-foreground">{t("recallTuning.minRelevanceHint")}</p>
-      </div>
+        <p className="mt-2 text-xs text-muted-foreground">{t("recallTuning.minRelevanceHint")}</p>
+      </SettingsCard>
 
-      <div>
-        <h3 className="mb-2 text-sm font-medium">{t("recallTuning.feedbackStats")}</h3>
+      <SettingsCard>
+        <CardHead title={t("recallTuning.feedbackStats")} />
         {(state.feedback_stats?.length ?? 0) === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("recallTuning.noFeedback")}</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t("recallTuning.noFeedback")}</p>
         ) : (
-          <table className="w-full text-sm">
+          <table className="mt-4 w-full text-sm">
             <thead>
               <tr className="text-left text-muted-foreground">
                 <th className="py-1">{t("recallTuning.lambda")}</th>
@@ -239,11 +247,11 @@ export default function AgentRecallTuningPage() {
             </tbody>
           </table>
         )}
-      </div>
+      </SettingsCard>
 
-      <div>
-        <h3 className="mb-2 text-sm font-medium">{t("recallTuning.testBox")}</h3>
-        <div className="flex gap-2">
+      <SettingsCard>
+        <CardHead title={t("recallTuning.testBox")} />
+        <div className="mt-4 flex gap-2">
           <Input
             value={testQuery}
             onChange={(e) => setTestQuery(e.target.value)}
@@ -260,28 +268,28 @@ export default function AgentRecallTuningPage() {
             )}
           </Button>
         </div>
-        {testNote && <p className="mt-1 text-xs text-muted-foreground">{testNote}</p>}
+        {testNote && <p className="mt-2 text-xs text-muted-foreground">{testNote}</p>}
         {testHits && testHits.length === 0 && (
-          <p className="mt-2 text-sm text-muted-foreground">{t("recallTuning.noResults")}</p>
+          <p className="mt-3 text-sm text-muted-foreground">{t("recallTuning.noResults")}</p>
         )}
         {testHits && testHits.length > 0 && (
-          <ul className="mt-2 space-y-2">
+          <ul className="mt-3 space-y-2">
             {testHits.map((h) => (
-              <li key={h.id} className="rounded border p-2 text-sm">
+              <li key={h.id} className="rounded-md border p-2 text-sm">
                 {h.topic && <div className="font-medium">{h.topic}</div>}
                 <div className="text-muted-foreground">{h.summary}</div>
               </li>
             ))}
           </ul>
         )}
-      </div>
+      </SettingsCard>
 
-      <div>
-        <h3 className="mb-2 text-sm font-medium">{t("recallTuning.recentRecalls")}</h3>
+      <SettingsCard>
+        <CardHead title={t("recallTuning.recentRecalls")} />
         {(recalls?.length ?? 0) === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("recallTuning.noRecalls")}</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t("recallTuning.noRecalls")}</p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="mt-4 space-y-2">
             {recalls!.map((rc) => (
               <li key={rc.recall_id} className="rounded border p-2 text-sm">
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
@@ -324,14 +332,16 @@ export default function AgentRecallTuningPage() {
             ))}
           </ul>
         )}
-      </div>
+      </SettingsCard>
     </div>
   );
 }
 
 function Stat({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
   return (
-    <div className="rounded-lg border p-3">
+    // Borderless inside the stat-strip card; the strip's divide-x
+    // separates columns so the tiles don't nest cards.
+    <div className="sm:px-4 sm:first:pl-0 sm:last:pr-0">
       <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
         {icon}
         {label}

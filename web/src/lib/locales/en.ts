@@ -518,6 +518,7 @@ const en: Record<string, string> = {
   "account.email": "Email",
   "account.displayName": "Display name",
   "account.displayNamePlaceholder": "How your name appears in the dashboard",
+  "account.profile": "Profile",
   "account.saveProfile": "Save profile",
   "account.saving": "Saving...",
   "account.currentPassword": "Current",

@@ -27,6 +27,7 @@ import {
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n";
+import { PageHeader } from "@/components/settings-ui";
 
 import AgentProfilePanel from "@/components/agent-profile-panel";
 import AgentCustomizePage from "@/app/agents/[id]/customize/page";
@@ -283,10 +284,10 @@ export function AgentSettingsDialog({
           {tab === "regex-hooks" && <AgentRegexHooksPage />}
           {tab === "knowledge" && (
             <div className="mx-auto w-full max-w-5xl space-y-6 p-6">
-              <div>
-                <h2 className="text-2xl font-semibold tracking-tight">{tt("knowledge.pageTitle")}</h2>
-                <p className="text-sm text-muted-foreground mt-1">{tt("knowledge.pageSubtitle")}</p>
-              </div>
+              <PageHeader
+                title={tt("knowledge.pageTitle")}
+                desc={tt("knowledge.pageSubtitle")}
+              />
               <KBSettingsCard />
               <DiarySettingsCard />
               <CardsSettingsCard />

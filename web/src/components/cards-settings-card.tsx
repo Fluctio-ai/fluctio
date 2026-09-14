@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Layers } from "lucide-react";
 import {
@@ -16,6 +15,7 @@ import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
+import { SettingsCard, CardHead, Field, GroupLabel } from "@/components/settings-ui";
 
 // CardsSettingsCard — Q&A flashcard config. Lives in the Settings dialog's
 // Knowledge tab next to DiarySettingsCard. Generation: nightly LLM pass
@@ -70,76 +70,63 @@ export function CardsSettingsCard() {
   }, [agentId, enabled, cronTime, dailyLimit, reviewLimit, pushEnabled, pushTime, pushChannel]);
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-      <div>
-        <div className="mb-1 flex items-center gap-2">
-          <Layers className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("cards.settings.title")}</h3>
-        </div>
-        <p className="mb-3 text-sm text-muted-foreground">{t("cards.settings.desc")}</p>
-        <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!configLoaded} />
-      </div>
+    <SettingsCard className="space-y-4">
+      <CardHead
+        icon={Layers}
+        title={t("cards.settings.title")}
+        desc={t("cards.settings.desc")}
+        control={
+          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!configLoaded} />
+        }
+      />
 
       {enabled && (
-        <div className="space-y-3 pt-1">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("cards.settings.genTime")}</Label>
+        <div className="space-y-4 border-t border-border pt-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label={t("cards.settings.genTime")} hint={t("cards.settings.genTimeDesc")}>
               <Input
                 type="time"
                 value={cronTime}
                 onChange={(e) => setCronTime(e.target.value)}
-                className="h-8 text-xs"
               />
-              <p className="text-[11px] text-muted-foreground">{t("cards.settings.genTimeDesc")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("cards.settings.dailyLimit")}</Label>
+            </Field>
+            <Field label={t("cards.settings.dailyLimit")} hint={t("cards.settings.dailyLimitDesc")}>
               <Input
                 type="number"
                 min={1}
                 max={50}
                 value={dailyLimit}
                 onChange={(e) => setDailyLimit(e.target.value)}
-                className="h-8 text-xs"
               />
-              <p className="text-[11px] text-muted-foreground">{t("cards.settings.dailyLimitDesc")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("cards.settings.reviewLimit")}</Label>
+            </Field>
+            <Field label={t("cards.settings.reviewLimit")} hint={t("cards.settings.reviewLimitDesc")}>
               <Input
                 type="number"
                 min={1}
                 max={200}
                 value={reviewLimit}
                 onChange={(e) => setReviewLimit(e.target.value)}
-                className="h-8 text-xs"
               />
-              <p className="text-[11px] text-muted-foreground">{t("cards.settings.reviewLimitDesc")}</p>
-            </div>
+            </Field>
           </div>
 
           <div className="rounded-md border border-border/60 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <Label className="text-xs">{t("cards.settings.push")}</Label>
+              <GroupLabel>{t("cards.settings.push")}</GroupLabel>
               <Switch checked={pushEnabled} onCheckedChange={setPushEnabled} />
             </div>
             {pushEnabled && (
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("cards.settings.pushTime")}</Label>
+              <div className="grid grid-cols-2 gap-4">
+                <Field label={t("cards.settings.pushTime")} hint={t("cards.settings.pushTimeDesc")}>
                   <Input
                     type="time"
                     value={pushTime}
                     onChange={(e) => setPushTime(e.target.value)}
-                    className="h-8 text-xs"
                   />
-                  <p className="text-[11px] text-muted-foreground">{t("cards.settings.pushTimeDesc")}</p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">{t("cards.settings.pushChannel")}</Label>
+                </Field>
+                <Field label={t("cards.settings.pushChannel")}>
                   <Select value={pushChannel} onValueChange={(v) => v && setPushChannel(v)}>
-                    <SelectTrigger className="h-8 text-xs">
+                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -152,16 +139,16 @@ export function CardsSettingsCard() {
                       <SelectItem value="line">LINE</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
+                </Field>
               </div>
             )}
           </div>
         </div>
       )}
 
-      <div className="flex justify-end pt-1">
-        <SaveButton size="sm" onSave={handleSave} disabled={!configLoaded} />
+      <div className="flex justify-end border-t border-border pt-4">
+        <SaveButton onSave={handleSave} disabled={!configLoaded} />
       </div>
-    </div>
+    </SettingsCard>
   );
 }

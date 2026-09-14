@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -16,6 +15,7 @@ import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
+import { SettingsCard, CardHead, Field, GroupLabel } from "@/components/settings-ui";
 import { BookOpen } from "lucide-react";
 
 // KBSettingsCard — the KB auto-query configuration card. Lives in the
@@ -45,7 +45,6 @@ export function KBSettingsCard() {
   const [ftMaxResults, setFtMaxResults] = useState(3);
   const [ftThreshold, setFtThreshold] = useState(0.6);
   const [configLoaded, setConfigLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!agentId) return;
@@ -131,28 +130,27 @@ export function KBSettingsCard() {
   ]);
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <BookOpen className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("knowledge.autoQuery")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-3">{t("knowledge.autoQueryDesc")}</p>
-        <Switch
-          checked={kbEnabled}
-          onCheckedChange={setKbEnabled}
-          disabled={!configLoaded}
-        />
-      </div>
+    <SettingsCard className="space-y-4">
+      <CardHead
+        icon={BookOpen}
+        title={t("knowledge.autoQuery")}
+        desc={t("knowledge.autoQueryDesc")}
+        control={
+          <Switch
+            checked={kbEnabled}
+            onCheckedChange={setKbEnabled}
+            disabled={!configLoaded}
+          />
+        }
+      />
 
       {kbEnabled && (
-        <div className="space-y-3 pt-1">
-          <Label className="text-xs font-medium">{t("knowledge.wikiRecall")}</Label>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("knowledge.triggerMode")}</Label>
+        <div className="space-y-4 border-t border-border pt-4">
+          <GroupLabel>{t("knowledge.wikiRecall")}</GroupLabel>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label={t("knowledge.triggerMode")}>
               <Select value={autoMode} onValueChange={(v) => v && setAutoMode(v)}>
-                <SelectTrigger className="h-8 text-xs">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -161,38 +159,33 @@ export function KBSettingsCard() {
                   <SelectItem value="disabled">{t("knowledge.modeDisabled")}</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("knowledge.maxResults")}</Label>
+            </Field>
+            <Field label={t("knowledge.maxResults")}>
               <Input
                 type="number"
                 min={1}
                 max={20}
                 value={maxResults}
                 onChange={(e) => setMaxResults(Number(e.target.value))}
-                className="h-8 text-xs"
               />
-            </div>
+            </Field>
           </div>
 
           {/* Keywords input lives right under the trigger mode that
               enables it — it used to render at the card tail, far from
               the Wiki 触发模式 select that shows it. */}
           {autoMode === "keyword" && (
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("knowledge.keywords")}</Label>
+            <Field label={t("knowledge.keywords")}>
               <Input
                 value={keywords}
                 onChange={(e) => setKeywords(e.target.value)}
                 placeholder={t("knowledge.keywordsPlaceholder")}
-                className="h-8 text-xs"
               />
-            </div>
+            </Field>
           )}
 
-          <div className="space-y-1.5">
+          <Field label={t("knowledge.wikiRatio")} hint={t("knowledge.wikiRatioDesc")}>
             <div className="flex items-center justify-between">
-              <Label className="text-xs">{t("knowledge.wikiRatio")}</Label>
               <span className="text-xs text-muted-foreground tabular-nums">
                 {t("knowledge.sourceLabel")} {Math.round(wikiRatio * 100)}% ·{" "}
                 {t("knowledge.conceptLabel")} {100 - Math.round(wikiRatio * 100)}%
@@ -207,14 +200,10 @@ export function KBSettingsCard() {
               onChange={(e) => setWikiRatio(Number(e.target.value) / 100)}
               className="w-full accent-primary"
             />
-            <p className="text-[11px] text-muted-foreground">
-              {t("knowledge.wikiRatioDesc")}
-            </p>
-          </div>
+          </Field>
 
-          <div className="space-y-1.5">
+          <Field label={t("knowledge.threshold")} hint={t("knowledge.thresholdDesc")}>
             <div className="flex items-center justify-between">
-              <Label className="text-xs">{t("knowledge.threshold")}</Label>
               <span className="text-xs text-muted-foreground tabular-nums">
                 {threshold.toFixed(2)}
               </span>
@@ -228,27 +217,23 @@ export function KBSettingsCard() {
               onChange={(e) => setThreshold(Number(e.target.value))}
               className="w-full accent-primary"
             />
-            <p className="text-[11px] text-muted-foreground">
-              {t("knowledge.thresholdDesc")}
-            </p>
-          </div>
+          </Field>
 
-          <div className="space-y-3 pt-2 border-t border-border mt-1">
+          <div className="space-y-4 border-t border-border pt-4">
             <div>
-              <Label className="text-xs font-medium">{t("knowledge.flashRecall")}</Label>
-              <p className="text-[11px] text-muted-foreground mt-0.5">{t("knowledge.flashRecallDesc")}</p>
+              <GroupLabel>{t("knowledge.flashRecall")}</GroupLabel>
+              <p className="mt-1 text-xs text-muted-foreground">{t("knowledge.flashRecallDesc")}</p>
             </div>
             <div className="flex items-center justify-between">
-              <Label className="text-xs">{t("knowledge.enableRecall")}</Label>
+              <Label>{t("knowledge.enableRecall")}</Label>
               <Switch checked={ftEnabled} onCheckedChange={setFtEnabled} />
             </div>
             {ftEnabled && (
               <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">{t("knowledge.triggerMode")}</Label>
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label={t("knowledge.triggerMode")}>
                     <Select value={ftAutoMode} onValueChange={(v) => v && setFtAutoMode(v)}>
-                      <SelectTrigger className="h-8 text-xs">
+                      <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -257,22 +242,19 @@ export function KBSettingsCard() {
                         <SelectItem value="disabled">{t("knowledge.modeDisabled")}</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">{t("knowledge.maxResults")}</Label>
+                  </Field>
+                  <Field label={t("knowledge.maxResults")}>
                     <Input
                       type="number"
                       min={1}
                       max={20}
                       value={ftMaxResults}
                       onChange={(e) => setFtMaxResults(Number(e.target.value))}
-                      className="h-8 text-xs"
                     />
-                  </div>
+                  </Field>
                 </div>
-                <div className="space-y-1.5">
+                <Field label={t("knowledge.threshold")} hint={t("knowledge.ftThresholdDesc")}>
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs">{t("knowledge.threshold")}</Label>
                     <span className="text-xs text-muted-foreground tabular-nums">
                       {ftThreshold.toFixed(2)}
                     </span>
@@ -286,57 +268,47 @@ export function KBSettingsCard() {
                     onChange={(e) => setFtThreshold(Number(e.target.value))}
                     className="w-full accent-primary"
                   />
-                  <p className="text-[11px] text-muted-foreground">
-                    {t("knowledge.ftThresholdDesc")}
-                  </p>
-                </div>
+                </Field>
                 {ftAutoMode === "keyword" && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">{t("knowledge.keywords")}</Label>
+                  <Field label={t("knowledge.keywords")}>
                     <Input
                       value={ftKeywords}
                       onChange={(e) => setFtKeywords(e.target.value)}
                       placeholder={t("knowledge.keywordsPlaceholder")}
-                      className="h-8 text-xs"
                     />
-                  </div>
+                  </Field>
                 )}
               </>
             )}
           </div>
 
-          <div className="space-y-2 pt-2 border-t border-border mt-1">
-            <Label className="text-xs font-medium">{t("knowledge.dedupThresholds")}</Label>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">{t("knowledge.dedupArticleHigh")}</Label>
-                <Input type="number" min={0} max={1} step={0.01} value={articleDupHigh} onChange={(e) => setArticleDupHigh(Number(e.target.value))} className="h-8 text-xs" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">{t("knowledge.dedupArticleMid")}</Label>
-                <Input type="number" min={0} max={1} step={0.01} value={articleDupMid} onChange={(e) => setArticleDupMid(Number(e.target.value))} className="h-8 text-xs" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">{t("knowledge.dedupFlash")}</Label>
-                <Input type="number" min={0} max={1} step={0.01} value={flashDupThreshold} onChange={(e) => setFlashDupThreshold(Number(e.target.value))} className="h-8 text-xs" />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[11px] text-muted-foreground">{t("knowledge.dedupTodo")}</Label>
-                <Input type="number" min={0} max={1} step={0.01} value={todoDupThreshold} onChange={(e) => setTodoDupThreshold(Number(e.target.value))} className="h-8 text-xs" />
-              </div>
-            </div>
-          </div>
-
           {/* Search behavior + todo reminders each get their own labeled
               group — they used to float unlabeled after the dedup block
               and read as dedup sub-fields. */}
-          <div className="space-y-2 pt-2 border-t border-border mt-1">
-            <Label className="text-xs font-medium">{t("knowledge.searchBehavior")}</Label>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs">{t("knowledge.searchMode")}</Label>
+          <div className="space-y-4 border-t border-border pt-4">
+            <GroupLabel>{t("knowledge.dedupThresholds")}</GroupLabel>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label={<span className="text-xs">{t("knowledge.dedupArticleHigh")}</span>}>
+                <Input type="number" min={0} max={1} step={0.01} value={articleDupHigh} onChange={(e) => setArticleDupHigh(Number(e.target.value))} />
+              </Field>
+              <Field label={<span className="text-xs">{t("knowledge.dedupArticleMid")}</span>}>
+                <Input type="number" min={0} max={1} step={0.01} value={articleDupMid} onChange={(e) => setArticleDupMid(Number(e.target.value))} />
+              </Field>
+              <Field label={<span className="text-xs">{t("knowledge.dedupFlash")}</span>}>
+                <Input type="number" min={0} max={1} step={0.01} value={flashDupThreshold} onChange={(e) => setFlashDupThreshold(Number(e.target.value))} />
+              </Field>
+              <Field label={<span className="text-xs">{t("knowledge.dedupTodo")}</span>}>
+                <Input type="number" min={0} max={1} step={0.01} value={todoDupThreshold} onChange={(e) => setTodoDupThreshold(Number(e.target.value))} />
+              </Field>
+            </div>
+          </div>
+
+          <div className="space-y-4 border-t border-border pt-4">
+            <GroupLabel>{t("knowledge.searchBehavior")}</GroupLabel>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label={t("knowledge.searchMode")}>
                 <Select value={searchMode} onValueChange={(v) => v && setSearchMode(v)}>
-                  <SelectTrigger className="h-8 text-xs">
+                  <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -344,11 +316,10 @@ export function KBSettingsCard() {
                     <SelectItem value="strict">{t("knowledge.searchStrict")}</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">{t("knowledge.noResultAction")}</Label>
+              </Field>
+              <Field label={t("knowledge.noResultAction")}>
                 <Select value={emptyAction} onValueChange={(v) => v && setEmptyAction(v)}>
-                  <SelectTrigger className="h-8 text-xs">
+                  <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -356,16 +327,15 @@ export function KBSettingsCard() {
                     <SelectItem value="stop">{t("knowledge.actionStop")}</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+              </Field>
             </div>
           </div>
 
-          <div className="space-y-2 pt-2 border-t border-border mt-1">
-            <Label className="text-xs font-medium">{t("knowledge.todoReminders")}</Label>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("knowledge.reminderChannel")}</Label>
+          <div className="space-y-4 border-t border-border pt-4">
+            <GroupLabel>{t("knowledge.todoReminders")}</GroupLabel>
+            <Field label={t("knowledge.reminderChannel")} hint={t("knowledge.reminderChannelDesc")}>
               <Select value={reminderChannel} onValueChange={(v) => v && setReminderChannel(v)}>
-                <SelectTrigger className="h-8 text-xs">
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -378,17 +348,14 @@ export function KBSettingsCard() {
                   <SelectItem value="line">LINE</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-[11px] text-muted-foreground">
-                {t("knowledge.reminderChannelDesc")}
-              </p>
-            </div>
+            </Field>
           </div>
         </div>
       )}
 
-      <div className="flex justify-end pt-1">
-        <SaveButton size="sm" onSave={handleSave} disabled={!configLoaded} />
+      <div className="flex justify-end border-t border-border pt-4">
+        <SaveButton onSave={handleSave} disabled={!configLoaded} />
       </div>
-    </div>
+    </SettingsCard>
   );
 }

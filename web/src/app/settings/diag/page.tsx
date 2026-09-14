@@ -12,6 +12,7 @@ import {
   type DiagReportEntry,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
+import { PageHeader, SettingsCard, CardHead, Field, SettingsError } from "@/components/settings-ui";
 
 // DiagReportPage is the manual error-report generator: it pulls recent failed
 // LLM calls from llm_call_diag, has the default agent's LLM compose a
@@ -67,62 +68,55 @@ export default function DiagReportPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-xl font-semibold tracking-tight">{t("diag.title")}</h3>
-        <p className="text-sm text-muted-foreground mt-1">{t("diag.desc")}</p>
-      </div>
+      <PageHeader title={t("diag.title")} desc={t("diag.desc")} />
 
-      <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">{t("diag.days")}</label>
+      <SettingsCard className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-[10rem_1fr_auto] sm:items-end">
+          <Field label={t("diag.days")}>
             <Input
               type="number"
               min={1}
               max={30}
               value={days}
               onChange={(e) => setDays(Math.max(1, Number(e.target.value) || 3))}
-              className="w-24"
               disabled={busy}
             />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">{t("diag.agentFilter")}</label>
+          </Field>
+          <Field label={t("diag.agentFilter")}>
             <Input
               type="text"
               placeholder={t("diag.agentFilterPlaceholder")}
               value={agentId}
               onChange={(e) => setAgentId(e.target.value)}
-              className="w-64"
               disabled={busy}
             />
-          </div>
+          </Field>
           <Button onClick={generate} disabled={busy}>
             {busy ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <FileText className="h-4 w-4 mr-2" />
+              <FileText className="h-4 w-4" />
             )}
             {busy ? t("diag.generating") : t("diag.generate")}
           </Button>
         </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <SettingsError>{error}</SettingsError>}
         {done && !error && (
           <p className="text-sm text-muted-foreground">{t("diag.generated")}</p>
         )}
         <p className="text-xs text-muted-foreground">{t("diag.note")}</p>
-      </div>
+      </SettingsCard>
 
-      <div className="space-y-2">
-        <h4 className="text-sm font-medium">{t("diag.history")}</h4>
+      <SettingsCard>
+        <CardHead icon={FileText} title={t("diag.history")} />
         {reports.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("diag.empty")}</p>
+          <p className="mt-4 text-sm text-muted-foreground">{t("diag.empty")}</p>
         ) : (
-          <ul className="divide-y rounded-lg border">
+          <ul className="mt-4 divide-y divide-border">
             {reports.map((r) => (
               <li
                 key={r.name}
-                className="flex items-center justify-between gap-3 px-4 py-2.5"
+                className="flex items-center justify-between gap-3 py-2.5"
               >
                 <div className="min-w-0">
                   <p className="text-sm font-mono truncate">{r.name}</p>
@@ -134,7 +128,6 @@ export default function DiagReportPage() {
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
-                    size="sm"
                     onClick={() =>
                       window.open(
                         diagReportDownloadUrl(r.name),
@@ -143,20 +136,19 @@ export default function DiagReportPage() {
                       )
                     }
                   >
-                    <Download className="h-4 w-4 mr-1.5" />
+                    <Download className="h-4 w-4" />
                     {t("diag.download")}
                   </Button>
                   <Button
                     variant="ghost"
-                    size="sm"
                     onClick={() => remove(r.name)}
                     disabled={deleting === r.name}
                     className="text-muted-foreground hover:text-destructive"
                   >
                     {deleting === r.name ? (
-                      <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
-                      <Trash2 className="h-4 w-4 mr-1.5" />
+                      <Trash2 className="h-4 w-4" />
                     )}
                     {t("diag.delete")}
                   </Button>
@@ -165,7 +157,7 @@ export default function DiagReportPage() {
             ))}
           </ul>
         )}
-      </div>
+      </SettingsCard>
     </div>
   );
 }

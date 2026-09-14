@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Calendar } from "lucide-react";
 import {
@@ -16,6 +15,7 @@ import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
+import { SettingsCard, CardHead, Field } from "@/components/settings-ui";
 
 // DiarySettingsCard — daily-diary generation config. Lives in the
 // Settings dialog's Knowledge tab next to KBSettingsCard. When enabled,
@@ -58,50 +58,43 @@ export function DiarySettingsCard() {
   }, [agentId, enabled, cronTime, thinkingMode]);
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-card p-5">
-      <div>
-        <div className="flex items-center gap-2 mb-1">
-          <Calendar className="h-4 w-4 text-primary" />
-          <h3 className="font-medium">{t("diary.title")}</h3>
-        </div>
-        <p className="text-sm text-muted-foreground mb-3">{t("diary.desc")}</p>
-        <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!configLoaded} />
-      </div>
+    <SettingsCard className="space-y-4">
+      <CardHead
+        icon={Calendar}
+        title={t("diary.title")}
+        desc={t("diary.desc")}
+        control={
+          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!configLoaded} />
+        }
+      />
 
       {enabled && (
-        <div className="space-y-3 pt-1">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("diary.cronTime")}</Label>
-              <Input
-                type="time"
-                value={cronTime}
-                onChange={(e) => setCronTime(e.target.value)}
-                className="h-8 text-xs"
-              />
-              <p className="text-[11px] text-muted-foreground">{t("diary.cronTimeDesc")}</p>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">{t("diary.thinkingMode")}</Label>
-              <Select value={thinkingMode} onValueChange={(v) => v && setThinkingMode(v)}>
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="off">{t("diary.modeOff")}</SelectItem>
-                  <SelectItem value="blindspots">{t("diary.modeBlindspots")}</SelectItem>
-                  <SelectItem value="deep">{t("diary.modeDeep")}</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-[11px] text-muted-foreground">{t("diary.thinkingModeDesc")}</p>
-            </div>
-          </div>
+        <div className="grid grid-cols-2 gap-4 border-t border-border pt-4">
+          <Field label={t("diary.cronTime")} hint={t("diary.cronTimeDesc")}>
+            <Input
+              type="time"
+              value={cronTime}
+              onChange={(e) => setCronTime(e.target.value)}
+            />
+          </Field>
+          <Field label={t("diary.thinkingMode")} hint={t("diary.thinkingModeDesc")}>
+            <Select value={thinkingMode} onValueChange={(v) => v && setThinkingMode(v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="off">{t("diary.modeOff")}</SelectItem>
+                <SelectItem value="blindspots">{t("diary.modeBlindspots")}</SelectItem>
+                <SelectItem value="deep">{t("diary.modeDeep")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
         </div>
       )}
 
-      <div className="flex justify-end pt-1">
-        <SaveButton size="sm" onSave={handleSave} disabled={!configLoaded} />
+      <div className="flex justify-end border-t border-border pt-4">
+        <SaveButton onSave={handleSave} disabled={!configLoaded} />
       </div>
-    </div>
+    </SettingsCard>
   );
 }

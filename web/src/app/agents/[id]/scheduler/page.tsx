@@ -33,6 +33,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
+import { PageHeader, SettingsError } from "@/components/settings-ui";
 
 // Scheduler page: lists every cron job the agent has on file. The
 // `create_cron_job` tool the agent itself uses writes here, so anything
@@ -174,20 +175,12 @@ export default function AgentSchedulerPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("scheduler.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t("scheduler.subtitle", { name: agentName || t("scheduler.thisAgent") })}
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title={t("scheduler.title")}
+        desc={t("scheduler.subtitle", { name: agentName || t("scheduler.thisAgent") })}
+      />
 
-      {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
-          <p className="text-sm text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <SettingsError>{error}</SettingsError>}
 
       {loading ? (
         <div className="space-y-2">

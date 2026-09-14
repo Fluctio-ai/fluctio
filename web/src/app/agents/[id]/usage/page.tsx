@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
+import { PageHeader, SettingsError } from "@/components/settings-ui";
 
 const RANGES: { value: TokenUsageRange; label: string }[] = [
   { value: "24h", label: "24h" },
@@ -119,36 +120,28 @@ export default function AgentUsagePage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold tracking-tight">{t("usage.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t("usage.subtitle")}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Tabs value={range} onValueChange={(v) => setRange(v as TokenUsageRange)}>
-            <TabsList>
-              {RANGES.map((r) => (
-                <TabsTrigger key={r.value} value={r.value}>
-                  {r.label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-          <Button variant="outline" size="sm" onClick={() => load(range)} disabled={loading}>
-            <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={t("usage.title")}
+        desc={t("usage.subtitle")}
+        actions={
+          <div className="flex items-center gap-2">
+            <Tabs value={range} onValueChange={(v) => setRange(v as TokenUsageRange)}>
+              <TabsList>
+                {RANGES.map((r) => (
+                  <TabsTrigger key={r.value} value={r.value}>
+                    {r.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <Button variant="outline" size="icon" onClick={() => load(range)} disabled={loading}>
+              <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+        }
+      />
 
-      {error && (
-        <Card className="border-destructive/40 bg-destructive/5">
-          <CardContent>
-            <p className="text-sm text-destructive">{error}</p>
-          </CardContent>
-        </Card>
-      )}
+      {error && <SettingsError>{error}</SettingsError>}
 
       <Card>
         <CardContent>

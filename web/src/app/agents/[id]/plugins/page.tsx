@@ -14,6 +14,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
+import { PageHeader } from "@/components/settings-ui";
 
 // Per-agent plugin enable tab. Mirrors the Skills page layout (cards
 // grid with header). Off by default — plugins listed here come from
@@ -82,12 +83,10 @@ export default function AgentPluginsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">{t("plugins.title")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          {t("plugins.subtitle", { name: agentName, code: "chat.send" })}
-        </p>
-      </div>
+      <PageHeader
+        title={t("plugins.title")}
+        desc={t("plugins.subtitle", { name: agentName, code: "chat.send" })}
+      />
 
       {hookPlugins.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-card/30 p-12">

@@ -3,6 +3,7 @@
 import { Sun, Moon, Monitor } from "lucide-react";
 import { useTheme, type Theme } from "@/components/theme-provider";
 import { useLocale, useT, LOCALES } from "@/lib/i18n";
+import { PageHeader, SettingsCard, CardHead } from "@/components/settings-ui";
 
 const choices: Array<{ value: Theme; labelKey: string; icon: React.ComponentType<{ className?: string }> }> = [
   { value: "light", labelKey: "general.theme.light", icon: Sun },
@@ -17,14 +18,10 @@ export default function GeneralSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-xl font-semibold tracking-tight">{t("general.title")}</h3>
-        <p className="text-sm text-muted-foreground mt-1">{t("general.description")}</p>
-      </div>
+      <PageHeader title={t("general.title")} desc={t("general.description")} />
 
-      <div className="rounded-lg border border-border bg-card p-5">
-        <h4 className="font-medium mb-1">{t("general.theme")}</h4>
-        <p className="text-sm text-muted-foreground mb-4">{t("general.themeDesc")}</p>
+      <SettingsCard className="space-y-4">
+        <CardHead title={t("general.theme")} desc={t("general.themeDesc")} />
         <div className="grid grid-cols-3 gap-3">
           {choices.map((c) => {
             const active = theme === c.value;
@@ -47,11 +44,10 @@ export default function GeneralSettingsPage() {
             );
           })}
         </div>
-      </div>
+      </SettingsCard>
 
-      <div className="rounded-lg border border-border bg-card p-5">
-        <h4 className="font-medium mb-1">{t("general.language")}</h4>
-        <p className="text-sm text-muted-foreground mb-4">{t("general.languageDesc")}</p>
+      <SettingsCard className="space-y-4">
+        <CardHead title={t("general.language")} desc={t("general.languageDesc")} />
         <div className="grid grid-cols-2 gap-3">
           {LOCALES.map((l) => {
             const active = locale === l.value;
@@ -72,7 +68,7 @@ export default function GeneralSettingsPage() {
             );
           })}
         </div>
-      </div>
+      </SettingsCard>
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { getStatus, type StatusResponse } from "@/lib/api";
 import { useT } from "@/lib/i18n";
+import { PageHeader, SettingsCard } from "@/components/settings-ui";
 
 const UPGRADE_CMD = "fluctio upgrade";
 
@@ -36,14 +37,9 @@ export default function AboutSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-xl font-semibold tracking-tight">{t("about.title")}</h3>
-        <p className="text-sm text-muted-foreground mt-1">
-          {t("about.desc")}
-        </p>
-      </div>
+      <PageHeader title={t("about.title")} desc={t("about.desc")} />
 
-      <div className="rounded-lg border border-border bg-card p-5 space-y-3">
+      <SettingsCard className="space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Fluctio</span>
           <code className="text-sm font-mono bg-muted px-2 py-0.5 rounded">
@@ -60,7 +56,6 @@ export default function AboutSettingsPage() {
           </div>
           <Button
             variant="outline"
-            size="sm"
             onClick={() => window.open(RELEASES_URL, "_blank", "noopener,noreferrer")}
           >
             <ExternalLink className="h-4 w-4 mr-2" />
@@ -76,19 +71,19 @@ export default function AboutSettingsPage() {
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7"
+              className="size-7"
               onClick={copyCmd}
               aria-label={t("about.copyCommand")}
             >
               {copied ? (
-                <Check className="h-3.5 w-3.5" />
+                <Check className="size-3.5" />
               ) : (
-                <Copy className="h-3.5 w-3.5" />
+                <Copy className="size-3.5" />
               )}
             </Button>
           </div>
         </div>
-      </div>
+      </SettingsCard>
     </div>
   );
 }

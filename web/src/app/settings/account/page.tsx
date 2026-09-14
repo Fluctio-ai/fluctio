@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Save, Check, Upload, X } from "lucide-react";
+import { Upload, X } from "lucide-react";
 import { getMe, updateMe, changeMyPassword } from "@/lib/api";
 import { logout as doLogout } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
+import { SaveButton } from "@/components/save-button";
+import { PageHeader, SettingsCard, CardHead, Field, SettingsError } from "@/components/settings-ui";
 
 const AVATAR_MAX_BYTES = 256 * 1024;
 
@@ -19,17 +20,11 @@ export default function AccountSettingsPage() {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
-
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileSaved, setProfileSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
 
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [pwSaving, setPwSaving] = useState(false);
-  const [pwSaved, setPwSaved] = useState(false);
-  const [pwError, setPwError] = useState("");
 
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -78,41 +73,25 @@ export default function AccountSettingsPage() {
     e.target.value = "";
   }
 
-  async function saveProfile() {
-    setProfileSaving(true);
-    setProfileError("");
+  // SaveButton owns the saving/saved/error visuals; throw to surface the
+  // error state (avatar pre-check errors stay inline via profileError).
+  const saveProfile = async () => {
     const res = await updateMe({ displayName, avatarUrl });
-    setProfileSaving(false);
-    if (res?.error) {
-      setProfileError(res.error);
-      return;
-    }
-    setProfileSaved(true);
-    setTimeout(() => setProfileSaved(false), 2000);
+    if (res?.error) throw new Error(res.error);
     // Tell the sidebar (and any other listener) to refetch /api/me so the
     // footer avatar/name picks up the new avatarUrl without a full reload.
     window.dispatchEvent(new Event("me-changed"));
-  }
+  };
 
-  async function savePassword(e: React.FormEvent) {
-    e.preventDefault();
-    setPwError("");
+  async function savePassword() {
     if (!oldPassword || !newPassword) {
-      setPwError(t("account.bothFieldsRequired"));
-      return;
+      throw new Error(t("account.bothFieldsRequired"));
     }
     if (newPassword !== confirmPassword) {
-      setPwError(t("account.passwordMismatch"));
-      return;
+      throw new Error(t("account.passwordMismatch"));
     }
-    setPwSaving(true);
     const res = await changeMyPassword({ oldPassword, newPassword });
-    setPwSaving(false);
-    if (res?.error) {
-      setPwError(res.error);
-      return;
-    }
-    setPwSaved(true);
+    if (res?.error) throw new Error(res.error);
     // Force re-login on the new password — also kicks any stale sessions
     // off this device. Brief delay so the user sees the success state.
     setTimeout(() => {
@@ -135,15 +114,12 @@ export default function AccountSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-xl font-semibold tracking-tight">{t("account.title")}</h3>
-        <p className="text-sm text-muted-foreground mt-1">
-          {t("account.desc")}
-        </p>
-      </div>
+      <PageHeader title={t("account.title")} desc={t("account.desc")} />
 
       {/* Profile */}
-      <div className="rounded-lg border border-border bg-card p-5 space-y-4">
+      <SettingsCard className="space-y-4">
+        <CardHead title={t("account.profile")} />
+
         <div className="flex items-center gap-4">
           <div className="relative size-16 group">
             <div className="size-16 rounded-lg bg-muted overflow-hidden flex items-center justify-center text-lg font-bold text-muted-foreground">
@@ -166,8 +142,8 @@ export default function AccountSettingsPage() {
               </button>
             )}
           </div>
-          <Button variant="outline" size="sm" onClick={pickAvatar}>
-            <Upload className="size-4 mr-2" />
+          <Button variant="outline" onClick={pickAvatar}>
+            <Upload className="size-4" />
             {t("account.uploadAvatar")}
           </Button>
           <input
@@ -180,65 +156,35 @@ export default function AccountSettingsPage() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <Label>{t("account.username")}</Label>
+          <Field label={t("account.username")}>
             <Input value={username} disabled />
-          </div>
-          <div className="space-y-1.5">
-            <Label>{t("account.email")}</Label>
+          </Field>
+          <Field label={t("account.email")}>
             <Input value={email} disabled />
-          </div>
-          <div className="space-y-1.5 sm:col-span-2">
-            <Label htmlFor="display-name">{t("account.displayName")}</Label>
+          </Field>
+          <Field label={t("account.displayName")} htmlFor="display-name" className="sm:col-span-2">
             <Input
               id="display-name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder={t("account.displayNamePlaceholder")}
             />
-          </div>
+          </Field>
         </div>
 
-        {profileError && (
-          <p className="text-sm text-destructive">{profileError}</p>
-        )}
+        {profileError && <SettingsError>{profileError}</SettingsError>}
+
         <div className="flex justify-end">
-          <Button
-            onClick={saveProfile}
-            disabled={profileSaving}
-            variant={profileSaved ? "outline" : "default"}
-            className={
-              profileSaved
-                ? "border-success/30 text-success"
-                : ""
-            }
-          >
-            {profileSaved ? (
-              <>
-                <Check className="h-4 w-4 mr-2" />
-                {t("common.saved")}
-              </>
-            ) : (
-              <>
-                <Save className="h-4 w-4 mr-2" />
-                {profileSaving ? t("account.saving") : t("account.saveProfile")}
-              </>
-            )}
-          </Button>
+          <SaveButton onSave={saveProfile} label={t("account.saveProfile")} />
         </div>
-      </div>
+      </SettingsCard>
 
       {/* Password */}
-      <form onSubmit={savePassword} className="rounded-lg border border-border bg-card p-5 space-y-4">
-        <div>
-          <h4 className="font-medium">{t("account.changePassword")}</h4>
-          <p className="text-sm text-muted-foreground">
-            {t("account.changePasswordDesc")}
-          </p>
-        </div>
+      <SettingsCard className="space-y-4">
+        <CardHead title={t("account.changePassword")} desc={t("account.changePasswordDesc")} />
+
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="old-pw">{t("account.currentPassword")}</Label>
+          <Field label={t("account.currentPassword")} htmlFor="old-pw">
             <Input
               id="old-pw"
               type="password"
@@ -246,9 +192,8 @@ export default function AccountSettingsPage() {
               onChange={(e) => setOldPassword(e.target.value)}
               autoComplete="current-password"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="new-pw">{t("account.newPassword")}</Label>
+          </Field>
+          <Field label={t("account.newPassword")} htmlFor="new-pw">
             <Input
               id="new-pw"
               type="password"
@@ -256,9 +201,8 @@ export default function AccountSettingsPage() {
               onChange={(e) => setNewPassword(e.target.value)}
               autoComplete="new-password"
             />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="confirm-pw">{t("account.confirmPassword")}</Label>
+          </Field>
+          <Field label={t("account.confirmPassword")} htmlFor="confirm-pw">
             <Input
               id="confirm-pw"
               type="password"
@@ -266,32 +210,13 @@ export default function AccountSettingsPage() {
               onChange={(e) => setConfirmPassword(e.target.value)}
               autoComplete="new-password"
             />
-          </div>
+          </Field>
         </div>
-        {pwError && <p className="text-sm text-destructive">{pwError}</p>}
-        <div className="flex justify-end">
-          <Button
-            type="submit"
-            disabled={pwSaving}
-            variant={pwSaved ? "outline" : "default"}
-            className={
-              pwSaved
-                ? "border-success/30 text-success"
-                : ""
-            }
-          >
-            {pwSaved ? (
-              <>
-                <Check className="h-4 w-4 mr-2" />
-                {t("account.passwordUpdated")}
-              </>
-            ) : (
-              pwSaving ? t("account.updating") : t("account.updatePassword")
-            )}
-          </Button>
-        </div>
-      </form>
 
+        <div className="flex justify-end">
+          <SaveButton onSave={savePassword} />
+        </div>
+      </SettingsCard>
     </div>
   );
 }

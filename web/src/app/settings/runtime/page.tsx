@@ -2,13 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import { SaveButton } from "@/components/save-button";
 import { TestButton } from "@/components/test-button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -17,18 +14,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Save, Check, Clock, Container, Database, Boxes } from "lucide-react";
+import { Clock, Container, Database } from "lucide-react";
 import { getConfig, updateConfig, getMe, getSystemVectorization, setSystemVectorization, testEmbedding, testReranker, type ConfigResponse, type MemoryEmbeddingConfig, type MemoryRerankerConfig } from "@/lib/api";
 import { useT } from "@/lib/i18n";
+import { PageHeader, SettingsCard, CardHead, Field, ToggleRow } from "@/components/settings-ui";
 
 export default function RuntimeSettingsPage() {
   const tt = useT();
   const router = useRouter();
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState("");
 
   const [sandboxEnabled, setSandboxEnabled] = useState(false);
   const [sandboxBackend, setSandboxBackend] = useState("docker");
@@ -131,66 +126,42 @@ export default function RuntimeSettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-xl font-semibold tracking-tight">{tt("runtime.title")}</h3>
-          <p className="text-sm text-muted-foreground mt-1">
-            {tt("runtime.configDesc")}
-          </p>
-        </div>
-        <SaveButton onSave={handleSave} />
-      </div>
-      {saveError && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {saveError}
-        </div>
-      )}
+      <PageHeader
+        title={tt("runtime.title")}
+        desc={tt("runtime.configDesc")}
+        actions={<SaveButton onSave={handleSave} />}
+      />
 
-      <div className="rounded-lg border border-border bg-card">
-        <div className="p-5">
-          <div className="flex items-start gap-3">
-            <Clock className="mt-0.5 h-4 w-4 text-info" />
-            <div className="grid flex-1 gap-4 sm:grid-cols-[1fr_260px] sm:items-start">
-              <div>
-                <h3 className="font-medium">{tt("runtime.defaultTimezone")}</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {tt("runtime.timezoneDesc", { tz: config.meta?.serverTimezone || "Local" })}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="default-timezone">{tt("runtime.ianaTimezone")}</Label>
-                <Input
-                  id="default-timezone"
-                  value={defaultTimezone}
-                  onChange={(e) => setDefaultTimezone(e.target.value)}
-                  placeholder="Asia/Shanghai"
-                  className="font-mono text-sm"
-                />
-              </div>
-            </div>
-          </div>
+      {/* Sandbox + timezone share one card: sections split by border-t. */}
+      <SettingsCard padded={false}>
+        <div className="p-5 space-y-4">
+          <CardHead
+            icon={Clock}
+            title={tt("runtime.defaultTimezone")}
+            desc={tt("runtime.timezoneDesc", { tz: config.meta?.serverTimezone || "Local" })}
+          />
+          <Field label={tt("runtime.ianaTimezone")} htmlFor="default-timezone">
+            <Input
+              id="default-timezone"
+              value={defaultTimezone}
+              onChange={(e) => setDefaultTimezone(e.target.value)}
+              placeholder="Asia/Shanghai"
+              className="max-w-sm font-mono"
+            />
+          </Field>
         </div>
-        <Separator />
-        <div className="p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <Container className="h-4 w-4 text-muted-foreground" />
-                <h3 className="font-medium">{tt("runtime.sandbox")}</h3>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {tt("runtime.sandboxDesc")}
-              </p>
-            </div>
-            <Switch checked={sandboxEnabled} onCheckedChange={setSandboxEnabled} />
-          </div>
-        </div>
-        {sandboxEnabled && (
-          <div className="px-5 pb-5 space-y-4">
-            <Separator />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>{tt("runtime.backend")}</Label>
+        <div className="border-t border-border p-5 space-y-4">
+          <CardHead
+            icon={Container}
+            title={tt("runtime.sandbox")}
+            desc={tt("runtime.sandboxDesc")}
+            control={
+              <Switch checked={sandboxEnabled} onCheckedChange={setSandboxEnabled} />
+            }
+          />
+          {sandboxEnabled && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <Field label={tt("runtime.backend")}>
                 <Select value={sandboxBackend} onValueChange={(v) => v && setSandboxBackend(v)}>
                   <SelectTrigger>
                     <SelectValue>
@@ -207,100 +178,98 @@ export default function RuntimeSettingsPage() {
                     <SelectItem value="boxlite">{tt("runtime.backendBoxlite")}</SelectItem>
                   </SelectContent>
                 </Select>
-              </div>
+              </Field>
               {sandboxBackend === "e2b" ? (
                 <>
-                  <div className="space-y-2">
-                    <Label>{tt("runtime.e2bApiKey")}</Label>
+                  <Field label={tt("runtime.e2bApiKey")}>
                     <Input
                       type="password"
                       value={sandboxE2BKey}
                       onChange={(e) => setSandboxE2BKey(e.target.value)}
                       placeholder="e2b_..."
-                      className="font-mono text-sm"
+                      className="font-mono"
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{tt("runtime.e2bTemplate")}</Label>
+                  </Field>
+                  <Field label={tt("runtime.e2bTemplate")}>
                     <Input
                       value={sandboxE2BTemplate}
                       onChange={(e) => setSandboxE2BTemplate(e.target.value)}
                       placeholder="base"
-                      className="font-mono text-sm"
+                      className="font-mono"
                     />
-                  </div>
+                  </Field>
                 </>
               ) : sandboxBackend === "boxlite" ? (
                 <>
-                  <div className="space-y-2">
-                    <Label>{tt("runtime.boxliteApiKey")}</Label>
+                  <Field label={tt("runtime.boxliteApiKey")}>
                     <Input
                       type="password"
                       value={sandboxBoxliteKey}
                       onChange={(e) => setSandboxBoxliteKey(e.target.value)}
                       placeholder="client_secret"
-                      className="font-mono text-sm"
+                      className="font-mono"
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{tt("runtime.snapshot")}</Label>
+                  </Field>
+                  <Field label={tt("runtime.snapshot")} hint={tt("runtime.snapshotHint")}>
                     <Input
                       value={sandboxBoxliteImage}
                       onChange={(e) => setSandboxBoxliteImage(e.target.value)}
                       placeholder="fluctio-sandbox"
-                      className="font-mono text-sm"
+                      className="font-mono"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {tt("runtime.snapshotHint")}
-                    </p>
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>{tt("runtime.apiUrl")}</Label>
+                  </Field>
+                  <Field label={tt("runtime.apiUrl")} className="sm:col-span-2">
                     <Input
                       value={sandboxBoxliteURL}
                       onChange={(e) => setSandboxBoxliteURL(e.target.value)}
                       placeholder="https://api.dev.boxlite.ai/api/v1"
-                      className="font-mono text-sm"
+                      className="font-mono"
                     />
-                  </div>
+                  </Field>
                 </>
               ) : (
-                <div className="space-y-2">
-                  <Label>{tt("runtime.dockerImage")}</Label>
+                <Field label={tt("runtime.dockerImage")}>
                   <Input
                     value={sandboxDockerImage}
                     onChange={(e) => setSandboxDockerImage(e.target.value)}
                     placeholder="ghcr.io/fluctio-ai/fluctio-sandbox:latest"
-                    className="font-mono text-sm"
+                    className="font-mono"
                   />
-                </div>
+                </Field>
               )}
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </SettingsCard>
 
       {/* System vectorization defaults — embedding & reranker inherited by agents */}
-      <div className="rounded-lg border border-border bg-card p-5 space-y-4">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Database className="h-4 w-4 text-primary" />
-            <h3 className="font-medium">{tt("runtime.vectorizationDefaults") || "向量化服务默认值"}</h3>
-          </div>
-          <p className="text-sm text-muted-foreground">{tt("runtime.vectorizationDefaultsDesc") || "系统级 embedding/reranker 默认配置。未自建向量配置的智能体会继承这些值（与 LLM 模型默认同理）。"}</p>
-        </div>
-        <div className="space-y-2 rounded-md border border-border/60 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">{tt("memory.embedding") || "Embedding"}</span>
-            <Switch checked={sysEmbedding.enabled} onCheckedChange={(v) => setSysEmbedding({ ...sysEmbedding, enabled: v })} />
-          </div>
+      <SettingsCard className="space-y-4">
+        <CardHead
+          icon={Database}
+          title={tt("runtime.vectorizationDefaults") || "向量化服务默认值"}
+          desc={tt("runtime.vectorizationDefaultsDesc") || "系统级 embedding/reranker 默认配置。未自建向量配置的智能体会继承这些值（与 LLM 模型默认同理）。"}
+        />
+        <div className="space-y-3 rounded-md border border-border/60 p-3">
+          <ToggleRow
+            title={tt("memory.embedding") || "Embedding"}
+            checked={sysEmbedding.enabled}
+            onCheckedChange={(v) => setSysEmbedding({ ...sysEmbedding, enabled: v })}
+          />
           {sysEmbedding.enabled && (
             <>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Input value={sysEmbedding.model || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, model: e.target.value })} placeholder="BAAI/bge-m3" className="font-mono text-sm" />
-                <Input value={sysEmbedding.apiBase || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiBase: e.target.value })} placeholder="https://api.siliconflow.cn/v1" className="font-mono text-sm" />
-                <Input type="password" value={sysEmbedding.apiKey || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiKey: e.target.value })} placeholder="sk-..." className="font-mono text-sm" />
-                <Input type="number" value={sysEmbedding.dim || 1024} onChange={(e) => setSysEmbedding({ ...sysEmbedding, dim: parseInt(e.target.value) || 1024 })} placeholder="1024" className="font-mono text-sm" />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label={tt("memory.model") || "Model"}>
+                  <Input value={sysEmbedding.model || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, model: e.target.value })} placeholder="BAAI/bge-m3" className="font-mono" />
+                </Field>
+                <Field label={tt("memory.apiBase") || "API base"}>
+                  <Input value={sysEmbedding.apiBase || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiBase: e.target.value })} placeholder="https://api.siliconflow.cn/v1" className="font-mono" />
+                </Field>
+                <Field label={tt("memory.apiKey") || "API key"}>
+                  <Input type="password" value={sysEmbedding.apiKey || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiKey: e.target.value })} placeholder="sk-..." className="font-mono" />
+                </Field>
+                <Field label={tt("memory.dimensions") || "Dimensions"}>
+                  <Input type="number" value={sysEmbedding.dim || 1024} onChange={(e) => setSysEmbedding({ ...sysEmbedding, dim: parseInt(e.target.value) || 1024 })} placeholder="1024" className="font-mono" />
+                </Field>
               </div>
               <div className="flex justify-end">
                 <TestButton
@@ -314,17 +283,24 @@ export default function RuntimeSettingsPage() {
             </>
           )}
         </div>
-        <div className="space-y-2 rounded-md border border-border/60 p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">{tt("memory.reranker") || "Reranker"}</span>
-            <Switch checked={sysReranker.enabled} onCheckedChange={(v) => setSysReranker({ ...sysReranker, enabled: v })} />
-          </div>
+        <div className="space-y-3 rounded-md border border-border/60 p-3">
+          <ToggleRow
+            title={tt("memory.reranker") || "Reranker"}
+            checked={sysReranker.enabled}
+            onCheckedChange={(v) => setSysReranker({ ...sysReranker, enabled: v })}
+          />
           {sysReranker.enabled && (
             <>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <Input value={sysReranker.model || ""} onChange={(e) => setSysReranker({ ...sysReranker, model: e.target.value })} placeholder="jina-reranker-v2-base-multilingual" className="font-mono text-sm" />
-                <Input value={sysReranker.apiBase || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiBase: e.target.value })} placeholder="https://api.jina.ai/v1" className="font-mono text-sm" />
-                <Input type="password" value={sysReranker.apiKey || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiKey: e.target.value })} placeholder="jina_..." className="font-mono text-sm sm:col-span-2" />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label={tt("memory.model") || "Model"}>
+                  <Input value={sysReranker.model || ""} onChange={(e) => setSysReranker({ ...sysReranker, model: e.target.value })} placeholder="jina-reranker-v2-base-multilingual" className="font-mono" />
+                </Field>
+                <Field label={tt("memory.apiBase") || "API base"}>
+                  <Input value={sysReranker.apiBase || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiBase: e.target.value })} placeholder="https://api.jina.ai/v1" className="font-mono" />
+                </Field>
+                <Field label={tt("memory.apiKey") || "API key"} className="sm:col-span-2">
+                  <Input type="password" value={sysReranker.apiKey || ""} onChange={(e) => setSysReranker({ ...sysReranker, apiKey: e.target.value })} placeholder="jina_..." className="font-mono" />
+                </Field>
               </div>
               <div className="flex justify-end">
                 <TestButton
@@ -338,7 +314,7 @@ export default function RuntimeSettingsPage() {
             </>
           )}
         </div>
-      </div>
+      </SettingsCard>
     </div>
   );
 }

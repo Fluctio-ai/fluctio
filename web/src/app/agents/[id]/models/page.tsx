@@ -51,6 +51,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
+import { PageHeader, SettingsCard, CardHead } from "@/components/settings-ui";
 
 // Per-agent Models page — same UI/UX as the admin /models page, but
 // scoped to a single agent. Reads/writes agent-scoped provider rows
@@ -594,35 +595,37 @@ export default function AgentModelsPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("models.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
+      <PageHeader
+        title={t("models.title")}
+        desc={
+          <>
             {t("models.agentSubtitle1")}{" "}
             <strong>{agentName || t("models.thisAgent")}</strong>.{" "}
             {t("models.agentSubtitle2")}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {saved && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-success mr-2">
-              <Check className="h-3.5 w-3.5" /> {t("common.saved")}
-            </span>
-          )}
-          <Button variant="outline" onClick={openAddDialog} disabled={saving}>
-            <Plus className="h-4 w-4 mr-2" />
-            {t("models.addProvider")}
-          </Button>
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <div className="flex items-center gap-2">
+            {saved && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-success">
+                <Check className="h-3.5 w-3.5" /> {t("common.saved")}
+              </span>
+            )}
+            <Button variant="outline" onClick={openAddDialog} disabled={saving}>
+              <Plus className="h-4 w-4" />
+              {t("models.addProvider")}
+            </Button>
+          </div>
+        }
+      />
 
       {/* Active Model */}
-      <div className="rounded-lg border border-border bg-card p-5">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <Cpu className="h-4 w-4 text-primary" />
-            <h3 className="font-medium">{t("models.activeModel")}</h3>
-            {inheriting ? (
+      <SettingsCard>
+        <CardHead
+          icon={Cpu}
+          title={t("models.activeModel")}
+          badge={
+            inheriting ? (
               <Badge variant="outline" className="text-[10px]">
                 {t("models.inheriting")}
               </Badge>
@@ -630,21 +633,22 @@ export default function AgentModelsPage() {
               <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px]">
                 {t("models.override")}
               </Badge>
-            )}
-          </div>
-          {!inheriting && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={handleClearOverride}
-              disabled={saving}
-            >
-              {t("models.clearOverride")}
-            </Button>
-          )}
-        </div>
-        {allModelOptions.length > 0 ? (
+            )
+          }
+          control={
+            !inheriting ? (
+              <Button
+                variant="ghost"
+                onClick={handleClearOverride}
+                disabled={saving}
+              >
+                {t("models.clearOverride")}
+              </Button>
+            ) : undefined
+          }
+        />
+        <div className="mt-4">
+          {allModelOptions.length > 0 ? (
           <Select
             value={model}
             onValueChange={(v: string | null) => v && handleModelChange(v)}
@@ -667,10 +671,11 @@ export default function AgentModelsPage() {
             onChange={(e) => setModel(e.target.value)}
             onBlur={() => handleModelChange(model)}
             placeholder={systemDefault ? `${t("models.inherit")} (${systemDefault})` : t("models.addProviderPlaceholder")}
-            className="font-mono text-sm max-w-md"
+            className="font-mono max-w-md"
           />
         )}
-        <p className="text-xs text-muted-foreground mt-2">
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
           {inheriting ? (
             <>
               {t("models.usingSystemDefault")}
@@ -698,7 +703,7 @@ export default function AgentModelsPage() {
             </>
           )}
         </p>
-      </div>
+      </SettingsCard>
 
       {/* Providers Table */}
       {providers.length === 0 ? (
@@ -822,7 +827,7 @@ export default function AgentModelsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>{t("models.providerLabel")}</Label>
                 <Select
@@ -889,7 +894,7 @@ export default function AgentModelsPage() {
               )}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>{t("models.apiTypeLabel")}</Label>
                 <Select value={formApiType} onValueChange={(v: string | null) => v && setFormApi(v)}>
@@ -923,7 +928,7 @@ export default function AgentModelsPage() {
 
             <div className="space-y-3 pt-2 border-t border-border">
               <div className="flex items-center justify-between">
-                <Label className="text-base">{t("models.modelsLabel")}</Label>
+                <Label>{t("models.modelsLabel")}</Label>
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
@@ -1041,7 +1046,7 @@ export default function AgentModelsPage() {
                           }, 200);
                         }}
                         placeholder="e.g. gpt-4o"
-                        className="font-mono text-xs h-8"
+                        className="font-mono"
                       />
                       {acActiveIdx === idx && acMatches.length > 0 && (
                         <ul className="absolute z-50 left-0 right-0 mt-0.5 max-h-44 overflow-y-auto rounded-md border border-border bg-popover shadow-md">
@@ -1069,7 +1074,6 @@ export default function AgentModelsPage() {
                         value={m.name}
                         onChange={(e) => handleUpdateModel(idx, "name", e.target.value)}
                         placeholder="e.g. GPT-4o"
-                        className="text-xs h-8"
                       />
                     </div>
                   </div>
@@ -1081,7 +1085,6 @@ export default function AgentModelsPage() {
                         value={m.contextWindow || ""}
                         onChange={(e) => handleUpdateModel(idx, "contextWindow", e.target.value)}
                         placeholder="e.g. 200000"
-                        className="text-xs h-8"
                       />
                     </div>
                     <div className="space-y-1">
@@ -1091,7 +1094,6 @@ export default function AgentModelsPage() {
                         value={m.maxTokens || ""}
                         onChange={(e) => handleUpdateModel(idx, "maxTokens", e.target.value)}
                         placeholder="e.g. 8192"
-                        className="text-xs h-8"
                       />
                     </div>
                   </div>

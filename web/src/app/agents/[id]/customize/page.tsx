@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Save, Check, Loader2, RotateCcw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useT } from "@/lib/i18n";
+import { PageHeader } from "@/components/settings-ui";
 
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
@@ -132,32 +133,31 @@ export default function AgentCustomizePage() {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{t("customize.title")}</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            {t("customize.subtitle", { name: agentName })}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {active?.source === "db" && (
-            <Button
-              onClick={handleRevert}
-              disabled={saving}
-              variant="outline"
-              title={
-                active.baseContent
-                  ? t("customize.revertTitle")
-                  : t("customize.revertTitleNoBase")
-              }
-            >
-              <RotateCcw className="h-4 w-4 mr-2" /> {t("customize.revert")}
-            </Button>
-          )}
-          <SaveButton onSave={handleSave} />
-        </div>
-      </div>
+    <div className="p-6 max-w-5xl mx-auto">
+      <PageHeader
+        className="mb-4"
+        title={t("customize.title")}
+        desc={t("customize.subtitle", { name: agentName })}
+        actions={
+          <div className="flex gap-2">
+            {active?.source === "db" && (
+              <Button
+                onClick={handleRevert}
+                disabled={saving}
+                variant="outline"
+                title={
+                  active.baseContent
+                    ? t("customize.revertTitle")
+                    : t("customize.revertTitleNoBase")
+                }
+              >
+                <RotateCcw className="h-4 w-4 mr-2" /> {t("customize.revert")}
+              </Button>
+            )}
+            <SaveButton onSave={handleSave} />
+          </div>
+        }
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-border mb-4 overflow-x-auto">
