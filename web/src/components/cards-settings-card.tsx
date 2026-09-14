@@ -11,11 +11,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { channelLabel } from "@/components/channel-icon";
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
-import { SettingsCard, CardHead, Field, GroupLabel } from "@/components/settings-ui";
+import { SettingsCard, CardHead, Field, GroupHead } from "@/components/settings-ui";
 
 // CardsSettingsCard — Q&A flashcard config. Lives in the Settings dialog's
 // Knowledge tab next to DiarySettingsCard. Generation: nightly LLM pass
@@ -110,11 +111,15 @@ export function CardsSettingsCard() {
             </Field>
           </div>
 
-          <div className="rounded-md border border-border/60 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <GroupLabel>{t("cards.settings.push")}</GroupLabel>
-              <Switch checked={pushEnabled} onCheckedChange={setPushEnabled} />
-            </div>
+          {/* Push digest — border-t group (same shape as the KB card's
+              flash-recall group), no nested inset box. */}
+          <div className="space-y-4 border-t border-border pt-4">
+            <GroupHead
+              title={t("cards.settings.push")}
+              control={
+                <Switch checked={pushEnabled} onCheckedChange={setPushEnabled} />
+              }
+            />
             {pushEnabled && (
               <div className="grid grid-cols-2 gap-4">
                 <Field label={t("cards.settings.pushTime")} hint={t("cards.settings.pushTimeDesc")}>
@@ -127,7 +132,7 @@ export function CardsSettingsCard() {
                 <Field label={t("cards.settings.pushChannel")}>
                   <Select value={pushChannel} onValueChange={(v) => v && setPushChannel(v)}>
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue>{(v: unknown) => channelLabel(v as string)}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="wechat">WeChat</SelectItem>

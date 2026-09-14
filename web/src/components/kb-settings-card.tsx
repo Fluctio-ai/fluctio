@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -10,12 +9,14 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  selectLabel,
 } from "@/components/ui/select";
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
-import { SettingsCard, CardHead, Field, GroupLabel } from "@/components/settings-ui";
+import { SettingsCard, CardHead, Field, GroupLabel, GroupHead } from "@/components/settings-ui";
+import { channelLabel } from "@/components/channel-icon";
 import { BookOpen } from "lucide-react";
 
 // KBSettingsCard — the KB auto-query configuration card. Lives in the
@@ -26,6 +27,19 @@ import { BookOpen } from "lucide-react";
 export function KBSettingsCard() {
   const t = useT();
   const agentId = useAgentIdFromURL();
+  const autoModeLabel = selectLabel({
+    always: t("knowledge.modeAlways"),
+    keyword: t("knowledge.modeKeyword"),
+    disabled: t("knowledge.modeDisabled"),
+  });
+  const searchModeLabel = selectLabel({
+    augment: t("knowledge.searchAugment"),
+    strict: t("knowledge.searchStrict"),
+  });
+  const emptyActionLabel = selectLabel({
+    llm: t("knowledge.actionLLM"),
+    stop: t("knowledge.actionStop"),
+  });
   const [kbEnabled, setKbEnabled] = useState(false);
   const [autoMode, setAutoMode] = useState("always");
   const [keywords, setKeywords] = useState("");
@@ -151,7 +165,7 @@ export function KBSettingsCard() {
             <Field label={t("knowledge.triggerMode")}>
               <Select value={autoMode} onValueChange={(v) => v && setAutoMode(v)}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>{autoModeLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="always">{t("knowledge.modeAlways")}</SelectItem>
@@ -184,13 +198,16 @@ export function KBSettingsCard() {
             </Field>
           )}
 
-          <Field label={t("knowledge.wikiRatio")} hint={t("knowledge.wikiRatioDesc")}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground tabular-nums">
+          <Field
+            label={t("knowledge.wikiRatio")}
+            hint={t("knowledge.wikiRatioDesc")}
+            labelTrailing={
+              <>
                 {t("knowledge.sourceLabel")} {Math.round(wikiRatio * 100)}% ·{" "}
                 {t("knowledge.conceptLabel")} {100 - Math.round(wikiRatio * 100)}%
-              </span>
-            </div>
+              </>
+            }
+          >
             <input
               type="range"
               min={0}
@@ -202,12 +219,11 @@ export function KBSettingsCard() {
             />
           </Field>
 
-          <Field label={t("knowledge.threshold")} hint={t("knowledge.thresholdDesc")}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground tabular-nums">
-                {threshold.toFixed(2)}
-              </span>
-            </div>
+          <Field
+            label={t("knowledge.threshold")}
+            hint={t("knowledge.thresholdDesc")}
+            labelTrailing={threshold.toFixed(2)}
+          >
             <input
               type="range"
               min={0}
@@ -220,21 +236,20 @@ export function KBSettingsCard() {
           </Field>
 
           <div className="space-y-4 border-t border-border pt-4">
-            <div>
-              <GroupLabel>{t("knowledge.flashRecall")}</GroupLabel>
-              <p className="mt-1 text-xs text-muted-foreground">{t("knowledge.flashRecallDesc")}</p>
-            </div>
-            <div className="flex items-center justify-between">
-              <Label>{t("knowledge.enableRecall")}</Label>
-              <Switch checked={ftEnabled} onCheckedChange={setFtEnabled} />
-            </div>
+            <GroupHead
+              title={t("knowledge.flashRecall")}
+              desc={t("knowledge.flashRecallDesc")}
+              control={
+                <Switch checked={ftEnabled} onCheckedChange={setFtEnabled} />
+              }
+            />
             {ftEnabled && (
               <>
                 <div className="grid grid-cols-2 gap-4">
                   <Field label={t("knowledge.triggerMode")}>
                     <Select value={ftAutoMode} onValueChange={(v) => v && setFtAutoMode(v)}>
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue>{autoModeLabel}</SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="always">{t("knowledge.modeAlways")}</SelectItem>
@@ -253,12 +268,11 @@ export function KBSettingsCard() {
                     />
                   </Field>
                 </div>
-                <Field label={t("knowledge.threshold")} hint={t("knowledge.ftThresholdDesc")}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {ftThreshold.toFixed(2)}
-                    </span>
-                  </div>
+                <Field
+                  label={t("knowledge.threshold")}
+                  hint={t("knowledge.ftThresholdDesc")}
+                  labelTrailing={ftThreshold.toFixed(2)}
+                >
                   <input
                     type="range"
                     min={0}
@@ -309,7 +323,7 @@ export function KBSettingsCard() {
               <Field label={t("knowledge.searchMode")}>
                 <Select value={searchMode} onValueChange={(v) => v && setSearchMode(v)}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue>{searchModeLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="augment">{t("knowledge.searchAugment")}</SelectItem>
@@ -320,7 +334,7 @@ export function KBSettingsCard() {
               <Field label={t("knowledge.noResultAction")}>
                 <Select value={emptyAction} onValueChange={(v) => v && setEmptyAction(v)}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue>{emptyActionLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="llm">{t("knowledge.actionLLM")}</SelectItem>
@@ -336,15 +350,15 @@ export function KBSettingsCard() {
             <Field label={t("knowledge.reminderChannel")} hint={t("knowledge.reminderChannelDesc")}>
               <Select value={reminderChannel} onValueChange={(v) => v && setReminderChannel(v)}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>{(v: unknown) => channelLabel(v as string)}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="wechat">微信</SelectItem>
+                  <SelectItem value="wechat">WeChat</SelectItem>
                   <SelectItem value="qq">QQ</SelectItem>
                   <SelectItem value="telegram">Telegram</SelectItem>
                   <SelectItem value="discord">Discord</SelectItem>
                   <SelectItem value="slack">Slack</SelectItem>
-                  <SelectItem value="feishu">飞书</SelectItem>
+                  <SelectItem value="feishu">Feishu</SelectItem>
                   <SelectItem value="line">LINE</SelectItem>
                 </SelectContent>
               </Select>

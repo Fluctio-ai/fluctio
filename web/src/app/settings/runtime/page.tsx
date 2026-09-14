@@ -242,14 +242,17 @@ export default function RuntimeSettingsPage() {
         </div>
       </SettingsCard>
 
-      {/* System vectorization defaults — embedding & reranker inherited by agents */}
-      <SettingsCard className="space-y-4">
-        <CardHead
-          icon={Database}
-          title={tt("runtime.vectorizationDefaults") || "向量化服务默认值"}
-          desc={tt("runtime.vectorizationDefaultsDesc") || "系统级 embedding/reranker 默认配置。未自建向量配置的智能体会继承这些值（与 LLM 模型默认同理）。"}
-        />
-        <div className="space-y-3 rounded-md border border-border/60 p-3">
+      {/* System vectorization defaults — embedding & reranker inherited by
+          agents. Border-t sections (not inset boxes): no box-in-box. */}
+      <SettingsCard padded={false}>
+        <div className="p-5">
+          <CardHead
+            icon={Database}
+            title={tt("runtime.vectorizationDefaults") || "向量化服务默认值"}
+            desc={tt("runtime.vectorizationDefaultsDesc") || "系统级 embedding/reranker 默认配置。未自建向量配置的智能体会继承这些值（与 LLM 模型默认同理）。"}
+          />
+        </div>
+        <div className="space-y-4 border-t border-border p-5">
           <ToggleRow
             title={tt("memory.embedding") || "Embedding"}
             checked={sysEmbedding.enabled}
@@ -283,7 +286,7 @@ export default function RuntimeSettingsPage() {
             </>
           )}
         </div>
-        <div className="space-y-3 rounded-md border border-border/60 p-3">
+        <div className="space-y-4 border-t border-border p-5">
           <ToggleRow
             title={tt("memory.reranker") || "Reranker"}
             checked={sysReranker.enabled}

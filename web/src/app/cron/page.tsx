@@ -31,6 +31,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  selectLabel,
 } from "@/components/ui/select";
 import {
   Table,
@@ -249,7 +250,13 @@ export default function CronPage() {
                 <Label>{tt("cron.type")}</Label>
                 <Select value={newType} onValueChange={(v) => v && setNewType(v)}>
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue>
+                      {selectLabel({
+                        cron: tt("cron.typeCron"),
+                        interval: tt("cron.typeInterval"),
+                        exact: tt("cron.typeExact"),
+                      })}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="cron">{tt("cron.typeCron")}</SelectItem>

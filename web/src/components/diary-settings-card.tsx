@@ -10,6 +10,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  selectLabel,
 } from "@/components/ui/select";
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
@@ -25,6 +26,11 @@ import { SettingsCard, CardHead, Field } from "@/components/settings-ui";
 export function DiarySettingsCard() {
   const t = useT();
   const agentId = useAgentIdFromURL();
+  const thinkingModeLabel = selectLabel({
+    off: t("diary.modeOff"),
+    blindspots: t("diary.modeBlindspots"),
+    deep: t("diary.modeDeep"),
+  });
   const [enabled, setEnabled] = useState(false);
   const [cronTime, setCronTime] = useState("02:30");
   const [thinkingMode, setThinkingMode] = useState("blindspots");
@@ -80,7 +86,7 @@ export function DiarySettingsCard() {
           <Field label={t("diary.thinkingMode")} hint={t("diary.thinkingModeDesc")}>
             <Select value={thinkingMode} onValueChange={(v) => v && setThinkingMode(v)}>
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue>{thinkingModeLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="off">{t("diary.modeOff")}</SelectItem>

@@ -407,16 +407,15 @@ export default function AgentMemoryPage() {
           />
           {wikiEmbedding && (
             <>
-              <div className="rounded-md border border-border/60 bg-muted/20 p-3">
-                <div className="mb-1.5 flex items-center justify-between">
-                  <span className="text-sm font-medium">{t("memory.wikiThreshold") || "相似度阈值"}</span>
-                  <span className="text-xs text-muted-foreground font-mono">{wikiThreshold.toFixed(2)}</span>
-                </div>
+              <Field
+                label={t("memory.wikiThreshold") || "相似度阈值"}
+                hint={t("memory.wikiThresholdDesc") || "wiki 生成与搜索时的 cosine 门槛；越高越严格（结果更少更准）。默认 0.45。"}
+                labelTrailing={wikiThreshold.toFixed(2)}
+              >
                 <input type="range" min="0" max="1" step="0.05" value={wikiThreshold}
                   onChange={(e) => setWikiThreshold(parseFloat(e.target.value))}
-                  className="w-full accent-primary h-1.5" />
-                <p className="mt-1.5 text-xs text-muted-foreground">{t("memory.wikiThresholdDesc") || "wiki 生成与搜索时的 cosine 门槛；越高越严格（结果更少更准）。默认 0.45。"}</p>
-              </div>
+                  className="w-full accent-primary" />
+              </Field>
               <div className="flex flex-wrap items-center gap-3 pt-1">
                 <Button variant="outline" onClick={() => handleWikiReindex(false)} disabled={wikiReindexing}>
                   {wikiReindexing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}

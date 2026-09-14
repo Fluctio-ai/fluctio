@@ -109,18 +109,32 @@ export function Field({
   label,
   htmlFor,
   hint,
+  // Right-aligned slot on the label row — live values for range inputs
+  // (percentages, thresholds). Keeps slider rows on the Field primitive
+  // instead of hand-rolled label-row JSX.
+  labelTrailing,
   children,
   className,
 }: {
   label?: React.ReactNode;
   htmlFor?: string;
   hint?: React.ReactNode;
+  labelTrailing?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("space-y-1.5", className)}>
-      {label && <Label htmlFor={htmlFor}>{label}</Label>}
+      {(label || labelTrailing) && (
+        <div className="flex items-center justify-between gap-2">
+          {label && <Label htmlFor={htmlFor}>{label}</Label>}
+          {labelTrailing && (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {labelTrailing}
+            </span>
+          )}
+        </div>
+      )}
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
@@ -171,6 +185,35 @@ export function GroupLabel({
   return (
     <div className={cn("text-xs font-medium text-muted-foreground", className)}>
       {children}
+    </div>
+  );
+}
+
+// GroupHead — a GroupLabel with optional desc and a right-aligned control
+// (usually a Switch). The group-level twin of CardHead: sub-sections inside
+// a card whose enable toggle belongs on the group title line (e.g. 闪存召回
+// inside the KB card) use this instead of stacking label/desc/switch as
+// three separate rows.
+export function GroupHead({
+  title,
+  desc,
+  control,
+  className,
+}: {
+  title: React.ReactNode;
+  desc?: React.ReactNode;
+  control?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex items-start justify-between gap-4", className)}>
+      <div className="min-w-0 space-y-0.5">
+        <GroupLabel>{title}</GroupLabel>
+        {desc && (
+          <p className="text-xs leading-relaxed text-muted-foreground">{desc}</p>
+        )}
+      </div>
+      {control && <div className="shrink-0 pt-0.5">{control}</div>}
     </div>
   );
 }
