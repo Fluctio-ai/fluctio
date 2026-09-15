@@ -136,8 +136,8 @@ select option {
 }
 
 /* Light theme — Geist-inspired: pure neutral grayscale (chroma≈0) with a
-   single wave-blue accent axis (#1890FF). Primary, brand, focus ring, and
-   info all share the blue family; surface tiers stay neutral gray. */
+   single surge-cyan accent axis (#0e7490). Primary, brand, focus ring, and
+   info all share the cyan family; surface tiers stay neutral gray. */
 :root {
   --background: oklch(1 0 0);              /* #ffffff pure white */
   --foreground: oklch(0.145 0 0);          /* #171717 — aligns with Geist primary */
@@ -146,8 +146,10 @@ select option {
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
 
-  /* Primary action = wave-blue fill with white text */
-  --primary: #1890ff;             /* wave blue */
+  /* Primary action = surge-cyan fill with white text (cyan-700: 4.95:1 on
+     white — AA for both the fill and its white label; cyan-600 would read
+     3.9:1 and fail small text). */
+  --primary: #0e7490;             /* surge cyan */
   --primary-foreground: oklch(0.985 0 0);  /* near-white text */
 
   /* Neutral surface tiers (pure gray, no purple tint) */
@@ -156,107 +158,111 @@ select option {
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);    /* #757575 — Geist secondary gray */
 
-  /* Accent = light wave-blue tint for selection/emphasis (blue-axis theme). */
-  --accent: #e6f4ff;               /* light blue — selection/hover base */
-  --accent-foreground: #003a8c;   /* deep-blue text on light-blue fill */
+  /* Accent = light cyan tint for selection/emphasis (cyan-axis theme). */
+  --accent: #ecfeff;               /* cyan-50 — selection/hover base */
+  --accent-foreground: #155e75;   /* cyan-800 text on cyan-50 fill (7.8:1) */
 
-  /* Brand wave-blue — the primary hue (logo, onboarding, marketing). Stays
-     distinct from amber warning; rings/info share this blue axis. */
-  --brand: #1890ff;            /* #1890ff Fluctio wave blue */
+  /* Brand surge-cyan — the primary hue (logo, onboarding, marketing). Stays
+     distinct from amber warning; rings/info share this cyan axis. */
+  --brand: #0e7490;            /* #0e7490 Fluctio surge cyan */
 
   --destructive: oklch(0.577 0.245 27.325);/* keep vivid red for errors */
   --border: oklch(0.922 0 0);              /* #eaeaea — pure gray hairline */
   --input: oklch(0.922 0 0);
-  --ring: #1890ff;     /* focus ring = wave blue */
+  --ring: #0e7490;     /* focus ring = surge cyan */
 
-  /* Chart palette — Geist categorical (blue/green/teal/purple/pink). Avoids amber
-     so a data series never reads as the warning state. */
-  --chart-1: #1890ff;  /* blue */
-  --chart-2: oklch(0.6458 0.1746 147.27);  /* green */
-  --chart-3: oklch(0.6492 0.1572 181.95);  /* teal */
-  --chart-4: oklch(0.5550 0.3008 306.12);  /* purple */
-  --chart-5: oklch(0.6352 0.2380 1.01);    /* pink */
+  /* Chart palette — categorical ring around the cyan axis (cyan → blue →
+     violet → rose → green), equal lightness so series read as peers. Avoids
+     amber so a data series never reads as the warning state. */
+  --chart-1: #0891b2;  /* cyan-600 — one step brighter than primary for data */
+  --chart-2: oklch(0.55 0.16 262);         /* blue */
+  --chart-3: oklch(0.55 0.18 305);         /* violet */
+  --chart-4: oklch(0.62 0.2 350);          /* rose */
+  --chart-5: oklch(0.55 0.12 150);         /* green */
 
   --radius: 0.75rem;                       /* 12px base — Geist md; anchors 2xl+ tiers */
 
   /* Sidebar — slightly off-white, same neutral axis */
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: #1890ff;     /* sidebar active = wave blue */
+  --sidebar-primary: #0e7490;     /* sidebar active = surge cyan */
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: #e6f4ff;
-  --sidebar-accent-foreground: #003a8c;
+  --sidebar-accent: #ecfeff;
+  --sidebar-accent-foreground: #155e75;
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: #1890ff;  /* wave blue */
+  --sidebar-ring: #0e7490;  /* surge cyan */
 
   /* Semantic status tokens — replaces scattered emerald/amber/blue/cyan.
      Light-theme steps sit deeper than the dark ones on purpose: they are
      used as small text on /10 tints (status chips, knowledge pills,
      warning callouts), where AA needs ≥4.5:1 — the original L .62/.75
-     steps read 3.5:1 / 1.9:1 on white. Info stays on the wave-blue axis,
-     one step deeper than the #1890ff brand primary. */
+     steps read 3.5:1 / 1.9:1 on white. Info stays on the cyan axis,
+     one step deeper than the #0e7490 brand primary. */
   --success: oklch(0.52 0.15 150);         /* green — deep step for text */
   --success-foreground: oklch(0.985 0 0);
   --warning: oklch(0.55 0.14 75);          /* amber — deep step for text */
   --warning-foreground: oklch(0.205 0 0);
-  --info: #0958d9;            /* wave blue, deep step for text */
+  --info: #155e75;            /* surge cyan, deep step for text */
   --info-foreground: oklch(0.985 0 0);
 }
 
-/* Dark theme — mirrors the light structure with a wave-blue primary (#40a9ff
-   fill / near-black text) and pure neutral surfaces. Background targets
-   Geist's dark neutral (#171717); blue is lifted one step for contrast. */
+/* Dark theme — "deep water": the same structure as light but surfaces carry
+   a faint cool-cyan cast (chroma ≤0.012) instead of pure gray, and the
+   primary glows one step brighter (cyan-400) against it. Primary text stays
+   neutral white so long chat reads never tint. */
 .dark {
-  --background: oklch(0.145 0 0);          /* #171717 — Geist dark neutral */
+  --background: oklch(0.145 0.008 230);    /* deep-water neutral */
   --foreground: oklch(0.985 0 0);          /* #ededed — Geist dark primary */
-  --card: oklch(0.178 0 0);                /* #212121 — pure gray card */
+  --card: oklch(0.178 0.01 230);           /* card — same cast, one step up */
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.178 0 0);
+  --popover: oklch(0.178 0.01 230);
   --popover-foreground: oklch(0.985 0 0);
 
-  /* Primary action = wave-blue fill (#40a9ff) with near-black text */
-  --primary: #40a9ff;
-  --primary-foreground: oklch(0.145 0 0);
+  /* Primary action = glowing surge-cyan fill (#22d3ee) with deep-cyan text */
+  --primary: #22d3ee;
+  --primary-foreground: #083344;           /* cyan-950 — 9:1 on the fill */
 
-  /* Neutral surface tiers — pure gray, no purple */
-  --secondary: oklch(0.22 0 0);
+  /* Neutral surface tiers — cool cast, no purple */
+  --secondary: oklch(0.22 0.012 230);
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.22 0 0);
-  --muted-foreground: oklch(0.65 0 0);     /* #a0a0a0 — Geist dark secondary */
+  --muted: oklch(0.22 0.012 230);
+  --muted-foreground: oklch(0.65 0.015 230); /* #a0a0a0-axis, same cast */
 
-  /* Accent — deep wave-blue selection base */
-  --accent: #112545;
-  --accent-foreground: #bae0ff;   /* light-blue text on deep-blue fill */
+  /* Accent — deep-water cyan selection base */
+  --accent: #083344;
+  --accent-foreground: #67e8f9;   /* cyan-300 text on cyan-950 fill */
 
-  /* Brand wave-blue — decorative + primary hue */
-  --brand: #40a9ff;
+  /* Brand surge-cyan — decorative + primary hue */
+  --brand: #22d3ee;
 
   --destructive: oklch(0.65 0.2 25);
   --border: oklch(1 0 0 / 10%);            /* Geist-style translucent hairline */
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.7170 0.1648 250.79);     /* Geist dark blue-900 #47a8ff */
+  --ring: #22d3ee;     /* focus ring = surge cyan */
 
-  --chart-1: oklch(0.7170 0.1648 250.79);  /* blue-900 */
-  --chart-2: oklch(0.7310 0.2158 148.29);  /* green-900 */
-  --chart-3: oklch(0.7456 0.1765 182.8);   /* teal-900 */
-  --chart-4: oklch(0.6987 0.2037 309.51);  /* purple-900 */
-  --chart-5: oklch(0.6936 0.2223 3.91);    /* pink-900 */
+  /* Chart palette — same categorical ring as light, lifted to dark-theme
+     lightness. Avoids amber (warning) as before. */
+  --chart-1: oklch(0.72 0.13 220);         /* cyan */
+  --chart-2: oklch(0.72 0.15 262);         /* blue */
+  --chart-3: oklch(0.72 0.16 305);         /* violet */
+  --chart-4: oklch(0.75 0.15 350);         /* rose */
+  --chart-5: oklch(0.72 0.13 150);         /* green */
 
-  --sidebar: oklch(0.178 0 0);
+  --sidebar: oklch(0.178 0.01 230);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: #40a9ff;
-  --sidebar-primary-foreground: oklch(0.145 0 0);
-  --sidebar-accent: #112545;
-  --sidebar-accent-foreground: #bae0ff;
+  --sidebar-primary: #22d3ee;
+  --sidebar-primary-foreground: #083344;
+  --sidebar-accent: #083344;
+  --sidebar-accent-foreground: #67e8f9;
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.7170 0.1648 250.79);  /* Geist dark blue-900 */
+  --sidebar-ring: #22d3ee;  /* surge cyan */
 
   --success: oklch(0.68 0.16 150);
   --success-foreground: oklch(0.145 0 0);
   --warning: oklch(0.78 0.15 75);
   --warning-foreground: oklch(0.145 0 0);
-  --info: #40a9ff;
-  --info-foreground: oklch(0.145 0 0);
+  --info: #22d3ee;
+  --info-foreground: #083344;
 }
 
 @layer base {

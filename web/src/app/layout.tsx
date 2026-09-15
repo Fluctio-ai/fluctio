@@ -44,7 +44,7 @@ export const metadata: Metadata = {
 // webview under the notch so the safe-area insets the full-screen dialogs
 // apply (env(safe-area-inset-*)) resolve to real values.
 export const viewport: Viewport = {
-  themeColor: "#1890ff",
+  themeColor: "#0e7490",
   viewportFit: "cover",
 };
 
