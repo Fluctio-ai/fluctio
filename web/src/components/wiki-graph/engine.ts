@@ -860,10 +860,21 @@ export class WikiGraphEngine {
         const s = d.source as SimNode;
         const t = d.target as SimNode;
         if (s.x == null || s.y == null || t.x == null || t.y == null) continue;
+        // Arced links instead of straight chords: the control point sits
+        // on a fixed side of the link's normal, bowed ~12% of its length
+        // (capped so long hub links don't swoop). Uniform side + modest
+        // curvature reads as flow and separates crossing links where
+        // straight segments would overlap exactly.
+        const dx = t.x - s.x;
+        const dy = t.y - s.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const bow = Math.min(len * 0.12, LINK_DISTANCE * 0.8);
+        const mx = (s.x + t.x) / 2 + cx + (dy / len) * bow;
+        const my = (s.y + t.y) / 2 + cy - (dx / len) * bow;
         rd.gfx.clear();
         rd.gfx
           .moveTo(s.x + cx, s.y + cy)
-          .lineTo(t.x + cx, t.y + cy)
+          .quadraticCurveTo(mx, my, t.x + cx, t.y + cy)
           .stroke({ alpha: rd.alpha, width: 1, color: rd.color });
       }
 
