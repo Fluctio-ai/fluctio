@@ -172,7 +172,14 @@ export default function AgentRegexHooksPage() {
   };
 
   // Drag & drop reorder
-  const onDragStart = (idx: number) => setDragIdx(idx);
+  // The state flip is deferred past the browser's drag-image snapshot:
+  // setDragIdx during dragstart re-renders mid-capture, and Chrome then
+  // grabs the wrong (often whole-pane) ghost — the page header rode
+  // along in the drag preview instead of just the hook card.
+  const onDragStart = (e: React.DragEvent, idx: number) => {
+    e.dataTransfer.effectAllowed = "move";
+    requestAnimationFrame(() => setDragIdx(idx));
+  };
 
   const onDragOver = (e: React.DragEvent, idx: number) => {
     e.preventDefault();
@@ -231,7 +238,7 @@ export default function AgentRegexHooksPage() {
               onToggle={(enabled) => handleToggle(hook, enabled)}
               onEdit={() => openEdit(hook)}
               onDelete={() => setDeleteTarget(hook)}
-              onDragStart={() => onDragStart(idx)}
+              onDragStart={(e) => onDragStart(e, idx)}
               onDragOver={(e) => onDragOver(e, idx)}
               onDragEnd={onDragEnd}
             />
@@ -470,7 +477,7 @@ function HookRow({
   onToggle: (enabled: boolean) => void;
   onEdit: () => void;
   onDelete: () => void;
-  onDragStart: () => void;
+  onDragStart: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
   onDragEnd: () => void;
 }) {
