@@ -65,21 +65,25 @@ const PAGE_TYPE_SECTIONS = (t: ReturnType<typeof useT>) => [
 ];
 
 // Graph palette per resolved theme. The WebGL engine can't read CSS
-// variables, so colors are resolved here; node fills mirror the page-type
-// colors the left pane groups by.
+// variables, so colors are resolved here; node fills mirror the chart
+// ring in globals.css (cyan/blue/violet/rose/green, no amber) with a
+// darker step for the light canvas and a brighter one for the dark —
+// the same family the workflow node kinds use, so the two graphs read
+// as one system. Selection rides the surge-cyan brand axis; the dark
+// bg carries the deep-water cast instead of pure black.
 const graphTheme = (isDark: boolean): import("@/components/wiki-graph/engine").GraphTheme => ({
-  bg: isDark ? "#0a0a0a" : "#ffffff",
+  bg: isDark ? "#0a0e11" : "#ffffff",
   node: "#6b7280",
   label: isDark ? "#e5e7eb" : "#1f2937",
   edge: isDark ? "#555" : "#9ca3af",
   edgeHover: isDark ? "#9ca3af" : "#4b5563",
-  selectedBorder: "#8b5cf6",
+  selectedBorder: isDark ? "#22d3ee" : "#0e7490",
   typeColors: {
-    overview: "#8b5cf6",
-    entity: "#3b82f6",
-    concept: "#10b981",
-    source: "#f59e0b",
-    query: "#ef4444",
+    overview: isDark ? "#22d3ee" : "#0891b2",
+    entity: isDark ? "#60a5fa" : "#1d4ed8",
+    concept: isDark ? "#2dd4bf" : "#0d9488",
+    source: isDark ? "#a78bfa" : "#7c3aed",
+    query: isDark ? "#fb7185" : "#e11d48",
   },
 });
 

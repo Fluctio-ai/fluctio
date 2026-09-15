@@ -27,6 +27,13 @@ select option {
   color: var(--color-foreground);
 }
 
+/* Native radio/checkbox/range/progress controls have no component wrapper,
+   so their checked/filled color is the browser default blue — route it
+   through the brand axis like every other control. */
+:root {
+  accent-color: var(--primary);
+}
+
 /* CJK glyphs are full-width — negative tracking (tracking-tight) crowds
    them against each other, so neutralize it under the zh locale only;
    the en locale keeps the tightened display look. Relies on <html lang>
@@ -228,7 +235,7 @@ select option {
   --chart-2: oklch(0.55 0.16 262);         /* blue */
   --chart-3: oklch(0.55 0.18 305);         /* violet */
   --chart-4: oklch(0.62 0.2 350);          /* rose */
-  --chart-5: oklch(0.55 0.12 150);         /* green */
+  --chart-5: oklch(0.55 0.12 180);         /* teal */
 
   --radius: 0.75rem;                       /* 12px base — Geist md; anchors 2xl+ tiers */
 
@@ -295,7 +302,7 @@ select option {
   --chart-2: oklch(0.72 0.15 262);         /* blue */
   --chart-3: oklch(0.72 0.16 305);         /* violet */
   --chart-4: oklch(0.75 0.15 350);         /* rose */
-  --chart-5: oklch(0.72 0.13 150);         /* green */
+  --chart-5: oklch(0.72 0.13 180);         /* teal */
 
   --sidebar: oklch(0.178 0.01 230);
   --sidebar-foreground: oklch(0.985 0 0);

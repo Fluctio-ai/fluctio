@@ -65,16 +65,15 @@ type AnyEdge = {
 // 13px label at ≥4.5:1 on BOTH the light and dark canvas — vis-network
 // paints to <canvas>, so CSS vars can't reach it and the pairs must be
 // literal. The four core kinds take the primary slots (llm rides the
-// wave-blue axis); form was missing entirely and fell through to the gray
-// fallback. Legacy kinds keep distinct hues, deepened where white text
-// wouldn't pass.
+// surge-cyan brand axis; form takes the chart-ring blue). Legacy kinds
+// keep distinct hues, deepened where white text wouldn't pass.
 const NODE_COLORS: Record<string, { bg: string; fg: string }> = {
-  llm: { bg: "#0059ec", fg: "#ffffff" },               // blue-800 — brand axis
-  tool: { bg: "#107d32", fg: "#ffffff" },              // green-900
+  llm: { bg: "#0e7490", fg: "#ffffff" },               // cyan-700 — surge-cyan brand axis
+  tool: { bg: "#115e59", fg: "#ffffff" },              // teal-800 — cyan-adjacent, clear of kb_search teal-500
   code: { bg: "#aa4d00", fg: "#ffffff" },              // amber-900
-  form: { bg: "#8500d1", fg: "#ffffff" },              // purple-800
+  form: { bg: "#1d4ed8", fg: "#ffffff" },              // blue-700 — chart-ring blue
   reply: { bg: "#06b6d4", fg: "#171717" },             // cyan — light chip, dark label
-  question_rewrite: { bg: "#7e22ce", fg: "#ffffff" },  // violet-700
+  question_rewrite: { bg: "#7e22ce", fg: "#ffffff" },  // violet-700 — chart-ring violet
   http: { bg: "#f97316", fg: "#171717" },              // orange — light chip, dark label
   kb_search: { bg: "#14b8a6", fg: "#171717" },         // teal — light chip, dark label
   set: { bg: "#4d4d4d", fg: "#ffffff" },               // Geist gray-900
