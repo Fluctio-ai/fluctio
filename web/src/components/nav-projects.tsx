@@ -178,7 +178,7 @@ export function NavSessions({
               <SidebarMenuButton
                 onClick={() => navigateOnce(`/agents/${agentId}/chats`)}
                 tooltip={t("sidebar.seeAllChats")}
-                className="text-muted-foreground"
+                className="text-muted-foreground pl-4"
               >
                 <MoreHorizontal className="size-4" />
                 <span>{t("sidebar.seeAllChats")}</span>
@@ -230,6 +230,7 @@ function SessionRow({
         isActive={active}
         tooltip={`${channelLabel(session.channel)} · ${session.title}`}
         onClick={onOpen}
+        className="pl-4"
       >
         {session.thumbnailUrl ? (
           // eslint-disable-next-line @next/next/no-img-element

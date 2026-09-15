@@ -417,7 +417,7 @@ function ProjectRow({
         tooltip={project.name}
         isActive={isActive}
         onClick={onClick}
-        className="font-medium"
+        className="font-medium pl-4"
       >
         {/* Default: just the folder icon. Hover: swap to a chevron
             so the user can tell the row is collapsible (and the
