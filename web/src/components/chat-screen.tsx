@@ -3385,7 +3385,7 @@ export function ChatScreen() {
                         className="h-9 w-9 shrink-0"
                         aria-label={t("chat.sendMessage")}
                       >
-                        <Send className="h-4 w-4" />
+                        <Send className="h-4 w-4 -translate-x-px translate-y-px" />
                       </Button>
                     )}
                   </div>
@@ -3448,7 +3448,7 @@ export function ChatScreen() {
                       className="h-8 w-8 shrink-0"
                       aria-label={t("chat.sendMessage")}
                     >
-                      <Send className="h-4 w-4" />
+                      <Send className="h-4 w-4 -translate-x-px translate-y-px" />
                     </Button>
                   )}
                 </div>
