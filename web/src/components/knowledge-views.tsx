@@ -702,7 +702,7 @@ function InsightSection({
                       {q.tag && <span className="text-xs text-muted-foreground">{q.tag}</span>}
                       {q.verified === true && (
                         <span
-                          className="text-xs text-emerald-600 dark:text-emerald-400"
+                          className="text-xs text-success"
                           title={t("knowledge.quoteVerifiedTip")}
                         >
                           ✓ {t("knowledge.quoteVerified")}
@@ -1141,7 +1141,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                   <span className="min-w-0 break-words text-xs text-muted-foreground">
                     {relativeTime(b.created_at)}{b.content ? ` · ${t("knowledge.bookmarkBody", { n: b.content.length })}` : ""}
                     {b.promoted_to_article_id && (
-                      <span className="ml-2 text-emerald-600 dark:text-emerald-400">{t("knowledge.bookmarkPromoted")}</span>
+                      <span className="ml-2 text-success">{t("knowledge.bookmarkPromoted")}</span>
                     )}
                   </span>
                   <div className="flex shrink-0 items-center gap-1.5">

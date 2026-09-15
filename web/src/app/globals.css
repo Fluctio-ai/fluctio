@@ -255,7 +255,7 @@ select option {
      warning callouts), where AA needs ≥4.5:1 — the original L .62/.75
      steps read 3.5:1 / 1.9:1 on white. Info stays on the cyan axis,
      one step deeper than the #0e7490 brand primary. */
-  --success: oklch(0.52 0.15 150);         /* green — deep step for text */
+  --success: oklch(0.52 0.14 168);         /* teal-green — bridges the cyan axis, deep step for text */
   --success-foreground: oklch(0.985 0 0);
   --warning: oklch(0.55 0.14 75);          /* amber — deep step for text */
   --warning-foreground: oklch(0.205 0 0);
@@ -313,7 +313,7 @@ select option {
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: #22d3ee;  /* surge cyan */
 
-  --success: oklch(0.68 0.16 150);
+  --success: oklch(0.72 0.14 172);
   --success-foreground: oklch(0.145 0 0);
   --warning: oklch(0.78 0.15 75);
   --warning-foreground: oklch(0.145 0 0);

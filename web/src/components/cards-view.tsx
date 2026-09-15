@@ -441,7 +441,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                         </Badge>
                       )}
                       {c.status === "mastered" && (
-                        <Badge variant="outline" className="border-emerald-500/40 px-1 py-0 text-[10px] text-emerald-600 dark:text-emerald-400">
+                        <Badge variant="outline" className="border-success/40 px-1 py-0 text-[10px] text-success">
                           {t("cards.mastered")}
                         </Badge>
                       )}
@@ -583,7 +583,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                           variant="outline"
                           className={cn(
                             "px-1.5 py-0 text-[10px]",
-                            rv.grade === "remembered" && "border-emerald-500/40 text-emerald-600 dark:text-emerald-400",
+                            rv.grade === "remembered" && "border-success/40 text-success",
                             rv.grade === "fuzzy" && "border-warning/50 text-warning",
                             rv.grade === "forgot" && "border-destructive/40 text-destructive",
                           )}

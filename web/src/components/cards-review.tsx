@@ -241,19 +241,24 @@ export function CardDeck({
             below (忘了+模糊+记得 combined width). */}
         <div className={cn("relative flex flex-1 items-center justify-center", variant === "inline" ? "px-2" : "px-6")}>
           <div className="relative w-full max-w-md">
-            {[next2, next].map((c, i) =>
-              c ? (
-                <div
-                  key={c.id}
-                  aria-hidden
-                  className="absolute inset-0 rounded-2xl border bg-card shadow-sm"
-                  style={{
-                    transform: `translateY(${(2 - i) * 10}px) scale(${1 - (2 - i) * 0.04})`,
-                    opacity: 1 - (2 - i) * 0.25,
-                  }}
-                />
-              ) : null,
-            )}
+            {/* The peeking pile is a full-review flourish; the dashboard's
+                inline module is height-constrained between its siblings,
+                where two stacked cards + the front card's shadow read as
+                clutter — inline shows the front card alone, lighter. */}
+            {variant !== "inline" &&
+              [next2, next].map((c, i) =>
+                c ? (
+                  <div
+                    key={c.id}
+                    aria-hidden
+                    className="absolute inset-0 rounded-2xl border bg-card shadow-sm"
+                    style={{
+                      transform: `translateY(${(2 - i) * 10}px) scale(${1 - (2 - i) * 0.04})`,
+                      opacity: 1 - (2 - i) * 0.25,
+                    }}
+                  />
+                ) : null,
+              )}
             {card && (
               <div
                 role="button"
@@ -273,7 +278,8 @@ export function CardDeck({
                   transition: dragging ? "none" : "transform 220ms cubic-bezier(.2,.8,.3,1)",
                 }}
                 className={cn(
-                  "relative z-10 min-h-[280px] cursor-grab select-none rounded-2xl border bg-card p-6 text-left shadow-lg",
+                  "relative z-10 min-h-[280px] cursor-grab select-none rounded-2xl border bg-card p-6 text-left",
+                  variant === "inline" ? "shadow-sm" : "shadow-lg",
                   variant === "inline" && "min-h-[320px] md:min-h-[380px]",
                   "touch-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
                   flipped ? "border-primary/50" : "hover:border-primary/30",
@@ -292,7 +298,7 @@ export function CardDeck({
                 <span
                   aria-hidden
                   style={{ opacity: Math.min(1, Math.max(0, dragX / SWIPE_PX)) }}
-                  className="pointer-events-none absolute right-3 top-3 rotate-12 rounded-md border border-emerald-500/50 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400"
+                  className="pointer-events-none absolute right-3 top-3 rotate-12 rounded-md border border-success/50 bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
                 >
                   {t("cards.deckRight")}
                 </span>
@@ -386,7 +392,7 @@ export function CardDeck({
             </Button>
             <Button
               variant="outline"
-              className="h-11 flex-1 flex-col gap-0 border-emerald-500/40 py-1 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+              className="h-11 flex-1 flex-col gap-0 border-success/40 py-1 text-success hover:bg-success/10"
               disabled={saving}
               onClick={() => grade("remembered", "button")}
             >

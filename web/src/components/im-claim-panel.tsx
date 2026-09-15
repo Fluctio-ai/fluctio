@@ -119,7 +119,7 @@ export function ImOwnerClaimSection({
                     <ChannelIcon channel={c.type} />
                     <span className="font-medium capitalize">{c.type}</span>
                     {ids.length > 0 && (
-                      <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400 tabular-nums">
+                      <span className="rounded-full bg-success/10 px-1.5 py-0.5 text-[11px] font-medium text-success tabular-nums">
                         {ids.length}
                       </span>
                     )}

@@ -490,7 +490,7 @@ export function WorkflowEditor({
         </Button>
       </div>
       {msg && (
-        <p className={msg.ok ? "text-xs text-green-600" : "text-xs text-destructive"}>
+        <p className={msg.ok ? "text-xs text-success" : "text-xs text-destructive"}>
           {msg.text}
         </p>
       )}
