@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { login as apiLogin } from "@/lib/api";
 import { useT } from "@/lib/i18n";
+import { LogoWave } from "@/components/logo-wave";
 
 interface LoginScreenProps {
   onSuccess: () => void;
@@ -41,6 +42,9 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-2">
+          <div className="flex justify-center">
+            <LogoWave size={48} />
+          </div>
           <h1 className="text-2xl font-bold text-foreground">{t("login.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("login.subtitle")}</p>
         </div>

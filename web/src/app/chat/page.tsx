@@ -494,9 +494,9 @@ export default function ChatPage() {
               <div className="flex justify-start">
                 <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-3">
                   <div className="flex items-center gap-1">
-                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-muted-foreground/60" style={{ animationDelay: "0ms" }} />
-                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-muted-foreground/60" style={{ animationDelay: "200ms" }} />
-                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-muted-foreground/60" style={{ animationDelay: "400ms" }} />
+                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-primary/80" style={{ animationDelay: "0ms" }} />
+                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-primary/80" style={{ animationDelay: "200ms" }} />
+                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-primary/80" style={{ animationDelay: "400ms" }} />
                   </div>
                 </div>
               </div>
@@ -531,7 +531,7 @@ export default function ChatPage() {
                 size="icon"
                 className="h-8 w-8 shrink-0"
               >
-                <Send className="h-4 w-4" />
+                <Send className="h-4 w-4 -translate-x-px translate-y-px" />
               </Button>
             </div>
             <p className="text-center text-[11px] text-muted-foreground/50 mt-2">

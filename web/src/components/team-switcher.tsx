@@ -38,8 +38,6 @@ function AgentAvatar({
   }, [agentId]);
 
   if (!agentId) {
-    // Platform header (no agent): the animated inline mark — wave bands
-    // phase-shift and the fill follows the --brand token per theme.
     return <LogoWave size={size} className="rounded-lg" />;
   }
   if (failed) {

@@ -6,14 +6,15 @@
 // strings so callers merge them into SidebarMenuButton's cn() chain,
 // overriding its horizontal row defaults via tailwind-merge.
 //
-// Container: shipped as ready-made per-section constants since the only
-// degrees of freedom are the column count (cols-2 for the two-entry agent
-// group, cols-3 for the eight KB entries). Both hide under the collapsed
-// icon rail — a tile grid has no meaningful single-icon form (the tiles'
-// min-height and vertical stack would overflow the 32px rail), matching
-// NavKnowledge's whole-group hide.
-export const navTileGrid2 = "grid grid-cols-2 gap-1 rounded-lg border border-sidebar-border bg-sidebar-accent/40 p-1 group-data-[collapsible=icon]:hidden";
-export const navTileGrid3 = "grid grid-cols-3 gap-1 rounded-lg border border-sidebar-border bg-sidebar-accent/40 p-1 group-data-[collapsible=icon]:hidden";
+// Container base: callers append their literal column count
+// (`grid-cols-2` for the two-entry agent group, `grid-cols-3` for the
+// eight KB entries) — literals stay in source so Tailwind v4 scanning
+// emits them. Both hide under the collapsed icon rail — a tile grid has
+// no meaningful single-icon form (the tiles' min-height and vertical
+// stack would overflow the 32px rail), matching NavKnowledge's
+// whole-group hide.
+export const navTileGrid =
+  "grid gap-1 rounded-lg border border-sidebar-border bg-sidebar-accent/40 p-1 group-data-[collapsible=icon]:hidden";
 
 // Cell button: flex-col overrides the base row layout; [&_svg]:size-[18px]
 // must live here (not on the icon element) because the base button's

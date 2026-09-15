@@ -11,7 +11,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import type { LucideIcon } from "lucide-react";
-import { navTileButton, navTileGrid2, navTileIcon, navTileLabel } from "@/components/nav-tile";
+import { navTileButton, navTileGrid, navTileIcon, navTileLabel } from "@/components/nav-tile";
 
 export interface NavItem {
   title: string;
@@ -148,7 +148,7 @@ export function NavMain({
 // cols-2 keeps them on one full-width row.
 function TilesWrap({ tiles, children }: { tiles: boolean; children: React.ReactNode }) {
   if (!tiles) return <>{children}</>;
-  return <div className={navTileGrid2}>{children}</div>;
+  return <div className={`${navTileGrid} grid-cols-2`}>{children}</div>;
 }
 
 // Exported for pages that want a real anchor with Next client-nav

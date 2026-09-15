@@ -268,7 +268,7 @@ export function NavProjectsList({
         <SidebarMenu>
           {projects.length === 0 && (
             <SidebarMenuItem>
-              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="pl-4 pr-2 py-1.5 text-xs text-muted-foreground">
                 {t("projects.noProjects")}
               </div>
             </SidebarMenuItem>

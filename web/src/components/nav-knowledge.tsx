@@ -21,7 +21,7 @@ import {
   StickyNoteIcon,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { navTileButton, navTileGrid3, navTileIcon, navTileLabel } from "@/components/nav-tile";
+import { navTileButton, navTileGrid, navTileIcon, navTileLabel } from "@/components/nav-tile";
 
 // NavKnowledge is the "Knowledge" section of the agent sidebar: a
 // collapsible group sitting between "New chat" and "Projects" that links
@@ -141,7 +141,7 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
         // entry per row pushed Sessions/Projects off-screen on short
         // viewports.
         <SidebarMenu>
-          <div className={navTileGrid3}>
+          <div className={`${navTileGrid} grid-cols-3`}>
             {items.map((item) => {
               const norm = (s: string) => s.replace(/\/$/, "");
               // articles (/knowledge) is the parent route of flashes/todos/

@@ -65,27 +65,37 @@ select option {
 }
 
 /* ── Flow motion dialect ─────────────────────────────────────────────
-   Fluctio's namesake is moving water, so motion reads as flow: one
-   shared easing, and compositor-only loops that degrade to static
-   under prefers-reduced-motion (same contract as msg-in). */
-:root {
+   Fluctio's namesake is moving water, so motion reads as flow: a shared
+   flow easing for the ambient/looping family (wave drift, droplets,
+   staggers), compositor-only loops that degrade to static under
+   prefers-reduced-motion (same contract as msg-in). msg-in's expo-out
+   curve is deliberately separate — it is the one-shot entrance family,
+   not the flow family. */
+@theme inline {
   --ease-flow: cubic-bezier(0.45, 0, 0.25, 1);
 }
 
 /* Brand waves — the three logo bands drift horizontally with phase
    offsets. Standing water never looks alive; phase-shifted water does.
-   The paths repeat their waveform, and the safe-area padding leaves
-   ~205 units of slack on each side, so a 14px drift never clips. */
+   viewBox units: 64/1024 ≈ 1.9px at the 32px header (3px at the 48px
+   login mark) — visible without reading as wobble. The safe-area
+   padding leaves ~205 units of slack per side, so the drift never
+   clips. Paused under the collapsed icon rail (data-collapsible=icon),
+   where the mark is a static glyph and the always-on compositor work
+   buys nothing. */
 @keyframes wave-shift {
   from { transform: translateX(0); }
-  50% { transform: translateX(14px); }
+  50% { transform: translateX(64px); }
   to { transform: translateX(0); }
 }
 .logo-wave path {
   animation: wave-shift 3.9s var(--ease-flow) infinite;
 }
-.logo-wave path:nth-child(2) { animation-delay: -1.3s; }
-.logo-wave path:nth-child(3) { animation-delay: -2.6s; }
+.logo-wave g:nth-of-type(2) path { animation-delay: -1.3s; }
+.logo-wave g:nth-of-type(3) path { animation-delay: -2.6s; }
+[data-collapsible="icon"] .logo-wave path {
+  animation-play-state: paused;
+}
 
 /* Dashboard panes rise in staggered, like cards dealt onto water. */
 @keyframes dash-in {
@@ -97,8 +107,7 @@ select option {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .logo-wave path,
-  .dash-in {
+  .logo-wave path {
     animation: none;
   }
   .dash-in {
@@ -163,7 +172,6 @@ select option {
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
-  --color-info-foreground: var(--info-foreground);
   /* Radii pinned to Geist's three families (design.md §Shapes): 6px controls,
      12px cards/menus/modals, 16px fullscreen — mapped to how shadcn assigns
      rounded-md (controls) and rounded-lg (cards/modals). One family per view. */
@@ -245,7 +253,6 @@ select option {
   --warning: oklch(0.55 0.14 75);          /* amber — deep step for text */
   --warning-foreground: oklch(0.205 0 0);
   --info: #155e75;            /* surge cyan, deep step for text */
-  --info-foreground: oklch(0.985 0 0);
 }
 
 /* Dark theme — "deep water": the same structure as light but surfaces carry
@@ -304,7 +311,6 @@ select option {
   --warning: oklch(0.78 0.15 75);
   --warning-foreground: oklch(0.145 0 0);
   --info: #22d3ee;
-  --info-foreground: #083344;
 }
 
 @layer base {

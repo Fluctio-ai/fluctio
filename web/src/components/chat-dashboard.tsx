@@ -106,7 +106,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
     // lets each pane keep its own content-driven height.
     <div className="mx-auto grid w-full max-w-6xl items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
       {/* ── Today's cards ── */}
-      <section className="dash-in flex flex-col overflow-hidden rounded-xl border bg-card" style={{ animationDelay: "0ms" }}>
+      <section className="dash-in flex flex-col overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
           <Layers className="size-4 text-muted-foreground" />
           {t("dashboard.cards.title")}
