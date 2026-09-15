@@ -11,6 +11,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { AgentSwitcher, AgentSwitcherItem } from "@/components/team-switcher";
 import { NavMain, NavItem } from "@/components/nav-main";
@@ -110,6 +111,20 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
   const searchParams = useSearchParams();
   const activeAgentId = extractAgentId(pathname);
   const hasOpenSession = !!searchParams?.get("session");
+
+  // On mobile the sidebar renders as an overlay drawer. Once a nav link
+  // lands on its target the page behind the drawer has changed, so the
+  // drawer must close on its own — otherwise users tap twice per
+  // navigation (once to jump, once to dismiss the stale overlay).
+  // Desktop is unaffected: openMobile only ever turns true in the
+  // mobile-sheet branch of the Sidebar, where the persistent sidebar
+  // has no overlay to hide. Query changes are tracked too, because
+  // session links navigate within the same /chat/ pathname via
+  // ?session=<id>.
+  const { setOpenMobile } = useSidebar();
+  React.useEffect(() => {
+    setOpenMobile(false);
+  }, [pathname, searchParams, setOpenMobile]);
 
   const [status, setStatus] = React.useState<StatusResponse | null>(null);
   const [me, setMe] = React.useState<MeResponse | null>(null);
