@@ -223,7 +223,7 @@ select option {
      distinct from amber warning; rings/info share this cyan axis. */
   --brand: #0e7490;            /* #0e7490 Fluctio surge cyan */
 
-  --destructive: oklch(0.577 0.245 27.325);/* keep vivid red for errors */
+  --destructive: oklch(0.52 0.19 12);      /* rosy red — cyan's complement on the chart ring, cooler than the old orange-red; deep step keeps AA on white */
   --border: oklch(0.922 0 0);              /* #eaeaea — pure gray hairline */
   --input: oklch(0.922 0 0);
   --ring: #0e7490;     /* focus ring = surge cyan */
@@ -257,7 +257,7 @@ select option {
      one step deeper than the #0e7490 brand primary. */
   --success: oklch(0.52 0.14 168);         /* teal-green — bridges the cyan axis, deep step for text */
   --success-foreground: oklch(0.985 0 0);
-  --warning: oklch(0.55 0.14 75);          /* amber — deep step for text */
+  --warning: oklch(0.55 0.12 68);          /* gold — warm counterpoint, deep step for text */
   --warning-foreground: oklch(0.205 0 0);
   --info: #155e75;            /* surge cyan, deep step for text */
 }
@@ -291,7 +291,7 @@ select option {
   /* Brand surge-cyan — decorative + primary hue */
   --brand: #22d3ee;
 
-  --destructive: oklch(0.65 0.2 25);
+  --destructive: oklch(0.68 0.17 12);      /* rosy red, lifted for dark */
   --border: oklch(1 0 0 / 10%);            /* Geist-style translucent hairline */
   --input: oklch(1 0 0 / 15%);
   --ring: #22d3ee;     /* focus ring = surge cyan */
@@ -315,7 +315,7 @@ select option {
 
   --success: oklch(0.72 0.14 172);
   --success-foreground: oklch(0.145 0 0);
-  --warning: oklch(0.78 0.15 75);
+  --warning: oklch(0.78 0.13 68);
   --warning-foreground: oklch(0.145 0 0);
   --info: #22d3ee;
 }
