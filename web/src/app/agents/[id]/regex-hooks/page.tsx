@@ -172,13 +172,24 @@ export default function AgentRegexHooksPage() {
   };
 
   // Drag & drop reorder
-  // The state flip is deferred past the browser's drag-image snapshot:
-  // setDragIdx during dragstart re-renders mid-capture, and Chrome then
-  // grabs the wrong (often whole-pane) ghost — the page header rode
-  // along in the drag preview instead of just the hook card.
+  // The drag image is set explicitly from an offscreen clone: Chrome's
+  // auto-capture races React's re-render of this list (and even with the
+  // state flip deferred a frame it kept swallowing neighbouring content —
+  // the page header rode along in the ghost). Handing the browser a
+  // detached clone of just this card bypasses the auto-capture path
+  // entirely; the clone is removed one frame later, after capture.
   const onDragStart = (e: React.DragEvent, idx: number) => {
     e.dataTransfer.effectAllowed = "move";
-    requestAnimationFrame(() => setDragIdx(idx));
+    const card = e.currentTarget as HTMLElement;
+    const rect = card.getBoundingClientRect();
+    const ghost = card.cloneNode(true) as HTMLElement;
+    ghost.style.cssText = `position:fixed;left:-9999px;top:0;width:${rect.width}px;margin:0;pointer-events:none;`;
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost, Math.min(e.clientX - rect.left, rect.width), 20);
+    requestAnimationFrame(() => {
+      setDragIdx(idx);
+      ghost.remove();
+    });
   };
 
   const onDragOver = (e: React.DragEvent, idx: number) => {
