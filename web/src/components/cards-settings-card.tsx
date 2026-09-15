@@ -16,7 +16,7 @@ import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
-import { SettingsCard, CardHead, Field, GroupHead } from "@/components/settings-ui";
+import { SettingsCard, CardHead, Field, GroupHead, NumberField } from "@/components/settings-ui";
 
 // CardsSettingsCard — Q&A flashcard config. Lives in the Settings dialog's
 // Knowledge tab next to DiarySettingsCard. Generation: nightly LLM pass
@@ -28,8 +28,8 @@ export function CardsSettingsCard() {
   const agentId = useAgentIdFromURL();
   const [enabled, setEnabled] = useState(false);
   const [cronTime, setCronTime] = useState("03:00");
-  const [dailyLimit, setDailyLimit] = useState("10");
-  const [reviewLimit, setReviewLimit] = useState("20");
+  const [dailyLimit, setDailyLimit] = useState(10);
+  const [reviewLimit, setReviewLimit] = useState(20);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushTime, setPushTime] = useState("09:00");
   const [pushChannel, setPushChannel] = useState("wechat");
@@ -43,8 +43,8 @@ export function CardsSettingsCard() {
         if (c) {
           setEnabled(c.enabled ?? false);
           setCronTime(c.cronTime || "03:00");
-          setDailyLimit(String(c.dailyLimit || 10));
-          setReviewLimit(String(c.reviewLimit || 20));
+          setDailyLimit(c.dailyLimit || 10);
+          setReviewLimit(c.reviewLimit || 20);
           setPushEnabled(c.pushEnabled ?? false);
           setPushTime(c.pushTime || "09:00");
           setPushChannel(c.pushChannel || "wechat");
@@ -60,8 +60,8 @@ export function CardsSettingsCard() {
       cards: {
         enabled,
         cronTime,
-        dailyLimit: parseInt(dailyLimit, 10) || 10,
-        reviewLimit: parseInt(reviewLimit, 10) || 20,
+        dailyLimit: dailyLimit || 10,
+        reviewLimit: reviewLimit || 20,
         pushEnabled,
         pushTime,
         pushChannel,
@@ -92,21 +92,19 @@ export function CardsSettingsCard() {
               />
             </Field>
             <Field label={t("cards.settings.dailyLimit")} hint={t("cards.settings.dailyLimitDesc")}>
-              <Input
-                type="number"
+              <NumberField
                 min={1}
                 max={50}
                 value={dailyLimit}
-                onChange={(e) => setDailyLimit(e.target.value)}
+                onChange={setDailyLimit}
               />
             </Field>
             <Field label={t("cards.settings.reviewLimit")} hint={t("cards.settings.reviewLimitDesc")}>
-              <Input
-                type="number"
+              <NumberField
                 min={1}
                 max={200}
                 value={reviewLimit}
-                onChange={(e) => setReviewLimit(e.target.value)}
+                onChange={setReviewLimit}
               />
             </Field>
           </div>

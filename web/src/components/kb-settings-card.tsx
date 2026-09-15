@@ -15,7 +15,7 @@ import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
-import { SettingsCard, CardHead, Field, GroupLabel, GroupHead } from "@/components/settings-ui";
+import { SettingsCard, CardHead, Field, GroupLabel, GroupHead, NumberField } from "@/components/settings-ui";
 import { channelLabel } from "@/components/channel-icon";
 import { BookOpen } from "lucide-react";
 
@@ -175,12 +175,11 @@ export function KBSettingsCard() {
               </Select>
             </Field>
             <Field label={t("knowledge.maxResults")}>
-              <Input
-                type="number"
+              <NumberField
                 min={1}
                 max={20}
                 value={maxResults}
-                onChange={(e) => setMaxResults(Number(e.target.value))}
+                onChange={setMaxResults}
               />
             </Field>
           </div>
@@ -259,12 +258,11 @@ export function KBSettingsCard() {
                     </Select>
                   </Field>
                   <Field label={t("knowledge.maxResults")}>
-                    <Input
-                      type="number"
+                    <NumberField
                       min={1}
                       max={20}
                       value={ftMaxResults}
-                      onChange={(e) => setFtMaxResults(Number(e.target.value))}
+                      onChange={setFtMaxResults}
                     />
                   </Field>
                 </div>
@@ -303,16 +301,16 @@ export function KBSettingsCard() {
             <GroupLabel>{t("knowledge.dedupThresholds")}</GroupLabel>
             <div className="grid grid-cols-2 gap-4">
               <Field label={<span className="text-xs">{t("knowledge.dedupArticleHigh")}</span>}>
-                <Input type="number" min={0} max={1} step={0.01} value={articleDupHigh} onChange={(e) => setArticleDupHigh(Number(e.target.value))} />
+                <NumberField min={0} max={1} value={articleDupHigh} onChange={setArticleDupHigh} />
               </Field>
               <Field label={<span className="text-xs">{t("knowledge.dedupArticleMid")}</span>}>
-                <Input type="number" min={0} max={1} step={0.01} value={articleDupMid} onChange={(e) => setArticleDupMid(Number(e.target.value))} />
+                <NumberField min={0} max={1} value={articleDupMid} onChange={setArticleDupMid} />
               </Field>
               <Field label={<span className="text-xs">{t("knowledge.dedupFlash")}</span>}>
-                <Input type="number" min={0} max={1} step={0.01} value={flashDupThreshold} onChange={(e) => setFlashDupThreshold(Number(e.target.value))} />
+                <NumberField min={0} max={1} value={flashDupThreshold} onChange={setFlashDupThreshold} />
               </Field>
               <Field label={<span className="text-xs">{t("knowledge.dedupTodo")}</span>}>
-                <Input type="number" min={0} max={1} step={0.01} value={todoDupThreshold} onChange={(e) => setTodoDupThreshold(Number(e.target.value))} />
+                <NumberField min={0} max={1} value={todoDupThreshold} onChange={setTodoDupThreshold} />
               </Field>
             </div>
           </div>

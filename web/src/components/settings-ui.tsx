@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 // Settings form primitives — the single layout dialect for every settings
@@ -15,6 +16,7 @@ import { cn } from "@/lib/utils";
 //   SettingsCard rounded-lg border bg-card (padded via `padded`)
 //   CardHead     icon + text-sm title + badge, desc below, control right
 //   Field        Label text-sm + control + text-xs hint, space-y-1.5
+//   NumberField  typeable numeric Input (draft-while-focused, commit on blur)
 //   ToggleRow    title/hint left, Switch right
 //   GroupLabel   text-xs muted-medium group label inside a card body
 //   SettingsError the one error-banner dialect
@@ -138,6 +140,53 @@ export function Field({
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
+  );
+}
+
+// NumberField — typeable numeric Input (settings dialect's only numeric
+// control). `type="number"` + re-parsing the controlled value per keystroke
+// makes decimals untypeable ("0." collapses back to "0"), so this edits a
+// local string draft and commits once on blur: empty or unparseable drafts
+// fall back to the current value, anything else is clamped to min/max.
+// inputMode="decimal" keeps phones on the decimal pad without native spinners.
+export function NumberField({
+  value,
+  onChange,
+  min,
+  max,
+  ...props
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  min?: number;
+  max?: number;
+} & Omit<
+  React.ComponentProps<typeof Input>,
+  "value" | "onChange" | "type" | "inputMode" | "min" | "max" | "step"
+>) {
+  // draft === null ⇒ not editing: render the canonical value so outside
+  // updates (config reload after save) always show through. The draft is
+  // seeded implicitly by the first keystroke — the input event carries the
+  // full text (canonical value + edit), so no onFocus reset is needed.
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const commit = () => {
+    const raw = draft;
+    setDraft(null);
+    if (raw === null) return;
+    const n = Number(raw);
+    if (raw.trim() === "" || !Number.isFinite(n)) return;
+    const next = Math.min(max ?? Infinity, Math.max(min ?? -Infinity, n));
+    if (next !== value) onChange(next);
+  };
+  return (
+    <Input
+      type="text"
+      inputMode="decimal"
+      value={draft ?? String(value)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      {...props}
+    />
   );
 }
 

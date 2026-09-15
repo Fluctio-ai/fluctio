@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
@@ -20,7 +19,7 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
-import { SettingsCard, CardHead, GroupLabel } from "@/components/settings-ui";
+import { SettingsCard, CardHead, GroupLabel, NumberField } from "@/components/settings-ui";
 
 // WikiAutoGenSettingsCard — wiki background generation config plus the
 // manual generate actions. Lives in the Settings dialog's Knowledge tab
@@ -228,8 +227,7 @@ export function WikiAutoGenSettingsCard() {
           <div className="flex items-center justify-between gap-4">
             <Label className="text-sm">{t("wiki.autoGenInterval")}</Label>
             <div className="flex items-center gap-2">
-              <Input
-                type="number"
+              <NumberField
                 min={1}
                 className="w-20"
                 value={
@@ -237,10 +235,9 @@ export function WikiAutoGenSettingsCard() {
                     ? Math.round(wikiCfg.interval / 3600000000000)
                     : 6
                 }
-                onChange={(e) => {
-                  const hours = Math.max(1, Number(e.target.value) || 6);
-                  saveWikiCfg({ ...wikiCfg, interval: hours * 3600000000000 });
-                }}
+                onChange={(hours) =>
+                  saveWikiCfg({ ...wikiCfg, interval: hours * 3600000000000 })
+                }
                 disabled={wikiSaving}
               />
               <span className="text-xs text-muted-foreground">
@@ -250,20 +247,15 @@ export function WikiAutoGenSettingsCard() {
           </div>
           <div className="flex items-center justify-between gap-4">
             <Label className="text-sm">{t("wiki.autoGenMaxTokens")}</Label>
-            <Input
-              type="number"
+            <NumberField
               min={0}
-              step={512}
               className="w-24"
               value={
                 wikiCfg.maxTokens && wikiCfg.maxTokens > 0
                   ? wikiCfg.maxTokens
                   : 8192
               }
-              onChange={(e) => {
-                const v = Math.max(0, Number(e.target.value) || 0);
-                saveWikiCfg({ ...wikiCfg, maxTokens: v });
-              }}
+              onChange={(v) => saveWikiCfg({ ...wikiCfg, maxTokens: v })}
               disabled={wikiSaving}
             />
           </div>
