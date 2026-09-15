@@ -3179,10 +3179,13 @@ export function ChatScreen() {
             {sending && (
               <div className="flex justify-start">
                 <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-3">
+                  {/* Three surge-cyan droplets phasing like the logo's
+                      wave bands — the waiting state reads as flowing
+                      water, not a generic gray IM ellipsis. */}
                   <div className="flex items-center gap-1">
-                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-muted-foreground/60" style={{ animationDelay: "0ms" }} />
-                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-muted-foreground/60" style={{ animationDelay: "200ms" }} />
-                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-muted-foreground/60" style={{ animationDelay: "400ms" }} />
+                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-primary/80" style={{ animationDelay: "0ms" }} />
+                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-primary/80" style={{ animationDelay: "200ms" }} />
+                    <span className="typing-dot inline-block h-2 w-2 rounded-full bg-primary/80" style={{ animationDelay: "400ms" }} />
                   </div>
                 </div>
               </div>

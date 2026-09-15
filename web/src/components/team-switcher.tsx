@@ -19,6 +19,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Bot, ChevronsUpDownIcon, PlusIcon } from "lucide-react";
+import { LogoWave } from "@/components/logo-wave";
 
 // AgentAvatar shows the agent's uploaded /api/agents/{id}/files/avatar.png
 // when available, falls back to the Fluctio logo for the platform header
@@ -37,16 +38,9 @@ function AgentAvatar({
   }, [agentId]);
 
   if (!agentId) {
-    return (
-      <img
-        src="/logo.svg"
-        alt="Fluctio"
-        width={size}
-        height={size}
-        className="rounded-lg"
-        style={{ width: size, height: size }}
-      />
-    );
+    // Platform header (no agent): the animated inline mark — wave bands
+    // phase-shift and the fill follows the --brand token per theme.
+    return <LogoWave size={size} className="rounded-lg" />;
   }
   if (failed) {
     return (

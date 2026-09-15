@@ -106,7 +106,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
     // lets each pane keep its own content-driven height.
     <div className="mx-auto grid w-full max-w-6xl items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
       {/* ── Today's cards ── */}
-      <section className="flex flex-col overflow-hidden rounded-xl border bg-card">
+      <section className="dash-in flex flex-col overflow-hidden rounded-xl border bg-card" style={{ animationDelay: "0ms" }}>
         <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
           <Layers className="size-4 text-muted-foreground" />
           {t("dashboard.cards.title")}
@@ -145,7 +145,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
       </section>
 
       {/* ── Open KB todos ── */}
-      <section className="flex flex-col overflow-hidden rounded-xl border bg-card">
+      <section className="dash-in flex flex-col overflow-hidden rounded-xl border bg-card" style={{ animationDelay: "60ms" }}>
         <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
           <ListTodo className="size-4 text-muted-foreground" />
           {t("dashboard.todo.title")}
@@ -191,7 +191,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
       </section>
 
       {/* ── Recent chats ── */}
-      <section className="flex flex-col overflow-hidden rounded-xl border bg-card">
+      <section className="dash-in flex flex-col overflow-hidden rounded-xl border bg-card" style={{ animationDelay: "120ms" }}>
         <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
           <MessageSquare className="size-4 text-muted-foreground" />
           {t("dashboard.recent.title")}
@@ -227,7 +227,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
       </section>
 
       {/* ── Cron jobs ── */}
-      <section className="flex flex-col overflow-hidden rounded-xl border bg-card">
+      <section className="dash-in flex flex-col overflow-hidden rounded-xl border bg-card" style={{ animationDelay: "180ms" }}>
         <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
           <Timer className="size-4 text-muted-foreground" />
           {t("dashboard.cron.title")}

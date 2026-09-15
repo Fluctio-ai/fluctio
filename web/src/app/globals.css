@@ -64,6 +64,48 @@ select option {
   }
 }
 
+/* ── Flow motion dialect ─────────────────────────────────────────────
+   Fluctio's namesake is moving water, so motion reads as flow: one
+   shared easing, and compositor-only loops that degrade to static
+   under prefers-reduced-motion (same contract as msg-in). */
+:root {
+  --ease-flow: cubic-bezier(0.45, 0, 0.25, 1);
+}
+
+/* Brand waves — the three logo bands drift horizontally with phase
+   offsets. Standing water never looks alive; phase-shifted water does.
+   The paths repeat their waveform, and the safe-area padding leaves
+   ~205 units of slack on each side, so a 14px drift never clips. */
+@keyframes wave-shift {
+  from { transform: translateX(0); }
+  50% { transform: translateX(14px); }
+  to { transform: translateX(0); }
+}
+.logo-wave path {
+  animation: wave-shift 3.9s var(--ease-flow) infinite;
+}
+.logo-wave path:nth-child(2) { animation-delay: -1.3s; }
+.logo-wave path:nth-child(3) { animation-delay: -2.6s; }
+
+/* Dashboard panes rise in staggered, like cards dealt onto water. */
+@keyframes dash-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.dash-in {
+  animation: dash-in 320ms var(--ease-flow) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logo-wave path,
+  .dash-in {
+    animation: none;
+  }
+  .dash-in {
+    animation: msg-in-fade 120ms ease-out backwards;
+  }
+}
+
 /* Row actions revealed by `opacity-0 group-hover:opacity-100` (copy /
    delete chips on knowledge rows, chat hover toolbars, skill rows) have
    no hover to trigger them on touch — first tap sticks hover, second
@@ -320,7 +362,7 @@ html.theme-transition *::after {
 }
 
 .typing-dot {
-  animation: typing-dot 1.4s ease-in-out infinite;
+  animation: typing-dot 1.4s var(--ease-flow) infinite;
 }
 
 /* Existing animations */
