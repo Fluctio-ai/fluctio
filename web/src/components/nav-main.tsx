@@ -11,6 +11,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import type { LucideIcon } from "lucide-react";
+import { navTileButton, navTileGrid2, navTileIcon, navTileLabel } from "@/components/nav-tile";
 
 export interface NavItem {
   title: string;
@@ -37,9 +38,9 @@ function isActive(pathname: string, href: string) {
 // so the section blends in as an unlabeled cluster (used for the standalone
 // Overview link and the footer Settings entry).
 //
-// tiles switches the section to the compact 2-per-row icon+label grid
-// NavKnowledge uses — for short pairs (智能体: 新对话 + 工作流) so they
-// share one row instead of stacking full-width.
+// tiles switches the section to the compact icon-over-label tile grid
+// shared with NavKnowledge (nav-tile.tsx) — for short pairs (智能体:
+// 新对话 + 工作流) so they share one row instead of stacking full-width.
 export function NavMain({
   label,
   items,
@@ -127,14 +128,10 @@ export function NavMain({
                 onMouseEnter={() => {
                   if (item.url) router.prefetch(item.url);
                 }}
-                className={
-                  tiles
-                    ? "h-auto min-h-0 justify-start gap-1.5 px-2 py-1.5 [&>span]:truncate"
-                    : undefined
-                }
+                className={tiles ? navTileButton : undefined}
               >
-                <item.icon className={tiles ? "size-4 shrink-0" : undefined} />
-                <span className={tiles ? "text-xs" : undefined}>{item.title}</span>
+                <item.icon className={tiles ? navTileIcon : undefined} />
+                <span className={tiles ? navTileLabel : undefined}>{item.title}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           );
@@ -145,12 +142,13 @@ export function NavMain({
   );
 }
 
-// TilesWrap renders children as-is, or inside the 2-col tile grid when
-// tiles is set (fragment <div> pairs can't express the conditional wrap
-// inline without ternary-duplicating the map).
+// TilesWrap renders children as-is, or inside the tile grid when tiles is
+// set (fragment <div> pairs can't express the conditional wrap inline
+// without ternary-duplicating the map). Two entries in this mode, so
+// cols-2 keeps them on one full-width row.
 function TilesWrap({ tiles, children }: { tiles: boolean; children: React.ReactNode }) {
   if (!tiles) return <>{children}</>;
-  return <div className="grid grid-cols-2 gap-1">{children}</div>;
+  return <div className={navTileGrid2}>{children}</div>;
 }
 
 // Exported for pages that want a real anchor with Next client-nav

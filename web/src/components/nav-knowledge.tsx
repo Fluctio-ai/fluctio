@@ -21,6 +21,7 @@ import {
   StickyNoteIcon,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
+import { navTileButton, navTileGrid3, navTileIcon, navTileLabel } from "@/components/nav-tile";
 
 // NavKnowledge is the "Knowledge" section of the agent sidebar: a
 // collapsible group sitting between "New chat" and "Projects" that links
@@ -135,13 +136,12 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
         {t("nav.group.knowledge")}
       </SidebarGroupLabel>
       {!sectionCollapsed && (
-        // Two tiles per row: the entry list outgrew the one-per-row menu
-        // (7 entries pushed Sessions/Projects off-screen on short viewports),
-        // so entries render as a compact 2-col grid of icon+label tiles.
-        // The dedupe/active navigation logic is identical to the old
-        // SidebarMenuButton rows; only the presentation is denser.
+        // Entries render as a 3-col icon-over-label tile grid (classes in
+        // nav-tile.tsx, same dialect as the agent group's pair) — one
+        // entry per row pushed Sessions/Projects off-screen on short
+        // viewports.
         <SidebarMenu>
-          <div className="grid grid-cols-2 gap-1">
+          <div className={navTileGrid3}>
             {items.map((item) => {
               const norm = (s: string) => s.replace(/\/$/, "");
               // articles (/knowledge) is the parent route of flashes/todos/
@@ -161,7 +161,7 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
                   <SidebarMenuButton
                     isActive={active}
                     tooltip={item.title}
-                    className="h-auto min-h-0 justify-start gap-1.5 px-2 py-1.5 [&>span]:truncate"
+                    className={navTileButton}
                     onClick={() => {
                       if (norm(pathname) === norm(item.url)) {
                         // Already on this page — clicking the active item
@@ -178,8 +178,8 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
                     }}
                     onMouseEnter={() => router.prefetch(item.url)}
                   >
-                    <item.icon className="size-4 shrink-0" />
-                    <span className="text-xs">{item.title}</span>
+                    <item.icon className={navTileIcon} />
+                    <span className={navTileLabel}>{item.title}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               );
