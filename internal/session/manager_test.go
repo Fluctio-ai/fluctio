@@ -51,6 +51,12 @@ func (noopSessionStore) CreateForkSession(context.Context, string, string, strin
 func (noopSessionStore) SessionParent(context.Context, string, string) (string, int, error) {
 	return "", 0, nil
 }
+func (noopSessionStore) SetSessionChatOnly(context.Context, string, string, bool) error {
+	return nil
+}
+func (noopSessionStore) SessionChatOnly(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 
 func TestNewManagerWithStoreForUserEmptyUserIDDoesNotPanic(t *testing.T) {
 	mgr := NewManagerWithStoreForUser(t.TempDir(), noopSessionStore{}, "", "agent-1")

@@ -54,6 +54,12 @@ type Session struct {
 	parentSessionKey string
 	parentForkSeq    int
 
+	// chatOnly mirrors sessions.chat_only: when true, turns on this
+	// session send no tools to the LLM (pure-conversation mode). Loaded
+	// from the row in getByKey and kept in sync by SetChatOnlyByID, so
+	// it is always guarded by mu alongside the other persisted fields.
+	chatOnly bool
+
 	// Steering: turnDepth counts in-flight HandleMessage turns for this
 	// session (a counter, not a bool, so re-entrant/overlapping turns
 	// don't strand the active flag). steerBuf holds user messages that
@@ -88,6 +94,14 @@ func (s *Session) ParentSessionKey() string { return s.parentSessionKey }
 // ParentForkSeq is the inclusive fork point seq inside the parent's
 // session_messages archive. Only meaningful when ParentSessionKey != "".
 func (s *Session) ParentForkSeq() int { return s.parentForkSeq }
+
+// ChatOnly reports whether this session runs in pure-conversation mode
+// (no tools sent to the LLM). Read once per turn by the agent loop.
+func (s *Session) ChatOnly() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.chatOnly
+}
 
 // PushPendingCalls parks intercepted tool_calls awaiting user /yes.
 // A round's waiting calls are a batch; one /yes executes them all. desc
@@ -232,6 +246,11 @@ type SessionStore interface {
 	// and history merging for forked chats. ("",0,nil) for a normal
 	// non-fork session or when the store has no row yet.
 	SessionParent(ctx context.Context, agentID, sessionKey string) (parentKey string, forkSeq int, err error)
+	// SetSessionChatOnly / SessionChatOnly persist and read the
+	// pure-conversation flag. When on, agent turns for this session send
+	// no tools to the LLM. See Agent loop for the injection policy.
+	SetSessionChatOnly(ctx context.Context, agentID, sessionKey string, on bool) error
+	SessionChatOnly(ctx context.Context, agentID, sessionKey string) (bool, error)
 }
 
 type Manager struct {
@@ -553,6 +572,9 @@ func (m *Manager) getByKey(key, channel, accountID, chatID, projectID string) *S
 		if pk, fs, err := m.store.SessionParent(m.ctx(), m.agentID, key); err == nil {
 			s.parentSessionKey = pk
 			s.parentForkSeq = fs
+		}
+		if co, err := m.store.SessionChatOnly(m.ctx(), m.agentID, key); err == nil {
+			s.chatOnly = co
 		}
 	} else {
 		s.load()
@@ -1043,8 +1065,12 @@ type WebSession struct {
 	ProjectID string `json:"projectId,omitempty"`
 	Title     string `json:"title"`
 	Preview   string `json:"preview"`
-	CreatedAt int64  `json:"createdAt"` // unix ms
-	UpdatedAt int64  `json:"updatedAt"` // unix ms
+	// ChatOnly mirrors sessions.chat_only — pure-conversation mode
+	// (no tools sent to the LLM). Surfaced so the composer toggle
+	// renders in the right state after a reload.
+	ChatOnly     bool   `json:"chatOnly,omitempty"`
+	CreatedAt    int64  `json:"createdAt"` // unix ms
+	UpdatedAt    int64  `json:"updatedAt"` // unix ms
 	// ThumbnailURL is the first image_url attached to the FIRST user
 	// turn of the session, surfaced so the sidebar can show "image +
 	// text" instead of just the text label for multimodal chats.
@@ -1241,6 +1267,25 @@ func (m *Manager) MoveSessionByID(sessionId, projectID string) error {
 	m.mu.Unlock()
 	if m.store != nil {
 		return m.store.MoveSession(m.ctx(), m.agentID, key, projectID)
+	}
+	return nil
+}
+
+// SetChatOnlyByID flips a session's pure-conversation flag (resolve
+// either a session_key or a legacy web chat_id). Updates the in-memory
+// cache entry alongside the row so a live chat's next turn sees the new
+// value without waiting for a reload. File-backed mode is a no-op.
+func (m *Manager) SetChatOnlyByID(sessionId string, on bool) error {
+	key := m.ResolveSessionKey(sessionId)
+	m.mu.Lock()
+	if s, ok := m.sessions[key]; ok {
+		s.mu.Lock()
+		s.chatOnly = on
+		s.mu.Unlock()
+	}
+	m.mu.Unlock()
+	if m.store != nil {
+		return m.store.SetSessionChatOnly(m.ctx(), m.agentID, key, on)
 	}
 	return nil
 }

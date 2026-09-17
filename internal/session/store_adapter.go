@@ -328,6 +328,7 @@ func (a *StoreAdapter) BuildWebSession(ctx context.Context, m store.SessionMeta)
 		Title:         title,
 		Preview:       preview,
 		ThumbnailURL:  thumb,
+		ChatOnly:      m.ChatOnly,
 		CreatedAt:     m.UpdatedAt.UnixMilli(),
 		UpdatedAt:     m.UpdatedAt.UnixMilli(),
 	}
@@ -425,4 +426,12 @@ func (a *StoreAdapter) RenameSession(ctx context.Context, agentID, sessionKey, t
 
 func (a *StoreAdapter) MoveSession(ctx context.Context, agentID, sessionKey, projectID string) error {
 	return a.st.MoveSession(ctx, agentID, sessionKey, projectID)
+}
+
+func (a *StoreAdapter) SetSessionChatOnly(ctx context.Context, agentID, sessionKey string, on bool) error {
+	return a.st.SetSessionChatOnly(ctx, agentID, sessionKey, on)
+}
+
+func (a *StoreAdapter) SessionChatOnly(ctx context.Context, agentID, sessionKey string) (bool, error) {
+	return a.st.SessionChatOnly(ctx, agentID, sessionKey)
 }

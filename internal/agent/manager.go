@@ -414,6 +414,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				kbHC := &kb.HookContext{
 					Messages: hc.Messages,
 					Source:   hc.Source,
+					ChatOnly: hc.ChatOnly,
 				}
 				hookFn(ctx, kbHC)
 				if kbHC.SkipLLM {

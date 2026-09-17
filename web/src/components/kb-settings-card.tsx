@@ -14,10 +14,46 @@ import {
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
 import { SaveButton } from "@/components/save-button";
 import { SettingsCard, CardHead, Field, GroupLabel, GroupHead, NumberField } from "@/components/settings-ui";
 import { channelLabel } from "@/components/channel-icon";
 import { BookOpen } from "lucide-react";
+
+// ModePicker — the recall trigger mode as a tappable segmented control
+// instead of a dropdown: every option is visible at once (the old Select
+// hid the three modes behind one label, and keyword mode's "must set
+// keywords" contract wasn't discoverable). 4px inner radius is the
+// nested-control tier; outer 6px matches the control token.
+function ModePicker({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div className="inline-flex gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "h-7 rounded-[4px] px-3 text-xs font-medium transition-colors",
+            value === o.value
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:bg-background hover:text-foreground",
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // KBSettingsCard — the KB auto-query configuration card. Lives in the
 // Settings dialog's Knowledge tab. The data-source *list* is browsed
@@ -27,11 +63,6 @@ import { BookOpen } from "lucide-react";
 export function KBSettingsCard() {
   const t = useT();
   const agentId = useAgentIdFromURL();
-  const autoModeLabel = selectLabel({
-    always: t("knowledge.modeAlways"),
-    keyword: t("knowledge.modeKeyword"),
-    disabled: t("knowledge.modeDisabled"),
-  });
   const searchModeLabel = selectLabel({
     augment: t("knowledge.searchAugment"),
     strict: t("knowledge.searchStrict"),
@@ -143,6 +174,15 @@ export function KBSettingsCard() {
     ftThreshold,
   ]);
 
+  // Keyword mode is a contract: no keywords = recall silently never
+  // fires (groupTriggered's containsAnyKeyword over an empty list is
+  // always false). Block saving and flag the input instead of letting
+  // the user discover it weeks later.
+  const wikiKeywordsInvalid =
+    kbEnabled && autoMode === "keyword" && !keywords.trim();
+  const ftKeywordsInvalid =
+    kbEnabled && ftEnabled && ftAutoMode === "keyword" && !ftKeywords.trim();
+
   return (
     <SettingsCard className="space-y-4">
       <CardHead
@@ -161,38 +201,41 @@ export function KBSettingsCard() {
       {kbEnabled && (
         <div className="space-y-4 border-t border-border pt-4">
           <GroupLabel>{t("knowledge.wikiRecall")}</GroupLabel>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label={t("knowledge.triggerMode")}>
-              <Select value={autoMode} onValueChange={(v) => v && setAutoMode(v)}>
-                <SelectTrigger>
-                  <SelectValue>{autoModeLabel}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="always">{t("knowledge.modeAlways")}</SelectItem>
-                  <SelectItem value="keyword">{t("knowledge.modeKeyword")}</SelectItem>
-                  <SelectItem value="disabled">{t("knowledge.modeDisabled")}</SelectItem>
-                </SelectContent>
-              </Select>
-            </Field>
-            <Field label={t("knowledge.maxResults")}>
-              <NumberField
-                min={1}
-                max={20}
-                value={maxResults}
-                onChange={setMaxResults}
+          <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
+            <div>
+              <ModePicker
+                value={autoMode}
+                onChange={setAutoMode}
+                options={[
+                  { value: "always", label: t("knowledge.modeAlways") },
+                  { value: "keyword", label: t("knowledge.modeKeyword") },
+                  { value: "disabled", label: t("knowledge.modeDisabled") },
+                ]}
               />
-            </Field>
-          </div>
+            </div>
+          </Field>
+          <Field label={t("knowledge.maxResults")}>
+            <NumberField
+              min={1}
+              max={20}
+              value={maxResults}
+              onChange={setMaxResults}
+            />
+          </Field>
 
           {/* Keywords input lives right under the trigger mode that
               enables it — it used to render at the card tail, far from
               the Wiki 触发模式 select that shows it. */}
           {autoMode === "keyword" && (
-            <Field label={t("knowledge.keywords")}>
+            <Field
+              label={t("knowledge.keywords")}
+              hint={wikiKeywordsInvalid ? t("knowledge.keywordsRequired") : undefined}
+            >
               <Input
                 value={keywords}
                 onChange={(e) => setKeywords(e.target.value)}
                 placeholder={t("knowledge.keywordsPlaceholder")}
+                className={wikiKeywordsInvalid ? "border-destructive focus-visible:ring-destructive" : undefined}
               />
             </Field>
           )}
@@ -244,28 +287,27 @@ export function KBSettingsCard() {
             />
             {ftEnabled && (
               <>
-                <div className="grid grid-cols-2 gap-4">
-                  <Field label={t("knowledge.triggerMode")}>
-                    <Select value={ftAutoMode} onValueChange={(v) => v && setFtAutoMode(v)}>
-                      <SelectTrigger>
-                        <SelectValue>{autoModeLabel}</SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="always">{t("knowledge.modeAlways")}</SelectItem>
-                        <SelectItem value="keyword">{t("knowledge.modeKeyword")}</SelectItem>
-                        <SelectItem value="disabled">{t("knowledge.modeDisabled")}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                  <Field label={t("knowledge.maxResults")}>
-                    <NumberField
-                      min={1}
-                      max={20}
-                      value={ftMaxResults}
-                      onChange={setFtMaxResults}
+                <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
+                  <div>
+                    <ModePicker
+                      value={ftAutoMode}
+                      onChange={setFtAutoMode}
+                      options={[
+                        { value: "always", label: t("knowledge.modeAlways") },
+                        { value: "keyword", label: t("knowledge.modeKeyword") },
+                        { value: "disabled", label: t("knowledge.modeDisabled") },
+                      ]}
                     />
-                  </Field>
-                </div>
+                  </div>
+                </Field>
+                <Field label={t("knowledge.maxResults")}>
+                  <NumberField
+                    min={1}
+                    max={20}
+                    value={ftMaxResults}
+                    onChange={setFtMaxResults}
+                  />
+                </Field>
                 <Field
                   label={t("knowledge.threshold")}
                   hint={t("knowledge.ftThresholdDesc")}
@@ -282,11 +324,15 @@ export function KBSettingsCard() {
                   />
                 </Field>
                 {ftAutoMode === "keyword" && (
-                  <Field label={t("knowledge.keywords")}>
+                  <Field
+                    label={t("knowledge.keywords")}
+                    hint={ftKeywordsInvalid ? t("knowledge.keywordsRequired") : undefined}
+                  >
                     <Input
                       value={ftKeywords}
                       onChange={(e) => setFtKeywords(e.target.value)}
                       placeholder={t("knowledge.keywordsPlaceholder")}
+                      className={ftKeywordsInvalid ? "border-destructive focus-visible:ring-destructive" : undefined}
                     />
                   </Field>
                 )}
@@ -366,7 +412,10 @@ export function KBSettingsCard() {
       )}
 
       <div className="flex justify-end border-t border-border pt-4">
-        <SaveButton onSave={handleSave} disabled={!configLoaded} />
+        <SaveButton
+          onSave={handleSave}
+          disabled={!configLoaded || wikiKeywordsInvalid || ftKeywordsInvalid}
+        />
       </div>
     </SettingsCard>
   );

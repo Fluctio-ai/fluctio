@@ -1486,6 +1486,23 @@ func (a *Agent) sessionHasActiveGoal(ctx context.Context, msg bus.InboundMessage
 // with the OriginCron tag on the user message for traceability.
 const cronTriggerGuidance = "Scheduled-task trigger: the user message below is a task directive you previously set for yourself via create_cron_job. Execute it now and deliver the corresponding notification or result to the user directly. Do not acknowledge, confirm, or echo the directive, and do not treat it as a newly-requested task."
 
+// chatOnlyReminder is appended (as the final system message, not
+// persisted) on chat-only turns. Without it the model — whose system
+// prompt still describes its tools and whose history may show real
+// calls — narrates tool use it can no longer perform or fakes a call in
+// plain text. Positioned last so recency keeps it salient; appended
+// fresh each turn, it never disturbs the cached [system][history]
+// prefix.
+const chatOnlyReminder = "[Chat-only mode] Tools are not connected for this turn. Answer directly in text, reasoning over the conversation so far (past tool results in the history remain valid context). Do not claim to have called — or be about to call — any tool, and never simulate tool output. If the user asks for something that needs a tool, say the chat is in conversation-only mode right now."
+
+// chatOnlyFromParams lifts the per-send chatOnly flag from client
+// params (bus.InboundMessage.Params). JSON decodes the flag as bool;
+// anything else is a no-op.
+func chatOnlyFromParams(params map[string]any) bool {
+	v, _ := params["chatOnly"].(bool)
+	return v
+}
+
 // sessionStartTime returns the timestamp of the session's first persisted
 // message — used as the stable time anchor for BuildSystemPromptAs so the
 // system prompt renders byte-identically across turns (prefix cache). Falls
@@ -1971,6 +1988,14 @@ func (a *Agent) DeleteWebChatSession(sessionId string) error {
 // channel) by the URL token.
 func (a *Agent) RenameWebChatSession(sessionId, title string) error {
 	return a.sessions.RenameSessionByID(sessionId, title)
+}
+
+// SetWebChatSessionChatOnly flips a chat's pure-conversation mode
+// (drives the web input toggle). When on, turns in that session send no
+// tools to the LLM; history replays verbatim (providers accept
+// tool-trace history without a tools param).
+func (a *Agent) SetWebChatSessionChatOnly(sessionId string, on bool) error {
+	return a.sessions.SetChatOnlyByID(sessionId, on)
 }
 
 // MoveWebChatSession reassigns a chat to a different project (or
@@ -3309,7 +3334,25 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	}
 	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 
-	toolDefs := a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
+	// Pure-conversation mode (session chat_only): send no tools at all —
+	// the model reasons over the conversation alone. History replays
+	// verbatim; both major providers (z.ai anthropic-messages, DeepSeek
+	// responses) accept tool-trace history without a tools param (live
+	// probe 2026-09-17). The trailing reminder keeps the model from
+	// narrating tool use it can no longer perform — its system prompt
+	// still describes the tools, and past turns may show real calls.
+	//
+	// The params fallback covers a brand-new chat's FIRST turn: no
+	// session row exists yet so the flag can't be persisted, but the web
+	// client passes chatOnly=true per send. Once the row lands the flag
+	// round-trips through sessions.chat_only like everything else.
+	chatOnly := sess.ChatOnly() || chatOnlyFromParams(msg.Params)
+	var toolDefs []provider.Tool
+	if chatOnly {
+		messages = append(messages, provider.Message{Role: "system", Content: chatOnlyReminder})
+	} else {
+		toolDefs = a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
+	}
 
 	// Loop detection: track consecutive identical tool calls
 	type toolCallSig struct {
@@ -3381,7 +3424,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		)
 
 		// Hook: BeforeModelCall
-		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Source: msg.Source, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID}
+		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Source: msg.Source, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, ChatOnly: chatOnly}
 		a.hooks.Run(ctx, hcBefore)
 
 		// KB auto-query hook outputs: collect the indicator line once,
@@ -4329,7 +4372,25 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	}
 	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 
-	toolDefs := a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
+	// Pure-conversation mode (session chat_only): send no tools at all —
+	// the model reasons over the conversation alone. History replays
+	// verbatim; both major providers (z.ai anthropic-messages, DeepSeek
+	// responses) accept tool-trace history without a tools param (live
+	// probe 2026-09-17). The trailing reminder keeps the model from
+	// narrating tool use it can no longer perform — its system prompt
+	// still describes the tools, and past turns may show real calls.
+	//
+	// The params fallback covers a brand-new chat's FIRST turn: no
+	// session row exists yet so the flag can't be persisted, but the web
+	// client passes chatOnly=true per send. Once the row lands the flag
+	// round-trips through sessions.chat_only like everything else.
+	chatOnly := sess.ChatOnly() || chatOnlyFromParams(msg.Params)
+	var toolDefs []provider.Tool
+	if chatOnly {
+		messages = append(messages, provider.Message{Role: "system", Content: chatOnlyReminder})
+	} else {
+		toolDefs = a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
+	}
 
 	type toolCallSig struct {
 		name string
@@ -4349,7 +4410,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 
 	// ReAct loop - use Chat for tool iterations
 	for i := 0; i < a.maxToolIterations; i++ {
-		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Source: msg.Source, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID}
+		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Source: msg.Source, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, ChatOnly: chatOnly}
 		a.hooks.Run(ctx, hcBefore)
 		if len(kbSources) == 0 && len(hcBefore.KnowledgeSources) > 0 {
 			kbSources = hcBefore.KnowledgeSources

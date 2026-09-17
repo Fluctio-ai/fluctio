@@ -74,6 +74,13 @@ type HookContext struct {
 	// before more work happens.
 	IsPlanMode bool
 
+	// ChatOnly reports whether this turn runs in pure-conversation
+	// mode (session chat_only flag): no tools sent to the LLM. The KB
+	// auto-recall hook reads it to degrade its lanes from "always" to
+	// keyword-triggered, so quiet brainstorming turns don't get memory
+	// injections while an explicit keyword still recalls.
+	ChatOnly bool
+
 	// KB auto-query hook outputs (consumed by the agent loop).
 	// SkipLLM: the hook precomputed a response — skip the LLM call and
 	// emit PrebuiltContent directly.

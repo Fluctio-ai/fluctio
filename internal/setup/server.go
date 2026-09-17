@@ -50,6 +50,9 @@ type AgentHandle interface {
 	WebChatSessions() []session.WebSession
 	DeleteWebChatSession(sessionId string) error
 	RenameWebChatSession(sessionId, title string) error
+	// SetWebChatSessionChatOnly flips the chat's pure-conversation mode
+	// (no tools sent to the LLM for turns in that session).
+	SetWebChatSessionChatOnly(sessionId string, on bool) error
 	// MoveWebChatSession reassigns the chat to a different project (or
 	// detaches when projectID==""). Migrates workspace files between
 	// the old and new scope dirs and releases any active sandbox so

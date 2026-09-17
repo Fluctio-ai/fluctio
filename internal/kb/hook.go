@@ -13,6 +13,11 @@ import (
 type HookContext struct {
 	Messages           []provider.Message
 	Source             string
+	// ChatOnly mirrors the session's pure-conversation flag: when true,
+	// "always" recall lanes degrade to keyword-triggered (disabled lanes
+	// stay disabled) so brainstorming turns stay quiet unless the user
+	// explicitly names something recallable.
+	ChatOnly           bool
 	SkipLLM            bool
 	PrebuiltContent    string
 	SyntheticToolCalls []SyntheticToolCall
@@ -102,6 +107,16 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			return
 		}
 
+		// Chat-only turns degrade proactive recall: "always" lanes become
+		// keyword-triggered so a quiet brainstorming turn injects nothing,
+		// while an explicit keyword still recalls. "disabled" stays off,
+		// and the wiki/flash "" (off) modes are untouched — degrading ""
+		// would silently turn lanes on.
+		if hc.ChatOnly {
+			cfg.AutoMode = degradeAlwaysToKeyword(cfg.AutoMode)
+			cfg.FlashTodoAutoMode = degradeAlwaysToKeyword(cfg.FlashTodoAutoMode)
+		}
+
 		// Each group triggers independently. A group fires when it is
 		// enabled, its AutoMode isn't "disabled", and (always mode, or
 		// keyword mode matches one of its keywords). KB lanes need the
@@ -113,6 +128,9 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 		memMode := cfg.MemoryAutoMode
 		if memMode == "" {
 			memMode = "always"
+		}
+		if hc.ChatOnly {
+			memMode = degradeAlwaysToKeyword(memMode)
 		}
 		memOn := memSearch != nil && groupTriggered(memMode, query, cfg.MemoryKeywords)
 		if !wikiOn && !ftOn && !memOn {
@@ -390,6 +408,17 @@ func groupTriggered(autoMode, query string, keywords []string) bool {
 	default:
 		return false
 	}
+}
+
+// degradeAlwaysToKeyword maps "always" to "keyword" and leaves every
+// other mode untouched. Used by chat-only turns to silence proactive
+// recall without turning off lanes the user configured, and without
+// enabling lanes that were off ("" stays "").
+func degradeAlwaysToKeyword(mode string) string {
+	if mode == "always" {
+		return "keyword"
+	}
+	return mode
 }
 
 func containsAnyKeyword(text string, keywords []string) bool {

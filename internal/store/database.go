@@ -171,6 +171,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateSessionsAddForkColumns(ctx); err != nil {
 		return fmt.Errorf("migrate sessions fork columns: %w", err)
 	}
+	if err := d.migrateSessionsAddChatOnly(ctx); err != nil {
+		return fmt.Errorf("migrate sessions chat_only: %w", err)
+	}
 	if err := d.migrateSessionMessagesAddProviderModel(ctx); err != nil {
 		return fmt.Errorf("migrate session_messages provider/model: %w", err)
 	}
@@ -1660,10 +1663,11 @@ func (d *DBStore) migrateSessionsDropUserAndChatter(ctx context.Context) error {
 				last_summarized_seq INTEGER NOT NULL DEFAULT 0,
 				parent_session_key TEXT NOT NULL DEFAULT '',
 				parent_fork_seq INTEGER NOT NULL DEFAULT 0,
+				chat_only INTEGER NOT NULL DEFAULT 0,
 				PRIMARY KEY (agent_id, session_key)
 			)`,
-			`INSERT INTO sessions_new (agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq, parent_session_key, parent_fork_seq)
-				SELECT agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq, parent_session_key, parent_fork_seq FROM sessions`,
+			`INSERT INTO sessions_new (agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq, parent_session_key, parent_fork_seq, chat_only)
+				SELECT agent_id, session_key, channel, account_id, chat_id, project_id, title, messages, message_count, updated_at, last_summarized_seq, parent_session_key, parent_fork_seq, chat_only FROM sessions`,
 			`DROP TABLE sessions`,
 			`ALTER TABLE sessions_new RENAME TO sessions`,
 		} {
@@ -2826,6 +2830,12 @@ func (d *DBStore) migrationSQL() []string {
 			-- session; parent_fork_seq is ignored in that case.
 			parent_session_key TEXT NOT NULL DEFAULT '',
 			parent_fork_seq INTEGER NOT NULL DEFAULT 0,
+			-- chat_only: pure-conversation mode for this session. When on,
+			-- turns send no tools to the LLM (no function calling at all —
+			-- built-ins, MCP, plugins). History replays verbatim; providers
+			-- accept tool-trace history without a tools param (verified
+			-- against z.ai anthropic-messages and DeepSeek responses APIs).
+			chat_only INTEGER NOT NULL DEFAULT 0,
 			-- chatter_user_id is the actual conversation participant. For
 			-- web / dashboard chats it equals user_id (= the logged-in
 			-- user). For IM channels with per-sender app_users it's the
@@ -3884,7 +3894,7 @@ func (d *DBStore) SaveSession(ctx context.Context, agentID, sessionKey string, s
 
 func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMeta, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT session_key, '' AS user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at FROM sessions
+		fmt.Sprintf(`SELECT session_key, '' AS user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, COALESCE(chat_only,0) FROM sessions
 			WHERE agent_id = %s ORDER BY updated_at DESC`, d.ph(1)),
 		agentID)
 	if err != nil {
@@ -3894,9 +3904,11 @@ func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMe
 	var metas []SessionMeta
 	for rows.Next() {
 		var m SessionMeta
-		if err := rows.Scan(&m.Key, &m.UserID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt); err != nil {
+		var chatOnly int
+		if err := rows.Scan(&m.Key, &m.UserID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt, &chatOnly); err != nil {
 			return nil, err
 		}
+		m.ChatOnly = chatOnly != 0
 		metas = append(metas, m)
 	}
 	return metas, rows.Err()
@@ -3924,7 +3936,7 @@ func (d *DBStore) ListSessionsPaginated(ctx context.Context, agentIDs []string, 
 		return nil, 0, err
 	}
 	// Page query.
-	dataQ := fmt.Sprintf(`SELECT session_key, '' AS user_id, agent_id, channel, account_id, chat_id, project_id, title, message_count, updated_at
+	dataQ := fmt.Sprintf(`SELECT session_key, '' AS user_id, agent_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, COALESCE(chat_only,0)
 		FROM sessions %s ORDER BY updated_at DESC LIMIT %d OFFSET %d`, where, limit, offset)
 	rows, err := d.db.QueryContext(ctx, dataQ, args...)
 	if err != nil {
@@ -3935,10 +3947,12 @@ func (d *DBStore) ListSessionsPaginated(ctx context.Context, agentIDs []string, 
 	for rows.Next() {
 		var m SessionMeta
 		var agentID string
-		if err := rows.Scan(&m.Key, &m.UserID, &agentID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt); err != nil {
+		var chatOnly int
+		if err := rows.Scan(&m.Key, &m.UserID, &agentID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt, &chatOnly); err != nil {
 			return nil, 0, err
 		}
 		m.AgentID = agentID
+		m.ChatOnly = chatOnly != 0
 		metas = append(metas, m)
 	}
 	return metas, total, rows.Err()
@@ -4574,6 +4588,37 @@ func (d *DBStore) RenameSession(ctx context.Context, agentID, sessionKey, title 
 			d.ph(1), d.ph(2), d.ph(3)),
 		title, agentID, sessionKey)
 	return err
+}
+
+// SetSessionChatOnly flips a session's pure-conversation flag. When on,
+// the agent loop sends no tools with LLM requests for this session.
+func (d *DBStore) SetSessionChatOnly(ctx context.Context, agentID, sessionKey string, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE sessions SET chat_only = %s WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2), d.ph(3)),
+		v, agentID, sessionKey)
+	return err
+}
+
+// SessionChatOnly reads the chat-only flag; false when the row is
+// missing (treated as a normal session).
+func (d *DBStore) SessionChatOnly(ctx context.Context, agentID, sessionKey string) (bool, error) {
+	var v int
+	err := d.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT COALESCE(chat_only,0) FROM sessions WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2)),
+		agentID, sessionKey).Scan(&v)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return v != 0, nil
 }
 
 // LookupSessionTitle returns the session's title, or "" when the row is
@@ -6412,6 +6457,21 @@ func (d *DBStore) migrateSessionsAddForkColumns(ctx context.Context) error {
 		if _, err := d.db.ExecContext(ctx,
 			`ALTER TABLE sessions ADD COLUMN parent_fork_seq INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("add column parent_fork_seq: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateSessionsAddChatOnly retrofits the chat_only column so a session
+// can be flipped into pure-conversation mode (no tools sent to the LLM).
+// Default 0 = normal agent behavior; older rows are untouched.
+func (d *DBStore) migrateSessionsAddChatOnly(ctx context.Context) error {
+	if has, err := d.tableHasColumn(ctx, "sessions", "chat_only"); err != nil {
+		return err
+	} else if !has {
+		if _, err := d.db.ExecContext(ctx,
+			`ALTER TABLE sessions ADD COLUMN chat_only INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add column chat_only: %w", err)
 		}
 	}
 	return nil

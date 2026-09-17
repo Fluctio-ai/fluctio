@@ -6,8 +6,8 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, deleteAgentFile, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, forkChatSession, revealAgentWorkspace, sendChatStream, steerChat, stopChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
-import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus, Trash2 } from "lucide-react";
+import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, deleteAgentFile, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, setChatSessionChatOnly, forkChatSession, revealAgentWorkspace, sendChatStream, steerChat, stopChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
+import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus, Trash2, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
@@ -346,6 +346,9 @@ interface ChatSession {
   channel?: string;
   accountId?: string;
   chatId?: string;
+  // chatOnly mirrors sessions.chat_only — pure-conversation mode flag
+  // driving the composer toggle.
+  chatOnly?: boolean;
 }
 
 function generateSessionId() {
@@ -1410,6 +1413,56 @@ export function ChatScreen() {
     canUseComposer && (!isReadOnlyView || inputIsReadOnlySafeSlashCommand);
   const canAttach = !!selectedAgent && !sending && !isReadOnlyView;
 
+  // Chat-only mode: this session sends no tools to the LLM (pure
+  // conversation — brainstorming without tool noise). The row carries
+  // the flag once it exists; a brand-new chat before its first message
+  // has no row, so the toggle lives locally and each send carries
+  // params.chatOnly until the row lands and the effect below persists
+  // it. Toggling off restores the full tool set on the next turn.
+  const [chatOnlyLocal, setChatOnlyLocal] = useState<Record<string, boolean>>({});
+  const rowChatOnly = useMemo(
+    () => !!sessions.find((x) => x.id === sessionId)?.chatOnly,
+    [sessions, sessionId],
+  );
+  const chatOnly = chatOnlyLocal[sessionId] ?? rowChatOnly;
+
+  const handleToggleChatOnly = useCallback(async () => {
+    if (!selectedAgent || !sessionId || !canUseComposer) return;
+    const next = !chatOnly;
+    setChatOnlyLocal((prev) => ({ ...prev, [sessionId]: next }));
+    // Persist when the row exists; brand-new chats ride the params
+    // channel and get persisted by the sync effect after turn one.
+    if (sessions.some((x) => x.id === sessionId)) {
+      try {
+        await setChatSessionChatOnly(selectedAgent, sessionId, next);
+        loadSessions(selectedAgent);
+      } catch {
+        // Revert to the row's truth on failure.
+        setChatOnlyLocal((prev) => {
+          const cp = { ...prev };
+          delete cp[sessionId];
+          return cp;
+        });
+      }
+    }
+  }, [selectedAgent, sessionId, chatOnly, sessions, loadSessions, canUseComposer]);
+
+  // Sync local toggles onto rows as soon as the rows exist (covers the
+  // brand-new-chat flow: first turn creates the row, this persists the
+  // flag the params channel carried) and keeps row truth authoritative
+  // after reloads.
+  useEffect(() => {
+    if (!selectedAgent) return;
+    for (const [sid, on] of Object.entries(chatOnlyLocal)) {
+      const row = sessions.find((x) => x.id === sid);
+      if (row && !!row.chatOnly !== on) {
+        setChatSessionChatOnly(selectedAgent, sid, on)
+          .then(() => loadSessions(selectedAgent))
+          .catch(() => {});
+      }
+    }
+  }, [sessions, chatOnlyLocal, selectedAgent, loadSessions]);
+
   const handleRenameTitle = useCallback(
     async (next: string) => {
       const trimmed = next.trim();
@@ -2270,7 +2323,7 @@ export function ChatScreen() {
             break;
           }
         }
-      }, abortRef.current.signal, imageDataUrls, projectIdHint, undefined, rollbackPending);
+      }, abortRef.current.signal, imageDataUrls, projectIdHint, chatOnly ? { chatOnly: true } : undefined, rollbackPending);
       // The streamed turn's bubbles carry no seq (content_delta path), so
       // the message-space cursor lastMsgSeqRef is stale until re-anchored —
       // a scroll-to-bottom syncNewer right after would re-append the whole
@@ -2478,7 +2531,7 @@ export function ChatScreen() {
         .catch(() => {});
       textareaRef.current?.focus();
     }
-  }, [input, attachments, selectedAgent, sessionId, sending, isReadOnlyView, isReadOnlySafeSlashCommand, loadSessions, pathname, router, urlProjectId]);
+  }, [input, attachments, selectedAgent, sessionId, sending, isReadOnlyView, isReadOnlySafeSlashCommand, loadSessions, pathname, router, urlProjectId, chatOnly]);
 
   const handleStop = useCallback(() => {
     // Ask the server to cancel the running turn first — aborting the
@@ -3352,6 +3405,21 @@ export function ChatScreen() {
                           disabled={!canAttach}
                         />
                       </label>
+                      <button
+                        type="button"
+                        onClick={handleToggleChatOnly}
+                        disabled={!canUseComposer}
+                        aria-pressed={chatOnly}
+                        title={t("chat.chatOnlyHint")}
+                        className={`flex h-9 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${
+                          chatOnly
+                            ? "border-primary/60 bg-primary/10 text-primary"
+                            : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                        } disabled:opacity-50`}
+                      >
+                        <MessageCircle className="h-3.5 w-3.5" />
+                        {t("chat.chatOnly")}
+                      </button>
                       {urlProjectId && projectInfo && (
                         <div
                           className="flex h-9 min-w-0 items-center gap-1.5 rounded-full border border-border px-3 text-xs text-muted-foreground"
@@ -3391,6 +3459,21 @@ export function ChatScreen() {
                 </>
               ) : (
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleToggleChatOnly}
+                    disabled={!canUseComposer}
+                    aria-pressed={chatOnly}
+                    aria-label={t("chat.chatOnly")}
+                    title={t("chat.chatOnlyHint")}
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors ${
+                      chatOnly
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    } disabled:opacity-50`}
+                  >
+                    <MessageCircle className="h-4 w-4" />
+                  </button>
                   <label
                     className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors ${
                       !canAttach

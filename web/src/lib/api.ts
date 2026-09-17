@@ -996,6 +996,10 @@ export interface ChatSessionEntry {
   projectId?: string;
   title?: string;
   preview: string;
+  // chatOnly mirrors sessions.chat_only — pure-conversation mode: turns
+  // send no tools to the LLM. Surfaced so the composer toggle re-renders
+  // in the right state after a reload.
+  chatOnly?: boolean;
   thumbnailUrl?: string;
   createdAt?: number;
   updatedAt?: number;
@@ -1099,6 +1103,24 @@ export async function renameChatSession(agentId: string, sessionId: string, titl
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ agentId, title }),
+  });
+  return res.json();
+}
+
+// setChatSessionChatOnly flips a chat's pure-conversation mode. Uses the
+// same PUT as rename; the server skips the title write when none is sent.
+// No-op server-side when the session row doesn't exist yet (brand-new
+// chat before its first message) — callers should rely on the per-send
+// params.chatOnly channel for that first turn instead.
+export async function setChatSessionChatOnly(
+  agentId: string,
+  sessionId: string,
+  on: boolean,
+) {
+  const res = await apiFetch(`/api/chat/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agentId, chatOnly: on }),
   });
   return res.json();
 }

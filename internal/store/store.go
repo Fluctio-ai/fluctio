@@ -138,6 +138,13 @@ type Store interface {
 	// drag-and-drop affordance. Workspace file migration is the
 	// caller's responsibility — this only flips sessions.project_id.
 	MoveSession(ctx context.Context, agentID, sessionKey, projectID string) error
+	// SetSessionChatOnly flips a session's chat-only flag (chat_only).
+	// When on, turns in that session send no tools to the LLM — pure
+	// conversation mode for thinking/brainstorming without tool noise.
+	SetSessionChatOnly(ctx context.Context, agentID, sessionKey string, on bool) error
+	// SessionChatOnly reads a session's chat-only flag. False for rows
+	// created before the column existed (DEFAULT 0).
+	SessionChatOnly(ctx context.Context, agentID, sessionKey string) (bool, error)
 	// ResolveActiveSessionKey returns the most recently updated session_key
 	// for the (channel, accountID, chatID) triple, or ErrNotFound. Used by
 	// IM routing to pick the conversation thread an inbound message
@@ -540,7 +547,11 @@ type SessionMeta struct {
 	ProjectID    string    `json:"projectId,omitempty"`
 	Title        string    `json:"title,omitempty"`
 	MessageCount int       `json:"messageCount"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	// ChatOnly mirrors sessions.chat_only — true when this session runs
+	// in pure-conversation mode (no tools sent to the LLM). Surfaced so
+	// the chat UI can render its toggle in the right state on reload.
+	ChatOnly  bool      `json:"chatOnly,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // ProjectRecord is a per-(user, agent) named workspace folder. Sessions
