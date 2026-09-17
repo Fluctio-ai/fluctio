@@ -2011,10 +2011,6 @@ func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AgentID string `json:"agentId"`
 		Title   string `json:"title"`
-		// ChatOnly, when non-nil, flips the session's pure-conversation
-		// mode alongside (or instead of) the rename. Pointer so an absent
-		// field never resets the flag.
-		ChatOnly *bool `json:"chatOnly,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -2028,19 +2024,49 @@ func (s *Server) handleRenameSession(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "agent not found"})
 		return
 	}
-	if req.ChatOnly != nil {
-		if err := ag.SetWebChatSessionChatOnly(r.PathValue("key"), *req.ChatOnly); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
+	if err := ag.RenameWebChatSession(r.PathValue("key"), req.Title); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
 	}
-	// Skip the rename when no title came in — a chatOnly-only toggle
-	// (e.g. the input-bar switch) must not blank an existing title.
-	if req.Title != "" {
-		if err := ag.RenameWebChatSession(r.PathValue("key"), req.Title); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
-		}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleSetSessionChatOnly flips one chat's pure-conversation mode.
+// Kept as its own PATCH sub-resource (mirrors handleMoveSessionProject)
+// rather than overloading the rename PUT, so rename keeps its single
+// meaning and this carries the owner-only + writable gates a
+// session-state mutation deserves.
+func (s *Server) handleSetSessionChatOnly(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AgentID  string `json:"agentId"`
+		ChatOnly bool   `json:"chatOnly"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	agentID := r.URL.Query().Get("agentId")
+	if agentID == "" {
+		agentID = req.AgentID
+	}
+	if agentID == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "agentId required"})
+		return
+	}
+	if rec := s.requireAgentOwner(w, r, agentID); rec == nil {
+		return
+	}
+	if !s.requireWritable(w, r) {
+		return
+	}
+	ag := s.resolveAgent(r, agentID)
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "agent not found"})
+		return
+	}
+	if err := ag.SetWebChatSessionChatOnly(r.PathValue("key"), req.ChatOnly); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }

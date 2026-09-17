@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -14,44 +15,36 @@ import {
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 import { SaveButton } from "@/components/save-button";
 import { SettingsCard, CardHead, Field, GroupLabel, GroupHead, NumberField } from "@/components/settings-ui";
 import { channelLabel } from "@/components/channel-icon";
 import { BookOpen } from "lucide-react";
 
-// ModePicker — the recall trigger mode as a tappable segmented control
-// instead of a dropdown: every option is visible at once (the old Select
-// hid the three modes behind one label, and keyword mode's "must set
-// keywords" contract wasn't discoverable). 4px inner radius is the
-// nested-control tier; outer 6px matches the control token.
-function ModePicker({
+// KeywordField — the keyword input shown under a keyword-mode trigger,
+// with the required-flag treatment (aria-invalid drives Input's built-in
+// destructive styling; hint explains that an empty list never fires).
+function KeywordField({
   value,
   onChange,
-  options,
+  invalid,
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: string }[];
+  invalid: boolean;
 }) {
+  const t = useT();
   return (
-    <div className="inline-flex gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={cn(
-            "h-7 rounded-[4px] px-3 text-xs font-medium transition-colors",
-            value === o.value
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:bg-background hover:text-foreground",
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
+    <Field
+      label={t("knowledge.keywords")}
+      hint={invalid ? t("knowledge.keywordsRequired") : undefined}
+    >
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={t("knowledge.keywordsPlaceholder")}
+        aria-invalid={invalid || undefined}
+      />
+    </Field>
   );
 }
 
@@ -71,6 +64,14 @@ export function KBSettingsCard() {
     llm: t("knowledge.actionLLM"),
     stop: t("knowledge.actionStop"),
   });
+  // Shared option list for the two trigger-mode Tabs (wiki recall and
+  // flash/todo recall) — one definition, rendered as a tappable
+  // segmented control so every mode is visible at once.
+  const modeOptions = [
+    { value: "always", label: t("knowledge.modeAlways") },
+    { value: "keyword", label: t("knowledge.modeKeyword") },
+    { value: "disabled", label: t("knowledge.modeDisabled") },
+  ];
   const [kbEnabled, setKbEnabled] = useState(false);
   const [autoMode, setAutoMode] = useState("always");
   const [keywords, setKeywords] = useState("");
@@ -202,17 +203,15 @@ export function KBSettingsCard() {
         <div className="space-y-4 border-t border-border pt-4">
           <GroupLabel>{t("knowledge.wikiRecall")}</GroupLabel>
           <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
-            <div>
-              <ModePicker
-                value={autoMode}
-                onChange={setAutoMode}
-                options={[
-                  { value: "always", label: t("knowledge.modeAlways") },
-                  { value: "keyword", label: t("knowledge.modeKeyword") },
-                  { value: "disabled", label: t("knowledge.modeDisabled") },
-                ]}
-              />
-            </div>
+            <Tabs value={autoMode} onValueChange={(v) => v && setAutoMode(v)}>
+              <TabsList>
+                {modeOptions.map((o) => (
+                  <TabsTrigger key={o.value} value={o.value}>
+                    {o.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
           </Field>
           <Field label={t("knowledge.maxResults")}>
             <NumberField
@@ -225,19 +224,13 @@ export function KBSettingsCard() {
 
           {/* Keywords input lives right under the trigger mode that
               enables it — it used to render at the card tail, far from
-              the Wiki 触发模式 select that shows it. */}
+              the Wiki 触发模式 picker that shows it. */}
           {autoMode === "keyword" && (
-            <Field
-              label={t("knowledge.keywords")}
-              hint={wikiKeywordsInvalid ? t("knowledge.keywordsRequired") : undefined}
-            >
-              <Input
-                value={keywords}
-                onChange={(e) => setKeywords(e.target.value)}
-                placeholder={t("knowledge.keywordsPlaceholder")}
-                className={wikiKeywordsInvalid ? "border-destructive focus-visible:ring-destructive" : undefined}
-              />
-            </Field>
+            <KeywordField
+              value={keywords}
+              onChange={setKeywords}
+              invalid={wikiKeywordsInvalid}
+            />
           )}
 
           <Field
@@ -288,17 +281,15 @@ export function KBSettingsCard() {
             {ftEnabled && (
               <>
                 <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
-                  <div>
-                    <ModePicker
-                      value={ftAutoMode}
-                      onChange={setFtAutoMode}
-                      options={[
-                        { value: "always", label: t("knowledge.modeAlways") },
-                        { value: "keyword", label: t("knowledge.modeKeyword") },
-                        { value: "disabled", label: t("knowledge.modeDisabled") },
-                      ]}
-                    />
-                  </div>
+                  <Tabs value={ftAutoMode} onValueChange={(v) => v && setFtAutoMode(v)}>
+                    <TabsList>
+                      {modeOptions.map((o) => (
+                        <TabsTrigger key={o.value} value={o.value}>
+                          {o.label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
                 </Field>
                 <Field label={t("knowledge.maxResults")}>
                   <NumberField
@@ -324,17 +315,11 @@ export function KBSettingsCard() {
                   />
                 </Field>
                 {ftAutoMode === "keyword" && (
-                  <Field
-                    label={t("knowledge.keywords")}
-                    hint={ftKeywordsInvalid ? t("knowledge.keywordsRequired") : undefined}
-                  >
-                    <Input
-                      value={ftKeywords}
-                      onChange={(e) => setFtKeywords(e.target.value)}
-                      placeholder={t("knowledge.keywordsPlaceholder")}
-                      className={ftKeywordsInvalid ? "border-destructive focus-visible:ring-destructive" : undefined}
-                    />
-                  </Field>
+                  <KeywordField
+                    value={ftKeywords}
+                    onChange={setFtKeywords}
+                    invalid={ftKeywordsInvalid}
+                  />
                 )}
               </>
             )}

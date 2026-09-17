@@ -1495,12 +1495,55 @@ const cronTriggerGuidance = "Scheduled-task trigger: the user message below is a
 // prefix.
 const chatOnlyReminder = "[Chat-only mode] Tools are not connected for this turn. Answer directly in text, reasoning over the conversation so far (past tool results in the history remain valid context). Do not claim to have called — or be about to call — any tool, and never simulate tool output. If the user asks for something that needs a tool, say the chat is in conversation-only mode right now."
 
-// chatOnlyFromParams lifts the per-send chatOnly flag from client
-// params (bus.InboundMessage.Params). JSON decodes the flag as bool;
-// anything else is a no-op.
-func chatOnlyFromParams(params map[string]any) bool {
-	v, _ := params["chatOnly"].(bool)
+// paramTruthy reads a client-boolean flag from bus params, accepting the
+// shapes JSON decoding can produce (bool, "true"/"1", non-zero numbers).
+// Shared by every per-send flag reader so they all treat the same wire
+// values the same way.
+func paramTruthy(params map[string]any, key string) bool {
+	v, ok := params[key]
+	if !ok {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		return t == "true" || t == "1"
+	case float64:
+		return t != 0
+	case int:
+		return t != 0
+	}
+	return false
+}
+
+// popChatOnly lifts and REMOVES the per-send chatOnly flag from client
+// params — pop, not peek, exactly like popLang: a recognized key must
+// not leak into the LLM-facing "Client Parameters" blob (which tells
+// the model to forward params to tools — the opposite of chat-only).
+// The flag covers a brand-new chat's FIRST turn, before a session row
+// exists to carry sessions.chat_only; afterwards the row is
+// authoritative.
+func popChatOnly(params map[string]any) bool {
+	v := paramTruthy(params, "chatOnly")
+	delete(params, "chatOnly")
 	return v
+}
+
+// chatOnlyTools resolves a turn's tool defs: nil when the session runs
+// in pure-conversation mode (session chat_only flag, or the first-turn
+// params fallback), in which case the caller appends chatOnlyReminder.
+// Pure-conversation mode sends NO tools at all — the model reasons over
+// the conversation alone. History replays verbatim; both major providers
+// (z.ai anthropic-messages, DeepSeek responses) accept tool-trace
+// history without a tools param (live probe 2026-09-17), so no history
+// projection is needed.
+func (a *Agent) chatOnlyTools(sess *session.Session, paramOn bool) (toolDefs []provider.Tool, chatOnly bool) {
+	chatOnly = sess.ChatOnly() || paramOn
+	if !chatOnly {
+		toolDefs = a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
+	}
+	return toolDefs, chatOnly
 }
 
 // sessionStartTime returns the timestamp of the session's first persisted
@@ -2456,21 +2499,7 @@ func renderSender(msg bus.InboundMessage) string {
 // authorizing real work). Truthy values: bool true, string "true"/"1",
 // any non-zero number. The frontend posts `params: {planMode: true}`.
 func isPlanMode(params map[string]any) bool {
-	v, ok := params["planMode"]
-	if !ok {
-		return false
-	}
-	switch t := v.(type) {
-	case bool:
-		return t
-	case string:
-		return t == "true" || t == "1"
-	case float64:
-		return t != 0
-	case int:
-		return t != 0
-	}
-	return false
+	return paramTruthy(params, "planMode")
 }
 
 // planModeNudge is the system message we prepend on plan-mode turns.
@@ -3027,6 +3056,10 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// Parameters" system message rendered from Params. No-op for IM/cron
 	// sources that never set params["lang"].
 	msg.Lang = popLang(msg.Params)
+	// Lift (and remove) the per-send chat-only flag the same way, so it
+	// reaches the turn's tool resolution without leaking into the
+	// Client Parameters blob.
+	chatOnlyParam := popChatOnly(msg.Params)
 	// IM channels, cron, and legacy callers never set params["lang"], so
 	// fall back to the agent's configured default language (agent.json
 	// "language" field). Empty stays empty → slashT then applies its own
@@ -3334,24 +3367,11 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	}
 	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 
-	// Pure-conversation mode (session chat_only): send no tools at all —
-	// the model reasons over the conversation alone. History replays
-	// verbatim; both major providers (z.ai anthropic-messages, DeepSeek
-	// responses) accept tool-trace history without a tools param (live
-	// probe 2026-09-17). The trailing reminder keeps the model from
-	// narrating tool use it can no longer perform — its system prompt
-	// still describes the tools, and past turns may show real calls.
-	//
-	// The params fallback covers a brand-new chat's FIRST turn: no
-	// session row exists yet so the flag can't be persisted, but the web
-	// client passes chatOnly=true per send. Once the row lands the flag
-	// round-trips through sessions.chat_only like everything else.
-	chatOnly := sess.ChatOnly() || chatOnlyFromParams(msg.Params)
-	var toolDefs []provider.Tool
+	// Pure-conversation mode: no tools at all + the anti-hallucination
+	// reminder. See chatOnlyTools / chatOnlyReminder for the policy.
+	toolDefs, chatOnly := a.chatOnlyTools(sess, chatOnlyParam)
 	if chatOnly {
 		messages = append(messages, provider.Message{Role: "system", Content: chatOnlyReminder})
-	} else {
-		toolDefs = a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
 	}
 
 	// Loop detection: track consecutive identical tool calls
@@ -4187,6 +4207,9 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 // the final text response uses ChatStream for true SSE streaming.
 func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage) *provider.StreamReader {
 	a.persistInboundImages(&msg)
+	// Same lift-and-remove as HandleMessage's popLang site: recognized
+	// keys must not survive into the Client Parameters blob.
+	chatOnlyParam := popChatOnly(msg.Params)
 	// Regex hooks: intercept messages matching a pattern and execute CLI
 	// instead of the LLM.
 	if reply, hookName, matched, feedToLLM := a.matchRegexHooks(ctx, msg.Text); matched {
@@ -4372,24 +4395,11 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	}
 	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 
-	// Pure-conversation mode (session chat_only): send no tools at all —
-	// the model reasons over the conversation alone. History replays
-	// verbatim; both major providers (z.ai anthropic-messages, DeepSeek
-	// responses) accept tool-trace history without a tools param (live
-	// probe 2026-09-17). The trailing reminder keeps the model from
-	// narrating tool use it can no longer perform — its system prompt
-	// still describes the tools, and past turns may show real calls.
-	//
-	// The params fallback covers a brand-new chat's FIRST turn: no
-	// session row exists yet so the flag can't be persisted, but the web
-	// client passes chatOnly=true per send. Once the row lands the flag
-	// round-trips through sessions.chat_only like everything else.
-	chatOnly := sess.ChatOnly() || chatOnlyFromParams(msg.Params)
-	var toolDefs []provider.Tool
+	// Pure-conversation mode: no tools at all + the anti-hallucination
+	// reminder. See chatOnlyTools / chatOnlyReminder for the policy.
+	toolDefs, chatOnly := a.chatOnlyTools(sess, chatOnlyParam)
 	if chatOnly {
 		messages = append(messages, provider.Message{Role: "system", Content: chatOnlyReminder})
-	} else {
-		toolDefs = a.registry.DefinitionsForMode(builtinAllowForMode(a.promptMode))
 	}
 
 	type toolCallSig struct {

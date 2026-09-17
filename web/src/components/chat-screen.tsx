@@ -1426,40 +1426,39 @@ export function ChatScreen() {
   );
   const chatOnly = chatOnlyLocal[sessionId] ?? rowChatOnly;
 
-  const handleToggleChatOnly = useCallback(async () => {
+  const handleToggleChatOnly = useCallback(() => {
     if (!selectedAgent || !sessionId || !canUseComposer) return;
-    const next = !chatOnly;
-    setChatOnlyLocal((prev) => ({ ...prev, [sessionId]: next }));
-    // Persist when the row exists; brand-new chats ride the params
-    // channel and get persisted by the sync effect after turn one.
-    if (sessions.some((x) => x.id === sessionId)) {
-      try {
-        await setChatSessionChatOnly(selectedAgent, sessionId, next);
-        loadSessions(selectedAgent);
-      } catch {
-        // Revert to the row's truth on failure.
-        setChatOnlyLocal((prev) => {
-          const cp = { ...prev };
-          delete cp[sessionId];
-          return cp;
-        });
-      }
-    }
-  }, [selectedAgent, sessionId, chatOnly, sessions, loadSessions, canUseComposer]);
+    // Optimistic flip only — the sync effect below is the single writer
+    // that persists it (or rolls back by dropping the override when the
+    // PUT fails; the row then remains the visible truth).
+    setChatOnlyLocal((prev) => ({ ...prev, [sessionId]: !chatOnly }));
+  }, [selectedAgent, sessionId, chatOnly, canUseComposer]);
 
-  // Sync local toggles onto rows as soon as the rows exist (covers the
-  // brand-new-chat flow: first turn creates the row, this persists the
-  // flag the params channel carried) and keeps row truth authoritative
-  // after reloads.
+  // Single writer for the chat-only flag: whenever a local toggle meets
+  // its session row, push it once (covers the brand-new-chat flow too —
+  // first turn creates the row, this persists what the params channel
+  // carried) and then drop the override so the row is the only truth
+  // left behind. Entries for chats with no row yet (brand-new, nothing
+  // sent) simply wait here; they ride params.chatOnly per send.
   useEffect(() => {
     if (!selectedAgent) return;
     for (const [sid, on] of Object.entries(chatOnlyLocal)) {
       const row = sessions.find((x) => x.id === sid);
-      if (row && !!row.chatOnly !== on) {
-        setChatSessionChatOnly(selectedAgent, sid, on)
-          .then(() => loadSessions(selectedAgent))
-          .catch(() => {});
+      if (!row) continue;
+      const drop = () =>
+        setChatOnlyLocal((prev) => {
+          const cp = { ...prev };
+          delete cp[sid];
+          return cp;
+        });
+      if (!!row.chatOnly === on) {
+        drop(); // already persisted (e.g. by a previous run) — just clear
+        continue;
       }
+      setChatSessionChatOnly(selectedAgent, sid, on)
+        .then(() => loadSessions(selectedAgent))
+        .catch(() => {}) // drop reverts the UI to the row's truth
+        .finally(drop);
     }
   }, [sessions, chatOnlyLocal, selectedAgent, loadSessions]);
 

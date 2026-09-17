@@ -345,6 +345,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("PUT /api/chat/sessions/{key}", auth(s.handleRenameSession))
 	mux.HandleFunc("DELETE /api/chat/sessions/{key}", auth(s.handleDeleteSession))
 	mux.HandleFunc("PATCH /api/chat/sessions/{key}/project", auth(s.handleMoveSessionProject))
+	mux.HandleFunc("PATCH /api/chat/sessions/{key}/chat-only", auth(s.handleSetSessionChatOnly))
 	mux.HandleFunc("POST /api/chat/sessions/fork", auth(s.handleForkSession))
 	// Long-lived SSE subscription so cron-fired (and other async)
 	// messages reach the open chat panel without a manual refresh.
