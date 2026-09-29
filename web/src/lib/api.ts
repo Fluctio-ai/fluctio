@@ -2601,7 +2601,6 @@ export interface MaintenanceStatus {
   startedAt?: number;
   updatedAt?: number;
   elapsedSeconds?: number;
-  turnsActive?: boolean;
   backupName?: string;
   sizeBefore?: number;
   sizeAfter?: number;

@@ -558,18 +558,6 @@ func (m *Manager) All() []*Agent {
 	return result
 }
 
-// AnyTurnActive reports whether any session of any agent has a turn
-// in-flight. Advisory probe for the DB maintenance coordinator's idle
-// window; not a synchronization primitive.
-func (m *Manager) AnyTurnActive() bool {
-	for _, ag := range m.agents {
-		if ag.Sessions().AnyTurnActive() {
-			return true
-		}
-	}
-	return false
-}
-
 // Names returns all agent IDs.
 func (m *Manager) Names() []string {
 	names := make([]string, 0, len(m.agents))

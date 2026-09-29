@@ -1,7 +1,6 @@
 package setup
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"time"
@@ -36,10 +35,9 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []store.SessionEventRecord{}
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Disposition",
 		"attachment; filename=\"session-"+url.PathEscape(key)+".json\"")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	jsonResponse(w, http.StatusOK, map[string]any{
 		"agent":      ag.Name(),
 		"sessionKey": key,
 		"exportedAt": time.Now().UTC().Format(time.RFC3339),

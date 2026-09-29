@@ -9,7 +9,6 @@ package maintenance
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,14 +39,6 @@ const (
 	StageFailed  = "failed"
 )
 
-// DB is the slice of *store.DBStore the coordinator needs, declared
-// locally so the struct stays explicit about what maintenance touches.
-type DB interface {
-	Dialect() string
-	Source() string
-	DB() *sql.DB
-}
-
 // Status is the full, honest state of the coordinator. Elapsed is wall
 // time since the run started — it grows while waiting for the idle
 // window and is NOT a progress indicator, because none can be given
@@ -57,29 +48,24 @@ type Status struct {
 	StartedAt      int64   `json:"startedAt,omitempty"` // unix seconds
 	UpdatedAt      int64   `json:"updatedAt,omitempty"`
 	ElapsedSeconds float64 `json:"elapsedSeconds,omitempty"`
-	// TurnsActive is the last observed idle-probe value during the
-	// waiting stage, so the dashboard can say "waiting for an active
-	// turn to finish" rather than just "waiting".
-	TurnsActive bool   `json:"turnsActive,omitempty"`
-	BackupName  string `json:"backupName,omitempty"`
-	SizeBefore  int64  `json:"sizeBefore,omitempty"` // db + wal bytes, measured after the idle window
-	SizeAfter   int64  `json:"sizeAfter,omitempty"`
-	Error       string `json:"error,omitempty"`
+	BackupName     string  `json:"backupName,omitempty"`
+	SizeBefore     int64   `json:"sizeBefore,omitempty"` // db + wal bytes, measured after the idle window
+	SizeAfter      int64  `json:"sizeAfter,omitempty"`
+	Error          string  `json:"error,omitempty"`
 }
 
 // Coordinator serializes maintenance runs for the whole process (the
 // database is process-global, so per-agent runs would fight over the
 // same file).
 type Coordinator struct {
-	mu      sync.Mutex
-	db      DB
-	st      store.Store // for backup.Create
+	mu  sync.Mutex
+	db  *store.DBStore
+	st  store.Store // for backup.Create
 	// busy is the advisory in-flight-turn probe (true = something is
-	// running, e.g. Gateway.AnyTurnActive); nil means "assume idle"
+	// running, e.g. session.AnyTurnActive); nil means "assume idle"
 	// (single-user dev, tests).
-	busy    func() bool
-	running bool
-	cur     Status
+	busy func() bool
+	cur  Status
 
 	waitWindow   time.Duration // idle-window budget; 0 = default 2m
 	poll         time.Duration // busy-probe interval; 0 = default 2s
@@ -105,7 +91,7 @@ func New(st store.Store, busy func() bool) *Coordinator {
 func (c *Coordinator) Start() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.running {
+	if c.runningLocked() {
 		return ErrAlreadyRunning
 	}
 	if c.st == nil {
@@ -117,7 +103,6 @@ func (c *Coordinator) Start() error {
 	if c.db.Dialect() != "sqlite" {
 		return ErrSQLiteOnly
 	}
-	c.running = true
 	c.cur = Status{Stage: StageWaiting, StartedAt: time.Now().Unix()}
 	c.touchLocked()
 	go c.run()
@@ -134,18 +119,10 @@ func (c *Coordinator) run() {
 
 	// 1. Idle window. Never interrupts an in-flight turn; gives up
 	// honestly instead of forcing the migration through.
-	waitWindow := c.dur(&c.waitWindow, 2*time.Minute)
-	poll := c.dur(&c.poll, 2*time.Second)
+	waitWindow := orDefault(c.waitWindow, 2*time.Minute)
+	poll := orDefault(c.poll, 2*time.Second)
 	deadline := time.Now().Add(waitWindow)
-	for {
-		active := c.busy != nil && c.busy()
-		c.mu.Lock()
-		c.cur.TurnsActive = active
-		c.touchLocked()
-		c.mu.Unlock()
-		if !active {
-			break
-		}
+	for c.busy != nil && c.busy() {
 		if time.Now().After(deadline) {
 			c.fail(fmt.Sprintf("no idle window within %s (a turn stayed active); nothing was changed", waitWindow))
 			return
@@ -156,7 +133,8 @@ func (c *Coordinator) run() {
 	// 2. Backup first, always. Reuses the daily-snapshot machinery, so
 	// the pre-maintenance snapshot follows the same rotation/retention
 	// as scheduled backups and TodayHasBackup().
-	sizeBefore := c.dbSize()
+	src := c.db.Source()
+	sizeBefore := totalSize(src)
 	c.set(func(s *Status) {
 		s.Stage = StageBackup
 		s.SizeBefore = sizeBefore
@@ -173,7 +151,7 @@ func (c *Coordinator) run() {
 	// concurrent DB access queues behind it rather than erroring — the
 	// idle window exists to keep that queue short, not for correctness.
 	c.set(func(s *Status) { s.Stage = StageVacuum })
-	vctx, cancel := context.WithTimeout(ctx, c.dur(&c.vacuumBudget, 10*time.Minute))
+	vctx, cancel := context.WithTimeout(ctx, orDefault(c.vacuumBudget, 10*time.Minute))
 	defer cancel()
 	if _, err := c.db.DB().ExecContext(vctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		c.fail("wal checkpoint failed: " + err.Error())
@@ -189,16 +167,13 @@ func (c *Coordinator) run() {
 		slog.Warn("maintenance: post-vacuum wal checkpoint", "error", err)
 	}
 
-	sizeAfter := c.dbSize()
+	sizeAfter := totalSize(src)
 	c.set(func(s *Status) {
 		s.Stage = StageDone
 		s.SizeAfter = sizeAfter
 	})
 	slog.Info("maintenance done",
 		"backup", name, "before", sizeBefore, "after", sizeAfter)
-	c.mu.Lock()
-	c.running = false
-	c.mu.Unlock()
 }
 
 // Status returns a snapshot of the current (or last) run.
@@ -217,11 +192,12 @@ func (c *Coordinator) Status() Status {
 // waiting stage.
 func (c *Coordinator) IdleNow() bool { return c.busy == nil || !c.busy() }
 
-// Running reports whether a run is in flight.
+// Running reports whether a run is in flight (derived from the stage —
+// there is deliberately no separate flag to fall out of sync).
 func (c *Coordinator) Running() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.running
+	return c.runningLocked()
 }
 
 // TableSize is one row of the dbstat top-tables breakdown.
@@ -254,14 +230,15 @@ func (c *Coordinator) DBStats(ctx context.Context) (DBStats, error) {
 		return out, ErrNotBound
 	}
 	out.Dialect = c.db.Dialect()
-	out.DBBytes, out.WALBytes = c.dbSize(), c.walSize()
+	p := dbPath(c.db.Source())
+	out.DBBytes, out.WALBytes = fileSize(p), fileSize(p+"-wal")
 
 	conn := c.db.DB()
 	if out.Dialect == "sqlite" {
 		var pageCount, freePages, pageSize int64
-		if err := conn.QueryRowContext(ctx, "PRAGMA page_count").Scan(&pageCount); err == nil {
-			_ = conn.QueryRowContext(ctx, "PRAGMA freelist_count").Scan(&freePages)
-			_ = conn.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize)
+		if err := conn.QueryRowContext(ctx,
+			"SELECT * FROM pragma_page_count, pragma_freelist_count, pragma_page_size").
+			Scan(&pageCount, &freePages, &pageSize); err == nil {
 			out.PageCount, out.FreePages, out.PageSize = pageCount, freePages, pageSize
 			if pageCount > 0 {
 				out.FreeRatio = float64(freePages) / float64(pageCount)
@@ -294,9 +271,6 @@ func (c *Coordinator) fail(msg string) {
 		s.Stage = StageFailed
 		s.Error = msg
 	})
-	c.mu.Lock()
-	c.running = false
-	c.mu.Unlock()
 	slog.Warn("maintenance failed", "error", msg)
 }
 
@@ -311,13 +285,21 @@ func (c *Coordinator) touchLocked() {
 	c.cur.UpdatedAt = time.Now().Unix()
 }
 
-func (c *Coordinator) dur(p *time.Duration, def time.Duration) time.Duration {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if *p > 0 {
-		return *p
+// runningLocked reports whether a run is in flight; caller holds c.mu.
+// Derived from the stage so there is no separate flag to fall out of
+// sync.
+func (c *Coordinator) runningLocked() bool {
+	switch c.cur.Stage {
+	case StageWaiting, StageBackup, StageVacuum:
+		return true
 	}
-	*p = def
+	return false
+}
+
+func orDefault(d, def time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
 	return def
 }
 
@@ -335,20 +317,6 @@ func dbPath(source string) string {
 	return p
 }
 
-func (c *Coordinator) dbSize() int64 {
-	if c.db == nil {
-		return 0
-	}
-	return fileSize(dbPath(c.db.Source()))
-}
-
-func (c *Coordinator) walSize() int64 {
-	if c.db == nil {
-		return 0
-	}
-	return fileSize(dbPath(c.db.Source()) + "-wal")
-}
-
 func fileSize(p string) int64 {
 	if p == "" {
 		return 0
@@ -358,4 +326,11 @@ func fileSize(p string) int64 {
 		return 0
 	}
 	return info.Size()
+}
+
+// totalSize reports db + wal bytes for a SQLite DSN source — the number
+// SizeBefore/SizeAfter report for a maintenance run.
+func totalSize(src string) int64 {
+	p := dbPath(src)
+	return fileSize(p) + fileSize(p+"-wal")
 }

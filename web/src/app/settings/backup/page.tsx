@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
@@ -199,35 +199,58 @@ export default function BackupSettingsPage() {
 }
 
 // MaintenanceCard — online SQLite maintenance coordinator surface.
-// Polls status every 2s while a run is active (waiting/backup/vacuum);
-// otherwise one pull on mount. Shows honest stage + elapsed wall time
-// — never a progress percentage, matching the backend contract.
+// Polls status every 2s while a run is active (waiting/backup/vacuum),
+// scheduling the next poll only after the previous response lands (a
+// stalled request must not stack up overlaps); otherwise one pull on
+// mount. Shows honest stage + elapsed wall time — never a progress
+// percentage, matching the backend contract.
+const MAINTENANCE_STAGE_TEXT: Record<string, string> = {
+  waiting: "maintenance.waiting",
+  backup: "maintenance.backup",
+  vacuum: "maintenance.vacuum",
+  done: "maintenance.done",
+  failed: "maintenance.failed",
+};
+
 function MaintenanceCard() {
   const t = useT();
-  const [st, setSt] = useState<MaintenanceStatus | null>(null);
-  const [db, setDb] = useState<MaintenanceDBStats | null>(null);
-  const [turnsActive, setTurnsActive] = useState(false);
+  // One snapshot per response: three sequential setStates would render
+  // torn states between them.
+  const [snap, setSnap] = useState<{
+    st: MaintenanceStatus;
+    db: MaintenanceDBStats | null;
+    turnsActive: boolean;
+  } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
-  const active = !!st && ["waiting", "backup", "vacuum"].includes(st.stage);
+  const active = !!snap && ["waiting", "backup", "vacuum"].includes(snap.st.stage);
 
   const refresh = useCallback(async () => {
     const res = await getMaintenanceStatus();
     if (res.error) return;
-    if (res.maintenance) setSt(res.maintenance);
-    if (res.db) setDb(res.db);
-    setTurnsActive(!!res.turnsActive);
+    // db is omitted by the backend while a run is in flight; keep the
+    // last known bloat picture rather than blanking it.
+    const db = res.db ?? snapRef.current?.db ?? null;
+    setSnap({ st: res.maintenance ?? { stage: "idle" }, db, turnsActive: !!res.turnsActive });
   }, []);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  // snapRef mirrors snap for refresh() without re-creating the callback.
+  const snapRef = useRef(snap);
+  useEffect(() => { snapRef.current = snap; }, [snap]);
+
+  useEffect(() => { refresh(); }, [refresh]);
 
   useEffect(() => {
     if (!active) return;
-    const id = setInterval(refresh, 2000);
-    return () => clearInterval(id);
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      await refresh();
+      if (!stopped) timer = setTimeout(tick, 2000);
+    };
+    tick();
+    return () => { stopped = true; clearTimeout(timer); };
   }, [active, refresh]);
 
   const handleStart = useCallback(async () => {
@@ -243,16 +266,8 @@ function MaintenanceCard() {
     }
   }, [refresh, t]);
 
-  const stageText = (stage?: string) => {
-    switch (stage) {
-      case "waiting": return t("maintenance.waiting");
-      case "backup": return t("maintenance.backup");
-      case "vacuum": return t("maintenance.vacuum");
-      case "done": return t("maintenance.done");
-      case "failed": return t("maintenance.failed");
-      default: return "";
-    }
-  };
+  const st = snap?.st;
+  const db = snap?.db;
 
   return (
     <SettingsCard>
@@ -265,7 +280,9 @@ function MaintenanceCard() {
             onClick={handleStart}
             disabled={active || starting}
           >
-            {active || starting ? t("maintenance.elapsed") + " " + Math.floor(st?.elapsedSeconds ?? 0) + "s" : t("maintenance.start")}
+            {active || starting
+              ? `${t("maintenance.elapsed")} ${Math.floor(st?.elapsedSeconds ?? 0)}s`
+              : t("maintenance.start")}
           </Button>
         }
       />
@@ -294,7 +311,9 @@ function MaintenanceCard() {
       )}
       {st && st.stage !== "idle" && (
         <div className="mt-4 space-y-1.5 border-t border-border pt-3 text-sm">
-          <p className="font-medium">{stageText(st.stage)}</p>
+          <p className="font-medium">
+            {MAINTENANCE_STAGE_TEXT[st.stage] ? t(MAINTENANCE_STAGE_TEXT[st.stage]) : st.stage}
+          </p>
           {st.stage === "failed" && st.error && (
             <p className="text-xs text-destructive">{st.error}</p>
           )}
@@ -312,7 +331,7 @@ function MaintenanceCard() {
       )}
       {st && st.stage === "idle" && (
         <p className="mt-3 text-xs text-muted-foreground">
-          {turnsActive ? t("maintenance.turnsActive") : t("maintenance.idle")}
+          {snap?.turnsActive ? t("maintenance.turnsActive") : t("maintenance.idle")}
         </p>
       )}
     </SettingsCard>

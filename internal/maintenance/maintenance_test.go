@@ -3,6 +3,7 @@ package maintenance
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,8 +104,8 @@ func TestWaitingTimeout(t *testing.T) {
 	if s.BackupName != "" {
 		t.Fatalf("backup written despite timeout: %q", s.BackupName)
 	}
-	if !s.TurnsActive {
-		t.Fatal("TurnsActive should be true while waiting on a busy probe")
+	if !strings.Contains(s.Error, "no idle window") {
+		t.Fatalf("error = %q, want idle-window timeout", s.Error)
 	}
 }
 

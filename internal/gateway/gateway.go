@@ -676,11 +676,6 @@ func (g *Gateway) UserSpaceForCtx(ctx context.Context, userID string) (*UserSpac
 // UserSpaceFor.
 func (g *Gateway) LocalAgentManager() *agent.Manager { return nil }
 
-// AnyTurnActive reports whether any agent across all loaded user spaces
-// has a chat turn in-flight. Backs the DB maintenance coordinator's
-// idle-window probe (see internal/maintenance). Advisory only.
-func (g *Gateway) AnyTurnActive() bool { return g.users.AnyTurnActive() }
-
 // EnsureAgent loads an agent that does not belong to userID into that
 // user's UserSpace. Used by super_admin chat handlers — see
 // UserSpace.EnsureAgent.

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
@@ -374,19 +375,6 @@ func (m *Manager) Get(channel, accountID, chatID, projectID string) *Session {
 // `?session=…`) and wants to bypass the active-session lookup.
 func (m *Manager) GetByKey(sessionKey string) *Session {
 	return m.getByKey(sessionKey, "", "", "", "")
-}
-
-// AnyTurnActive reports whether any cached session of this agent has a
-// turn in-flight. Advisory only — see Session.TurnActive.
-func (m *Manager) AnyTurnActive() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, s := range m.sessions {
-		if s.TurnActive() {
-			return true
-		}
-	}
-	return false
 }
 
 // LookupSessionProject returns the project_id of a session row (or ""
@@ -799,6 +787,20 @@ func (s *Session) GetMessages() []provider.Message {
 	return msgs
 }
 
+// activeTurns counts every in-flight HandleMessage turn across all
+// sessions of all agents in this process. BeginTurn/EndTurn keep it in
+// lockstep with the per-session turnDepth so process-wide consumers get
+// one cheap atomic read instead of threading a probe through every
+// manager layer.
+var activeTurns atomic.Int64
+
+// AnyTurnActive reports whether any session anywhere in this process
+// has a turn in-flight. Advisory probe (the DB maintenance coordinator's
+// idle window) — not a synchronization primitive: a false negative just
+// means a maintenance run overlaps one more turn, which queues safely
+// behind the single SQLite connection.
+func AnyTurnActive() bool { return activeTurns.Load() > 0 }
+
 // BeginTurn marks a HandleMessage turn as in-flight for this session.
 // Paired with EndTurn. Steering messages are only accepted while at
 // least one turn is active.
@@ -806,6 +808,7 @@ func (s *Session) BeginTurn() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.turnDepth++
+	activeTurns.Add(1)
 }
 
 // EndTurn marks a turn as finished. When the last in-flight turn ends it
@@ -817,6 +820,7 @@ func (s *Session) EndTurn() []provider.Message {
 	defer s.mu.Unlock()
 	if s.turnDepth > 0 {
 		s.turnDepth--
+		activeTurns.Add(-1)
 	}
 	if s.turnDepth > 0 || len(s.steerBuf) == 0 {
 		return nil
@@ -824,20 +828,6 @@ func (s *Session) EndTurn() []provider.Message {
 	leftover := s.steerBuf
 	s.steerBuf = nil
 	return leftover
-}
-
-// TurnActive reports whether any HandleMessage turn is currently
-// in-flight for this session. Unlike PushSteerIfActive — whose return
-// value is the single source of truth for the steer path and which
-// deliberately has no separate probe — this is an advisory check for
-// coarse callers (the DB maintenance coordinator looking for an idle
-// window). Races are acceptable there: a false negative just means a
-// maintenance run overlaps one more turn, which queues safely behind
-// the single SQLite connection.
-func (s *Session) TurnActive() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.turnDepth > 0
 }
 
 // PushSteerIfActive buffers a steering message iff a turn is currently

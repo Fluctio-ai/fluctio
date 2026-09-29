@@ -14,11 +14,23 @@ import (
 // vacuum trigger is super-admin-only because it briefly queues all DB
 // traffic behind the single SQLite connection.
 
-// handleMaintenanceStatus returns the coordinator's current (or last)
-// run plus a read-only bloat picture of the database.
-func (s *Server) handleMaintenanceStatus(w http.ResponseWriter, r *http.Request) {
+// requireMaintenance answers the 503 envelope when the coordinator
+// isn't wired; handlers proceed only on true.
+func (s *Server) requireMaintenance(w http.ResponseWriter) bool {
 	if s.maintenance == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "maintenance not wired"})
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"error": "maintenance not wired"})
+		return false
+	}
+	return true
+}
+
+// handleMaintenanceStatus returns the coordinator's current (or last)
+// run plus a read-only bloat picture of the database. DB stats are
+// expensive (dbstat walks every page of the db), so while a run is in
+// flight the response carries only the in-memory status — the frontend
+// polls this every 2s during waiting/backup/vacuum.
+func (s *Server) handleMaintenanceStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMaintenance(w) {
 		return
 	}
 	st := s.maintenance.Status()
@@ -26,13 +38,16 @@ func (s *Server) handleMaintenanceStatus(w http.ResponseWriter, r *http.Request)
 		"maintenance": st,
 		"turnsActive": !s.maintenance.IdleNow(),
 	}
-	if db, err := s.maintenance.DBStats(r.Context()); err == nil {
-		resp["db"] = db
-	} else if err != maintenance.ErrNotBound {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
+	switch st.Stage {
+	case maintenance.StageIdle, maintenance.StageDone, maintenance.StageFailed:
+		if db, err := s.maintenance.DBStats(r.Context()); err == nil {
+			resp["db"] = db
+		} else if err != maintenance.ErrNotBound {
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	jsonResponse(w, http.StatusOK, resp)
 }
 
 // handleMaintenanceVacuum starts one backup→VACUUM run in the
@@ -41,20 +56,19 @@ func (s *Server) handleMaintenanceStatus(w http.ResponseWriter, r *http.Request)
 // touched before the idle window is acquired, so a rejected call is a
 // no-op.
 func (s *Server) handleMaintenanceVacuum(w http.ResponseWriter, r *http.Request) {
-	if s.maintenance == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "maintenance not wired"})
+	if !s.requireMaintenance(w) {
 		return
 	}
 	if err := s.maintenance.Start(); err != nil {
 		switch err {
 		case maintenance.ErrAlreadyRunning:
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "maintenance already running"})
+			jsonResponse(w, http.StatusConflict, map[string]any{"error": "maintenance already running"})
 		case maintenance.ErrSQLiteOnly:
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		}
 		return
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"ok": true})
+	jsonResponse(w, http.StatusAccepted, map[string]any{"ok": true})
 }

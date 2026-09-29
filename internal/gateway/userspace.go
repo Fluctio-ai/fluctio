@@ -1058,18 +1058,6 @@ func (r *userSpaceRegistry) all() []*UserSpace {
 	return out
 }
 
-// AnyTurnActive reports whether any loaded user space has an in-flight
-// agent turn. Advisory probe for the DB maintenance coordinator's idle
-// window; not a synchronization primitive.
-func (r *userSpaceRegistry) AnyTurnActive() bool {
-	for _, sp := range r.all() {
-		if sp.Agents != nil && sp.Agents.AnyTurnActive() {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *userSpaceRegistry) evictIdle() int {
 	if r.idleTTL <= 0 {
 		return 0
