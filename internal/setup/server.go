@@ -356,6 +356,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("PATCH /api/chat/sessions/{key}/project", auth(s.handleMoveSessionProject))
 	mux.HandleFunc("PATCH /api/chat/sessions/{key}/chat-only", auth(s.handleSetSessionChatOnly))
 	mux.HandleFunc("POST /api/chat/sessions/fork", auth(s.handleForkSession))
+	// Raw session_events dump (debugging: "record exists but UI didn't
+	// render it" vs "record gone"). Reads the same store the chat page
+	// does, minus the history projection.
+	mux.HandleFunc("GET /api/chat/sessions/{key}/export", auth(s.handleSessionExport))
 	// Long-lived SSE subscription so cron-fired (and other async)
 	// messages reach the open chat panel without a manual refresh.
 	mux.HandleFunc("GET /api/chat/subscribe", auth(s.handleChatSubscribe))
