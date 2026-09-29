@@ -2592,6 +2592,52 @@ export async function deleteBackup(name: string): Promise<{ ok?: boolean; error?
   return res.json().catch(() => ({ ok: true }));
 }
 
+// --- Online DB maintenance (backup → VACUUM coordinator) ---
+// Stages are linear: idle → waiting → backup → vacuum → done|failed.
+// elapsedSeconds is wall time, never a progress percentage — the
+// backend deliberately cannot give one honestly.
+export interface MaintenanceStatus {
+  stage: string;
+  startedAt?: number;
+  updatedAt?: number;
+  elapsedSeconds?: number;
+  turnsActive?: boolean;
+  backupName?: string;
+  sizeBefore?: number;
+  sizeAfter?: number;
+  error?: string;
+}
+export interface MaintenanceDBStats {
+  dialect: string;
+  dbBytes?: number;
+  walBytes?: number;
+  pageCount?: number;
+  freePages?: number;
+  pageSize?: number;
+  freeRatio?: number;
+  sessionEventsRows?: number;
+  sessionEventsBytes?: number;
+  topTables?: { name: string; bytes: number }[];
+}
+export async function getMaintenanceStatus(): Promise<{
+  maintenance?: MaintenanceStatus;
+  db?: MaintenanceDBStats;
+  turnsActive?: boolean;
+  error?: string;
+}> {
+  const res = await apiFetch(`/api/maintenance/status`);
+  if (!res.ok) return { error: `HTTP ${res.status}` };
+  return res.json().catch(() => ({}));
+}
+export async function startMaintenanceVacuum(): Promise<{ ok?: boolean; error?: string }> {
+  const res = await apiFetch(`/api/maintenance/vacuum`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { error: body.error ?? `HTTP ${res.status}` };
+  }
+  return res.json().catch(() => ({ ok: true }));
+}
+
 // --- Privacy config (agent PII scrubbing settings) ---
 export interface PrivacyConfig {
   piiScrubbing?: { enabled?: boolean; entropy?: boolean };

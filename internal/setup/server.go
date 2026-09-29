@@ -18,6 +18,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/maintenance"
 	"github.com/fluctio-ai/fluctio/internal/pubimg"
 	"github.com/fluctio-ai/fluctio/internal/push"
 	"github.com/fluctio-ai/fluctio/internal/runtime"
@@ -141,7 +142,15 @@ type Server struct {
 	// sandbox-backed runtime, in which case the /runtime endpoints return
 	// 503 instead of nil-panicking. Set via SetRuntimeManager at boot.
 	runtimeMgr *runtime.Manager
+	// maintenance coordinates online SQLite maintenance (idle-window
+	// wait → backup → VACUUM). Nil (unwired) keeps the /api/maintenance
+	// endpoints at 503. Set via SetMaintenance at boot.
+	maintenance *maintenance.Coordinator
 }
+
+// SetMaintenance wires the DB maintenance coordinator. Call once at
+// boot; leaving it unset disables the maintenance endpoints (they 503).
+func (s *Server) SetMaintenance(m *maintenance.Coordinator) { s.maintenance = m }
 
 // SetRuntimeManager wires the project runtime manager. Call once at boot
 // after constructing the Server; leaving it unset disables the coding-
@@ -610,6 +619,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/backup/list", auth(s.handleListBackups))
 	mux.HandleFunc("POST /api/backup/now", auth(s.handleBackupNow))
 	mux.HandleFunc("GET /api/backup/download", auth(s.handleDownloadBackup))
+	// Online SQLite maintenance: staged backup→VACUUM coordinator.
+	// Status is readable by any admin-session user; the vacuum trigger
+	// is super-admin-only because it queues all DB traffic briefly.
+	mux.HandleFunc("GET /api/maintenance/status", admin(s.handleMaintenanceStatus))
+	mux.HandleFunc("POST /api/maintenance/vacuum", admin(s.handleMaintenanceVacuum))
 
 	// Tasks
 	mux.HandleFunc("GET /api/tasks", admin(s.handleListTasks))

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { HardDrive } from "lucide-react";
+import { HardDrive, Database } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
 import { PageHeader, SettingsCard, CardHead, Field } from "@/components/settings-ui";
@@ -15,8 +15,12 @@ import {
   listBackups,
   backupNow,
   deleteBackup,
+  getMaintenanceStatus,
+  startMaintenanceVacuum,
   type BackupConfig,
   type BackupInfo,
+  type MaintenanceStatus,
+  type MaintenanceDBStats,
 } from "@/lib/api";
 
 function formatSize(bytes: number): string {
@@ -189,6 +193,128 @@ export default function BackupSettingsPage() {
           </ul>
         )}
       </SettingsCard>
+      <MaintenanceCard />
     </div>
+  );
+}
+
+// MaintenanceCard — online SQLite maintenance coordinator surface.
+// Polls status every 2s while a run is active (waiting/backup/vacuum);
+// otherwise one pull on mount. Shows honest stage + elapsed wall time
+// — never a progress percentage, matching the backend contract.
+function MaintenanceCard() {
+  const t = useT();
+  const [st, setSt] = useState<MaintenanceStatus | null>(null);
+  const [db, setDb] = useState<MaintenanceDBStats | null>(null);
+  const [turnsActive, setTurnsActive] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  const active = !!st && ["waiting", "backup", "vacuum"].includes(st.stage);
+
+  const refresh = useCallback(async () => {
+    const res = await getMaintenanceStatus();
+    if (res.error) return;
+    if (res.maintenance) setSt(res.maintenance);
+    if (res.db) setDb(res.db);
+    setTurnsActive(!!res.turnsActive);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(refresh, 2000);
+    return () => clearInterval(id);
+  }, [active, refresh]);
+
+  const handleStart = useCallback(async () => {
+    if (!window.confirm(t("maintenance.confirm"))) return;
+    setStarting(true);
+    setErr(null);
+    try {
+      const res = await startMaintenanceVacuum();
+      if (res.error) setErr(res.error);
+      await refresh();
+    } finally {
+      setStarting(false);
+    }
+  }, [refresh, t]);
+
+  const stageText = (stage?: string) => {
+    switch (stage) {
+      case "waiting": return t("maintenance.waiting");
+      case "backup": return t("maintenance.backup");
+      case "vacuum": return t("maintenance.vacuum");
+      case "done": return t("maintenance.done");
+      case "failed": return t("maintenance.failed");
+      default: return "";
+    }
+  };
+
+  return (
+    <SettingsCard>
+      <CardHead
+        icon={Database}
+        title={t("maintenance.title")}
+        control={
+          <Button
+            variant="secondary"
+            onClick={handleStart}
+            disabled={active || starting}
+          >
+            {active || starting ? t("maintenance.elapsed") + " " + Math.floor(st?.elapsedSeconds ?? 0) + "s" : t("maintenance.start")}
+          </Button>
+        }
+      />
+      <p className="mt-3 text-xs text-muted-foreground">{t("maintenance.desc")}</p>
+      {err && <p className="mt-3 text-xs text-destructive">{err}</p>}
+      {db && (
+        <dl className="mt-4 grid grid-cols-3 gap-4 text-sm">
+          <div>
+            <dt className="text-xs text-muted-foreground">{t("maintenance.dbSize")}</dt>
+            <dd className="font-medium">
+              {formatSize(db.dbBytes ?? 0)}
+              {db.walBytes ? ` (+${formatSize(db.walBytes)} WAL)` : ""}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">{t("maintenance.freeRatio")}</dt>
+            <dd className="font-medium">
+              {db.freeRatio !== undefined ? `${(db.freeRatio * 100).toFixed(1)}%` : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">{t("maintenance.eventsRows")}</dt>
+            <dd className="font-medium">{(db.sessionEventsRows ?? 0).toLocaleString()}</dd>
+          </div>
+        </dl>
+      )}
+      {st && st.stage !== "idle" && (
+        <div className="mt-4 space-y-1.5 border-t border-border pt-3 text-sm">
+          <p className="font-medium">{stageText(st.stage)}</p>
+          {st.stage === "failed" && st.error && (
+            <p className="text-xs text-destructive">{st.error}</p>
+          )}
+          {st.backupName && (
+            <p className="text-xs text-muted-foreground">
+              {t("maintenance.backupName")}: {st.backupName}
+            </p>
+          )}
+          {st.sizeBefore !== undefined && st.sizeAfter !== undefined && (
+            <p className="text-xs text-muted-foreground">
+              {t("maintenance.sizeChange")}: {formatSize(st.sizeBefore)} → {formatSize(st.sizeAfter)}
+            </p>
+          )}
+        </div>
+      )}
+      {st && st.stage === "idle" && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {turnsActive ? t("maintenance.turnsActive") : t("maintenance.idle")}
+        </p>
+      )}
+    </SettingsCard>
   );
 }

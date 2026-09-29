@@ -16,6 +16,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/daemon"
 	"github.com/fluctio-ai/fluctio/internal/gateway"
+	"github.com/fluctio-ai/fluctio/internal/maintenance"
 	"github.com/fluctio-ai/fluctio/internal/pubimg"
 	coderuntime "github.com/fluctio-ai/fluctio/internal/runtime"
 	"github.com/fluctio-ai/fluctio/internal/sandbox"
@@ -200,6 +201,10 @@ func runGateway(port int) error {
 	webSrv.SetUsageMeter(gw.Usage())
 	webSrv.SetAuth(authResolver)
 	webSrv.SetWebChannel(gw.WebChannel())
+	// Online DB maintenance: the idle-window probe walks every loaded
+	// agent's sessions; the coordinator snapshots a backup before the
+	// VACUUM runs (SQLite-only; PostgreSQL fails Start honestly).
+	webSrv.SetMaintenance(maintenance.New(gw.Store(), gw.AnyTurnActive))
 	// Share the chat-event hub so bus-fired web turns (cron / goal
 	// continuation / heartbeat / sub-agent) stream through the same
 	// SSE pipeline a user-typed turn uses. Must be wired before

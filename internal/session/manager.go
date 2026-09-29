@@ -376,6 +376,19 @@ func (m *Manager) GetByKey(sessionKey string) *Session {
 	return m.getByKey(sessionKey, "", "", "", "")
 }
 
+// AnyTurnActive reports whether any cached session of this agent has a
+// turn in-flight. Advisory only — see Session.TurnActive.
+func (m *Manager) AnyTurnActive() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.sessions {
+		if s.TurnActive() {
+			return true
+		}
+	}
+	return false
+}
+
 // LookupSessionProject returns the project_id of a session row (or ""
 // if loose / not yet stored). Used by the agent runtime to populate
 // InboundMessage.ProjectID so workspace IO routes to projects/<pid>/.
@@ -811,6 +824,20 @@ func (s *Session) EndTurn() []provider.Message {
 	leftover := s.steerBuf
 	s.steerBuf = nil
 	return leftover
+}
+
+// TurnActive reports whether any HandleMessage turn is currently
+// in-flight for this session. Unlike PushSteerIfActive — whose return
+// value is the single source of truth for the steer path and which
+// deliberately has no separate probe — this is an advisory check for
+// coarse callers (the DB maintenance coordinator looking for an idle
+// window). Races are acceptable there: a false negative just means a
+// maintenance run overlaps one more turn, which queues safely behind
+// the single SQLite connection.
+func (s *Session) TurnActive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.turnDepth > 0
 }
 
 // PushSteerIfActive buffers a steering message iff a turn is currently
