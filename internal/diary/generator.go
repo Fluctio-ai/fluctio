@@ -104,9 +104,31 @@ func Generate(
 	// turns (origin!=""), hidden regex-hook turns (llm_visible=false), and
 	// empty/tool-call-only assistant turns. Thinking lives in a separate
 	// field that is never read here, so reasoning traces never leak in.
+	//
+	// A cron-fired turn arrives as a normal-looking pair: an inbound
+	// directive tagged OriginCron plus an assistant reply whose Origin
+	// stays empty (it must — WebChatHistory hides non-OriginUser rows,
+	// and the push has to stay visible to the user). The origin!=""
+	// filter drops the directive but leaves the reply standing alone,
+	// pushing bot output into the transcript as if the user had talked
+	// about it. So track per session whether we are inside a cron-fired
+	// turn: a cron-tagged user row starts it, a real user row ends it,
+	// and assistant rows inside are machine output, not conversation.
 	visible := msgs[:0]
+	cronTurn := map[string]bool{}
 	for i := range msgs {
 		m := msgs[i]
+		if m.Role == "user" && m.LLMVisible {
+			switch m.Origin {
+			case provider.OriginCron:
+				cronTurn[m.SessionKey] = true
+			case provider.OriginUser:
+				cronTurn[m.SessionKey] = false
+			}
+			// Other injected origins (e.g. goal_context) don't flip
+			// the state: they continue an ongoing turn rather than
+			// start a new trigger.
+		}
 		if m.Role != "user" && m.Role != "assistant" {
 			continue
 		}
@@ -114,6 +136,9 @@ func Generate(
 			continue
 		}
 		if strings.TrimSpace(m.Content) == "" {
+			continue
+		}
+		if cronTurn[m.SessionKey] {
 			continue
 		}
 		visible = append(visible, m)
@@ -334,7 +359,7 @@ func findBlindspots(ctx context.Context, prov provider.Provider, model, transcri
 		return nil, nil
 	}
 	themesJSON, _ := json.Marshal(themes)
-	prompt := fmt.Sprintf(`下面是某用户今天的原始聊天记录，以及已归纳的主题。请找出"用户可能忽略的重点"——记录里确实出现、有价值，但用户没有深入跟进/没列待办/没进一步行动的点。
+	prompt := fmt.Sprintf(`下面是某用户今天的原始聊天记录，以及已归纳的主题。请找出"用户可能忽略的重点"——记录里确实出现、有价值，但用户一带而过或未展开的事实、观点或信号。
 
 聊天记录:
 %s
@@ -347,7 +372,9 @@ func findBlindspots(ctx context.Context, prov provider.Provider, model, transcri
 
 要求:
 - 每条必须基于聊天记录里真实出现的内容，不要臆造
-- 聚焦真正重要的；3-6 条；若确实没有遗漏可返回空数组
+- 要找的是内容层面的遗漏: 用户关注的话题里被略过的关键观点/论据、未被注意的关联或反例、用户持续关注的事物当天出现的异常信号（如追更内容缺席）
+- 不要报流程或完整性问题: 未列待办/未跟进/未整理/未转化/未核对、内容截断或占位符、出处不完整；用户被追问后未回应的悬置琐事视为不重要，一律不纳入
+- 宁缺毋滥，0-4 条；没有真正有价值的遗漏就返回空数组，严禁为凑数硬凑不痛不痒的条目
 - point 简明，reason 一句话`, transcript, themesJSON)
 
 	resp, err := callLLM(ctx, prov, model, prompt, 3072, thinkingOff(thinkingMode, true))
