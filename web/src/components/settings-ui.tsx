@@ -190,6 +190,33 @@ export function NumberField({
   );
 }
 
+// DecimalInput — string-state sibling of NumberField for "empty = inherit"
+// numeric fields: the value lives as a string ("" = no override) and
+// parsing belongs to the save path, so this only pins the no-native-spinner
+// contract (text input + decimal keyset) that NumberField derives from its
+// draft mechanism.
+export function DecimalInput({
+  value,
+  onChange,
+  ...props
+}: {
+  value: string;
+  onChange: (s: string) => void;
+} & Omit<
+  React.ComponentProps<typeof Input>,
+  "value" | "onChange" | "type" | "inputMode"
+>) {
+  return (
+    <Input
+      type="text"
+      inputMode="decimal"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      {...props}
+    />
+  );
+}
+
 export function ToggleRow({
   title,
   hint,

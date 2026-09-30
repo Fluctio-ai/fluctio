@@ -8,10 +8,10 @@ import {
   Bot,
   User as UserIcon,
   ExternalLink,
-  Loader2,
   RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -81,9 +81,10 @@ export default function AdminChatsPage() {
 
       {loading ? (
         <div className="rounded-lg border border-border bg-card">
-          <div className="flex flex-col items-center justify-center py-16">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <p className="mt-3 text-xs text-muted-foreground/60">{t("adminChats.loading")}</p>
+          <div className="space-y-3 p-4">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
           </div>
         </div>
       ) : sorted.length === 0 ? (

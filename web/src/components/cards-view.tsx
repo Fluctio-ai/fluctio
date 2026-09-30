@@ -340,7 +340,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
           </Badge>
         )}
         {stats && (
-          <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">
+          <span className="ml-auto text-xs tabular-nums text-muted-foreground">
             {t("cards.statActive", { n: stats.active })} · {t("cards.statMastered", { n: stats.mastered })}
           </span>
         )}
@@ -374,7 +374,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                 type="button"
                 onClick={() => setFilter(f)}
                 className={cn(
-                  "rounded-full px-2 py-0.5 text-[11px] transition-colors",
+                  "rounded-full px-2 py-0.5 text-xs transition-colors",
                   filter === f ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
                 )}
               >
@@ -384,7 +384,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
             <select
               value={source}
               onChange={(e) => setSource(e.target.value)}
-              className="ml-auto rounded-md border bg-background px-1.5 py-0.5 text-[11px] text-muted-foreground"
+              className="ml-auto rounded-md border bg-background px-1.5 py-0.5 text-xs text-muted-foreground"
               aria-label={t("cards.sourceFilter")}
             >
               <option value="">{t("cards.source.all")}</option>
@@ -397,7 +397,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
             type="button"
             onClick={handleGenerate}
             disabled={generating}
-            className="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent disabled:opacity-50"
+            className="mt-2 flex w-full items-center justify-center gap-1 rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
           >
             <SparklesIcon className="size-3" />
             {generating ? t("common.saving") : t("cards.genNow")}
@@ -427,7 +427,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                     <p className={cn("truncate text-sm", c.status === "archived" && "text-muted-foreground line-through")}>
                       {c.question}
                     </p>
-                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                       <LayersIcon className="size-3 shrink-0" />
                       {t(`cards.source.${c.source_type}`)}
                       {due === "overdue" && (
@@ -480,7 +480,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
               {selected.source_type === "diary" && selected.source_ref ? ` · ${selected.source_ref}` : ""}
               {selected.source_type === "wiki" && wikiTitle ? ` · ${wikiTitle}` : ""}
             </Badge>
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {t("cards.intervalProgress", { cur: selected.interval_index, total: 6 })}
               {selected.review_count > 0 && ` · ${t("cards.reviewedN", { n: selected.review_count })}`}
               {selected.lapse_count > 0 && ` · ${t("cards.lapsedN", { n: selected.lapse_count })}`}
@@ -519,7 +519,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                   flipped ? "border-primary/40" : "hover:border-primary/30",
                 )}
               >
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
                   {flipped ? t("cards.back") : t("cards.front")}
                 </p>
                 {flipped ? (
@@ -527,12 +527,12 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                 ) : (
                   <p className="mt-2 break-words text-lg font-medium">{selected.question}</p>
                 )}
-                <p className="mt-3 text-[11px] text-muted-foreground">{t("cards.flipHint")}</p>
+                <p className="mt-3 text-xs text-muted-foreground">{t("cards.flipHint")}</p>
               </button>
 
               {selected.source_excerpt && (
                 <div className="rounded-lg border border-dashed p-3">
-                  <p className="text-[11px] text-muted-foreground">{t("cards.excerpt")}</p>
+                  <p className="text-xs text-muted-foreground">{t("cards.excerpt")}</p>
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{selected.source_excerpt}</p>
                 </div>
               )}

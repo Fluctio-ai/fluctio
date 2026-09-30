@@ -319,7 +319,7 @@ export default function ChatPage() {
   const agentName = useAgentName(selectedAgent);
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] md:h-screen">
+    <div className="flex h-[calc(100dvh-3rem)] md:h-dvh">
       {/* Sidebar: agents + sessions */}
       <div className="hidden w-56 flex-col border-r border-border bg-card/30 lg:flex">
         <div className="flex items-center justify-between border-b border-border p-3">
@@ -465,7 +465,7 @@ export default function ChatPage() {
                     >
                       {msg.timestamp > 0 && (
                         <span
-                          className="text-[10px] text-muted-foreground/60"
+                          className="text-xs text-muted-foreground/60"
                           title={formatDateTime(msg.timestamp)}
                         >
                           {formatTime(msg.timestamp)}
@@ -624,7 +624,7 @@ function ToolCallGroup({ msg }: { msg: ChatMessage }) {
                   {expandedTool[tc.id] && (
                     <div className="px-3 py-2 space-y-2 bg-muted/20">
                       <div>
-                        <p className="text-[10px] font-medium text-muted-foreground uppercase mb-1">Input</p>
+                        <p className="text-xs font-medium text-muted-foreground uppercase mb-1">Input</p>
                         <pre className="text-xs font-mono bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40">
                           {(() => {
                             try { return JSON.stringify(JSON.parse(tc.arguments), null, 2); }
@@ -634,7 +634,7 @@ function ToolCallGroup({ msg }: { msg: ChatMessage }) {
                       </div>
                       {tc.result != null ? (
                         <div>
-                          <p className="text-[10px] font-medium text-muted-foreground uppercase mb-1">Output</p>
+                          <p className="text-xs font-medium text-muted-foreground uppercase mb-1">Output</p>
                           <pre className="text-xs font-mono bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-60">
                             {tc.result.length > 2000 ? tc.result.slice(0, 2000) + "..." : tc.result}
                           </pre>

@@ -73,6 +73,7 @@ import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
+import { DocMarkdown } from "@/components/doc-markdown";
 
 type Tab = "article" | "flash" | "todo" | "diary";
 
@@ -446,6 +447,7 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
                     }
                   }}
                 >
+                  <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
                   <div className="flex-1 min-w-0">
                     <p className="truncate">{src.title}</p>
                     <p className="text-xs tabular-nums text-muted-foreground">
@@ -551,11 +553,10 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
                           <span className="absolute right-0 top-0 text-xs text-muted-foreground/40 select-none pointer-events-none">
                             #{entry.chunk_index}
                           </span>
-                          <div className="prose prose-sm dark:prose-invert max-w-none break-words">
-                            <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                              {i === 0 ? stripLeadingTitle(entry.content, selectedSource.title) : entry.content}
-                            </ReactMarkdown>
-                          </div>
+                          <DocMarkdown
+                            className="break-words"
+                            text={i === 0 ? stripLeadingTitle(entry.content, selectedSource.title) : entry.content}
+                          />
                           {i < entries.length - 1 && (
                             <p className="text-center text-muted-foreground/40 text-xs my-2 select-none pointer-events-none">
                               * * *
@@ -800,6 +801,23 @@ function EmptyHint() {
 
 type FlashItem = { src: KBSource; content: string };
 
+// KB list toolbars share one "add" affordance — h-7 + text-xs, the reading-
+// surface mini deliberately below the settings h-8 default. Encoded once so
+// the three toolbars can't drift.
+function ToolbarAddButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: string;
+}) {
+  return (
+    <Button size="sm" className="h-7 shrink-0 text-xs" onClick={onClick}>
+      <PlusIcon className="h-3 w-3 mr-1" /> {children}
+    </Button>
+  );
+}
+
 export function FlashView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
   const agentId = useAgentIdFromURL();
@@ -887,9 +905,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
         <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setSortNew((v) => !v)}>
           {sortNew ? t("knowledge.sortNewest") : t("knowledge.sortOldest")}
         </Button>
-        <Button size="sm" className="h-7 shrink-0" onClick={() => setFlashOpen(true)}>
-          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.flashes")}
-        </Button>
+        <ToolbarAddButton onClick={() => setFlashOpen(true)}>{t("knowledge.flashes")}</ToolbarAddButton>
       </div>
       <ScrollArea className="flex-1">
         <div className="p-4 columns-1 sm:columns-2 lg:columns-3 gap-3">
@@ -905,11 +921,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
                 key={src.id}
                 className="group mb-3 break-inside-avoid rounded-lg border bg-background p-3"
               >
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                    {content}
-                  </ReactMarkdown>
-                </div>
+                <DocMarkdown text={content} />
                 <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
                   <span>{relativeTime(src.created_at)}</span>
                   <div className="flex gap-2">
@@ -1091,9 +1103,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-2 border-b px-3 py-2">
         <SearchInput value={query} onChange={setQuery} placeholder={t("knowledge.searchBookmarks")} />
-        <Button size="sm" className="h-7 shrink-0" onClick={() => setAddOpen(true)}>
-          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.bookmarks")}
-        </Button>
+        <ToolbarAddButton onClick={() => setAddOpen(true)}>{t("knowledge.bookmarks")}</ToolbarAddButton>
       </div>
       <ScrollArea className="flex-1">
         <div className="columns-1 gap-3 p-4 sm:columns-2 lg:columns-3 xl:columns-4">
@@ -1396,9 +1406,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
           <button type="button" onClick={() => setView("calendar")} className={cn("rounded px-2 py-1 text-xs", view === "calendar" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewCalendar")}</button>
           <button type="button" onClick={() => setView("list")} className={cn("rounded px-2 py-1 text-xs", view === "list" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewList")}</button>
         </div>
-        <Button size="sm" className="h-7 shrink-0" onClick={() => openCreate()}>
-          <PlusIcon className="h-3 w-3 mr-1" /> {t("knowledge.todos")}
-        </Button>
+        <ToolbarAddButton onClick={() => openCreate()}>{t("knowledge.todos")}</ToolbarAddButton>
       </div>
       {(overdueTodos.length > 0 || dueToday.length > 0) && (
         <div className="flex items-center gap-3 border-b px-4 py-1.5 text-xs">
@@ -1588,11 +1596,10 @@ function TodoCard({
       title={t("knowledge.move")}
       className="group rounded-lg border bg-background p-2.5 text-sm shadow-sm cursor-grab active:cursor-grabbing hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2 transition-colors"
     >
-      <div className={cn("prose prose-sm dark:prose-invert max-w-none", src.status === "cancelled" && "opacity-60 [&_*]:line-through")}>
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-          {content}
-        </ReactMarkdown>
-      </div>
+      <DocMarkdown
+        className={cn(src.status === "cancelled" && "opacity-60 [&_*]:line-through")}
+        text={content}
+      />
       {src.end_at && (
         <p className={cn("mt-1.5 text-xs", overdue ? "text-destructive font-medium" : "text-muted-foreground")}>
           {t("knowledge.dueLabel")}: {datetimeLocalValue(src.end_at).replace("T", " ")}
@@ -1830,11 +1837,7 @@ function TodoDetailDialog({
           />
         ) : (
           <div className="relative">
-            <div className="prose prose-sm dark:prose-invert max-h-64 max-w-none overflow-y-auto">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-                {item.content}
-              </ReactMarkdown>
-            </div>
+            <DocMarkdown className="max-h-64 overflow-y-auto" text={item.content} />
             <button
               type="button"
               onClick={() => { setDraft(item.content); setEditing(true); }}

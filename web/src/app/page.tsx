@@ -8,6 +8,7 @@ import { logout } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BootSkeleton } from "@/components/boot-skeleton";
 import { useT } from "@/lib/i18n";
 import { LogoWave } from "@/components/logo-wave";
 
@@ -66,15 +67,13 @@ export default function RootPage() {
 
   if (loading && !showLogin) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
-      </div>
+      <BootSkeleton />
     );
   }
 
   if (showLogin) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-dvh items-center justify-center bg-background">
         <div className="w-full max-w-sm space-y-6 p-6">
           <div className="flex flex-col items-center gap-3">
             <LogoWave size={48} />

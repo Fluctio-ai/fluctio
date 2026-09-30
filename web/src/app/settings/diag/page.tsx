@@ -12,7 +12,7 @@ import {
   type DiagReportEntry,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-import { PageHeader, SettingsCard, CardHead, Field, SettingsError } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, CardHead, Field, NumberField, SettingsError } from "@/components/settings-ui";
 
 // DiagReportPage is the manual error-report generator: it pulls recent failed
 // LLM calls from llm_call_diag, has the default agent's LLM compose a
@@ -73,14 +73,7 @@ export default function DiagReportPage() {
       <SettingsCard className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-[10rem_1fr_auto] sm:items-end">
           <Field label={t("diag.days")}>
-            <Input
-              type="number"
-              min={1}
-              max={30}
-              value={days}
-              onChange={(e) => setDays(Math.max(1, Number(e.target.value) || 3))}
-              disabled={busy}
-            />
+            <NumberField value={days} onChange={setDays} min={1} max={30} disabled={busy} />
           </Field>
           <Field label={t("diag.agentFilter")}>
             <Input

@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { CalendarIcon, ExternalLinkIcon, FileTextIcon, Loader2Icon, XIcon } from "lucide-react";
+import { CalendarIcon, ExternalLinkIcon, FileTextIcon, XIcon } from "lucide-react";
 import { type KBCard, getAgentConfig, listCards, reviewCard } from "@/lib/api";
 import { useWikiTitle } from "@/hooks/use-wiki-title";
 import { useT } from "@/lib/i18n";
@@ -214,7 +215,7 @@ export function CardDeck({
     if (queue === null) {
       return (
         <div className="flex flex-1 items-center justify-center">
-          <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+          <Skeleton className="size-72 rounded-xl" />
         </div>
       );
     }
@@ -315,7 +316,7 @@ export function CardDeck({
                     {t(`cards.source.${card.source_type}`)}
                   </Badge>
                   {card.review_count > 0 && (
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       {t("cards.intervalProgress", { cur: card.interval_index, total: 6 })}
                     </span>
                   )}

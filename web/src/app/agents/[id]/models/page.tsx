@@ -51,7 +51,7 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
-import { PageHeader, SettingsCard, CardHead } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, CardHead, DecimalInput } from "@/components/settings-ui";
 
 // Per-agent Models page — same UI/UX as the admin /models page, but
 // scoped to a single agent. Reads/writes agent-scoped provider rows
@@ -1080,19 +1080,17 @@ export default function AgentModelsPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
                       <Label className="text-xs">{t("models.contextWindowLabel")}</Label>
-                      <Input
-                        type="number"
-                        value={m.contextWindow || ""}
-                        onChange={(e) => handleUpdateModel(idx, "contextWindow", e.target.value)}
+                      <DecimalInput
+                        value={String(m.contextWindow || "")}
+                        onChange={(v) => handleUpdateModel(idx, "contextWindow", v)}
                         placeholder="e.g. 200000"
                       />
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">{t("models.maxTokensLabel")}</Label>
-                      <Input
-                        type="number"
-                        value={m.maxTokens || ""}
-                        onChange={(e) => handleUpdateModel(idx, "maxTokens", e.target.value)}
+                      <DecimalInput
+                        value={String(m.maxTokens || "")}
+                        onChange={(v) => handleUpdateModel(idx, "maxTokens", v)}
                         placeholder="e.g. 8192"
                       />
                     </div>

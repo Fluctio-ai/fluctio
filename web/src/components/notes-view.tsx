@@ -10,6 +10,7 @@ import * as React from "react";
 import dynamic from "next/dynamic";
 import {
   ArrowLeftIcon,
+  ChevronRightIcon,
   DownloadIcon,
   EyeIcon,
   FileIcon,
@@ -432,6 +433,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                       n.id === selectedId && "bg-accent",
                     )}
                   >
+                    <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate">{noteTitle(n, t("knowledge.notes.untitled"))}</p>
                       <p className="text-xs tabular-nums text-muted-foreground">

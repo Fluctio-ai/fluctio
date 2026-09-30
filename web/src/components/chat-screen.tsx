@@ -3890,7 +3890,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
                   {expandedTool[tc.id] && (
                     <div className="px-3 py-2 space-y-2 bg-muted/20">
                       <div>
-                        <p className="text-[10px] font-medium text-muted-foreground uppercase mb-1">Input</p>
+                        <p className="text-xs font-medium text-muted-foreground uppercase mb-1">Input</p>
                         <pre className="text-xs font-mono bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40">
                           {(() => {
                             try { return JSON.stringify(JSON.parse(tc.arguments), null, 2); }
@@ -3900,7 +3900,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
                       </div>
                       {tc.result != null ? (
                         <div>
-                          <p className="text-[10px] font-medium text-muted-foreground uppercase mb-1">Output</p>
+                          <p className="text-xs font-medium text-muted-foreground uppercase mb-1">Output</p>
                           <pre className="text-xs font-mono bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-60">
                             {tc.result.length > 2000 ? tc.result.slice(0, 2000) + "..." : tc.result}
                           </pre>
@@ -4106,7 +4106,7 @@ function FilesPanel({ agentId, files, onOpenFile }: { agentId: string; files: Pr
   const t = useT();
   return (
     <div className="mt-2 space-y-1.5 max-w-[85%]">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
         {t("chat.files")}
       </p>
       <div className="flex flex-col gap-1.5">
@@ -4682,7 +4682,7 @@ function WorkspacePanel({
         // still bounds it to FILES_PANEL_MAX on very wide screens. overflow-
         // hidden is the belt-and-suspenders against inner content overflow.
         style={{ width, maxWidth: `min(${FILES_PANEL_MAX}px, 70%)` }}
-        className="relative z-30 hidden md:flex shrink-0 flex-col overflow-hidden border-l border-border bg-background -mt-12 h-screen"
+        className="relative z-30 hidden md:flex shrink-0 flex-col overflow-hidden border-l border-border bg-background -mt-12 h-dvh"
       >
         <div
           onMouseDown={(e) => { e.preventDefault(); startResize(); }}
@@ -5260,7 +5260,7 @@ function SlashMenu({
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium truncate">{label}</p>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground/70">
                     {badge}
                   </span>
                 </div>

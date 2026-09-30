@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Clock, Container, Database } from "lucide-react";
 import { getConfig, updateConfig, getMe, getSystemVectorization, setSystemVectorization, testEmbedding, testReranker, type ConfigResponse, type MemoryEmbeddingConfig, type MemoryRerankerConfig } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-import { PageHeader, SettingsCard, CardHead, Field, ToggleRow } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, CardHead, Field, NumberField, ToggleRow } from "@/components/settings-ui";
 
 export default function RuntimeSettingsPage() {
   const tt = useT();
@@ -271,7 +271,7 @@ export default function RuntimeSettingsPage() {
                   <Input type="password" value={sysEmbedding.apiKey || ""} onChange={(e) => setSysEmbedding({ ...sysEmbedding, apiKey: e.target.value })} placeholder="sk-..." className="font-mono" />
                 </Field>
                 <Field label={tt("memory.dimensions") || "Dimensions"}>
-                  <Input type="number" value={sysEmbedding.dim || 1024} onChange={(e) => setSysEmbedding({ ...sysEmbedding, dim: parseInt(e.target.value) || 1024 })} placeholder="1024" className="font-mono" />
+                  <NumberField value={sysEmbedding.dim || 1024} onChange={(dim) => setSysEmbedding({ ...sysEmbedding, dim })} min={1} className="font-mono" />
                 </Field>
               </div>
               <div className="flex justify-end">

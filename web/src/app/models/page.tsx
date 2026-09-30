@@ -32,6 +32,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Brain, Plus, Pencil, Trash2, Check, Cpu, Loader2, Download } from "lucide-react";
+import { DecimalInput } from "@/components/settings-ui";
 import {
   getAgent,
   getConfig,
@@ -463,12 +464,12 @@ export default function ModelsPage() {
         <p className="text-xs text-muted-foreground mt-2">
           {isSuperAdmin ? tt("models.usedByAgents") : inheriting ? (
             fallbackSource === "agent" ? (
-              <><strong>{agentName || tt("models.thisAgent")}</strong> {tt("models.usingSystemDefault")} <code className="text-[11px]">{effectiveFallback}</code></>
+              <><strong>{agentName || tt("models.thisAgent")}</strong> {tt("models.usingSystemDefault")} <code className="text-xs">{effectiveFallback}</code></>
             ) : (
-              <>{tt("models.usingSystemDefault")}{effectiveFallback ? <>: <code className="text-[11px]">{effectiveFallback}</code></> : <> {tt("models.noneConfigured")}</>}. {tt("models.pickModelOverride")} {inAgentContext ? tt("models.thisAgent") : tt("models.only")}</>
+              <>{tt("models.usingSystemDefault")}{effectiveFallback ? <>: <code className="text-xs">{effectiveFallback}</code></> : <> {tt("models.noneConfigured")}</>}. {tt("models.pickModelOverride")} {inAgentContext ? tt("models.thisAgent") : tt("models.only")}</>
             )
           ) : (
-            <>{tt("models.overrideAppliesTo")} {inAgentContext ? <strong>{tt("models.thisAgent")}</strong> : <>agents</>}. {tt("models.overrideInFormat")} <code className="text-[11px]">provider/modelId</code>.</>
+            <>{tt("models.overrideAppliesTo")} {inAgentContext ? <strong>{tt("models.thisAgent")}</strong> : <>agents</>}. {tt("models.overrideInFormat")} <code className="text-xs">provider/modelId</code>.</>
           )}
         </p>
       </div>
@@ -575,7 +576,7 @@ export default function ModelsPage() {
               <Input type={editingName && !formApiKey ? "text" : "password"} value={formApiKey} onChange={(e) => setFormApiKey(e.target.value)}
                 placeholder={editingName ? (() => { const row = providers.find((p) => p.id === editingId); return row?.maskedKey || "sk-…"; })() : "sk-…"}
                 className="font-mono text-sm placeholder:text-muted-foreground/70" />
-              {editingName && (<p className="text-[11px] text-muted-foreground/60">{tt("models.keepExistingKey")}</p>)}
+              {editingName && (<p className="text-xs text-muted-foreground/60">{tt("models.keepExistingKey")}</p>)}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -647,7 +648,7 @@ export default function ModelsPage() {
                           className="flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs hover:bg-accent font-mono disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <span>{fm.id}</span>
-                          <span className="text-muted-foreground text-[10px]">
+                          <span className="text-muted-foreground text-xs">
                             {fm.contextWindow >= 1000 ? `${Math.round(fm.contextWindow / 1000)}K` : fm.contextWindow || "—"}
                           </span>
                         </button>
@@ -689,11 +690,11 @@ export default function ModelsPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
                       <Label className="text-xs">{tt("models.contextWindowLabel")}</Label>
-                      <Input type="number" value={m.contextWindow || ""} onChange={(e) => handleUpdateModel(idx, "contextWindow", e.target.value)} placeholder="200000" className="font-mono text-xs h-8" />
+                      <DecimalInput value={String(m.contextWindow || "")} onChange={(v) => handleUpdateModel(idx, "contextWindow", v)} placeholder="200000" className="font-mono text-xs h-8" />
                     </div>
                     <div className="space-y-1">
                       <Label className="text-xs">{tt("models.maxTokensLabel")}</Label>
-                      <Input type="number" value={m.maxTokens || ""} onChange={(e) => handleUpdateModel(idx, "maxTokens", e.target.value)} placeholder="8192" className="font-mono text-xs h-8" />
+                      <DecimalInput value={String(m.maxTokens || "")} onChange={(v) => handleUpdateModel(idx, "maxTokens", v)} placeholder="8192" className="font-mono text-xs h-8" />
                     </div>
                   </div>
                 </div>

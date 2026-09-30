@@ -1199,9 +1199,7 @@ function ConnectWeChatDialog({
         ) : (
           <div className="flex flex-col items-center gap-4 py-2">
             {loading ? (
-              <div className="flex h-56 w-56 items-center justify-center">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
+              <Skeleton className="h-56 w-56 rounded-lg" />
             ) : qrPayload ? (
               <div className="rounded-lg border bg-white p-4">
                 <QRCodeSVG value={qrPayload} size={224} level="M" />

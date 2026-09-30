@@ -421,7 +421,7 @@ function InstallSkillDialog({
             </div>
           ) : (
             <>
-              <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1.5 px-1">{tt("skills.resultsFromSkillsh")}</p>
+              <p className="text-xs uppercase tracking-wider text-muted-foreground/70 mb-1.5 px-1">{tt("skills.resultsFromSkillsh")}</p>
               <div className="space-y-1.5 py-1">
                 {visible.map((r) => {
                   const already = installedNames.has(r.skillId);

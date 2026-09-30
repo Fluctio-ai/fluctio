@@ -33,6 +33,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
+import { DOC_PROSE_CLASS } from "@/components/doc-markdown";
 import { ExternalAnchor } from "@/components/markdown-link";
 import {
   type WikiPage,
@@ -559,7 +560,7 @@ export default function WikiPage() {
                 </Button>
               </div>
               <Separator className="mb-4" />
-              <div className="prose prose-sm dark:prose-invert max-w-none">
+              <div className={DOC_PROSE_CLASS}>
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkBreaks]}
                   components={{

@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { SaveButton } from "@/components/save-button";
 import { MemoryTestButton } from "@/components/memory-test-button";
-import { PageHeader, SettingsCard, CardHead, Field, ToggleRow } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, CardHead, Field, NumberField, ToggleRow } from "@/components/settings-ui";
 import { Database, Boxes, Settings2, Layers, Loader2, RefreshCw } from "lucide-react";
 import {
   getAgentMemory,
@@ -294,9 +294,9 @@ export default function AgentMemoryPage() {
                   </Field>
                   <Field label={t("memory.dimensions") || "Dimensions"} hint={t("memory.sendDimensions") || "Send dimensions"}>
                     <div className="flex items-center gap-2">
-                      <Input type="number" value={embedding.dim || 1024}
-                        onChange={(e) => setEmbedding({ ...embedding, dim: parseInt(e.target.value) || 1024 })}
-                        placeholder="1024" className="flex-1 font-mono" />
+                      <NumberField value={embedding.dim || 1024}
+                        onChange={(dim) => setEmbedding({ ...embedding, dim })}
+                        min={1} className="flex-1 font-mono" />
                       <Switch checked={!!embedding.dimEnabled} onCheckedChange={(v) => setEmbedding({ ...embedding, dimEnabled: v })}
                         aria-label={t("memory.sendDimensions") || "Send dimensions"} />
                     </div>

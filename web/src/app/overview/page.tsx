@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useT } from "@/lib/i18n";
 import {
   getStatus,
@@ -61,8 +62,26 @@ export default function OverviewPage() {
 
   if (loading && !status) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted border-t-primary" />
+      // Skeleton approximates the stats area with the common denominator —
+      // two cards in the base 2-col grid every role renders; admins expand
+      // to 4–5 cards when live data lands.
+      <div className="p-6 space-y-6 max-w-5xl mx-auto">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-4 w-72 max-w-full" />
+        </div>
+        <div className="grid gap-4 grid-cols-2">
+          {[0, 1].map((i) => (
+            <div key={i} className="rounded-lg border border-border bg-card p-5">
+              <div className="flex items-center justify-between mb-3">
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="size-8 rounded-full" />
+              </div>
+              <Skeleton className="h-8 w-14" />
+              <Skeleton className="mt-2 h-3 w-20" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

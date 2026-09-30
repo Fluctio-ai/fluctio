@@ -13,7 +13,6 @@ const en: Record<string, string> = {
   "adminChats.refresh": "Refresh",
   "adminChats.refreshBtn": "Refresh chats",
   "adminChats.loadFailed": "Failed to load chats",
-  "adminChats.loading": "Loading chats…",
   "adminChats.empty": "No chats yet",
   "adminChats.emptyDesc": "Conversations will appear here once users start chatting with their agents.",
   "adminChats.col.title": "Title",

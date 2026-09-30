@@ -15,7 +15,7 @@ import {
 import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle, Archive, SlidersHorizontal } from "lucide-react";
 import { getAgent, getAgentMemory, setAgentMemory, updateAgent, getCompactionPreview, type CompactionPreview, type AgentUpdatePayload } from "@/lib/api";
 import { SaveButton } from "@/components/save-button";
-import { PageHeader, SettingsCard, CardHead, Field } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, CardHead, Field, DecimalInput } from "@/components/settings-ui";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
@@ -474,27 +474,23 @@ export default function AgentContextPage() {
         />
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
           <Field label={t("context.maxTokens")} hint={t("context.maxTokensHint")}>
-            <Input
-              type="number"
+            <DecimalInput
               value={maxTokens}
-              onChange={(e) => setMaxTokens(e.target.value)}
+              onChange={setMaxTokens}
               placeholder="8192"
             />
           </Field>
           <Field label={t("context.temperature")} hint={t("context.temperatureHint")}>
-            <Input
-              type="number"
-              step="0.1"
+            <DecimalInput
               value={temperature}
-              onChange={(e) => setTemperature(e.target.value)}
+              onChange={setTemperature}
               placeholder="0.7"
             />
           </Field>
           <Field label={t("context.maxIter")} hint={t("context.maxIterHint")}>
-            <Input
-              type="number"
+            <DecimalInput
               value={maxToolIterations}
-              onChange={(e) => setMaxIter(e.target.value)}
+              onChange={setMaxIter}
               placeholder="20"
             />
           </Field>
@@ -721,11 +717,10 @@ export default function AgentContextPage() {
                 <p className="text-xs text-muted-foreground mt-0.5">{t("context.compactionManualDesc")}</p>
                 {compactionRadio === "manual" && (
                   <div className="mt-2 space-y-1">
-                    <Input
-                      type="number"
+                    <DecimalInput
                       placeholder={t("context.compactionManualPlaceholder")}
                       value={compactionManual}
-                      onChange={(e) => setCompactionManual(e.target.value)}
+                      onChange={setCompactionManual}
                       onBlur={handleCompactionManualSave}
                       disabled={compactionSaving}
                       className="max-w-[200px]"

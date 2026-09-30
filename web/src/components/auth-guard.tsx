@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { getMe } from "@/lib/api";
 import { LoginScreen } from "./login-screen";
+import { BootSkeleton } from "./boot-skeleton";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -89,9 +90,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
   if (!checked) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" />
-      </div>
+      <BootSkeleton />
     );
   }
   if (!authed) {

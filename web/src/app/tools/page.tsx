@@ -327,7 +327,7 @@ function ProviderFields({
         </div>
       )}
 
-      <button onClick={() => setShowAdvanced((v) => !v)} className="text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+      <button onClick={() => setShowAdvanced((v) => !v)} className="text-xs text-muted-foreground hover:text-foreground transition-colors">
         {showAdvanced ? tt("tools.hideAdvanced") : tt("tools.showAdvanced")}
       </button>
 
@@ -388,9 +388,9 @@ function AdvancedOptionsEditor({
 
   return (
     <div className="rounded-md border border-border/70 bg-muted/20 p-3 space-y-2">
-      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{tt("tools.providerOptions")}</p>
+      <p className="text-xs uppercase tracking-wider text-muted-foreground">{tt("tools.providerOptions")}</p>
       {entries.length === 0 && (
-        <p className="text-[11px] text-muted-foreground italic">{tt("tools.noCustomOptions")}</p>
+        <p className="text-xs text-muted-foreground italic">{tt("tools.noCustomOptions")}</p>
       )}
       {entries.map(([k, v]) => (
         <div key={k} className="flex items-center gap-2">
@@ -472,9 +472,9 @@ function ChainEditor({
             const label = refOptions.find((o) => o.value === ref)?.label || ref;
             return (
               <div key={ref} className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
-                <span className="text-[11px] font-mono text-muted-foreground w-6">{i === 0 ? "1°" : `${i + 1}`}</span>
+                <span className="text-xs font-mono text-muted-foreground w-6">{i === 0 ? "1°" : `${i + 1}`}</span>
                 <span className="text-sm flex-1">{label}</span>
-                <span className="text-[11px] font-mono text-muted-foreground">{ref}</span>
+                <span className="text-xs font-mono text-muted-foreground">{ref}</span>
                 <div className="flex gap-0.5">
                   <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => move(i, -1)} disabled={i === 0}><ChevronUp className="h-3.5 w-3.5" /></Button>
                   <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => move(i, 1)} disabled={i === chain.length - 1}><ChevronDown className="h-3.5 w-3.5" /></Button>

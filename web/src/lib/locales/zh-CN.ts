@@ -13,7 +13,6 @@ const zhCN: Record<string, string> = {
   "adminChats.refresh": "刷新",
   "adminChats.refreshBtn": "刷新对话",
   "adminChats.loadFailed": "加载对话失败",
-  "adminChats.loading": "加载对话中…",
   "adminChats.empty": "暂无对话",
   "adminChats.emptyDesc": "用户与 agent 对话后将显示在此。",
   "adminChats.col.title": "标题",

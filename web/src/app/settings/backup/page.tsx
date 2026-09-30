@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { HardDrive, Database } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
-import { PageHeader, SettingsCard, CardHead, Field } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, CardHead, Field, NumberField } from "@/components/settings-ui";
 import {
   apiFetch,
   getSystemBackup,
@@ -144,12 +144,7 @@ export default function BackupSettingsPage() {
             />
           </Field>
           <Field label={t("backup.maxKeep")} hint={t("backup.maxKeepDesc")}>
-            <Input
-              type="number"
-              min={1}
-              value={maxKeep}
-              onChange={(e) => setMaxKeep(Math.max(1, Number(e.target.value) || 1))}
-            />
+            <NumberField value={maxKeep} onChange={setMaxKeep} min={1} />
           </Field>
         </div>
       </SettingsCard>

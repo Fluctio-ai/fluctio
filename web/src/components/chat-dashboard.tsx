@@ -5,12 +5,24 @@ import { useEffect, useState } from "react";
 import {
   Flame,
   Layers,
-  Loader2,
   ListTodo,
   MessageSquare,
   Timer,
 } from "lucide-react";
+
+// Placeholder while a dashboard pane's data is in flight — three reading-
+// width text lines, the shape every pane's list renders.
+function PaneSkeleton() {
+  return (
+    <div className="space-y-2.5 p-4">
+      <Skeleton className="h-4 w-3/4" />
+      <Skeleton className="h-4 w-full" />
+      <Skeleton className="h-4 w-2/3" />
+    </div>
+  );
+}
 import { CardDeck } from "@/components/cards-review";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ChannelIcon, channelLabel } from "@/components/channel-icon";
 import {
   type AgentCronJob,
@@ -118,9 +130,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
         </div>
         <div className="min-h-0 flex-1">
           {stats === null ? (
-            <div className="flex h-24 items-center justify-center">
-              <Loader2 className="size-5 animate-spin text-muted-foreground" />
-            </div>
+            <PaneSkeleton />
           ) : stats.due_today > 0 ? (
             <CardDeck agentId={agentId} variant="inline" onFinish={onDeckFinish} />
           ) : (
@@ -154,9 +164,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
           )}
         </div>
         {todos === undefined ? (
-          <div className="flex h-24 items-center justify-center">
-            <Loader2 className="size-5 animate-spin text-muted-foreground" />
-          </div>
+          <PaneSkeleton />
         ) : todos === null || todos.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
             <ListTodo className="size-8 text-muted-foreground/50" />
@@ -197,9 +205,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
           {t("dashboard.recent.title")}
         </div>
         {sessions === null ? (
-          <div className="flex h-24 items-center justify-center">
-            <Loader2 className="size-5 animate-spin text-muted-foreground" />
-          </div>
+          <PaneSkeleton />
         ) : sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
             <MessageSquare className="size-8 text-muted-foreground/50" />
@@ -233,9 +239,7 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
           {t("dashboard.cron.title")}
         </div>
         {crons === null ? (
-          <div className="flex h-24 items-center justify-center">
-            <Loader2 className="size-5 animate-spin text-muted-foreground" />
-          </div>
+          <PaneSkeleton />
         ) : crons.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
             <Timer className="size-8 text-muted-foreground/50" />

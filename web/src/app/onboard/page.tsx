@@ -273,7 +273,7 @@ export default function OnboardPage() {
   ];
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
+    <div className="flex min-h-dvh items-center justify-center bg-muted/30 p-4">
       <div className="w-full max-w-2xl space-y-6">
         <Stepper current={step} />
 
