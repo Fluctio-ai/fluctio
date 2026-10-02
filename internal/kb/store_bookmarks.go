@@ -3,6 +3,7 @@ package kb
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -12,6 +13,12 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// ErrBookmarkNotFound is returned by GetBookmark / DeleteBookmark /
+// UpdateBookmark when no row matches the given id (or it belongs to another
+// agent) — the typed not-found case, so tool handlers can errors.Is it apart
+// from real DB failures (mirrors ErrTodoNotFound / ErrFlashNotFound).
+var ErrBookmarkNotFound = errors.New("bookmark not found")
 
 // NormalizeBookmarkURL canonicalizes a URL for storage and dedup: parse, drop
 // the fragment, strip a handful of tracking query keys (utm_*, fbclid, gclid,
@@ -155,6 +162,35 @@ func (s *KBStore) ListBookmarks(ctx context.Context, agentID string, limit, offs
 	return out, nil
 }
 
+// ListBookmarkMetas lists bookmarks newest first WITHOUT the fetched page
+// body — the content column is projected as '' so scanBookmark decodes
+// unchanged while the potentially huge body text (tens of KB per row) never
+// leaves SQLite. For list callers that render only metadata (the LLM listing
+// tool); the web UI keeps ListBookmarks because its reader panel wants bodies.
+func (s *KBStore) ListBookmarkMetas(ctx context.Context, agentID string, limit, offset int) ([]KBBookmark, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT id, agent_id, url, title, summary, '', content_fetched_at, source, created_at, updated_at, promoted_to_article_id
+			FROM kb_bookmarks WHERE agent_id = %s ORDER BY created_at DESC LIMIT %s OFFSET %s`,
+			s.ph(1), s.ph(2), s.ph(3)),
+		agentID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list bookmark metas: %w", err)
+	}
+	defer rows.Close()
+	var out []KBBookmark
+	for rows.Next() {
+		b, ok := scanBookmark(rows)
+		if !ok {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
 func (s *KBStore) GetBookmark(ctx context.Context, agentID, id string) (*KBBookmark, error) {
 	row := s.db.QueryRowContext(ctx,
 		fmt.Sprintf(`SELECT %s FROM kb_bookmarks WHERE id = %s AND agent_id = %s`,
@@ -162,7 +198,7 @@ func (s *KBStore) GetBookmark(ctx context.Context, agentID, id string) (*KBBookm
 		id, agentID)
 	b, ok := scanBookmark(row)
 	if !ok {
-		return nil, fmt.Errorf("bookmark not found")
+		return nil, ErrBookmarkNotFound
 	}
 	return &b, nil
 }
@@ -179,7 +215,7 @@ func (s *KBStore) DeleteBookmark(ctx context.Context, agentID, id string) error 
 		return fmt.Errorf("delete bookmark: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("bookmark not found")
+		return ErrBookmarkNotFound
 	}
 	return nil
 }
@@ -216,7 +252,7 @@ func (s *KBStore) UpdateBookmark(ctx context.Context, agentID, id, title, summar
 		return fmt.Errorf("update bookmark: %w", err)
 	}
 	if rows, _ := res.RowsAffected(); rows == 0 {
-		return fmt.Errorf("bookmark not found")
+		return ErrBookmarkNotFound
 	}
 	if s.embedder != nil && s.embedder.Available() {
 		go s.embedBookmark(context.Background(), agentID, id)

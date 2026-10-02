@@ -32,6 +32,7 @@ func RegisterKBTools(r *tools.Registry, store *KBStore, agentID string, sourceRa
 	registerKBListTodos(r, store, agentID)
 	registerKBListFlashes(r, store, agentID)
 	registerKBBookmark(r, store, agentID)
+	registerKBBookmarkTools(r, store, agentID)
 	registerKBNotes(r, store, agentID)
 	registerKBVerifyClaim(r, store, agentID)
 	// The deep-reading tool needs an LLM invoker; when none is wired (e.g. an
@@ -700,21 +701,15 @@ func registerKBBookmark(r *tools.Registry, store *KBStore, agentID string) {
 			if err != nil {
 				return "", err
 			}
-			short := id
-			if len(short) > 12 {
-				short = short[:12]
-			}
-			return fmt.Sprintf("Saved bookmark (source_id=%s) — URL only, body fetch failed: %v. Tell the user the link is saved but the page body could not be retrieved.", short, ferr), nil
+			// Full UUID, not a truncated id: the read/update/delete/promote
+			// tools match WHERE id = ? exactly, so this id must roundtrip.
+			return fmt.Sprintf("Saved bookmark (bookmark_id=%s) — URL only, body fetch failed: %v. Tell the user the link is saved but the page body could not be retrieved.", id, ferr), nil
 		}
 		id, err := store.SaveBookmark(ctx, agentID, args.URL, title, args.Summary, content, "llm")
 		if err != nil {
 			return "", err
 		}
-		short := id
-		if len(short) > 12 {
-			short = short[:12]
-		}
-		return fmt.Sprintf("Saved bookmark (source_id=%s, %d chars fetched, title=%q).", short, len(content), title), nil
+		return fmt.Sprintf("Saved bookmark (bookmark_id=%s, %d chars fetched, title=%q).", id, len(content), title), nil
 	})
 }
 

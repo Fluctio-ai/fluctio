@@ -34,6 +34,12 @@ func TestRegisterKBToolsIncludesFlashTodo(t *testing.T) {
 		"knowledgebase_read_note",
 		"knowledgebase_save_note",
 		"knowledgebase_save_note_attachment",
+		"knowledgebase_save_bookmark",
+		"knowledgebase_list_bookmarks",
+		"knowledgebase_read_bookmark",
+		"knowledgebase_update_bookmark",
+		"knowledgebase_delete_bookmark",
+		"knowledgebase_promote_bookmark",
 		"knowledgebase_search", // existing — sanity check
 	} {
 		if !r.HasBuiltin(name) {
