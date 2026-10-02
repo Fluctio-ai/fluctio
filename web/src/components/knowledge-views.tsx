@@ -1740,9 +1740,9 @@ function statusChipBg(s: TodoStatus): string {
   return "";
 }
 
-// TodoRow is the compact one-line row shared by the list view, the
-// calendar's undated strip and the day sheet: status color bar + truncated
-// title + date span. Click opens the detail dialog.
+// TodoRow is the compact row shared by the list view, the calendar's
+// undated strip and the day sheet: status color bar + wrapping title +
+// date span. Click opens the detail dialog.
 function TodoRow({
   item,
   onOpen,
@@ -1769,7 +1769,7 @@ function TodoRow({
       className="group flex cursor-pointer items-center gap-2.5 rounded-md border bg-background px-2.5 py-1.5 hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2"
     >
       <span className={cn("h-7 w-1 shrink-0 rounded-full", statusBar(st))} />
-      <span className={cn("min-w-0 flex-1 truncate text-sm", st === "cancelled" && "line-through opacity-70")}>
+      <span className={cn("min-w-0 flex-1 break-words text-sm", st === "cancelled" && "line-through opacity-70")}>
         {todoFirstLine(item.content)}
       </span>
       {span && (
