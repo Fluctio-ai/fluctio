@@ -474,14 +474,6 @@ func registerKBSaveTodo(r *tools.Registry, store *KBStore, agentID string) {
 		if err := json.Unmarshal(rawArgs, &args); err != nil {
 			return "", fmt.Errorf("parse args: %w", err)
 		}
-		title := deriveTitle(args.Content)
-		if dup := store.CheckDuplicate(ctx, agentID, "todo", title, args.Content, store.DupTodo()); dup.Duplicate {
-			extra := ""
-			if dup.Score > 0 {
-				extra = fmt.Sprintf("，相似度 %.0f%%", dup.Score*100)
-			}
-			return fmt.Sprintf("已存在相似的待办（标题：%q%s），未重复记录。如需更新请用 knowledgebase_update_todo。", dup.Title, extra), nil
-		}
 		id, err := store.SaveTodo(ctx, agentID, args.Content, args.Status, args.StartAt, args.EndAt)
 		if err != nil {
 			return "", err

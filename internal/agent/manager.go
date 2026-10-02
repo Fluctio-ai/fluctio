@@ -343,7 +343,6 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 						ArticleDupHigh:    deref(cfg.ArticleDupHigh),
 						ArticleDupMid:     deref(cfg.ArticleDupMid),
 						FlashDupThreshold: deref(cfg.FlashDupThreshold),
-						TodoDupThreshold:  deref(cfg.TodoDupThreshold),
 					}
 				})
 				if ag.memoryCfg.KBEmbedding && ag.embedder != nil && ag.embedder.Available() {

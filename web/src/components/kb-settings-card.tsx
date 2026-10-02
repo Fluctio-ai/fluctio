@@ -84,7 +84,6 @@ export function KBSettingsCard() {
   const [articleDupHigh, setArticleDupHigh] = useState(0.90);
   const [articleDupMid, setArticleDupMid] = useState(0.72);
   const [flashDupThreshold, setFlashDupThreshold] = useState(0.85);
-  const [todoDupThreshold, setTodoDupThreshold] = useState(0.78);
   const [ftEnabled, setFtEnabled] = useState(false);
   const [ftAutoMode, setFtAutoMode] = useState("disabled");
   const [ftKeywords, setFtKeywords] = useState("");
@@ -110,7 +109,6 @@ export function KBSettingsCard() {
           setArticleDupHigh(kb.articleDupHigh ?? 0.90);
           setArticleDupMid(kb.articleDupMid ?? 0.72);
           setFlashDupThreshold(kb.flashDupThreshold ?? 0.85);
-          setTodoDupThreshold(kb.todoDupThreshold ?? 0.78);
           setFtEnabled(kb.flashTodoEnabled ?? false);
           setFtAutoMode(kb.flashTodoAutoMode ?? "disabled");
           setFtKeywords((kb.flashTodoKeywords ?? []).join(", "));
@@ -141,7 +139,6 @@ export function KBSettingsCard() {
         articleDupHigh: articleDupHigh || undefined,
         articleDupMid: articleDupMid || undefined,
         flashDupThreshold: flashDupThreshold || undefined,
-        todoDupThreshold: todoDupThreshold || undefined,
         flashTodoEnabled: ftEnabled,
         flashTodoAutoMode: ftAutoMode,
         flashTodoKeywords: ftKeywords
@@ -167,7 +164,6 @@ export function KBSettingsCard() {
     articleDupHigh,
     articleDupMid,
     flashDupThreshold,
-    todoDupThreshold,
     ftEnabled,
     ftAutoMode,
     ftKeywords,
@@ -339,9 +335,6 @@ export function KBSettingsCard() {
               </Field>
               <Field label={<span className="text-xs">{t("knowledge.dedupFlash")}</span>}>
                 <NumberField min={0} max={1} value={flashDupThreshold} onChange={setFlashDupThreshold} />
-              </Field>
-              <Field label={<span className="text-xs">{t("knowledge.dedupTodo")}</span>}>
-                <NumberField min={0} max={1} value={todoDupThreshold} onChange={setTodoDupThreshold} />
               </Field>
             </div>
           </div>

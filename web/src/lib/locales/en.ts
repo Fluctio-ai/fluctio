@@ -778,7 +778,6 @@ const en: Record<string, string> = {
   "knowledge.dedupArticleHigh": "Article near-dup skip (≥)",
   "knowledge.dedupArticleMid": "Article pend (≥)",
   "knowledge.dedupFlash": "Flash skip (≥)",
-  "knowledge.dedupTodo": "Todo skip (≥)",
   "knowledge.addText": "Add Text",
   "knowledge.titleLabel": "Title",
   "knowledge.sourceTitlePlaceholder": "Source title",

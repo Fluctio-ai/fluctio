@@ -255,12 +255,11 @@ type KBCfg struct {
 	EmptyAction string   `json:"emptyAction,omitempty"` // "llm" (default), "stop"
 	// Dedup thresholds for inbound KB writes (0 = use built-in default).
 	// At or above these an existing same/similar source blocks the write:
-	// flash/todo are skipped silently; high-similarity articles (≥High) also
+	// flash are skipped silently; high-similarity articles (≥High) also
 	// skip (near-duplicate, nothing worth a merge); mid-tier pends for user.
 	ArticleDupHigh    float64 `json:"articleDupHigh,omitempty"`    // ≥ → skip (near-duplicate)
 	ArticleDupMid     float64 `json:"articleDupMid,omitempty"`     // ≥ → pend for user
 	FlashDupThreshold float64 `json:"flashDupThreshold,omitempty"` // ≥ → skip flash
-	TodoDupThreshold  float64 `json:"todoDupThreshold,omitempty"`  // ≥ → skip todo
 }
 
 // sourcesAccumulatorKey is the context key for a *[]KnowledgeSource that the

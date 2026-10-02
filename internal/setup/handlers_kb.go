@@ -390,11 +390,6 @@ func (s *Server) handleKBSaveTodo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "knowledge base not available", http.StatusServiceUnavailable)
 		return
 	}
-	title := kb.DeriveTitle(req.Content)
-	if dup := kbStore.CheckDuplicate(r.Context(), agentID, "todo", title, req.Content, kbStore.DupTodo()); dup.Duplicate {
-		writeJSON(w, http.StatusOK, map[string]any{"deduped": true, "existing_source_id": dup.SourceID, "existing_title": dup.Title, "reason": dup.Reason})
-		return
-	}
 	id, err := kbStore.SaveTodo(r.Context(), agentID, req.Content, req.Status, req.StartAt, req.EndAt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

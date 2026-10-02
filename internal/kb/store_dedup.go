@@ -20,7 +20,6 @@ const (
 	DefaultArticleDupHigh    = 0.90
 	DefaultArticleDupMid     = 0.72
 	DefaultFlashDupThreshold = 0.85
-	DefaultTodoDupThreshold  = 0.78
 )
 
 // PendingDefaultTTL is how long a mid-tier article pend stays rescuable
@@ -49,13 +48,6 @@ func ResolveFlashDupThreshold(v float64) float64 {
 	return DefaultFlashDupThreshold
 }
 
-func ResolveTodoDupThreshold(v float64) float64 {
-	if v > 0 {
-		return v
-	}
-	return DefaultTodoDupThreshold
-}
-
 // SetDedupCfgFn wires an optional per-agent dedup config supplier. When set,
 // the Dup* helpers below read live thresholds from it; otherwise built-in
 // defaults apply. Injected by the caller (manager / setup) from config.
@@ -68,12 +60,11 @@ func (s *KBStore) dedupCfg() KBCfg {
 	return KBCfg{}
 }
 
-// DupArticleHigh/Mid/Flash/Todo resolve the active dedup threshold for the
+// DupArticleHigh/Mid/Flash resolve the active dedup threshold for the
 // store, honoring a wired config override, else the built-in default.
 func (s *KBStore) DupArticleHigh() float64 { return ResolveArticleDupHigh(s.dedupCfg().ArticleDupHigh) }
 func (s *KBStore) DupArticleMid() float64  { return ResolveArticleDupMid(s.dedupCfg().ArticleDupMid) }
 func (s *KBStore) DupFlash() float64       { return ResolveFlashDupThreshold(s.dedupCfg().FlashDupThreshold) }
-func (s *KBStore) DupTodo() float64        { return ResolveTodoDupThreshold(s.dedupCfg().TodoDupThreshold) }
 
 // EncodeSeqRanges encodes a single seq as a JSON-style range array
 // "[[seq,seq]]"; empty when seq<=0 so legacy rows / non-chat writes stay "".
@@ -270,7 +261,7 @@ func (s *KBStore) PruneExpiredPending(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-// DeriveTitle exports the title derivation SaveFlash/SaveTodo use, so
+// DeriveTitle exports the title derivation SaveFlash uses, so
 // callers outside the kb package (setup HTTP handlers) can match it for
 // dedup checks without reimplementing the first-line rule.
 func DeriveTitle(content string) string {

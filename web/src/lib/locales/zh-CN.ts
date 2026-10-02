@@ -778,7 +778,6 @@ const zhCN: Record<string, string> = {
   "knowledge.dedupArticleHigh": "文章高相似跳过 (≥)",
   "knowledge.dedupArticleMid": "文章待确认 (≥)",
   "knowledge.dedupFlash": "闪记跳过 (≥)",
-  "knowledge.dedupTodo": "待办跳过 (≥)",
   "knowledge.addText": "添加文本",
   "knowledge.titleLabel": "标题",
   "knowledge.sourceTitlePlaceholder": "数据源标题",
