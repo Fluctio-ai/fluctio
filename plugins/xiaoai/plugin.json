@@ -1,0 +1,19 @@
+{
+  "id": "xiaoai",
+  "name": "XiaoAI Speaker",
+  "version": "0.1.0",
+  "description": "XiaoAI speaker channel via Songloft (miot plugin): conversation webhook in, MiNA TTS out",
+  "type": "channel",
+  "command": "node main.js",
+  "config": {
+    "songloftUrl": { "type": "string", "required": true },
+    "songloftUsername": { "type": "string", "required": true },
+    "songloftPassword": { "type": "string", "required": true, "sensitive": true },
+    "publicBaseUrl": { "type": "string", "required": true },
+    "webhookToken": { "type": "string", "required": true, "sensitive": true },
+    "listenHost": { "type": "string", "default": "0.0.0.0" },
+    "listenPort": { "type": "string", "default": "32100" },
+    "maxChars": { "type": "string", "default": "400" },
+    "ignoreKeywords": { "type": "string", "default": "下一首,上一首,暂停,继续播放,停止播放,单曲循环,循环播放,随机播放,顺序播放" }
+  }
+}
