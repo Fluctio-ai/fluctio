@@ -69,6 +69,7 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
 import { dayKey, endOfToday, pad2 } from "@/lib/time";
 import { readCache, writeCache } from "@/lib/page-data-cache";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1304,8 +1305,11 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
   const [newEnd, setNewEnd] = useState("");
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<"board" | "calendar" | "list">("board");
-  // calAnchor is the shared month anchor of the calendar + gantt panes:
-  // paging either pane keeps both on the same month.
+  // calGran is the shared day-column granularity of the calendar + gantt
+  // panes: month grid, single week, or a single day (gantt goes hourly).
+  const [calGran, setCalGran] = useState<CalGran>("month");
+  // calAnchor is the shared range anchor of the calendar + gantt panes:
+  // paging either pane keeps both on the same month/week/day.
   const [calAnchor, setCalAnchor] = useState(() => new Date());
   const [deleteTarget, setDeleteTarget] = useState<FlashItem | null>(null);
   const [detailTarget, setDetailTarget] = useState<FlashItem | null>(null);
@@ -1444,13 +1448,27 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
         <SearchInput value={query} onChange={setQuery} placeholder={t("knowledge.searchTodos")} />
         <div className="flex shrink-0 items-center rounded-md border p-0.5">
           <button type="button" onClick={() => setView("board")} className={cn("rounded px-2 py-1 text-xs", view === "board" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewBoard")}</button>
           <button type="button" onClick={() => setView("calendar")} className={cn("rounded px-2 py-1 text-xs", view === "calendar" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewCalendar")}</button>
           <button type="button" onClick={() => setView("list")} className={cn("rounded px-2 py-1 text-xs", view === "list" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}>{t("knowledge.viewList")}</button>
         </div>
+        {view === "calendar" && (
+          <div className="flex shrink-0 items-center rounded-md border p-0.5">
+            {CAL_GRANS.map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setCalGran(g)}
+                className={cn("rounded px-2 py-1 text-xs", calGran === g ? "bg-background text-foreground shadow-sm" : "text-muted-foreground")}
+              >
+                {t("knowledge.gran_" + g)}
+              </button>
+            ))}
+          </div>
+        )}
         <ToolbarAddButton onClick={() => openCreate()}>{t("knowledge.todos")}</ToolbarAddButton>
       </div>
       {(overdueTodos.length > 0 || dueToday.length > 0) && (
@@ -1509,27 +1527,29 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
             )}
           </div>
         ) : view === "calendar" ? (
-          <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start">
-            <div className="2xl:w-[440px] 2xl:shrink-0">
+          // Stacked, full-width panes: side-by-side squeezed both surfaces;
+          // each keeps its own MonthNav and scrolls in the shared area.
+          <div className="flex flex-col">
+            <div className="border-b">
               <TodoCalendar
                 items={visibleTodos}
                 anchor={calAnchor}
                 setAnchor={setCalAnchor}
+                gran={calGran}
                 onOpenItem={setDetailTarget}
                 onCreateAt={(day) => openCreate(undefined, `${day}T09:00`)}
                 onDelete={askDelete}
               />
             </div>
-            <div className="min-w-0 flex-1">
-              <TodoGantt
-                items={visibleTodos}
-                loading={loading}
-                anchor={calAnchor}
-                setAnchor={setCalAnchor}
-                onOpenItem={setDetailTarget}
-                onDelete={askDelete}
-              />
-            </div>
+            <TodoGantt
+              items={visibleTodos}
+              loading={loading}
+              anchor={calAnchor}
+              setAnchor={setCalAnchor}
+              gran={calGran}
+              onOpenItem={setDetailTarget}
+              onDelete={askDelete}
+            />
           </div>
         ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
@@ -1750,6 +1770,31 @@ function monthGrid(anchor: Date): Date[] {
   });
 }
 
+// CalGran is the day-column granularity shared by the calendar + gantt
+// panes; CAL_GRANS drives the toolbar segmented control in that order.
+type CalGran = "month" | "week" | "day";
+const CAL_GRANS: readonly CalGran[] = ["month", "week", "day"];
+
+// startOfWeek returns the Monday (00:00) of anchor's week — the Monday-first
+// convention monthGrid uses, so week cells align with month-grid weeks.
+function startOfWeek(anchor: Date): Date {
+  const d = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d;
+}
+
+// startOfDay returns anchor's local midnight (the day-column join key).
+function startOfDay(anchor: Date): Date {
+  return new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+}
+
+// weekLabels returns the seven weekday abbreviations Monday-first (2024-01-01
+// was a Monday) — shared by the calendar grid header and the gantt week view.
+function weekLabels(locale: string): string[] {
+  return Array.from({ length: 7 }, (_, i) =>
+    new Intl.DateTimeFormat(locale, { weekday: "short" }).format(new Date(2024, 0, 1 + i)));
+}
+
 // fmtShort renders a timestamp as "M/D" (plus "HH:mm" when it carries a
 // time-of-day) for compact list rows.
 function fmtShort(iso: string): string {
@@ -1790,13 +1835,30 @@ function statusBar(s: TodoStatus): string {
 function statusChipBg(s: TodoStatus): string {
   switch (s) {
     case "pending":
-      return "bg-muted text-foreground/75";
+      return "bg-muted-foreground/30 text-foreground/90 ring-1 ring-inset ring-muted-foreground/25";
     case "in_progress":
-      return "bg-info/15 text-info";
+      return "bg-info/25 text-foreground/90 ring-1 ring-inset ring-info/45";
     case "done":
-      return "bg-success/15 text-success";
+      return "bg-success/25 text-foreground/90 ring-1 ring-inset ring-success/45";
     case "cancelled":
       return "bg-muted/60 text-muted-foreground/80 line-through";
+  }
+  return "";
+}
+
+// ganttBarStyle colors the bar by lifecycle status — the background carries
+// the status color (same four accents as the chips above) so a status reads
+// at a glance across every todo surface.
+function ganttBarStyle(s: TodoStatus): string {
+  switch (s) {
+    case "pending":
+      return "bg-muted-foreground/30 text-foreground/90 ring-muted-foreground/30";
+    case "in_progress":
+      return "bg-info/25 text-foreground/90 ring-info/50";
+    case "done":
+      return "bg-success/25 text-foreground/90 ring-success/50";
+    case "cancelled":
+      return "bg-muted/70 text-muted-foreground/80 ring-border";
   }
   return "";
 }
@@ -1984,30 +2046,53 @@ interface CalSeg {
 // chips, multi-day spans render as aligned color bars (rounded only at
 // segment ends, one track per event so a span reads as one continuous
 // block), and undated todos collect in a collapsed strip below the grid.
-// MonthNav is the prev / month-title / next / today header shared by the
-// calendar and gantt todo surfaces. children render at the right end (the
-// gantt shows its month count there).
+// MonthNav is the prev / range-title / next / today header shared by the
+// calendar and gantt todo surfaces. The step and title follow gran: a month,
+// a Monday-first week, or a single day. children render at the right end (the
+// gantt shows its range count there).
 function MonthNav({
   anchor,
   setAnchor,
+  gran,
   children,
 }: {
   anchor: Date;
   setAnchor: (d: Date) => void;
+  gran: CalGran;
   children?: ReactNode;
 }) {
   const t = useT();
   const { locale } = useLocale();
-  const monthTitle = new Intl.DateTimeFormat(locale, { year: "numeric", month: "long" }).format(anchor);
+  const step = (dir: number) => {
+    if (gran === "month") setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + dir, 1));
+    else {
+      const d = new Date(anchor);
+      d.setDate(d.getDate() + dir * (gran === "week" ? 7 : 1));
+      setAnchor(d);
+    }
+  };
+  const title = useMemo(() => {
+    if (gran === "month")
+      return new Intl.DateTimeFormat(locale, { year: "numeric", month: "long" }).format(anchor);
+    if (gran === "week") {
+      const s = startOfWeek(anchor);
+      const e = new Date(s);
+      e.setDate(s.getDate() + 6);
+      const crossYear = s.getFullYear() !== e.getFullYear();
+      const f = new Intl.DateTimeFormat(locale, { year: crossYear ? "numeric" : undefined, month: "short", day: "numeric" });
+      return `${f.format(s)} – ${f.format(e)}`;
+    }
+    return new Intl.DateTimeFormat(locale, { year: "numeric", month: "long", day: "numeric", weekday: "short" }).format(anchor);
+  }, [anchor, gran, locale]);
   return (
     <div className="mb-2 flex items-center gap-2">
-      <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.prevMonth")}
-        onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1))}>
+      <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.prevPeriod")}
+        onClick={() => step(-1)}>
         <ChevronLeftIcon className="h-3.5 w-3.5" />
       </Button>
-      <span className="min-w-32 text-center text-sm font-semibold">{monthTitle}</span>
-      <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.nextMonth")}
-        onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1))}>
+      <span className="min-w-40 text-center text-sm font-semibold whitespace-nowrap">{title}</span>
+      <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.nextPeriod")}
+        onClick={() => step(1)}>
         <ChevronRightIcon className="h-3.5 w-3.5" />
       </Button>
       <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => setAnchor(new Date())}>
@@ -2058,6 +2143,7 @@ function TodoCalendar({
   items,
   anchor,
   setAnchor,
+  gran,
   onOpenItem,
   onCreateAt,
   onDelete,
@@ -2065,6 +2151,7 @@ function TodoCalendar({
   items: FlashItem[];
   anchor: Date;
   setAnchor: (d: Date) => void;
+  gran: CalGran;
   onOpenItem: (it: FlashItem) => void;
   onCreateAt: (day: string) => void;
   onDelete: (id: string) => void;
@@ -2074,7 +2161,21 @@ function TodoCalendar({
   const [undatedOpen, setUndatedOpen] = useState(false);
   const [dayDialog, setDayDialog] = useState<{ day: string; items: FlashItem[] } | null>(null);
 
-  const grid = useMemo(() => monthGrid(anchor), [anchor]);
+  // The visible grid follows gran: the 42-day month, the anchor's single
+  // week (taller cells, more tracks), or just the anchor day (rendered as a
+  // full list below, not the 7-column grid).
+  const grid = useMemo(() => {
+    if (gran === "month") return monthGrid(anchor);
+    if (gran === "week") {
+      const s = startOfWeek(anchor);
+      return Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(s);
+        d.setDate(s.getDate() + i);
+        return d;
+      });
+    }
+    return [startOfDay(anchor)];
+  }, [anchor, gran]);
   const todayK = dayKey(new Date());
 
   // Layout: per-day segments with track assignment. The lowest track free
@@ -2126,8 +2227,7 @@ function TodoCalendar({
   }, [items, grid]);
 
   // 2024-01-01 is a Monday — enumerate the weekday labels Monday-first.
-  const dowLabels = Array.from({ length: 7 }, (_, i) =>
-    new Intl.DateTimeFormat(locale, { weekday: "short" }).format(new Date(2024, 0, 1 + i)));
+  const dowLabelList = weekLabels(locale);
   const dayTitle = (k: string) =>
     new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", weekday: "short" }).format(new Date(`${k}T00:00`));
 
@@ -2140,12 +2240,71 @@ function TodoCalendar({
   const openDay = (k: string) =>
     setDayDialog({ day: k, items: (byDay.get(k) ?? []).map((s) => s.item) });
 
+  // Day granularity skips the 7-column grid: the day's todos render as full
+  // rows (no track squeezing, whole titles visible) plus an add button.
+  if (gran === "day") {
+    const k = dayKey(anchor);
+    const list = (byDay.get(k) ?? []).map((s) => s.item);
+    return (
+      <div className="p-3 sm:p-4">
+        <MonthNav anchor={anchor} setAnchor={setAnchor} gran={gran} />
+        <div className="rounded-lg border p-2">
+          {list.length === 0 ? (
+            <p className="px-1 py-2 text-sm text-muted-foreground">{t("knowledge.noTodos")}</p>
+          ) : (
+            <div className="space-y-1.5">
+              {list.map((it) => (
+                <TodoRow key={it.src.id} item={it} onOpen={onOpenItem} onDelete={onDelete} />
+              ))}
+            </div>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2 h-7 px-2 text-xs"
+            onClick={() => onCreateAt(k)}
+          >
+            <PlusIcon className="mr-1 h-3 w-3" /> {t("knowledge.newTodo")}
+          </Button>
+        </div>
+        {undated.length > 0 && <UndatedStrip items={undated} open={undatedOpen} onToggle={() => setUndatedOpen((v) => !v)} onOpen={onOpenItem} onDelete={onDelete} />}
+        <Dialog open={dayDialog !== null} onOpenChange={(o) => { if (!o) setDayDialog(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{dayDialog ? dayTitle(dayDialog.day) : ""}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              {(dayDialog?.items ?? []).length === 0 && (
+                <p className="text-sm text-muted-foreground">{t("knowledge.noTodos")}</p>
+              )}
+              {(dayDialog?.items ?? []).map((it) => (
+                <TodoRow key={it.src.id} item={it} onOpen={(x) => { setDayDialog(null); onOpenItem(x); }} onDelete={onDelete} />
+              ))}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => { const dk = dayDialog?.day; setDayDialog(null); if (dk) onCreateAt(dk); }}
+              >
+                <PlusIcon className="mr-1 h-3 w-3" /> {t("knowledge.newTodo")}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+  }
+
+  // Week cells are taller and allow twice the bar tracks of the month grid.
+  const maxTracks = gran === "week" ? 6 : 3;
+  const cellMinH = gran === "week" ? "min-h-[110px] sm:min-h-[170px]" : "min-h-[76px] sm:min-h-[96px]";
+
   return (
     <div className="p-3 sm:p-4">
-      <MonthNav anchor={anchor} setAnchor={setAnchor} />
+      <MonthNav anchor={anchor} setAnchor={setAnchor} gran={gran} />
       <div className="overflow-hidden rounded-lg border">
         <div className="grid grid-cols-7 border-b bg-muted/30">
-          {dowLabels.map((d, i) => (
+          {dowLabelList.map((d, i) => (
             <div key={i} className="py-1 text-center text-[11px] font-medium text-muted-foreground">{d}</div>
           ))}
         </div>
@@ -2156,14 +2315,15 @@ function TodoCalendar({
             const inMonth = d.getMonth() === anchor.getMonth();
             // Track-padded row count: a bar on track 2 keeps two blank rows
             // above it so its position stays stable across days.
-            const rows = Math.min(3, segs.length ? segs[segs.length - 1].track + 1 : 0);
+            const rows = Math.min(maxTracks, segs.length ? segs[segs.length - 1].track + 1 : 0);
             const hidden = segs.filter((s) => s.track >= rows).length;
             return (
               <div
                 key={k}
                 onClick={() => cellClick(k)}
                 className={cn(
-                  "flex min-h-[76px] cursor-pointer flex-col bg-background p-1 hover:bg-accent/40 sm:min-h-[96px]",
+                  "flex cursor-pointer flex-col bg-background p-1 hover:bg-accent/40",
+                  cellMinH,
                   !inMonth && "bg-muted/30",
                   k === todayK && "bg-primary/5",
                 )}
@@ -2179,29 +2339,39 @@ function TodoCalendar({
                 <div className="flex flex-col gap-[2px] overflow-hidden">
                   {Array.from({ length: rows }, (_, tr) => {
                     const seg = segs.find((s) => s.track === tr);
-                    if (!seg) return <div key={tr} className="h-[18px]" />;
+                    if (!seg) return <div key={tr} className="h-[32px]" />;
                     const st = (seg.item.src.status || "pending") as TodoStatus;
                     const overdue = todoOverdue(seg.item.src);
+                    // Chips are two lines tall (line-clamp) so titles read in
+                    // place; the hover card still carries the full text.
                     return (
-                      <button
-                        key={tr}
-                        type="button"
-                        title={todoFirstLine(seg.item.content)}
-                        onClick={(e) => { e.stopPropagation(); onOpenItem(seg.item); }}
-                        className={cn(
-                          "flex h-[18px] items-center gap-1 overflow-hidden px-1 text-left text-[10px] sm:text-[11px]",
-                          seg.isStart && "rounded-l-sm pl-1.5",
-                          seg.isEnd && "rounded-r-sm pr-1.5",
-                          statusChipBg(st),
-                        )}
-                      >
-                        {seg.showLabel ? (
-                          <span className="truncate">{todoFirstLine(seg.item.content)}</span>
-                        ) : (
-                          <span className="truncate opacity-0">·</span>
-                        )}
-                        {overdue && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-destructive" />}
-                      </button>
+                      <Tooltip key={tr}>
+                        <TooltipTrigger
+                          render={(props) => (
+                            <button
+                              {...props}
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); onOpenItem(seg.item); }}
+                              className={cn(
+                                "flex min-h-[32px] items-center gap-1 overflow-hidden px-1 text-left text-[10px] leading-tight sm:text-[11px]",
+                                seg.isStart && "rounded-l-sm pl-1.5",
+                                seg.isEnd && "rounded-r-sm pr-1.5",
+                                statusChipBg(st),
+                              )}
+                            >
+                              {seg.showLabel ? (
+                                <span className="line-clamp-2 break-words">{todoFirstLine(seg.item.content)}</span>
+                              ) : (
+                                <span className="line-clamp-2 break-words opacity-0">·</span>
+                              )}
+                              {overdue && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-destructive" />}
+                            </button>
+                          )}
+                        />
+                        <TooltipContent side="bottom">
+                          <GanttTip item={seg.item} span={todoSpanText(seg.item.src)} />
+                        </TooltipContent>
+                      </Tooltip>
                     );
                   })}
                   {hidden > 0 && (
@@ -2247,18 +2417,125 @@ function TodoCalendar({
   );
 }
 
-// TodoGantt is the fourth todo surface: one row per task across a
-// monthly day-column grid, the bar spanning start-to-due (clipped at the
-// month edges with an arrow when the span continues beyond). Rows are
-// only tasks overlapping the month, so the row count itself reads as the
-// month workload; undated tasks collapse into the same strip the
-// calendar uses. Due-only / start-only todos become single-day bars,
-// matching the calendar convention.
+// GanttTip is the hover card shared by the gantt name cell, the gantt bar
+// and the calendar chips: the untruncated first-line title, the full span
+// and the status — fixed-width surfaces truncate long titles, this is where
+// they read whole.
+function GanttTip({ item, span }: { item: FlashItem; span: string }) {
+  const t = useT();
+  const st = (item.src.status || "pending") as TodoStatus;
+  return (
+    <div className="space-y-1 py-0.5 text-left">
+      <p className="font-medium">{todoFirstLine(item.content)}</p>
+      {span && <p className="opacity-80">{span}</p>}
+      <p className="opacity-80">{t("knowledge.status_" + st)}</p>
+    </div>
+  );
+}
+
+// GanttRow is one gantt lane: the task-name cell plus the column area with
+// its positioned bar. ticks (the day or hour background grid, including the
+// now-line on today) render behind the bar; left/width are 0..1 fractions of
+// the column area. nameW is the caller-owned name-column width (drag the
+// header resizer to change it). Both the name cell and the bar open the
+// GanttTip hover card with the untruncated title.
+function GanttRow({
+  item,
+  left,
+  width,
+  label,
+  clippedStart,
+  clippedEnd,
+  ticks,
+  nameW,
+  onOpenItem,
+}: {
+  item: FlashItem;
+  left: number;
+  width: number;
+  label: string;
+  clippedStart: boolean;
+  clippedEnd: boolean;
+  ticks: ReactNode;
+  nameW: number;
+  onOpenItem: (it: FlashItem) => void;
+}) {
+  const st = (item.src.status || "pending") as TodoStatus;
+  const overdue = todoOverdue(item.src);
+  const name = todoFirstLine(item.content);
+  const tip = <GanttTip item={item} span={todoSpanText(item.src)} />;
+  return (
+    <div className="flex border-b last:border-b-0 hover:bg-accent/30">
+      <Tooltip>
+        <TooltipTrigger
+          render={(props) => (
+            <button
+              {...props}
+              type="button"
+              onClick={() => onOpenItem(item)}
+              // The name cell wraps to two lines (line-clamp) and every row
+              // keeps the same two-line height so lanes read as an even
+              // grid — long titles show in place, the hover card still
+              // carries the fully untruncated text.
+              className="flex min-h-[46px] shrink-0 items-center gap-1.5 border-r px-2 py-1.5 text-left text-xs leading-snug hover:text-primary"
+              style={{ width: nameW }}
+            >
+              <span className={cn("size-1.5 shrink-0 rounded-full", statusBar(st))} />
+              <span className={cn("line-clamp-2 break-words", st === "cancelled" && "line-through opacity-70")}>
+                {name}
+              </span>
+            </button>
+          )}
+        />
+        <TooltipContent side="right">{tip}</TooltipContent>
+      </Tooltip>
+      <div className="relative flex-1 py-1">
+        {ticks}
+        <Tooltip>
+          <TooltipTrigger
+            render={(props) => (
+              <button
+                {...props}
+                type="button"
+                onClick={() => onOpenItem(item)}
+                // The bar fill and ring carry the status color (see
+                // ganttBarStyle); the name-column dot and the overdue marker
+                // stay as secondary cues, cancelled keeps its strike-through.
+                className={cn(
+                  "absolute inset-y-2 flex items-center gap-1 overflow-hidden rounded-sm px-1.5 text-left text-[10px] font-medium ring-1 ring-inset",
+                  ganttBarStyle(st),
+                  st === "cancelled" && "opacity-60 line-through",
+                )}
+                style={{ left: left * 100 + "%", width: width * 100 + "%" }}
+              >
+                {clippedStart && <span className="shrink-0 opacity-60">&#8249;</span>}
+                <span className="truncate">{label}</span>
+                {overdue && <span className="size-1.5 shrink-0 rounded-full bg-destructive" />}
+                {clippedEnd && <span className="ml-auto shrink-0 opacity-60">&#8250;</span>}
+              </button>
+            )}
+          />
+          <TooltipContent side="top">{tip}</TooltipContent>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+
+// TodoGantt is the fourth todo surface: one row per task across a day-column
+// grid spanning the anchor month or week (bars clip at the range edges with
+// an arrow when the span continues beyond), or a 24-hour column grid for the
+// day granularity (bars position by their overlap with the day, keeping a
+// 1-hour minimum so point-in-time dues stay visible). Rows are only tasks
+// overlapping the range, so the row count itself reads as the workload;
+// undated tasks collapse into the same strip the calendar uses. Due-only /
+// start-only todos become single-day bars, matching the calendar convention.
 function TodoGantt({
   items,
   loading,
   anchor,
   setAnchor,
+  gran,
   onOpenItem,
   onDelete,
 }: {
@@ -2266,38 +2543,94 @@ function TodoGantt({
   loading: boolean;
   anchor: Date;
   setAnchor: (d: Date) => void;
+  gran: CalGran;
   onOpenItem: (it: FlashItem) => void;
   onDelete: (id: string) => void;
 }) {
   const t = useT();
-
-  const year = anchor.getFullYear();
-  const month = anchor.getMonth();
-  const days = new Date(year, month + 1, 0).getDate();
+  const { locale } = useLocale();
   const todayK = dayKey(new Date());
-  const gridCols = { gridTemplateColumns: "repeat(" + days + ", minmax(0, 1fr))" };
+  // The name column width is user-adjustable (drag the header resizer) so
+  // long titles stop truncating; it persists in localStorage across visits.
+  const [nameW, setNameW] = useState(() => {
+    if (typeof window === "undefined") return 176;
+    const v = Number(window.localStorage.getItem("kb-gantt-name-w"));
+    return Number.isFinite(v) && v >= 128 && v <= 480 ? v : 176;
+  });
+  const saveNameW = (w: number) => {
+    try { window.localStorage.setItem("kb-gantt-name-w", String(w)); } catch {}
+  };
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = nameW;
+    const onMove = (ev: PointerEvent) => {
+      setNameW(Math.round(Math.min(480, Math.max(128, startW + ev.clientX - startX))));
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      setNameW((w) => { saveNameW(w); return w; });
+    };
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+  };
+  // The day view draws a now-line: keep a minute-fresh timestamp in state —
+  // calling Date.now() during render would be impure.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (gran !== "day") return;
+    const id = setInterval(() => setNowMs(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, [gran]);
 
-  // dayCells is computed once per month, not per row: the day-number header
+  // The range follows gran: the anchor month, its Monday-first week, or the
+  // anchor day alone (rendered as the 24-hour column grid below).
+  const { start, days } = useMemo(() => {
+    if (gran === "month") {
+      const s = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+      return { start: s, days: new Date(s.getFullYear(), s.getMonth() + 1, 0).getDate() };
+    }
+    if (gran === "week") return { start: startOfWeek(anchor), days: 7 };
+    return { start: startOfDay(anchor), days: 1 };
+  }, [anchor, gran]);
+
+  const cols = gran === "day" ? 24 : days;
+  const gridCols = { gridTemplateColumns: "repeat(" + cols + ", minmax(0, 1fr))" };
+  const minW = gran === "month" ? "min-w-[680px]" : gran === "week" ? "min-w-[560px]" : "min-w-[980px]";
+
+  // dayCells is computed once per range, not per row: the day-number header
   // and every row's tick grid map over the same descriptors.
   const dayCells = useMemo(() =>
     Array.from({ length: days }, (_, i) => {
-      const d = new Date(year, month, i + 1);
-      return { k: dayKey(d), weekend: d.getDay() === 0 || d.getDay() === 6 };
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return { k: dayKey(d), n: d.getDate(), weekend: d.getDay() === 0 || d.getDay() === 6 };
     }),
-  [year, month, days]);
+  [start, days]);
 
-  const { rows } = useMemo(() => {
+  const dows = useMemo(() => weekLabels(locale), [locale]);
+
+  // Month/week rows: s/e are column indexes into the day range, clipped at
+  // the edges when the span continues beyond it.
+  const rows = useMemo(() => {
+    if (gran === "day") return [];
     const rows: { item: FlashItem; s: number; e: number; clippedStart: boolean; clippedEnd: boolean }[] = [];
-    const firstK = dayKey(new Date(year, month, 1));
-    const lastK = dayKey(new Date(year, month, days));
-    const idxOf = (k: string) => Number(k.slice(8, 10)) - 1;
+    const firstK = dayKey(start);
+    const lastDate = new Date(start);
+    lastDate.setDate(start.getDate() + days - 1);
+    const lastK = dayKey(lastDate);
+    const startMs = start.getTime();
+    const idxOf = (k: string) => Math.round((new Date(`${k}T00:00`).getTime() - startMs) / 86400000);
     for (const it of items) {
       const s0 = it.src.start_at ? dayKey(new Date(it.src.start_at)) : "";
       const e0 = it.src.end_at ? dayKey(new Date(it.src.end_at)) : "";
       if (!s0 && !e0) continue; // undated live in the calendar pane strip
       const s = s0 || e0;
       const e = e0 || s0;
-      if (e < firstK || s > lastK) continue; // span entirely outside this month
+      if (e < firstK || s > lastK) continue; // span entirely outside this range
       rows.push({
         item: it,
         s: s < firstK ? 0 : idxOf(s),
@@ -2307,85 +2640,139 @@ function TodoGantt({
       });
     }
     rows.sort((a, b) => a.s - b.s || a.e - b.e);
-    return { rows };
-  }, [items, year, month, days]);
+    return rows;
+  }, [items, gran, start, days]);
+
+  // Day rows: one lane per task overlapping the day, positioned by its
+  // clamped overlap ([max(start, midnight), min(due, next-midnight)]).
+  const hourRows = useMemo(() => {
+    if (gran !== "day") return [];
+    const dayStart = start.getTime();
+    const dayEnd = dayStart + 86400000;
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    const hm = (ms: number) => { const d = new Date(ms); return `${d.getHours()}:${p2(d.getMinutes())}`; };
+    const out: { item: FlashItem; l: number; w: number; label: string; clippedStart: boolean; clippedEnd: boolean }[] = [];
+    for (const it of items) {
+      const a = it.src.start_at ? new Date(it.src.start_at).getTime()
+        : it.src.end_at ? new Date(it.src.end_at).getTime() : NaN;
+      if (isNaN(a)) continue; // undated live in the calendar pane strip
+      const b = it.src.end_at ? new Date(it.src.end_at).getTime() : a;
+      if (b < dayStart || a > dayEnd) continue; // entirely outside this day
+      const clippedStart = a < dayStart;
+      const clippedEnd = b > dayEnd;
+      let lo = Math.max(a, dayStart);
+      let hi = Math.min(b, dayEnd);
+      if (hi - lo < 3600000) {
+        hi = lo + 3600000;
+        if (hi > dayEnd) { hi = dayEnd; lo = hi - 3600000; }
+      }
+      out.push({
+        item: it,
+        l: (lo - dayStart) / 86400000,
+        w: (hi - lo) / 86400000,
+        label: b > a ? `${hm(lo)} – ${hm(hi)}` : hm(lo),
+        clippedStart,
+        clippedEnd,
+      });
+    }
+    out.sort((x, y) => x.l - y.l);
+    return out;
+  }, [items, gran, start]);
+
+  const laneCount = gran === "day" ? hourRows.length : rows.length;
+  const countKey = gran === "month" ? "knowledge.ganttThisMonth"
+    : gran === "week" ? "knowledge.ganttThisWeek" : "knowledge.ganttThisDay";
+
+  // dayTicks shade weekends and highlight today; hourTicks draw the
+  // now-line when the range is today. Both render behind every lane.
+  const dayTicks = (
+    <div className="absolute inset-0 grid" style={gridCols} aria-hidden>
+      {dayCells.map(({ k, weekend }, i) => (
+        <div key={i} className={cn(
+          "border-l border-border/60",
+          weekend && "bg-muted/25",
+          k === todayK && "bg-primary/5",
+        )} />
+      ))}
+    </div>
+  );
+  const nowFrac = todayK === dayKey(start) ? (nowMs - start.getTime()) / 86400000 : null;
+  const hourTicks = (
+    <div className="absolute inset-0 grid" style={gridCols} aria-hidden>
+      {Array.from({ length: 24 }, (_, i) => (
+        <div key={i} className="border-l border-border/60" />
+      ))}
+      {nowFrac !== null && nowFrac >= 0 && nowFrac <= 1 && (
+        <div className="absolute inset-y-0 w-px bg-destructive/70" style={{ left: nowFrac * 100 + "%" }} />
+      )}
+    </div>
+  );
 
   return (
     <div className="p-3 sm:p-4">
-      <MonthNav anchor={anchor} setAnchor={setAnchor}>
-        <span className="ml-auto text-xs text-muted-foreground">{t("knowledge.ganttThisMonth", { n: rows.length })}</span>
+      <MonthNav anchor={anchor} setAnchor={setAnchor} gran={gran}>
+        <span className="ml-auto text-xs text-muted-foreground">{t(countKey, { n: laneCount })}</span>
       </MonthNav>
       {loading ? (
         <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
-      ) : rows.length === 0 ? (
+      ) : laneCount === 0 ? (
         <p className="text-sm text-muted-foreground">{t("knowledge.noTodos")}</p>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
-          <div className="min-w-[680px]">
+          <div className={minW}>
             <div className="flex border-b bg-muted/30">
-              <div className="w-40 shrink-0 border-r sm:w-48" />
+              {/* Name column: drag the right-edge handle to widen (double-click resets). */}
+              <div className="relative shrink-0 border-r" style={{ width: nameW }}>
+                <div
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t("knowledge.ganttNameCol")}
+                  onPointerDown={startResize}
+                  onDoubleClick={() => { setNameW(176); saveNameW(176); }}
+                  className="group absolute inset-y-0 right-0 z-10 flex w-1.5 cursor-col-resize touch-none"
+                >
+                  <div className="mx-auto h-full w-px bg-transparent transition-colors group-hover:bg-primary/60 group-active:bg-primary" />
+                </div>
+              </div>
               <div className="grid flex-1" style={gridCols}>
-                {dayCells.map(({ k, weekend }, i) => (
-                  <div key={i} className={cn(
-                    "py-1 text-center text-[10px]",
-                    k === todayK ? "font-semibold text-primary" : weekend ? "text-muted-foreground" : "text-foreground/70",
-                  )}>
-                    {i + 1}
-                  </div>
-                ))}
+                {gran === "day" ? (
+                  Array.from({ length: 24 }, (_, i) => (
+                    <div key={i} className="py-1 text-center text-[10px] text-foreground/70">{i}</div>
+                  ))
+                ) : gran === "week" ? (
+                  dayCells.map(({ k, n }, i) => (
+                    <div key={i} className={cn(
+                      "flex flex-col items-center py-1 text-[10px]",
+                      k === todayK ? "font-semibold text-primary" : "text-foreground/70",
+                    )}>
+                      <span className="text-muted-foreground">{dows[i]}</span>
+                      <span className="text-[11px] font-medium">{n}</span>
+                    </div>
+                  ))
+                ) : (
+                  dayCells.map(({ k, n, weekend }, i) => (
+                    <div key={i} className={cn(
+                      "py-1 text-center text-[10px]",
+                      k === todayK ? "font-semibold text-primary" : weekend ? "text-muted-foreground" : "text-foreground/70",
+                    )}>
+                      {n}
+                    </div>
+                  ))
+                )}
               </div>
             </div>
-            {rows.map(({ item, s, e, clippedStart, clippedEnd }) => {
-              const st = (item.src.status || "pending") as TodoStatus;
-              const overdue = todoOverdue(item.src);
-              const label = todoFirstLine(item.content);
-              const span = todoSpanText(item.src);
-              return (
-                <div key={item.src.id} className="flex border-b last:border-b-0 hover:bg-accent/30">
-                  <button
-                    type="button"
-                    onClick={() => onOpenItem(item)}
-                    title={label}
-                    className="flex w-40 shrink-0 items-center gap-1.5 border-r px-2 py-1.5 text-left text-xs hover:text-primary sm:w-48"
-                  >
-                    <span className={cn("size-1.5 shrink-0 rounded-full", statusBar(st))} />
-                    <span className={cn("truncate", st === "cancelled" && "line-through opacity-70")}>
-                      {label}
-                    </span>
-                  </button>
-                  <div className="relative flex-1 py-1">
-                    <div className="absolute inset-0 grid" style={gridCols} aria-hidden>
-                      {dayCells.map(({ k, weekend }, i) => (
-                        <div key={i} className={cn(
-                          "border-l border-border/60",
-                          weekend && "bg-muted/25",
-                          k === todayK && "bg-primary/5",
-                        )} />
-                      ))}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => onOpenItem(item)}
-                      title={label + " - " + span}
-                      // Bars all use one light surge-cyan fill (primary is
-                      // the app cyan) so the chart reads as a single system;
-                      // status stays encoded in the name-column dot and the
-                      // overdue marker, cancelled keeps its strike-through.
-                      className={cn(
-                        "absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-sm px-1.5 text-left text-[10px] font-medium ring-1 ring-inset bg-primary/15 text-primary ring-primary/30",
-                        st === "cancelled" && "opacity-60 line-through",
-                      )}
-                      style={{ left: (s / days) * 100 + "%", width: ((e - s + 1) / days) * 100 + "%" }}
-                    >
-                      {clippedStart && <span className="shrink-0 opacity-60">&#8249;</span>}
-                      <span className="truncate">{span}</span>
-                      {overdue && <span className="size-1.5 shrink-0 rounded-full bg-destructive" />}
-                      {clippedEnd && <span className="ml-auto shrink-0 opacity-60">&#8250;</span>}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+            {gran === "day" ? (
+              hourRows.map((r) => (
+                <GanttRow key={r.item.src.id} item={r.item} left={r.l} width={r.w} label={r.label}
+                  clippedStart={r.clippedStart} clippedEnd={r.clippedEnd} ticks={hourTicks} nameW={nameW} onOpenItem={onOpenItem} />
+              ))
+            ) : (
+              rows.map((r) => (
+                <GanttRow key={r.item.src.id} item={r.item} left={r.s / days} width={(r.e - r.s + 1) / days}
+                  label={todoSpanText(r.item.src)}
+                  clippedStart={r.clippedStart} clippedEnd={r.clippedEnd} ticks={dayTicks} nameW={nameW} onOpenItem={onOpenItem} />
+              ))
+            )}
           </div>
         </div>
       )}
