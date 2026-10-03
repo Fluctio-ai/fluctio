@@ -823,6 +823,7 @@ const zhCN: Record<string, string> = {
   "knowledge.viewBoard": "看板",
   "knowledge.viewCalendar": "日历",
   "knowledge.viewList": "列表",
+  "knowledge.ganttThisMonth": "本月 {n} 项",
   "knowledge.today": "今天",
   "knowledge.noDate": "无日期",
   "knowledge.tgOverdue": "逾期",

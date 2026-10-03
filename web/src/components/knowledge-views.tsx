@@ -1,7 +1,7 @@
 "use client";
 import { useLocale, useT } from "@/lib/i18n";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createElement, isValidElement, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
@@ -70,7 +70,7 @@ import { cn } from "@/lib/utils";
 import { dayKey, endOfToday, pad2 } from "@/lib/time";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
-import ReactMarkdown from "react-markdown";
+import { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { DocMarkdown } from "@/components/doc-markdown";
@@ -172,6 +172,50 @@ function stripLeadingTitle(content: string, title: string): string {
   return content.slice(m[0].length);
 }
 
+// Attribution like「## 来源信息」「## 来源：某公众号」is byline metadata,
+// not document structure — but agent-authored ingest marks it as a
+// heading, where it renders as large as a section title. isSourceHeadingText
+// recognizes those forms (label-only headings like 来源信息/元信息, or the
+// label with its value inline) so the renderer can demote them to a small
+// annotation. Structural headings (来源分析方法论) don't match on purpose.
+function isSourceHeadingText(text: string): boolean {
+  const t = text.trim().replace(/\s+/g, " ");
+  return (
+    /^(?:来源信息|参考来源|元信息|元数据|出处|来源|作者|发布时间|发布日期|source|references?|author|published|meta)\s*[:：]?$/i.test(t) ||
+    /^(?:来源|出处|参考来源|作者|发布|source|references?|author|published)\s*[:：]/i.test(t)
+  );
+}
+
+// flattenNodeText pulls a heading's plain text out of React children: the
+// heading may be a plain string, an array, or wrap the text in links/em.
+function flattenNodeText(node: ReactNode): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(flattenNodeText).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return flattenNodeText(node.props.children);
+  return "";
+}
+
+// ArticleHeading is the article body's h1–h6: attribution headings demote
+// to a small muted byline; everything else renders as the heading itself.
+// The byline is a bare <div> so the typography plugin's element styles
+// (which outrank single utility classes on specificity) leave it alone.
+function ArticleHeading({ level, children }: { level?: number; children?: ReactNode }) {
+  if (isSourceHeadingText(flattenNodeText(children))) {
+    return <div className="my-3 text-xs text-muted-foreground">{children}</div>;
+  }
+  return createElement(`h${level ?? 2}`, null, children);
+}
+
+const ARTICLE_MD_COMPONENTS: Components = {
+  h1: ArticleHeading,
+  h2: ArticleHeading,
+  h3: ArticleHeading,
+  h4: ArticleHeading,
+  h5: ArticleHeading,
+  h6: ArticleHeading,
+};
+
 export function ArticleView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
   const agentId = useAgentIdFromURL();
@@ -265,6 +309,17 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
     setEntriesLoading(false);
     setInsightsLoading(false);
   }, [agentId]);
+
+  // articleText stitches the stored chunks back into one article. The
+  // chunker splits on paragraph boundaries with no overlap, so a blank-line
+  // join rebuilds the original; rendering it as ONE markdown pass — instead
+  // of per-chunk blocks joined by * * * dividers — keeps constructs that
+  // straddle a chunk boundary (lists, tables, split sentences) intact.
+  const articleText = useMemo(() => {
+    if (!entries.length) return "";
+    const first = stripLeadingTitle(entries[0].content, selectedSource?.title ?? "");
+    return [first, ...entries.slice(1).map((e) => e.content)].join("\n\n");
+  }, [entries, selectedSource]);
 
   // handleGenerate triggers the synchronous deep-reading LLM pass for the
   // selected article, swapping to the insights tab on success.
@@ -547,24 +602,11 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
                   ) : entries.length === 0 ? (
                     <p className="text-sm text-muted-foreground">{t("knowledge.noEntries")}</p>
                   ) : (
-                    <div className="space-y-1">
-                      {entries.map((entry, i) => (
-                        <div key={entry.id} className="relative">
-                          <span className="absolute right-0 top-0 text-xs text-muted-foreground/40 select-none pointer-events-none">
-                            #{entry.chunk_index}
-                          </span>
-                          <DocMarkdown
-                            className="break-words"
-                            text={i === 0 ? stripLeadingTitle(entry.content, selectedSource.title) : entry.content}
-                          />
-                          {i < entries.length - 1 && (
-                            <p className="text-center text-muted-foreground/40 text-xs my-2 select-none pointer-events-none">
-                              * * *
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <DocMarkdown
+                      className="break-words"
+                      components={ARTICLE_MD_COMPONENTS}
+                      text={articleText}
+                    />
                   )
                 ) : insights ? (
                   <InsightSection section={detailTab} insights={insights} />
@@ -1262,6 +1304,9 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
   const [newEnd, setNewEnd] = useState("");
   const [creating, setCreating] = useState(false);
   const [view, setView] = useState<"board" | "calendar" | "list">("board");
+  // calAnchor is the shared month anchor of the calendar + gantt panes:
+  // paging either pane keeps both on the same month.
+  const [calAnchor, setCalAnchor] = useState(() => new Date());
   const [deleteTarget, setDeleteTarget] = useState<FlashItem | null>(null);
   const [detailTarget, setDetailTarget] = useState<FlashItem | null>(null);
   const [archiveOpen, setArchiveOpen] = useState<Record<string, boolean>>({});
@@ -1464,12 +1509,28 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
             )}
           </div>
         ) : view === "calendar" ? (
-          <TodoCalendar
-            items={visibleTodos}
-            onOpenItem={setDetailTarget}
-            onCreateAt={(day) => openCreate(undefined, `${day}T09:00`)}
-            onDelete={askDelete}
-          />
+          <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start">
+            <div className="2xl:w-[440px] 2xl:shrink-0">
+              <TodoCalendar
+                items={visibleTodos}
+                anchor={calAnchor}
+                setAnchor={setCalAnchor}
+                onOpenItem={setDetailTarget}
+                onCreateAt={(day) => openCreate(undefined, `${day}T09:00`)}
+                onDelete={askDelete}
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <TodoGantt
+                items={visibleTodos}
+                loading={loading}
+                anchor={calAnchor}
+                setAnchor={setCalAnchor}
+                onOpenItem={setDetailTarget}
+                onDelete={askDelete}
+              />
+            </div>
+          </div>
         ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
           {TODO_STATUSES.map((st) => (
@@ -1923,20 +1984,93 @@ interface CalSeg {
 // chips, multi-day spans render as aligned color bars (rounded only at
 // segment ends, one track per event so a span reads as one continuous
 // block), and undated todos collect in a collapsed strip below the grid.
+// MonthNav is the prev / month-title / next / today header shared by the
+// calendar and gantt todo surfaces. children render at the right end (the
+// gantt shows its month count there).
+function MonthNav({
+  anchor,
+  setAnchor,
+  children,
+}: {
+  anchor: Date;
+  setAnchor: (d: Date) => void;
+  children?: ReactNode;
+}) {
+  const t = useT();
+  const { locale } = useLocale();
+  const monthTitle = new Intl.DateTimeFormat(locale, { year: "numeric", month: "long" }).format(anchor);
+  return (
+    <div className="mb-2 flex items-center gap-2">
+      <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.prevMonth")}
+        onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1))}>
+        <ChevronLeftIcon className="h-3.5 w-3.5" />
+      </Button>
+      <span className="min-w-32 text-center text-sm font-semibold">{monthTitle}</span>
+      <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.nextMonth")}
+        onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1))}>
+        <ChevronRightIcon className="h-3.5 w-3.5" />
+      </Button>
+      <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => setAnchor(new Date())}>
+        {t("knowledge.today")}
+      </Button>
+      {children}
+    </div>
+  );
+}
+
+// UndatedStrip is the collapsed no-date list shared by the calendar and
+// gantt; callers keep the length check so the strip stays out of empty views.
+function UndatedStrip({
+  items,
+  open,
+  onToggle,
+  onOpen,
+  onDelete,
+}: {
+  items: FlashItem[];
+  open: boolean;
+  onToggle: () => void;
+  onOpen: (it: FlashItem) => void;
+  onDelete: (id: string) => void;
+}) {
+  const t = useT();
+  return (
+    <div className="mt-3 overflow-hidden rounded-lg border">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+      >
+        <span>{t("knowledge.noDate")} ({items.length})</span>
+        <ChevronDownIcon className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="space-y-1.5 border-t p-2">
+          {items.map((it) => (
+            <TodoRow key={it.src.id} item={it} onOpen={onOpen} onDelete={onDelete} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 function TodoCalendar({
   items,
+  anchor,
+  setAnchor,
   onOpenItem,
   onCreateAt,
   onDelete,
 }: {
   items: FlashItem[];
+  anchor: Date;
+  setAnchor: (d: Date) => void;
   onOpenItem: (it: FlashItem) => void;
   onCreateAt: (day: string) => void;
   onDelete: (id: string) => void;
 }) {
   const t = useT();
   const { locale } = useLocale();
-  const [anchor, setAnchor] = useState(() => new Date());
   const [undatedOpen, setUndatedOpen] = useState(false);
   const [dayDialog, setDayDialog] = useState<{ day: string; items: FlashItem[] } | null>(null);
 
@@ -1991,7 +2125,6 @@ function TodoCalendar({
     return { byDay, undated };
   }, [items, grid]);
 
-  const monthTitle = new Intl.DateTimeFormat(locale, { year: "numeric", month: "long" }).format(anchor);
   // 2024-01-01 is a Monday — enumerate the weekday labels Monday-first.
   const dowLabels = Array.from({ length: 7 }, (_, i) =>
     new Intl.DateTimeFormat(locale, { weekday: "short" }).format(new Date(2024, 0, 1 + i)));
@@ -2009,20 +2142,7 @@ function TodoCalendar({
 
   return (
     <div className="p-3 sm:p-4">
-      <div className="mb-2 flex items-center gap-2">
-        <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.prevMonth")}
-          onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1))}>
-          <ChevronLeftIcon className="h-3.5 w-3.5" />
-        </Button>
-        <span className="min-w-32 text-center text-sm font-semibold">{monthTitle}</span>
-        <Button variant="outline" size="sm" className="h-7 px-2" aria-label={t("knowledge.nextMonth")}
-          onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1))}>
-          <ChevronRightIcon className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="outline" size="sm" className="h-7 px-2 text-xs" onClick={() => setAnchor(new Date())}>
-          {t("knowledge.today")}
-        </Button>
-      </div>
+      <MonthNav anchor={anchor} setAnchor={setAnchor} />
       <div className="overflow-hidden rounded-lg border">
         <div className="grid grid-cols-7 border-b bg-muted/30">
           {dowLabels.map((d, i) => (
@@ -2099,25 +2219,7 @@ function TodoCalendar({
           })}
         </div>
       </div>
-      {undated.length > 0 && (
-        <div className="mt-3 overflow-hidden rounded-lg border">
-          <button
-            type="button"
-            onClick={() => setUndatedOpen((v) => !v)}
-            className="flex w-full items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <span>{t("knowledge.noDate")} ({undated.length})</span>
-            <ChevronDownIcon className={cn("h-3.5 w-3.5 transition-transform", undatedOpen && "rotate-180")} />
-          </button>
-          {undatedOpen && (
-            <div className="space-y-1.5 border-t p-2">
-              {undated.map((it) => (
-                <TodoRow key={it.src.id} item={it} onOpen={onOpenItem} onDelete={onDelete} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {undated.length > 0 && <UndatedStrip items={undated} open={undatedOpen} onToggle={() => setUndatedOpen((v) => !v)} onOpen={onOpenItem} onDelete={onDelete} />}
       <Dialog open={dayDialog !== null} onOpenChange={(o) => { if (!o) setDayDialog(null); }}>
         <DialogContent>
           <DialogHeader>
@@ -2145,6 +2247,151 @@ function TodoCalendar({
   );
 }
 
+// TodoGantt is the fourth todo surface: one row per task across a
+// monthly day-column grid, the bar spanning start-to-due (clipped at the
+// month edges with an arrow when the span continues beyond). Rows are
+// only tasks overlapping the month, so the row count itself reads as the
+// month workload; undated tasks collapse into the same strip the
+// calendar uses. Due-only / start-only todos become single-day bars,
+// matching the calendar convention.
+function TodoGantt({
+  items,
+  loading,
+  anchor,
+  setAnchor,
+  onOpenItem,
+  onDelete,
+}: {
+  items: FlashItem[];
+  loading: boolean;
+  anchor: Date;
+  setAnchor: (d: Date) => void;
+  onOpenItem: (it: FlashItem) => void;
+  onDelete: (id: string) => void;
+}) {
+  const t = useT();
+
+  const year = anchor.getFullYear();
+  const month = anchor.getMonth();
+  const days = new Date(year, month + 1, 0).getDate();
+  const todayK = dayKey(new Date());
+  const gridCols = { gridTemplateColumns: "repeat(" + days + ", minmax(0, 1fr))" };
+
+  // dayCells is computed once per month, not per row: the day-number header
+  // and every row's tick grid map over the same descriptors.
+  const dayCells = useMemo(() =>
+    Array.from({ length: days }, (_, i) => {
+      const d = new Date(year, month, i + 1);
+      return { k: dayKey(d), weekend: d.getDay() === 0 || d.getDay() === 6 };
+    }),
+  [year, month, days]);
+
+  const { rows } = useMemo(() => {
+    const rows: { item: FlashItem; s: number; e: number; clippedStart: boolean; clippedEnd: boolean }[] = [];
+    const firstK = dayKey(new Date(year, month, 1));
+    const lastK = dayKey(new Date(year, month, days));
+    const idxOf = (k: string) => Number(k.slice(8, 10)) - 1;
+    for (const it of items) {
+      const s0 = it.src.start_at ? dayKey(new Date(it.src.start_at)) : "";
+      const e0 = it.src.end_at ? dayKey(new Date(it.src.end_at)) : "";
+      if (!s0 && !e0) continue; // undated live in the calendar pane strip
+      const s = s0 || e0;
+      const e = e0 || s0;
+      if (e < firstK || s > lastK) continue; // span entirely outside this month
+      rows.push({
+        item: it,
+        s: s < firstK ? 0 : idxOf(s),
+        e: e > lastK ? days - 1 : idxOf(e),
+        clippedStart: s < firstK,
+        clippedEnd: e > lastK,
+      });
+    }
+    rows.sort((a, b) => a.s - b.s || a.e - b.e);
+    return { rows };
+  }, [items, year, month, days]);
+
+  return (
+    <div className="p-3 sm:p-4">
+      <MonthNav anchor={anchor} setAnchor={setAnchor}>
+        <span className="ml-auto text-xs text-muted-foreground">{t("knowledge.ganttThisMonth", { n: rows.length })}</span>
+      </MonthNav>
+      {loading ? (
+        <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("knowledge.noTodos")}</p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border">
+          <div className="min-w-[680px]">
+            <div className="flex border-b bg-muted/30">
+              <div className="w-40 shrink-0 border-r sm:w-48" />
+              <div className="grid flex-1" style={gridCols}>
+                {dayCells.map(({ k, weekend }, i) => (
+                  <div key={i} className={cn(
+                    "py-1 text-center text-[10px]",
+                    k === todayK ? "font-semibold text-primary" : weekend ? "text-muted-foreground" : "text-foreground/70",
+                  )}>
+                    {i + 1}
+                  </div>
+                ))}
+              </div>
+            </div>
+            {rows.map(({ item, s, e, clippedStart, clippedEnd }) => {
+              const st = (item.src.status || "pending") as TodoStatus;
+              const overdue = todoOverdue(item.src);
+              const label = todoFirstLine(item.content);
+              const span = todoSpanText(item.src);
+              return (
+                <div key={item.src.id} className="flex border-b last:border-b-0 hover:bg-accent/30">
+                  <button
+                    type="button"
+                    onClick={() => onOpenItem(item)}
+                    title={label}
+                    className="flex w-40 shrink-0 items-center gap-1.5 border-r px-2 py-1.5 text-left text-xs hover:text-primary sm:w-48"
+                  >
+                    <span className={cn("size-1.5 shrink-0 rounded-full", statusBar(st))} />
+                    <span className={cn("truncate", st === "cancelled" && "line-through opacity-70")}>
+                      {label}
+                    </span>
+                  </button>
+                  <div className="relative flex-1 py-1">
+                    <div className="absolute inset-0 grid" style={gridCols} aria-hidden>
+                      {dayCells.map(({ k, weekend }, i) => (
+                        <div key={i} className={cn(
+                          "border-l border-border/60",
+                          weekend && "bg-muted/25",
+                          k === todayK && "bg-primary/5",
+                        )} />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onOpenItem(item)}
+                      title={label + " - " + span}
+                      // Bars all use one light surge-cyan fill (primary is
+                      // the app cyan) so the chart reads as a single system;
+                      // status stays encoded in the name-column dot and the
+                      // overdue marker, cancelled keeps its strike-through.
+                      className={cn(
+                        "absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-sm px-1.5 text-left text-[10px] font-medium ring-1 ring-inset bg-primary/15 text-primary ring-primary/30",
+                        st === "cancelled" && "opacity-60 line-through",
+                      )}
+                      style={{ left: (s / days) * 100 + "%", width: ((e - s + 1) / days) * 100 + "%" }}
+                    >
+                      {clippedStart && <span className="shrink-0 opacity-60">&#8249;</span>}
+                      <span className="truncate">{span}</span>
+                      {overdue && <span className="size-1.5 shrink-0 rounded-full bg-destructive" />}
+                      {clippedEnd && <span className="ml-auto shrink-0 opacity-60">&#8250;</span>}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 // CopyIconButton copies markdown text to the clipboard and briefly flips to a
 // green check mark on success. value may be async (articles fetch entries on
 // click). Mirrors the delete button's reveal-on-hover, but tinted primary on

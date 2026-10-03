@@ -823,6 +823,7 @@ const en: Record<string, string> = {
   "knowledge.viewBoard": "Board",
   "knowledge.viewCalendar": "Calendar",
   "knowledge.viewList": "List",
+  "knowledge.ganttThisMonth": "{n} this month",
   "knowledge.today": "Today",
   "knowledge.noDate": "No date",
   "knowledge.tgOverdue": "Overdue",

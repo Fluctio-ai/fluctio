@@ -1,4 +1,4 @@
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { cn } from "@/lib/utils";
@@ -14,19 +14,24 @@ export const DOC_PROSE_CLASS =
   "prose-h1:text-[1.375rem] prose-h2:text-lg prose-h3:text-base " +
   "prose-h4:text-[0.9375rem] prose-h5:text-sm prose-h6:text-[0.8125rem]";
 
-// Plain document render — markdown in, styled prose out. Sites that need
-// custom ReactMarkdown behavior (the wiki's wiki-link anchors) render their
-// own ReactMarkdown on DOC_PROSE_CLASS instead.
+// Plain document render — markdown in, styled prose out. Callers can pass
+// react-markdown components overrides (the article view demotes 来源
+// headings); heavier customization (the wiki's wiki-link anchors) still
+// renders its own ReactMarkdown on DOC_PROSE_CLASS.
 export function DocMarkdown({
   text,
   className,
+  components,
 }: {
   text: string;
   className?: string;
+  components?: Components;
 }) {
   return (
     <div className={cn(DOC_PROSE_CLASS, className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
+        {text}
+      </ReactMarkdown>
     </div>
   );
 }
