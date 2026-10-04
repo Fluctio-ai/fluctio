@@ -284,7 +284,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
                     selectDate(d.date);
                   }}
                   className={cn(
-                    "aspect-square rounded text-[10px] tabular-nums flex items-center justify-center transition-all",
+                    "h-7 rounded text-[10px] tabular-nums flex items-center justify-center transition-all",
                     d.date > todayCST()
                       ? "opacity-30 text-muted-foreground cursor-default"
                       : d.empty
