@@ -1843,6 +1843,13 @@ export async function generateDiary(
   });
   return res.json();
 }
+/** Delete one day's diary. The backend cascades into the flashcards
+ * distilled from that day (source_type='diary'). 404 → false (no row). */
+export async function deleteDiary(agentId: string, date: string): Promise<boolean> {
+  const res = await apiFetch(`/api/agents/${agentId}/diary/${date}`, { method: "DELETE" });
+  if (res.status === 404) return false;
+  return res.ok;
+}
 
 // --- Knowledge base types + API (slice 4a REST handlers) ---
 export interface KBSource {

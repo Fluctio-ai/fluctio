@@ -22,6 +22,7 @@ import {
   ArchiveRestoreIcon,
   ArrowLeftIcon,
   CalendarIcon,
+  ChevronRightIcon,
   FlameIcon,
   LayersIcon,
   PencilIcon,
@@ -54,6 +55,7 @@ import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { CardDeck, CardsReview } from "@/components/cards-review";
+import { usePaneResize, PaneDivider } from "@/components/pane-divider";
 
 // CardsView — the Q&A flashcard library (卡片库): left list (filter chips +
 // source select + search + paged loading), right detail (flip preview,
@@ -118,6 +120,11 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const [stats, setStats] = useState<KBCardStats | null>(null);
   const [reviewMode, setReviewMode] = useState<"due" | "practice" | null>(null);
   const reviewStartedRef = useRef(false);
+
+  // Resizable left pane (shared with the article/diary views), clamped to
+  // 240–560 so the card list can't collapse off-screen.
+  const paneRef = useRef<HTMLDivElement>(null);
+  const { width: leftWidth, startDrag } = usePaneResize(paneRef, 340, 240, 560);
 
   const load = useCallback(
     async (offset: number, replace: boolean) => {
@@ -349,8 +356,10 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
     <div className="flex min-h-0 flex-1">
       {/* ── Left: card list ── */}
       <div
+        ref={paneRef}
+        style={{ "--pane-lw": `${leftWidth}px` } as React.CSSProperties}
         className={cn(
-          "flex w-full flex-col border-r bg-muted/30 md:w-[340px] md:shrink-0",
+          "flex w-full flex-col border-r bg-muted/30 md:w-[var(--pane-lw)] md:shrink-0",
           selected ? "hidden md:flex" : "flex",
         )}
       >
@@ -418,12 +427,14 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                     role="button"
                     tabIndex={0}
                     className={cn(
-                      "group mb-0.5 w-full cursor-pointer rounded-md px-3 py-2 text-left hover:bg-accent",
+                      "group mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent",
                       selected?.id === c.id && "bg-accent",
                     )}
                     onClick={() => openCard(c)}
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCard(c); } }}
                   >
+                    <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0 flex-1">
                     <p className={cn("truncate text-sm", c.status === "archived" && "text-muted-foreground line-through")}>
                       {c.question}
                     </p>
@@ -454,6 +465,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                         <TrashIcon className="size-3" />
                       </button>
                     </p>
+                    </div>
                   </div>
                 );
               })
@@ -467,6 +479,9 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
           </div>
         </ScrollArea>
       </div>
+
+      {/* Drag divider between list and detail */}
+      <PaneDivider onPointerDown={startDrag} />
 
       {/* ── Right: detail ── */}
       {selected ? (

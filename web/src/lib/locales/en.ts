@@ -1039,6 +1039,10 @@ const en: Record<string, string> = {
   "diary.topicUnit": " topics",
   "diary.blindspotUnit": " missed",
   "diary.regenerate": "Regenerate",
+  "diary.delete": "Delete",
+  "diary.deleteConfirm": "Delete this day's diary? Cards distilled from it are removed too.",
+  "diary.deleted": "Diary deleted",
+  "diary.deleteFailed": "Delete failed",
   "diary.noDiary": "No diary for this date yet — pick a date below and Generate",
 
   // Memory

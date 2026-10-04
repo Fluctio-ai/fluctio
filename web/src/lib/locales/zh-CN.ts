@@ -1039,6 +1039,10 @@ const zhCN: Record<string, string> = {
   "diary.topicUnit": "主题",
   "diary.blindspotUnit": "盲区",
   "diary.regenerate": "重新生成",
+  "diary.delete": "删除",
+  "diary.deleteConfirm": "删除这天的日记？由它生成的知识卡片也会一并删除。",
+  "diary.deleted": "日记已删除",
+  "diary.deleteFailed": "删除失败",
   "diary.noDiary": "该日期还没有日记，可在左下方选日期点生成",
 
   // Memory

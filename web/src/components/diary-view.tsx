@@ -8,6 +8,7 @@ import {
   listDiary,
   getDiary,
   generateDiary,
+  deleteDiary,
   type DailyDiary,
   type DiaryTheme,
 } from "@/lib/api";
@@ -20,8 +21,11 @@ import {
   SparklesIcon,
   AlertTriangleIcon,
   FileTextIcon,
+  Trash2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePaneResize, PaneDivider } from "@/components/pane-divider";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 
 const PAGE_SIZE = 10;
 
@@ -98,7 +102,11 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
   const [generating, setGenerating] = useState(false);
   const [page, setPage] = useState(0);
   const [genDate, setGenDate] = useState(() => todayCST());
-  const [leftWidth, setLeftWidth] = useState(340);
+
+  // Resizable left pane (shared with the article/cards views), clamped to
+  // 260–560 so the month + list can't collapse off-screen.
+  const paneRef = useRef<HTMLDivElement>(null);
+  const { width: leftWidth, startDrag } = usePaneResize(paneRef, 340, 260, 560);
 
   const loadMonth = useCallback(
     async (m: string) => {
@@ -193,30 +201,33 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
     [agentId, month, selectedDate, selectDate, loadMonth],
   );
 
-  // Drag the vertical divider to resize month+list vs. detail.
-  const startDrag = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = leftWidth;
-      const move = (ev: PointerEvent) => {
-        const w = Math.max(260, Math.min(560, startW + ev.clientX - startX));
-        setLeftWidth(w);
-      };
-      const up = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
-    },
-    [leftWidth],
-  );
+  // Delete one day's diary, confirmed server-side by the cascading card
+  // removal. The ConfirmDeleteDialog stages the date; on success, drop the
+  // selection and refresh the month.
+  const [deleteDate, setDeleteDate] = useState<string | null>(null);
+  async function handleDelete() {
+    if (!agentId || !deleteDate) return;
+    const date = deleteDate;
+    setDeleteDate(null);
+    try {
+      if (await deleteDiary(agentId, date)) {
+        notify(t("diary.deleted"));
+        setSelectedDate(null);
+        setDetail(null);
+        loadMonth(month);
+      } else {
+        notify(t("diary.deleteFailed"));
+      }
+    } catch {
+      notify(t("diary.deleteFailed"));
+    }
+  }
 
   return (
     <div className="flex min-h-0 flex-1">
       {/* Left pane: heatmap + list */}
       <div
+        ref={paneRef}
         style={{ "--pane-lw": `${leftWidth}px` } as any}
         className={cn(
           "border-r bg-muted/30 flex-col w-full md:w-[var(--pane-lw)] md:shrink-0",
@@ -326,16 +337,19 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
                   type="button"
                   onClick={() => selectDate(d.date)}
                   className={cn(
-                    "w-full rounded-md px-3 py-2 text-left transition-colors hover:bg-accent",
+                    "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left transition-colors hover:bg-accent",
                     d.date === selectedDate && "bg-accent",
                   )}
                 >
-                  <p className="truncate text-sm font-medium">{d.overview || d.date}</p>
-                  <p className="tabular-nums text-xs text-muted-foreground">
-                    {d.date} · {d.themes.length}
-                    {t("diary.topicUnit")} · {d.blindspots.length}
-                    {t("diary.blindspotUnit")}
-                  </p>
+                  <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{d.overview || d.date}</p>
+                    <p className="tabular-nums text-xs text-muted-foreground">
+                      {d.date} · {d.themes.length}
+                      {t("diary.topicUnit")} · {d.blindspots.length}
+                      {t("diary.blindspotUnit")}
+                    </p>
+                  </div>
                 </button>
               ))
             )}
@@ -367,10 +381,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
       </div>
 
       {/* Drag divider */}
-      <div
-        onPointerDown={startDrag}
-        className="hidden md:block w-1 shrink-0 cursor-col-resize transition-colors hover:bg-primary/40"
-      />
+      <PaneDivider onPointerDown={startDrag} />
 
       {/* Right pane: detail */}
       <div className={cn("flex-1 flex-col min-w-0", selectedDate ? "flex" : "hidden md:flex")}>
@@ -380,6 +391,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
             detail={detail}
             onBack={() => setSelectedDate(null)}
             onGenerate={handleGenerate}
+            onDelete={setDeleteDate}
             generating={generating}
             agentId={agentId || ""}
           />
@@ -389,6 +401,14 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
           </div>
         )}
       </div>
+
+      <ConfirmDeleteDialog
+        open={deleteDate !== null}
+        name={deleteDate ?? ""}
+        description={t("diary.deleteConfirm")}
+        onOpenChange={(o) => { if (!o) setDeleteDate(null); }}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }
@@ -398,6 +418,7 @@ function DetailPane({
   detail,
   onBack,
   onGenerate,
+  onDelete,
   generating,
   agentId,
 }: {
@@ -405,6 +426,7 @@ function DetailPane({
   detail: DailyDiary | null;
   onBack: () => void;
   onGenerate: (date: string) => void;
+  onDelete: (date: string) => void;
   generating: boolean;
   agentId: string;
 }) {
@@ -427,6 +449,19 @@ function DetailPane({
           <ArrowLeftIcon className="h-5 w-5" />
         </button>
         <h2 className="flex-1 truncate text-base font-semibold">{dateLabel}</h2>
+        {detail && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-destructive hover:text-destructive"
+            onClick={() => onDelete(date)}
+            disabled={generating}
+            aria-label={t("diary.delete")}
+          >
+            <Trash2Icon className="h-3.5 w-3.5" />
+            <span className="ml-1 text-xs">{t("diary.delete")}</span>
+          </Button>
+        )}
         <Button size="sm" variant="outline" onClick={() => onGenerate(date)} disabled={generating || (!!detail && detail.themes.length === 0 && detail.blindspots.length === 0)}>
           <SparklesIcon className="mr-1.5 h-3.5 w-3.5" />
           {generating ? t("diary.generating") : t("diary.regenerate")}
