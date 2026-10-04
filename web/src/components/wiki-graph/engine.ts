@@ -8,6 +8,8 @@
  *     degree-ranked budget + greedy collision layout — visible labels never
  *     overlap at any zoom (Obsidian-style progressive reveal).
  *   - d3-zoom (pan/zoom/pinch) + d3-drag (node drag; <500ms && ≤4px = click).
+ *     Touch input is zoom-only (drag filters touch out); taps select via
+ *     Pixi's pointertap.
  *   - Link strength 1/min(deg) softens hub edges so hubs don't clump their
  *     neighbours; collide radius far exceeds the draw radius so nodes spread
  *     out when zoomed in.
@@ -16,7 +18,7 @@
  * Theme swaps are hot (setTheme re-colors without rebuilding); the engine is
  * destroyed and recreated only when its container unmounts/remounts.
  */
-import { Application, Container, Graphics, Text, Circle } from "pixi.js";
+import { Application, Container, Graphics, Text, Circle, type FederatedPointerEvent } from "pixi.js";
 import {
   forceSimulation,
   forceManyBody,
@@ -124,6 +126,9 @@ function easeCubicOut(t: number): number {
   const u = 1 - t;
   return 1 - u * u * u;
 }
+
+/** Hover/selection is mouse-only on this canvas — see the drag filter. */
+const isMouse = (e: FederatedPointerEvent) => e.pointerType === "mouse";
 
 /** Drop self-loops, edges with missing endpoints, and A↔B duplicates. */
 function dedupeEdges(edges: GraphEdge[], nodeExists: (id: string) => boolean): GraphEdge[] {
@@ -263,6 +268,9 @@ export class WikiGraphEngine {
     this.canvas = app.canvas as HTMLCanvasElement;
     this.canvas.style.width = "100%";
     this.canvas.style.height = "100%";
+    // d3-zoom's contract: without this the browser claims touch drags for
+    // page scrolling / pinch for page zoom before the canvas ever sees them.
+    this.canvas.style.touchAction = "none";
     this.container.appendChild(this.canvas);
 
     // 'passive': the stage itself doesn't emit, but node Graphics still hit-test.
@@ -476,8 +484,19 @@ export class WikiGraphEngine {
       })
         .circle(0, 0, n.radius)
         .fill({ color: this.nodeColor(n) });
-      gfx.on("pointerover", () => this.onNodePointerOver(n.id));
-      gfx.on("pointerleave", () => this.onNodePointerLeave());
+      gfx.on("pointerover", (e) => {
+        // Touch pointerover is a tap side-effect — letting it through would
+        // leave hoveredNodeId stuck, skewing focus after the tap.
+        if (isMouse(e)) this.onNodePointerOver(n.id);
+      });
+      gfx.on("pointerleave", (e) => {
+        if (isMouse(e)) this.onNodePointerLeave();
+      });
+      // Touch tap-to-select; mouse keeps the drag-click path (pointerType
+      // split avoids double firing).
+      gfx.on("pointertap", (e) => {
+        if (!isMouse(e)) this.onNodeClick(n.id);
+      });
       this.nodesLayer.addChild(gfx);
 
       const label = new Text({
@@ -751,6 +770,14 @@ export class WikiGraphEngine {
     select(canvas).call(
       drag<HTMLCanvasElement, unknown>()
         .container(() => canvas)
+        // Touch gestures (pan/pinch) belong to d3-zoom: d3-drag claims a
+        // touchstart that hits a node by noevent()-ing it, which freezes
+        // the zoom gesture entirely (pinch dead after tapping a node).
+        // Touch taps select via Pixi pointertap instead.
+        .filter(
+          (event: MouseEvent | TouchEvent) =>
+            !("touches" in event) && !event.ctrlKey && event.button === 0,
+        )
         .subject((): SimNode | undefined =>
           this.hoveredNodeId ? this.nodeById.get(this.hoveredNodeId) : undefined,
         )
