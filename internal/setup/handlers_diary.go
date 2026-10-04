@@ -92,6 +92,44 @@ func (s *Server) handleDiaryGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, d)
 }
 
+// handleDiaryDelete DELETE /api/agents/{id}/diary/{date} — remove one
+// day's diary and cascade into the flashcards distilled from it
+// (source_type='diary', source_ref=date), so deleted days don't leave
+// orphaned cards in the rotation. The card leg is best-effort: the diary
+// row is gone either way.
+func (s *Server) handleDiaryDelete(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	date := r.PathValue("date")
+	if rec := s.requireAgentOwner(w, r, agentID); rec == nil {
+		return
+	}
+	if !s.requireWritable(w, r) {
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	deleted, err := dbs.DeleteDailyDiary(r.Context(), agentID, date)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !deleted {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if ks := s.kbStoreFor(agentID); ks != nil {
+		if n, err := ks.DeleteCardsBySource(r.Context(), agentID, "diary", date); err != nil {
+			slog.Warn("diary delete: card cascade failed", "agent", agentID, "date", date, "error", err)
+		} else if n > 0 {
+			slog.Info("diary delete: removed cards", "agent", agentID, "date", date, "cards", n)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // handleDiaryGenerate POST /api/agents/{id}/diary/generate {"date":"..."} —
 // manually (re)generate one day's diary asynchronously. date defaults to
 // yesterday (UTC+8). Returns 202 immediately; the row appears via GET once

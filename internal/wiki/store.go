@@ -9,6 +9,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/fluctio-ai/fluctio/internal/kb"
 )
 
 type WikiStore struct {
@@ -313,6 +315,10 @@ func (s *WikiStore) DeletePagesBySource(ctx context.Context, agentID, sourceID s
 			}
 		}
 	}
+	// Cascade the pages' cards in one batched pass on the same tx.
+	if _, err := kb.DeleteCardsBySource(ctx, tx, s.ph, "", "wiki", ids); err != nil {
+		return 0, fmt.Errorf("delete cards for pages: %w", err)
+	}
 
 	tx.Commit()
 	return deleted, nil
@@ -329,6 +335,9 @@ func (s *WikiStore) DeletePage(ctx context.Context, id string) error {
 
 	tx.Exec(`DELETE FROM wiki_links WHERE src_page_id = `+s.ph(1)+` OR dst_page_id = `+s.ph(2), id, id)
 	tx.Exec(`DELETE FROM wiki_page_embeddings WHERE page_id = `+s.ph(1), id)
+	if _, err := kb.DeleteCardsBySource(ctx, tx, s.ph, "", "wiki", []string{id}); err != nil {
+		return fmt.Errorf("delete cards for page: %w", err)
+	}
 	_, err = tx.Exec(`DELETE FROM wiki_pages WHERE id = `+s.ph(1), id)
 	if err != nil {
 		return err

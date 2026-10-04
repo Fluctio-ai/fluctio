@@ -92,4 +92,18 @@ func TestDailyDiaryRoundTrip(t *testing.T) {
 	if g, _ := db.GetDailyDiary(ctx, "agent-2", "2026-08-03"); g != nil {
 		t.Errorf("agent-2 leaked into agent-1's diary")
 	}
+
+	// Delete: one day goes, the other stays; re-deleting reports no row.
+	if ok, err := db.DeleteDailyDiary(ctx, "agent-1", "2026-08-02"); err != nil || !ok {
+		t.Fatalf("delete d2: ok=%v err=%v", ok, err)
+	}
+	if g, _ := db.GetDailyDiary(ctx, "agent-1", "2026-08-02"); g != nil {
+		t.Errorf("deleted day still readable")
+	}
+	if g, _ := db.GetDailyDiary(ctx, "agent-1", "2026-08-03"); g == nil {
+		t.Errorf("surviving day was deleted too")
+	}
+	if ok, err := db.DeleteDailyDiary(ctx, "agent-1", "2026-08-02"); err != nil || ok {
+		t.Fatalf("re-delete: ok=%v err=%v, want false nil", ok, err)
+	}
 }

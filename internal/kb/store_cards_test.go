@@ -43,6 +43,59 @@ func setupCardsTestDB(t *testing.T) *KBStore {
 	return NewKBStore(db, "sqlite")
 }
 
+// TestDeleteCardsBySource covers the source-cascade delete: every card
+// distilled from one (source_type, source_ref) origin — plus its reviews
+// and embeddings — goes away, while other origins and agents stay put.
+func TestDeleteCardsBySource(t *testing.T) {
+	store := setupCardsTestDB(t)
+	ctx := context.Background()
+	const agent = "agt_del"
+
+	diaryCard, _ := store.SaveCard(ctx, agent, "什么是 CAP 定理？", "一致性/可用性/分区容忍三选二", "diary", "2026-10-01", "")
+	wikiCard, _ := store.SaveCard(ctx, agent, "什么是 WAL？", "先写日志再写数据页", "wiki", "page-x", "")
+	_, _ = store.SaveCard(ctx, agent, "手工卡", "手工答案", "manual", "", "")
+	// A same-date diary card for ANOTHER agent must survive.
+	_, _ = store.SaveCard(ctx, "agt_other", "别家的卡", "别家的答案", "diary", "2026-10-01", "")
+	// A review row for the diary card, so the review cascade is exercised.
+	if _, err := store.ReviewCard(ctx, agent, diaryCard, "remembered"); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+
+	n, err := store.DeleteCardsBySource(ctx, agent, "diary", "2026-10-01")
+	if err != nil {
+		t.Fatalf("DeleteCardsBySource: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("deleted = %d, want 1", n)
+	}
+
+	cards, err := store.ListCards(ctx, agent, "all", "", "", 50, 0)
+	if err != nil {
+		t.Fatalf("ListCards: %v", err)
+	}
+	if len(cards) != 2 {
+		t.Fatalf("cards left = %d, want 2 (wiki + manual)", len(cards))
+	}
+	for _, c := range cards {
+		if c.ID == diaryCard {
+			t.Fatalf("diary card survived the cascade")
+		}
+	}
+	if rv, _ := store.ListCardReviews(ctx, agent, diaryCard); len(rv) != 0 {
+		t.Fatalf("diary card reviews survived: %d", len(rv))
+	}
+	// Idempotent: re-deleting the same origin is a no-op; a miss returns 0.
+	if n, _ := store.DeleteCardsBySource(ctx, agent, "diary", "2026-10-01"); n != 0 {
+		t.Fatalf("re-delete = %d, want 0", n)
+	}
+	// Other agent's same-origin card untouched.
+	other, _ := store.ListCards(ctx, "agt_other", "all", "", "", 50, 0)
+	if len(other) != 1 {
+		t.Fatalf("other agent cards = %d, want 1", len(other))
+	}
+	_ = wikiCard
+}
+
 // TestCardReviewLadder walks one card through the full Ebbinghaus ladder:
 // each "remembered" advances the interval index, "fuzzy" holds it, and
 // "forgot" resets to 0 with a lapse — then enough "remembered" grades

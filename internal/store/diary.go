@@ -116,6 +116,24 @@ func (d *DBStore) InsertDailyDiary(ctx context.Context, dia DailyDiary) error {
 	return err
 }
 
+// DeleteDailyDiary removes one (agent, date) row. Returns (false, nil)
+// when the day has no diary — deletion is idempotent, the caller decides
+// whether to surface that as a 404.
+func (d *DBStore) DeleteDailyDiary(ctx context.Context, agentID, date string) (bool, error) {
+	var q string
+	if d.dialect == "postgres" {
+		q = `DELETE FROM daily_diary WHERE agent_id = $1 AND date = $2`
+	} else {
+		q = `DELETE FROM daily_diary WHERE agent_id = ? AND date = ?`
+	}
+	res, err := d.db.ExecContext(ctx, q, agentID, date)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // GetDailyDiary reads one entry; returns (nil, nil) when absent.
 func (d *DBStore) GetDailyDiary(ctx context.Context, agentID, date string) (*DailyDiary, error) {
 	var q string

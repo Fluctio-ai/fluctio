@@ -375,6 +375,60 @@ func (s *KBStore) DeleteCard(ctx context.Context, agentID, id string) error {
 	return nil
 }
 
+// execer is satisfied by both *sql.DB and *sql.Tx — the source cascade
+// below runs on whichever the caller holds.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// DeleteCardsBySource removes every card distilled from the given source
+// refs (sourceType + refs — wiki page ids or diary dates) plus its reviews
+// and embeddings, so a deleted origin leaves no orphaned cards in the
+// rotation. It runs on the caller's executor: a *sql.DB, or the live
+// *sql.Tx of the wiki store's page-deletion transaction (same db — pulling
+// a second connection there would deadlock the pool). agentID "" scopes on
+// refs alone (wiki page ids are globally unique). Returns the number of
+// cards removed. This is cardsgen's write contract in reverse, shared by
+// KBStore.DeleteCardsBySource and the wiki store's page deletes.
+func DeleteCardsBySource(ctx context.Context, ex execer, ph func(int) string, agentID, sourceType string, refs []string) (int64, error) {
+	if len(refs) == 0 {
+		return 0, nil
+	}
+	var conds []string
+	var args []interface{}
+	arg := func(v interface{}) string {
+		args = append(args, v)
+		return ph(len(args))
+	}
+	conds = append(conds, fmt.Sprintf(`source_type = %s`, arg(sourceType)))
+	if agentID != "" {
+		conds = append(conds, fmt.Sprintf(`agent_id = %s`, arg(agentID)))
+	}
+	refPhs := make([]string, len(refs))
+	for i, r := range refs {
+		refPhs[i] = arg(r)
+	}
+	where := fmt.Sprintf(`%s AND source_ref IN (%s)`,
+		strings.Join(conds, " AND "), strings.Join(refPhs, ","))
+	sub := fmt.Sprintf(`SELECT id FROM kb_cards WHERE %s`, where)
+	_, _ = ex.ExecContext(ctx, fmt.Sprintf(`DELETE FROM kb_card_embeddings WHERE card_id IN (%s)`, sub), args...)
+	_, _ = ex.ExecContext(ctx, fmt.Sprintf(`DELETE FROM kb_card_reviews WHERE card_id IN (%s)`, sub), args...)
+	res, err := ex.ExecContext(ctx, fmt.Sprintf(`DELETE FROM kb_cards WHERE %s`, where), args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete cards by source: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// DeleteCardsBySource removes every card distilled from one source
+// (sourceType + sourceRef — a diary date or wiki page id) plus its reviews
+// and embeddings. The cascade leg when the origin is deleted, so stale
+// cards don't linger in the rotation. Returns the number of cards removed.
+func (s *KBStore) DeleteCardsBySource(ctx context.Context, agentID, sourceType, sourceRef string) (int64, error) {
+	return DeleteCardsBySource(ctx, s.db, s.ph, agentID, sourceType, []string{sourceRef})
+}
+
 // setCardStatus stamps status (archive / restore / master). Restoring an
 // archived card returns it to active with its review state intact.
 func (s *KBStore) setCardStatus(ctx context.Context, agentID, id, status string) error {
