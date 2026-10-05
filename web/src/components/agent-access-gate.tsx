@@ -75,12 +75,10 @@ export default function AgentAccessGate({
   if (state === "checking") {
     // Full-viewport placeholder while the probe runs — z-50 lifts it
     // over the AppShell sidebar so non-owners don't briefly see the
-    // chat UI / admin tabs while the 403 is in flight.
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-        <div className="h-2 w-2 animate-pulse rounded-full bg-muted-foreground/40" />
-      </div>
-    );
+    // chat UI / admin tabs while the 403 is in flight. Intentionally
+    // blank: a lone centered spinner read as a stray dot between the
+    // boot skeleton and the chat UI.
+    return <div className="fixed inset-0 z-50 bg-background" />;
   }
 
   if (state === "denied") {
