@@ -30,7 +30,6 @@ import {
   PlusIcon,
   SettingsIcon,
   SparklesIcon,
-  WorkflowIcon,
   WrenchIcon,
 } from "lucide-react";
 import {
@@ -87,11 +86,8 @@ const AGENT_NAV = (
       icon: PlusIcon,
       active: onNewChatRoute && !hasSession,
     },
-    {
-      title: t("nav.workflow"),
-      url: `/agents/${agentId}/workflows/`,
-      icon: WorkflowIcon,
-    },
+    // Workflows moved into the knowledge/tools tile grid below (last
+    // cell) — keep this group for New chat only.
   ];
 };
 

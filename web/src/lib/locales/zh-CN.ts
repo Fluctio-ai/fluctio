@@ -172,6 +172,7 @@ const zhCN: Record<string, string> = {
   "nav.group.agent": "智能体",
   "nav.group.user": "用户",
   "nav.group.knowledge": "知识库",
+  "nav.group.tools": "工具",
   "nav.role.admin": "管理员",
   "nav.role.user": "用户",
 

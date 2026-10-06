@@ -19,15 +19,17 @@ import {
   LightbulbIcon,
   LinkIcon,
   StickyNoteIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { navTileButton, navTileGrid, navTileIcon, navTileLabel } from "@/components/nav-tile";
 
-// NavKnowledge is the "Knowledge" section of the agent sidebar: a
+// NavKnowledge is the "Tools" section of the agent sidebar: a
 // collapsible group sitting between "New chat" and "Projects" that links
-// to the data-source list (/knowledge/) and the wiki browser (/wiki/).
-// The KB *settings* (auto-query, wiki auto-gen) stay in the Settings
-// dialog — this group is only the content-browsing entry points.
+// to the KB views (/knowledge/*), the wiki browser (/wiki/) and the
+// workflow editor (/workflows/). The KB *settings* (auto-query, wiki
+// auto-gen) stay in the Settings dialog — this group is only the
+// content-browsing + workflow entry points.
 //
 // Single-user build: no owner/viewer gate — if an agent is active the
 // group shows. Mirrors NavSessions' collapsible-section pattern (click
@@ -100,6 +102,7 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
     if (!agentId) return;
     router.prefetch(`/agents/${agentId}/knowledge/`);
     router.prefetch(`/agents/${agentId}/wiki/`);
+    router.prefetch(`/agents/${agentId}/workflows/`);
   }, [agentId, router]);
 
   if (!agentId) return null;
@@ -119,6 +122,7 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
     { title: t("knowledge.bookmarks"), url: `/agents/${agentId}/knowledge/bookmarks/`, icon: LinkIcon },
     { title: t("knowledge.cards"), url: `/agents/${agentId}/knowledge/cards/`, icon: LayersIcon },
     { title: t("nav.knowledge.wiki"), url: `/agents/${agentId}/wiki/`, icon: BookMarkedIcon },
+    { title: t("nav.workflow"), url: `/agents/${agentId}/workflows/`, icon: WorkflowIcon },
   ];
 
   return (
@@ -133,7 +137,7 @@ export function NavKnowledge({ agentId }: { agentId: string | null }) {
             (sectionCollapsed ? "rotate-0" : "rotate-90")
           }
         />
-        {t("nav.group.knowledge")}
+        {t("nav.group.tools")}
       </SidebarGroupLabel>
       {!sectionCollapsed && (
         // Entries render as a 3-col icon-over-label tile grid (classes in

@@ -172,6 +172,7 @@ const en: Record<string, string> = {
   "nav.group.agent": "Agent",
   "nav.group.user": "User",
   "nav.group.knowledge": "Knowledge",
+  "nav.group.tools": "Tools",
   "nav.role.admin": "Admin",
   "nav.role.user": "User",
 
