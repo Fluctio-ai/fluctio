@@ -70,6 +70,13 @@ type ContextBuilder struct {
 	// surfaced by modAgentIntro so the prompt's "Working Directory" line
 	// matches where relative exec / file-tool paths land.
 	sessionWorkdir string
+
+	// projectCardActive records whether the current turn's chat belongs
+	// to a project, in which case a shared PROJECT.md lives at the
+	// project-shared layer. Wired per-turn by Agent.bindSession;
+	// surfaced by modRuntimeContext so the card-maintenance discipline
+	// only appears for project chats.
+	projectCardActive bool
 }
 
 // ctx returns a context tagged with this builder's user, used when reading

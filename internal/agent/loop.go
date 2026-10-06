@@ -335,6 +335,7 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, chatID, ses
 		} else {
 			a.ctxBuilder.sessionWorkdir = ""
 		}
+		a.ctxBuilder.projectCardActive = projectID != ""
 	}
 	// Reachability/visibility domain: in a project the user sees the
 	// whole project tree in the Files browser (this chat's session dir +
@@ -3274,6 +3275,10 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// buildUserMessage handles multi-image flatten + senderMetadata.
 	// `[SenderName]:` content-prefix policy lives there (group-only;
 	// DMs stay bare to avoid SOUL.md language-bias regressions).
+	// Project card: register this session in the shared PROJECT.md and
+	// inject the orientation snapshot on the session's first turn
+	// (no-op outside projects / once history exists).
+	a.injectProjectCard(ctx, sess, msg.ProjectID, msg.Text)
 	userMsg := buildUserMessage(msg, a.model)
 	sess.Append(userMsg)
 
@@ -4312,6 +4317,10 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// Store raw user message — buildUserMessage handles multi-image
 	// flatten + senderMetadata. Group msgs keep their `[SenderName]:`
 	// prefix (applied in buildUserMessage); DMs stay bare.
+	// Project card: register this session in the shared PROJECT.md and
+	// inject the orientation snapshot on the session's first turn
+	// (no-op outside projects / once history exists).
+	a.injectProjectCard(ctx, sess, msg.ProjectID, msg.Text)
 	userMsg := buildUserMessage(msg, a.model)
 	sess.Append(userMsg)
 

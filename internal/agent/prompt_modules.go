@@ -348,7 +348,7 @@ func modRuntimeContext(p *promptCtx) string {
 	if mcp == "" {
 		mcp = "（无）"
 	}
-	return fmt.Sprintf(`# 运行时处境（你正在操作的真实环境）
+	base := fmt.Sprintf(`# 运行时处境（你正在操作的真实环境）
 
 - 操作系统：%s/%s
 - bash：%s
@@ -360,6 +360,10 @@ func modRuntimeContext(p *promptCtx) string {
 
 原则：凡是你产出文件后，先确认文件在可见域内；不在就主动 deliver_file，不要等用户催。`,
 		runtime.GOOS, runtime.GOARCH, bash, mcp)
+	if p.cb.projectCardActive {
+		base += "\n\n- 项目卡（PROJECT.md）：本项目所有会话共用一份项目卡，位于项目共享层，read_file(\"../PROJECT.md\") 可取全文；本会话开始时已注入其快照。维护纪律：做出跨会话有价值的决策或结论时，在「决策与结论」区最上方补一行（日期 + 一句话，宁缺毋滥）；本会话到达重要节点（产出、结论、状态变化）时，在「会话索引」里带 <!-- sid --> 标记的本会话行回填一句话结论。不要删除或改写系统追加的索引行，也不要每个 turn 都更新——只在真正值得跨会话记住的节点动笔。"
+	}
+	return base
 }
 
 // modChatbotIntro builds the Chatbot-mode identity scaffolding: slim

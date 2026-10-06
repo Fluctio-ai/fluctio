@@ -61,6 +61,7 @@ const (
 	OriginGoalContext = "goal_context"
 	OriginCron        = "cron"       // scheduled-task trigger — a cron-fired inbound, not a real user turn
 	OriginTurnAbort   = "turn_abort" // turn-abort boundary marker (crash heal / stopped turn) — LLM-visible, rendered as a UI notice
+	OriginProjectCard = "project_card" // first-turn PROJECT.md snapshot — injected orientation context, not a real user turn
 )
 
 // Message represents a chat message.
