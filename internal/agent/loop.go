@@ -2025,13 +2025,35 @@ func (a *Agent) WebChatSessions() []session.WebSession {
 // DeleteWebChatSession removes a chat session (any channel) by the URL
 // token — accepts either session_key or legacy web chat_id.
 func (a *Agent) DeleteWebChatSession(sessionId string) error {
-	return a.sessions.DeleteSessionByID(sessionId)
+	// Capture the project before the row is gone, so the shared card's
+	// index row for this chat can be reconciled away right after.
+	key := a.sessions.ResolveSessionKey(sessionId)
+	pid := ""
+	if key != "" {
+		pid = a.sessions.LookupSessionProject(key)
+	}
+	if err := a.sessions.DeleteSessionByID(sessionId); err != nil {
+		return err
+	}
+	a.reconcileProjectCardFor(pid)
+	return nil
 }
 
 // RenameWebChatSession sets a custom title for a chat session (any
 // channel) by the URL token.
 func (a *Agent) RenameWebChatSession(sessionId, title string) error {
-	return a.sessions.RenameSessionByID(sessionId, title)
+	key := a.sessions.ResolveSessionKey(sessionId)
+	pid := ""
+	if key != "" {
+		pid = a.sessions.LookupSessionProject(key)
+	}
+	if err := a.sessions.RenameSessionByID(sessionId, title); err != nil {
+		return err
+	}
+	// Converge the card row's label to the new title immediately (the
+	// hourly sweep would catch it too; this keeps it instant).
+	a.reconcileProjectCardFor(pid)
+	return nil
 }
 
 // SetWebChatSessionChatOnly flips a chat's pure-conversation mode
@@ -2084,7 +2106,16 @@ func (a *Agent) MoveWebChatSession(ctx context.Context, sessionId, projectID str
 			return fmt.Errorf("workspace move: %w", err)
 		}
 	}
-	return a.sessions.MoveSessionByID(sessionId, projectID)
+	if err := a.sessions.MoveSessionByID(sessionId, projectID); err != nil {
+		return err
+	}
+	// The shared card's index section is per-project: the old project's
+	// row must go and the new project's card must learn about this chat.
+	// The hourly sweep converges these too; reconciling both ends now
+	// keeps drag-and-drop looking atomic.
+	a.reconcileProjectCardFor(oldProject)
+	a.reconcileProjectCardFor(projectID)
+	return nil
 }
 
 // ForkSession creates a new chat session B forked from sourceSessionKey

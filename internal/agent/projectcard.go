@@ -11,6 +11,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/session"
+	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
@@ -39,6 +40,13 @@ const (
 	// header, and the newest index rows kept, on first-turn injection.
 	projectCardMaxHeadLines = 25
 	projectCardMaxIndexRows = 15
+	// projectCardArchiveHeader receives index rows spilled past the live
+	// budget. Archived rows are kept verbatim — history, not garbage;
+	// the snapshot and the reconciler only look at the live section.
+	projectCardArchiveHeader = "## 会话归档"
+	// projectCardMaxLiveRows is the live-index budget: once 会话索引
+	// holds more rows, the oldest spill into 会话归档.
+	projectCardMaxLiveRows = 30
 )
 
 // projectCardTemplate seeds the card on first touch.
@@ -116,19 +124,25 @@ func ensureProjectCardEntry(ctx context.Context, ws workspace.Store, agentID, pr
 // failing — degrading to append-only keeps the registry row alive
 // without ever overwriting the narrative sections.
 func appendProjectCardRow(content, row string) string {
+	return insertProjectCardRow(content, projectCardIndexHeader, row)
+}
+
+// insertProjectCardRow is appendProjectCardRow for an arbitrary section
+// header (the archive section uses it too).
+func insertProjectCardRow(content, header, row string) string {
 	if !strings.HasSuffix(content, "\n") {
 		content += "\n"
 	}
 	lines := strings.Split(content, "\n")
 	headerIdx := -1
 	for i, l := range lines {
-		if strings.TrimSpace(l) == projectCardIndexHeader {
+		if strings.TrimSpace(l) == header {
 			headerIdx = i
 			break
 		}
 	}
 	if headerIdx == -1 {
-		return strings.TrimRight(content, "\n") + "\n\n" + projectCardIndexHeader + "\n\n" + row + "\n"
+		return strings.TrimRight(content, "\n") + "\n\n" + header + "\n\n" + row + "\n"
 	}
 	end := len(lines)
 	for i := headerIdx + 1; i < len(lines); i++ {
@@ -145,11 +159,34 @@ func appendProjectCardRow(content, row string) string {
 	return strings.Join(lines, "\n")
 }
 
+// projectCardSectionBounds locates a section by its exact header line
+// and returns (headerIdx, endIdx, true), where endIdx is the first line
+// of the next "## " section (or len(lines) when this is the last
+// section). ok=false when the header is absent — callers treat that as
+// "the user removed the section" and must not fabricate one.
+func projectCardSectionBounds(lines []string, header string) (int, int, bool) {
+	for i, l := range lines {
+		if strings.TrimSpace(l) != header {
+			continue
+		}
+		end := len(lines)
+		for j := i + 1; j < len(lines); j++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[j]), "## ") {
+				end = j
+				break
+			}
+		}
+		return i, end, true
+	}
+	return 0, 0, false
+}
+
 // buildProjectCardSnapshot renders the truncated first-turn snapshot:
 // the 关于 / 决策与结论 sections up to a line budget, then the index
 // header with the newest rows. Long cards degrade to newest-first
 // instead of overflowing the context window; the model reads the full
-// file via ../PROJECT.md when it needs the rest.
+// file via ../PROJECT.md when it needs the rest. The row scan stops at
+// the next "## " section so archived rows never leak into the snapshot.
 func buildProjectCardSnapshot(content string) string {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 	headerIdx := -1
@@ -171,8 +208,9 @@ func buildProjectCardSnapshot(content string) string {
 	}
 	out := append([]string{}, pre...)
 	out = append(out, lines[headerIdx])
+	_, idxEnd, _ := projectCardSectionBounds(lines, projectCardIndexHeader)
 	var rows []string
-	for _, l := range lines[headerIdx+1:] {
+	for _, l := range lines[headerIdx+1 : idxEnd] {
 		if strings.HasPrefix(strings.TrimSpace(l), "- ") {
 			rows = append(rows, l)
 		}
@@ -222,4 +260,274 @@ func (a *Agent) injectProjectCard(ctx context.Context, sess *session.Session, pr
 			"系统在本会话开始时注入的项目卡快照（本项目所有会话共用一份，位于项目共享层；read_file(\"../PROJECT.md\") 可取最新全文）。\n\n"+
 			"%s\n</project_card>", snapshot),
 	})
+}
+
+// readProjectCard fetches the shared card, "" when absent or
+// unreadable (callers treat that as "no card yet").
+func readProjectCard(ctx context.Context, ws workspace.Store, agentID, projectID string) string {
+	rc, err := ws.Get(ctx, agentID, projectID, "", projectCardFilename)
+	if err != nil {
+		return ""
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Reconciler (M2)
+//
+// The sessions table is the source of truth; the card's 会话索引
+// section converges to it. Immediate hooks on delete / rename / move
+// keep the UX tight, and the gateway's hourly sweep catches everything
+// those miss (auto titles, IM-side mutations, a crash between the DB
+// write and the card write). Best-effort by design.
+// ──────────────────────────────────────────────────────────────────
+
+// projectCardRow is one parsed skeleton row of the 会话索引 section:
+//
+//	- [2026-10-06] label · 进行中 <!-- sid:s-… -->
+type projectCardRow struct {
+	key    string
+	date   string
+	label  string
+	status string
+}
+
+// parseProjectCardRow extracts the row's fields; ok=false for any line
+// that isn't a marker-carrying row (narrative lines inside the section
+// are left alone by callers).
+func parseProjectCardRow(line string) (projectCardRow, bool) {
+	l := strings.TrimSpace(line)
+	if !strings.HasPrefix(l, "- ") {
+		return projectCardRow{}, false
+	}
+	rest := strings.TrimPrefix(l, "- ")
+	i := strings.Index(rest, "<!-- sid:")
+	if i < 0 || !strings.HasSuffix(rest, " -->") {
+		return projectCardRow{}, false
+	}
+	key := rest[i+len("<!-- sid:") : len(rest)-len(" -->")]
+	if key == "" {
+		return projectCardRow{}, false
+	}
+	rest = strings.TrimSpace(rest[:i])
+	r := projectCardRow{key: key, status: "进行中"}
+	if strings.HasPrefix(rest, "[") {
+		if j := strings.Index(rest, "] "); j > 0 {
+			r.date = rest[1:j]
+			rest = rest[j+2:]
+		}
+	}
+	if k := strings.LastIndex(rest, " · "); k >= 0 {
+		r.label = strings.TrimSpace(rest[:k])
+		r.status = strings.TrimSpace(rest[k+len(" · "):])
+	} else {
+		r.label = strings.TrimSpace(rest)
+	}
+	if r.label == "" {
+		r.label = "未命名会话"
+	}
+	return r, true
+}
+
+func (r projectCardRow) render() string {
+	return fmt.Sprintf("- [%s] %s · %s %s", r.date, r.label, r.status, projectCardMarker(r.key))
+}
+
+// projectCardSessionLister is the slice of store.Store the reconciler
+// needs — a one-method interface so unit tests don't have to satisfy
+// the whole store.
+type projectCardSessionLister interface {
+	ListSessions(ctx context.Context, agentID string) ([]store.SessionMeta, error)
+}
+
+// reconcileProjectCard aligns one project's card with the sessions
+// table: adds rows for DB sessions the card doesn't list yet (backfill
+// for sessions predating the card, or an ensure lost to a crash),
+// refreshes a row's label to the session's stored title when one exists
+// (manual + auto renames converge here), drops rows whose sessions no
+// longer exist (deleted or moved away), then archives live overflow.
+// Skips cards whose index section the user removed — ensure recreates
+// it on the next session create; the reconciler never fabricates
+// structure the operator deleted. Returns true when the card changed;
+// a no-op pass writes nothing.
+func reconcileProjectCard(ctx context.Context, ws workspace.Store, st projectCardSessionLister, agentID, projectID string) (bool, error) {
+	metas, err := st.ListSessions(ctx, agentID)
+	if err != nil {
+		return false, err
+	}
+	var live []store.SessionMeta
+	for _, m := range metas {
+		if m.ProjectID == projectID {
+			live = append(live, m)
+		}
+	}
+	content := readProjectCard(ctx, ws, agentID, projectID)
+	if content == "" {
+		if len(live) == 0 {
+			return false, nil
+		}
+		content = strings.TrimRight(projectCardTemplate, "\n") + "\n"
+	}
+	lines := strings.Split(content, "\n")
+	headerIdx, end, ok := projectCardSectionBounds(lines, projectCardIndexHeader)
+	if !ok {
+		return false, nil
+	}
+	byKey := make(map[string]store.SessionMeta, len(live))
+	for _, m := range live {
+		byKey[m.Key] = m
+	}
+	seen := map[string]bool{}
+	changed := false
+	var body []string
+	for i := headerIdx + 1; i < end; i++ {
+		r, isRow := parseProjectCardRow(lines[i])
+		if !isRow {
+			body = append(body, lines[i]) // narrative lines inside the section stay
+			continue
+		}
+		seen[r.key] = true
+		m, inDB := byKey[r.key]
+		switch {
+		case !inDB:
+			changed = true // session deleted or moved away — drop the row
+		case m.Title != "" && projectCardPreview(m.Title) != r.label:
+			r.label = projectCardPreview(m.Title)
+			body = append(body, r.render())
+			changed = true
+		default:
+			body = append(body, lines[i])
+		}
+	}
+	for _, m := range live {
+		if seen[m.Key] {
+			continue
+		}
+		label := "未命名会话"
+		if m.Title != "" {
+			label = projectCardPreview(m.Title)
+		}
+		body = append(body, projectCardRow{
+			key:    m.Key,
+			date:   m.UpdatedAt.Local().Format("2006-01-02"),
+			label:  label,
+			status: "进行中",
+		}.render())
+		changed = true
+	}
+	if !changed {
+		// DB alignment is a no-op, but the live-index budget still
+		// applies — a card can sit over budget with no session changes
+		// (e.g. 32 ensures, then the first reconcile). Archive first,
+		// then decide.
+		archived := archiveProjectCardOverflow(content, projectCardMaxLiveRows)
+		if archived == content {
+			return false, nil
+		}
+		if err := ws.Put(ctx, agentID, projectID, "", projectCardFilename, strings.NewReader(archived), int64(len(archived)), "text/markdown; charset=utf-8"); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	updated := lines[:headerIdx+1]
+	updated = append(updated, body...)
+	updated = append(updated, lines[end:]...)
+	content = archiveProjectCardOverflow(strings.Join(updated, "\n"), projectCardMaxLiveRows)
+	if err := ws.Put(ctx, agentID, projectID, "", projectCardFilename, strings.NewReader(content), int64(len(content)), "text/markdown; charset=utf-8"); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// archiveProjectCardOverflow moves the oldest index rows past `keep`
+// into the 会话归档 section (appended at EOF when absent), verbatim and
+// in their original oldest-first order.
+func archiveProjectCardOverflow(content string, keep int) string {
+	lines := strings.Split(content, "\n")
+	headerIdx, end, ok := projectCardSectionBounds(lines, projectCardIndexHeader)
+	if !ok {
+		return content
+	}
+	var rowIdx []int
+	for i := headerIdx + 1; i < end; i++ {
+		if _, isRow := parseProjectCardRow(lines[i]); isRow {
+			rowIdx = append(rowIdx, i)
+		}
+	}
+	if len(rowIdx) <= keep {
+		return content
+	}
+	overflow := rowIdx[:len(rowIdx)-keep]
+	drop := make(map[int]bool, len(overflow))
+	var moved []string
+	for _, i := range overflow {
+		drop[i] = true
+		moved = append(moved, lines[i])
+	}
+	var out []string
+	for i, l := range lines {
+		if !drop[i] {
+			out = append(out, l)
+		}
+	}
+	body := strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+	for _, row := range moved {
+		body = insertProjectCardRow(body, projectCardArchiveHeader, row)
+	}
+	return body
+}
+
+// reconcileProjectCardFor converges one project's card (best-effort;
+// the hourly sweep retries). Called after delete / rename / move so the
+// index rows track those mutations immediately instead of waiting for
+// the sweep.
+func (a *Agent) reconcileProjectCardFor(projectID string) {
+	if projectID == "" || a.workspaceStore == nil || a.dataStore == nil {
+		return
+	}
+	if _, err := reconcileProjectCard(context.Background(), a.workspaceStore, a.dataStore, a.agentID, projectID); err != nil {
+		slog.Warn("project card: reconcile failed",
+			"agent", a.agentID, "project", projectID, "error", err)
+	}
+}
+
+// reconcileAgentProjectCards reconciles every project this agent has
+// sessions in — the boot backfill for projects whose cards predate
+// them, plus the drift safety net.
+func (a *Agent) reconcileAgentProjectCards(ctx context.Context) {
+	if a.workspaceStore == nil || a.dataStore == nil {
+		return
+	}
+	metas, err := a.dataStore.ListSessions(ctx, a.agentID)
+	if err != nil {
+		slog.Warn("project card: list sessions failed", "agent", a.agentID, "error", err)
+		return
+	}
+	seen := map[string]bool{}
+	for _, m := range metas {
+		if m.ProjectID == "" || seen[m.ProjectID] {
+			continue
+		}
+		seen[m.ProjectID] = true
+		if _, err := reconcileProjectCard(ctx, a.workspaceStore, a.dataStore, a.agentID, m.ProjectID); err != nil {
+			slog.Warn("project card: reconcile failed",
+				"agent", a.agentID, "project", m.ProjectID, "error", err)
+		}
+	}
+}
+
+// ReconcileProjectCards aligns every agent's project cards with the
+// sessions table — the gateway's hourly sweep entry point.
+func (m *Manager) ReconcileProjectCards(ctx context.Context) {
+	for _, ag := range m.All() {
+		if ctx.Err() != nil {
+			return
+		}
+		ag.reconcileAgentProjectCards(ctx)
+	}
 }

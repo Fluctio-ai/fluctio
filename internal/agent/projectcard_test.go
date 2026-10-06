@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
@@ -154,5 +155,188 @@ func TestProjectCardPreview(t *testing.T) {
 	long := strings.Repeat("字", 50)
 	if got := projectCardPreview(long); len([]rune(got)) != 41 { // 40 + ellipsis
 		t.Errorf("long preview rune count = %d", len([]rune(got)))
+	}
+}
+
+// fakeCardLister satisfies projectCardSessionLister for reconcile tests.
+type fakeCardLister struct{ metas []store.SessionMeta }
+
+func (f *fakeCardLister) ListSessions(ctx context.Context, agentID string) ([]store.SessionMeta, error) {
+	return f.metas, nil
+}
+
+func cardMeta(key, projectID, title string, updated time.Time) store.SessionMeta {
+	return store.SessionMeta{Key: key, ProjectID: projectID, Title: title, UpdatedAt: updated}
+}
+
+func readCard(t *testing.T, st workspace.Store, projectID string) string {
+	t.Helper()
+	rc, err := st.Get(context.Background(), "agt", projectID, "", projectCardFilename)
+	if err != nil {
+		t.Fatalf("read card: %v", err)
+	}
+	defer rc.Close()
+	b := make([]byte, 1<<16)
+	n, _ := rc.Read(b)
+	return string(b[:n])
+}
+
+var cardT0 = time.Date(2026, 10, 6, 12, 0, 0, 0, time.Local)
+
+func TestReconcileBackfillsAndRenames(t *testing.T) {
+	st := newCardStore(t)
+	ctx := context.Background()
+	if _, err := ensureProjectCardEntry(ctx, st, "agt", "p1", "s-1", "旧预览", cardT0); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	lister := &fakeCardLister{metas: []store.SessionMeta{
+		cardMeta("s-1", "p1", "新标题", cardT0),
+		cardMeta("s-2", "p1", "另一个会话", cardT0.Add(time.Hour)),
+	}}
+	changed, err := reconcileProjectCard(ctx, st, lister, "agt", "p1")
+	if err != nil || !changed {
+		t.Fatalf("reconcile: changed=%v err=%v", changed, err)
+	}
+	content := readCard(t, st, "p1")
+	if !strings.Contains(content, "[2026-10-06] 新标题 · 进行中 <!-- sid:s-1 -->") {
+		t.Errorf("s-1 label should converge to the stored title:\n%s", content)
+	}
+	if !strings.Contains(content, "另一个会话 · 进行中 <!-- sid:s-2 -->") {
+		t.Errorf("s-2 backfill row missing:\n%s", content)
+	}
+}
+
+func TestReconcileDropsOrphanRow(t *testing.T) {
+	st := newCardStore(t)
+	ctx := context.Background()
+	if _, err := ensureProjectCardEntry(ctx, st, "agt", "p1", "s-1", "留下的", cardT0); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	if _, err := ensureProjectCardEntry(ctx, st, "agt", "p1", "s-2", "删掉的", cardT0); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	lister := &fakeCardLister{metas: []store.SessionMeta{
+		cardMeta("s-1", "p1", "", cardT0),
+	}}
+	if _, err := reconcileProjectCard(ctx, st, lister, "agt", "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	content := readCard(t, st, "p1")
+	if strings.Contains(content, projectCardMarker("s-2")) {
+		t.Errorf("orphan row should be dropped:\n%s", content)
+	}
+	if !strings.Contains(content, projectCardMarker("s-1")) {
+		t.Errorf("live row should stay:\n%s", content)
+	}
+}
+
+func TestReconcileNoopSkipsWrite(t *testing.T) {
+	st := newCardStore(t)
+	ctx := context.Background()
+	if _, err := ensureProjectCardEntry(ctx, st, "agt", "p1", "s-1", "预览", cardT0); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	before := readCard(t, st, "p1")
+	lister := &fakeCardLister{metas: []store.SessionMeta{
+		// No stored title, so the preview label stays authoritative.
+		cardMeta("s-1", "p1", "", cardT0),
+	}}
+	changed, err := reconcileProjectCard(ctx, st, lister, "agt", "p1")
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if changed {
+		t.Error("aligned card should be a no-op")
+	}
+	if after := readCard(t, st, "p1"); after != before {
+		t.Errorf("no-op reconcile rewrote the card:\n%s", after)
+	}
+}
+
+func TestReconcileCreatesCardForLegacyProject(t *testing.T) {
+	st := newCardStore(t)
+	ctx := context.Background()
+	lister := &fakeCardLister{metas: []store.SessionMeta{
+		cardMeta("s-9", "p-old", "存量会话", cardT0),
+	}}
+	changed, err := reconcileProjectCard(ctx, st, lister, "agt", "p-old")
+	if err != nil || !changed {
+		t.Fatalf("reconcile: changed=%v err=%v", changed, err)
+	}
+	content := readCard(t, st, "p-old")
+	if !strings.Contains(content, projectCardIndexHeader) || !strings.Contains(content, projectCardMarker("s-9")) {
+		t.Errorf("legacy project card should be created with the session row:\n%s", content)
+	}
+}
+
+func TestReconcileSkipsWithoutCardAndSessions(t *testing.T) {
+	st := newCardStore(t)
+	lister := &fakeCardLister{}
+	changed, err := reconcileProjectCard(context.Background(), st, lister, "agt", "p-none")
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if changed {
+		t.Error("no card and no sessions should be a no-op")
+	}
+}
+
+func TestArchiveProjectCardOverflow(t *testing.T) {
+	st := newCardStore(t)
+	ctx := context.Background()
+	// 32 rows → after the next reconcile-triggered archive pass, 30 live + 2 archived.
+	for i := range 32 {
+		key := "s-overflow-" + string(rune('a'+i))
+		if _, err := ensureProjectCardEntry(ctx, st, "agt", "p1", key, key, cardT0.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatalf("ensure %s: %v", key, err)
+		}
+	}
+	var metas []store.SessionMeta
+	for i := range 32 {
+		metas = append(metas, cardMeta("s-overflow-"+string(rune('a'+i)), "p1", "", cardT0.Add(time.Duration(i)*time.Minute)))
+	}
+	lister := &fakeCardLister{metas: metas}
+	if _, err := reconcileProjectCard(ctx, st, lister, "agt", "p1"); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	content := readCard(t, st, "p1")
+	idx := strings.Index(content, projectCardIndexHeader)
+	live := content[idx:strings.Index(content, projectCardArchiveHeader)]
+	if n := strings.Count(live, "<!-- sid:"); n != projectCardMaxLiveRows {
+		t.Errorf("live rows = %d, want %d", n, projectCardMaxLiveRows)
+	}
+	arch := content[strings.Index(content, projectCardArchiveHeader):]
+	if n := strings.Count(arch, "<!-- sid:"); n != 2 {
+		t.Errorf("archived rows = %d, want 2:\n%s", n, arch)
+	}
+	if !strings.Contains(arch, projectCardMarker("s-overflow-a")) {
+		t.Errorf("oldest rows should archive first:\n%s", arch)
+	}
+}
+
+func TestSnapshotIgnoresArchiveSection(t *testing.T) {
+	card := "# 卡\n\n## 会话索引\n\n- [2026-10-01] 索引行 · 进行中 <!-- sid:s-1 -->\n\n## 会话归档\n\n- [2026-09-01] 归档行 · 进行中 <!-- sid:s-old -->\n"
+	snap := buildProjectCardSnapshot(card)
+	if !strings.Contains(snap, "索引行") {
+		t.Errorf("live row missing from snapshot:\n%s", snap)
+	}
+	if strings.Contains(snap, "归档行") {
+		t.Errorf("archived row leaked into snapshot:\n%s", snap)
+	}
+}
+
+func TestParseProjectCardRow(t *testing.T) {
+	r, ok := parseProjectCardRow("- [2026-10-06] 会话主题 · 进行中 <!-- sid:s-1 -->")
+	if !ok || r.key != "s-1" || r.date != "2026-10-06" || r.label != "会话主题" || r.status != "进行中" {
+		t.Errorf("parse = %+v ok=%v", r, ok)
+	}
+	if got := r.render(); got != "- [2026-10-06] 会话主题 · 进行中 <!-- sid:s-1 -->" {
+		t.Errorf("render roundtrip = %q", got)
+	}
+	if _, ok := parseProjectCardRow("- 普通列表项，没有标记"); ok {
+		t.Error("non-marker bullet must not parse as a row")
+	}
+	if _, ok := parseProjectCardRow("文字行"); ok {
+		t.Error("plain line must not parse as a row")
 	}
 }

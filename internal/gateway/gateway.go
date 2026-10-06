@@ -866,6 +866,15 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.idleSummaryTicker(ctx, 10*time.Minute, idleAfter, 4)
 	}()
+	// project card reconcile sweep: hourly realignment of every
+	// project's shared PROJECT.md index section with the sessions table
+	// (see Agent.reconcileAgentProjectCards). Boot pass backfills cards
+	// for projects whose sessions predate the feature.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.projectCardTicker(ctx)
+	}()
 	// session_events retention: periodically prunes events older than the
 	// retention window so the table doesn't grow unbounded. Disabled when
 	// FLUCTIO_SESSION_EVENTS_RETENTION_HOURS<=0. See
