@@ -33,10 +33,12 @@ const cjkWithBreaks = { ...cjk, remarkPluginsAfter: [...cjk.remarkPluginsAfter, 
 
 // Math and Mermaid are deferred behind content detection: their libs are
 // ~700 KB of eager payload on the chat route (the app's landing page), yet
-// most messages carry neither math nor a ```mermaid fence. The delimiters
-// mirror what remark-math actually recognizes — the plugin defaults to
-// singleDollarTextMath:false, so lone $…$ (currency, prices) must NOT
-// trigger a load. Only $$…$$, \(…\), and \[…\] count.
+// most messages carry neither math nor a ```mermaid fence. The plugin defaults
+// to singleDollarTextMath:false, so lone $…$ (currency, prices) must NOT
+// trigger a load. Only $$…$$, \(…\), and \[…\] count — note remark-math
+// parses only `$`; the `\(`/`\[` aliases are rewritten to dollars by
+// aliasDollarMath in document context, so in chat bubbles they trigger the
+// load but stay literal.
 //
 // Loading is via React `use()` + a module-level cached promise: this
 // Streamdown version does not re-parse blocks when plugins change after
@@ -46,11 +48,97 @@ const cjkWithBreaks = { ...cjk, remarkPluginsAfter: [...cjk.remarkPluginsAfter, 
 // message used math every later instance includes it from its first
 // render and never suspends again (the import promise stays resolved).
 const MATH_RE = /\$\$[\s\S]+?\$\$|\\\([\s\S]+?\\\)|\\\[[\s\S]+?\\\]/;
+// Single-$ inline math, for the document-dialect callers (singleDollarMath).
+// Both delimiters must hug a non-space char — the tight-pair rule that
+// remarkTightInlineMath enforces at the AST level (see there for why a mere
+// regex here can't be enough). "price $5 and $10" never matches; a rare false
+// positive ("$5-$10") only loads the math chunk once.
+const INLINE_MATH_RE = /\$[^\s$](?:[^$]*[^\s$])?\$/;
 const MERMAID_RE = /```mermaid\b/i;
+// `\(`/`\[` alias grammar — the same two branches MATH_RE tests for (keep the
+// copies in sync) — with captures so aliasDollarMath can rewrite each form.
+const ALIAS_RE = /\\\(([\s\S]+?)\\\)|\\\[([\s\S]+?)\\\]/g;
+
+// Minimal mdast shape for the AST fixup below — avoids importing unist types
+// (transitive dep, not hoisted for direct import).
+type MdNode = { type?: string; value?: string; children?: MdNode[] };
 let mathModule: Promise<typeof import("@streamdown/math")> | null = null;
 let mermaidModule: Promise<typeof import("@streamdown/mermaid")> | null = null;
+// Sticky "the chunk is worth loading" flags: set once any rendered text
+// matched, never unset — every later mount includes the plugin from its first
+// render and never suspends again. They gate LOADING only; which math variant
+// an instance renders with is the per-instance singleDollarMath prop.
 let mathActive = false;
+let inlineMathActive = false;
 let mermaidActive = false;
+// Inline variant ($…$ on) — superset of the default ($$ blocks render either
+// way). Built lazily on first use (building eagerly would defeat the deferred
+// import) and cached: a fresh plugin object per render would defeat
+// Streamdown's memo.
+let inlineMathPlugin: StreamdownPlugins["math"] | null = null;
+
+function getInlineMathPlugin(mod: typeof import("@streamdown/math")) {
+  return (inlineMathPlugin ??= (() => {
+    const base = mod.createMathPlugin({ singleDollarTextMath: true });
+    return { ...base, remarkPlugin: { plugins: [base.remarkPlugin, remarkTightInlineMath] } };
+  })());
+}
+
+// remark-math (v6) rejects a `$…$` pair only when BOTH edges are whitespace,
+// so prose like "price $5 and $10" gets eaten as math (content "5 and " —
+// only its trailing edge is a space). This guard applies the tighter GitHub
+// rule — either edge disqualifies — demoting such inlineMath nodes back to
+// plain text at the AST level. It composes into the inline variant's remark
+// chain; the default (chat) variant needs no guard because single-$ math
+// never activates there.
+function remarkTightInlineMath() {
+  // unified calls the OUTER function as an attacher (arg = options); the
+  // returned closure is the transformer that receives the tree.
+  return (tree: MdNode) => {
+    const walk = (node: MdNode) => {
+      if (!node.children) return;
+      for (let i = 0; i < node.children.length; i++) {
+        const c = node.children[i];
+        if (c.type === "inlineMath" && typeof c.value === "string" && /^\s|\s$/.test(c.value)) {
+          node.children[i] = { type: "text", value: `$${c.value}$` };
+        } else walk(c);
+      }
+    };
+    walk(tree);
+  };
+}
+
+// remark-math only speaks `$`. Rewrite the LaTeX `\(`/`\[` aliases (common
+// in docs exported from LaTeX-ish tools) in prose only — fence-delimited
+// code lines keep their literal backslashes. (Inline code spans and indented
+// code blocks are NOT protected — acceptable for a rare pattern in prose
+// docs. An AST-level rewrite can't do this job: CommonMark eats the `\` of
+// `\(` as a backslash escape before any remark plugin sees the text.)
+function aliasDollarMath(src: string): string {
+  if (!src.includes("\\(") && !src.includes("\\[")) return src;
+  const lines = src.split("\n");
+  const out: string[] = [];
+  let buf: string[] = [];
+  let inFence = false;
+  const flush = () => {
+    if (!buf.length) return;
+    out.push(buf.join("\n").replace(ALIAS_RE, (_m, inline: string, block: string) =>
+      inline !== undefined ? `$${inline}$` : `$$${block}$$`,
+    ));
+    buf = [];
+  };
+  for (const line of lines) {
+    if (/^\s{0,3}(```|~~~)/.test(line)) {
+      flush();
+      inFence = !inFence;
+      out.push(line);
+      continue;
+    }
+    (inFence ? out : buf).push(line);
+  }
+  flush();
+  return out.join("\n");
+}
 
 type StreamdownPlugins = NonNullable<ComponentProps<typeof Streamdown>["plugins"]>;
 
@@ -109,6 +197,7 @@ export function ChatMarkdown({
   workspaceRoot,
   baseDir,
   bareCode = false,
+  singleDollarMath = false,
   knowledgeSources,
   onKnowledgeCitationClick,
 }: {
@@ -133,6 +222,11 @@ export function ChatMarkdown({
   // File-viewer mode: hide the floating copy pill on code blocks (the .chat-md
   // strip already removes the card) so a source file reads as plain code.
   bareCode?: boolean;
+  // Document context (workspace .md preview, notes): also render single-$
+  // inline math (`$x^2$`), the convention in files written for GitHub /
+  // Obsidian. Chat bubbles omit it — currency like "$5 and $10" would get
+  // mangled into KaTeX there.
+  singleDollarMath?: boolean;
   // [K#] citation sources attached to the assistant message; the renderer
   // turns [K1]/[K2]… markers in the text into clickable badges.
   knowledgeSources?: KnowledgeSource[];
@@ -210,6 +304,13 @@ export function ChatMarkdown({
     });
   }, [processedText, knowledgeByID]);
 
+  // Document context also understands the LaTeX `\(`/`\[` aliases: remark-math
+  // only parses `$`, so rewrite them before the regexes/Streamdown see the text.
+  const mathText = useMemo(
+    () => (singleDollarMath ? aliasDollarMath(renderedText) : renderedText),
+    [renderedText, singleDollarMath],
+  );
+
   // components depends on knowledgeSources (badge rendering), so build it per
   // render instead of as a module constant. The `a` renderer intercepts
   // #knowledge- links → citation badge; everything else defers to
@@ -242,17 +343,24 @@ export function ChatMarkdown({
   // Deferred math/mermaid plugins (see MATH_RE above). `use()` may be
   // called conditionally (React 19); each branch only ever runs after the
   // first content match, and the sticky module flags keep every later
-  // instance on the activated path.
-  if (MATH_RE.test(renderedText)) mathActive = true;
-  if (MERMAID_RE.test(renderedText)) mermaidActive = true;
-  const mathMod = mathActive ? use((mathModule ??= import("@streamdown/math"))) : undefined;
+  // instance on the activated path — they gate chunk LOADING, while the
+  // variant comes from this instance's singleDollarMath prop. A chat bubble
+  // therefore never loads or renders with the single-$ variant, even after
+  // a workspace preview activated it session-wide.
+  if (!mathActive && MATH_RE.test(mathText)) mathActive = true;
+  if (singleDollarMath && !inlineMathActive && INLINE_MATH_RE.test(mathText)) inlineMathActive = true;
+  if (!mermaidActive && MERMAID_RE.test(mathText)) mermaidActive = true;
+  const wantMath = singleDollarMath ? mathActive || inlineMathActive : mathActive;
+  const mathMod = wantMath ? use((mathModule ??= import("@streamdown/math"))) : undefined;
   const mermaidMod = mermaidActive ? use((mermaidModule ??= import("@streamdown/mermaid"))) : undefined;
   const plugins = useMemo(() => {
     const p: StreamdownPlugins = { code, cjk: cjkWithBreaks };
-    if (mathMod) p.math = mathMod.math;
+    // Inline variant is a superset of the default, so document context uses
+    // it for $$ blocks too.
+    if (mathMod) p.math = singleDollarMath ? getInlineMathPlugin(mathMod) : mathMod.math;
     if (mermaidMod) p.mermaid = mermaidMod.mermaid;
     return p;
-  }, [mathMod, mermaidMod]);
+  }, [mathMod, mermaidMod, singleDollarMath]);
 
   // Click anywhere on a mermaid diagram → fullscreen. Streamdown renders a
   // hidden fullscreen toggle inside the block; we delegate the click to it.
@@ -293,7 +401,7 @@ export function ChatMarkdown({
             mermaid: { panZoom: false, copy: false, download: false, fullscreen: true },
           }}
         >
-          {renderedText}
+          {mathText}
         </Streamdown>
       </Suspense>
     </div>

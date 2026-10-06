@@ -5186,7 +5186,7 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
                 />
               ) : (
                 <div className="h-full overflow-auto p-4">
-                  <ChatMarkdown text={text ?? ""} agentId={agentId} baseDir={baseDir} />
+                  <ChatMarkdown text={text ?? ""} agentId={agentId} baseDir={baseDir} singleDollarMath />
                 </div>
               )
             ) : error ? (
