@@ -45,6 +45,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   ChevronRightIcon,
+  FileTextIcon,
   FolderIcon,
   FolderOpenIcon,
   MoreHorizontalIcon,
@@ -65,6 +66,7 @@ import {
   type SessionItem,
 } from "@/components/nav-projects";
 import { ChatRowActions } from "@/components/chat-row-actions";
+import { ProjectCardDialog } from "@/components/project-card-dialog";
 import { useT } from "@/lib/i18n";
 
 // NavProjectsList is the "Projects" section of the agent sidebar. Each
@@ -102,6 +104,9 @@ export function NavProjectsList({
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editTarget, setEditTarget] = React.useState<ProjectEntry | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<ProjectEntry | null>(
+    null,
+  );
+  const [cardTarget, setCardTarget] = React.useState<ProjectEntry | null>(
     null,
   );
   // Open project IDs: clicking a project toggles its expand state. We
@@ -285,6 +290,7 @@ export function NavProjectsList({
                 onClick={() => onProjectClick(p.id)}
                 onEdit={() => setEditTarget(p)}
                 onDelete={() => setDeleteTarget(p)}
+                onViewCard={() => setCardTarget(p)}
                 onNewChat={() => startNewChat(p.id)}
                 sessions={projectSessions}
                 activeSessionKey={activeSessionKey}
@@ -331,6 +337,11 @@ export function NavProjectsList({
         onClose={() => setDeleteTarget(null)}
         onDeleted={onChanged}
       />
+      <ProjectCardDialog
+        target={cardTarget}
+        agentId={agentId}
+        onClose={() => setCardTarget(null)}
+      />
     </>
   );
 }
@@ -342,6 +353,7 @@ function ProjectRow({
   onClick,
   onEdit,
   onDelete,
+  onViewCard,
   onNewChat,
   sessions,
   activeSessionKey,
@@ -360,6 +372,8 @@ function ProjectRow({
   onClick: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  // onViewCard opens the read-only PROJECT.md viewer for this project.
+  onViewCard: () => void;
   // onNewChat is wired up only via the "..." dropdown now — the
   // expanded sub-list no longer carries a "+ New chat" affordance
   // because clicking the project header itself opens a fresh chat in
@@ -456,6 +470,10 @@ function ProjectRow({
           <DropdownMenuItem onClick={onNewChat}>
             <PlusIcon className="text-muted-foreground" />
             <span>{t("projects.newChatInProject")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onViewCard}>
+            <FileTextIcon className="text-muted-foreground" />
+            <span>{t("projects.card.view")}</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onEdit}>
