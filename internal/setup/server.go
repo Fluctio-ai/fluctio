@@ -490,6 +490,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/wiki/pages/{pageId}", auth(s.handleWikiGetPage))
 	mux.HandleFunc("GET /api/agents/{id}/wiki/graph", auth(s.handleWikiGraph))
 	mux.HandleFunc("DELETE /api/agents/{id}/wiki/pages/{pageId}", auth(s.handleWikiDeletePage))
+	mux.HandleFunc("PUT /api/agents/{id}/wiki/pages/{pageId}", auth(s.handleWikiUpdatePage))
 	mux.HandleFunc("POST /api/agents/{id}/wiki/generate", auth(s.handleWikiGenerate))
 	mux.HandleFunc("POST /api/agents/{id}/wiki/reindex-embed", auth(s.handleWikiReindexEmbed))
 	mux.HandleFunc("GET /api/agents/{id}/wiki/progress", auth(s.handleWikiProgress))

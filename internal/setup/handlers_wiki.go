@@ -162,6 +162,61 @@ func (s *Server) handleWikiDeletePage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleWikiUpdatePage applies manual edits from the clients (wiki PUT,
+// contract §8): title/body only — page_type/slug/source_ids stay owned
+// by the generator. Ids resolve exactly like handleWikiGetPage
+// ("type:slug" or UUID); UpsertPage stamps UpdatedAt and bumps revision.
+func (s *Server) handleWikiUpdatePage(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	pageID := r.PathValue("pageId")
+
+	if rec := s.requireAgentOwner(w, r, agentID); rec == nil {
+		return
+	}
+	ws := s.wikiStoreFor(agentID)
+	if ws == nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	var req struct {
+		Title *string `json:"title"`
+		Body  *string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	var p *wiki.WikiPage
+	var err error
+	if idx := strings.Index(pageID, ":"); idx > 0 {
+		p, err = ws.GetPageBySlug(r.Context(), agentID, pageID[:idx], pageID[idx+1:])
+	} else {
+		p, err = ws.GetPage(r.Context(), pageID)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if p == nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	if req.Title != nil && *req.Title != "" {
+		p.Title = *req.Title
+	}
+	if req.Body != nil {
+		p.Body = *req.Body
+	}
+	if err := ws.UpsertPage(r.Context(), p); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	// UpsertPage bumps the row's revision in SQL but not the struct —
+	// reflect it so the response matches what a follow-up GET returns.
+	p.Revision++
+	writeJSON(w, http.StatusOK, p)
+}
+
 // wikiGenLocks prevents concurrent generation for the same agent.
 var wikiGenLocks sync.Map // map[string]bool
 
