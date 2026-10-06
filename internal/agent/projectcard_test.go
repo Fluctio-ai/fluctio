@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -176,9 +177,11 @@ func readCard(t *testing.T, st workspace.Store, projectID string) string {
 		t.Fatalf("read card: %v", err)
 	}
 	defer rc.Close()
-	b := make([]byte, 1<<16)
-	n, _ := rc.Read(b)
-	return string(b[:n])
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read card body: %v", err)
+	}
+	return string(b)
 }
 
 var cardT0 = time.Date(2026, 10, 6, 12, 0, 0, 0, time.Local)

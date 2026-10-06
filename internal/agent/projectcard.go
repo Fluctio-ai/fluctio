@@ -189,14 +189,8 @@ func projectCardSectionBounds(lines []string, header string) (int, int, bool) {
 // the next "## " section so archived rows never leak into the snapshot.
 func buildProjectCardSnapshot(content string) string {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
-	headerIdx := -1
-	for i, l := range lines {
-		if strings.TrimSpace(l) == projectCardIndexHeader {
-			headerIdx = i
-			break
-		}
-	}
-	if headerIdx == -1 {
+	headerIdx, idxEnd, ok := projectCardSectionBounds(lines, projectCardIndexHeader)
+	if !ok {
 		if len(lines) > projectCardMaxHeadLines {
 			lines = append(lines[:projectCardMaxHeadLines:projectCardMaxHeadLines], "…（项目卡过长，已截断）")
 		}
@@ -208,7 +202,6 @@ func buildProjectCardSnapshot(content string) string {
 	}
 	out := append([]string{}, pre...)
 	out = append(out, lines[headerIdx])
-	_, idxEnd, _ := projectCardSectionBounds(lines, projectCardIndexHeader)
 	var rows []string
 	for _, l := range lines[headerIdx+1 : idxEnd] {
 		if strings.HasPrefix(strings.TrimSpace(l), "- ") {
@@ -378,6 +371,7 @@ func reconcileProjectCard(ctx context.Context, ws workspace.Store, st projectCar
 	if !ok {
 		return false, nil
 	}
+	orig := content
 	byKey := make(map[string]store.SessionMeta, len(live))
 	for _, m := range live {
 		byKey[m.Key] = m
@@ -420,24 +414,20 @@ func reconcileProjectCard(ctx context.Context, ws workspace.Store, st projectCar
 		}.render())
 		changed = true
 	}
-	if !changed {
-		// DB alignment is a no-op, but the live-index budget still
-		// applies — a card can sit over budget with no session changes
-		// (e.g. 32 ensures, then the first reconcile). Archive first,
-		// then decide.
-		archived := archiveProjectCardOverflow(content, projectCardMaxLiveRows)
-		if archived == content {
-			return false, nil
-		}
-		if err := ws.Put(ctx, agentID, projectID, "", projectCardFilename, strings.NewReader(archived), int64(len(archived)), "text/markdown; charset=utf-8"); err != nil {
-			return false, err
-		}
-		return true, nil
+	if changed {
+		updated := lines[:headerIdx+1]
+		updated = append(updated, body...)
+		updated = append(updated, lines[end:]...)
+		content = strings.Join(updated, "\n")
 	}
-	updated := lines[:headerIdx+1]
-	updated = append(updated, body...)
-	updated = append(updated, lines[end:]...)
-	content = archiveProjectCardOverflow(strings.Join(updated, "\n"), projectCardMaxLiveRows)
+	// The live-index budget applies even when DB alignment is a no-op —
+	// a card can sit over budget with no session changes (e.g. 32
+	// ensures, then the first reconcile). The final content comparison
+	// decides whether anything gets written.
+	content = archiveProjectCardOverflow(content, projectCardMaxLiveRows)
+	if content == orig {
+		return false, nil
+	}
 	if err := ws.Put(ctx, agentID, projectID, "", projectCardFilename, strings.NewReader(content), int64(len(content)), "text/markdown; charset=utf-8"); err != nil {
 		return false, err
 	}
