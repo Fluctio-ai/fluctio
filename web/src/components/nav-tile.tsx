@@ -7,8 +7,8 @@
 // overriding its horizontal row defaults via tailwind-merge.
 //
 // Container base: callers append their literal column count
-// (`grid-cols-2` for the two-entry agent group, `grid-cols-3` for the
-// eight KB entries) — literals stay in source so Tailwind v4 scanning
+// (`grid-cols-1` for the agent group's single 新对话 tile, `grid-cols-3`
+// for the tools grid) — literals stay in source so Tailwind v4 scanning
 // emits them. Both hide under the collapsed icon rail — a tile grid has
 // no meaningful single-icon form (the tiles' min-height and vertical
 // stack would overflow the 32px rail), matching NavKnowledge's

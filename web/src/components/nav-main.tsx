@@ -39,8 +39,8 @@ function isActive(pathname: string, href: string) {
 // Overview link and the footer Settings entry).
 //
 // tiles switches the section to the compact icon-over-label tile grid
-// shared with NavKnowledge (nav-tile.tsx) — for short pairs (智能体:
-// 新对话 + 工作流) so they share one row instead of stacking full-width.
+// shared with NavKnowledge (nav-tile.tsx) — used for the agent group's
+// 新对话 entry so it matches the tools grid's tile look.
 export function NavMain({
   label,
   items,
@@ -144,11 +144,12 @@ export function NavMain({
 
 // TilesWrap renders children as-is, or inside the tile grid when tiles is
 // set (fragment <div> pairs can't express the conditional wrap inline
-// without ternary-duplicating the map). Two entries in this mode, so
-// cols-2 keeps them on one full-width row.
+// without ternary-duplicating the map). Single entry (新对话, after
+// workflows moved into the tools grid), so cols-1 keeps the tile
+// full-width instead of half a row.
 function TilesWrap({ tiles, children }: { tiles: boolean; children: React.ReactNode }) {
   if (!tiles) return <>{children}</>;
-  return <div className={`${navTileGrid} grid-cols-2`}>{children}</div>;
+  return <div className={`${navTileGrid} grid-cols-1`}>{children}</div>;
 }
 
 // Exported for pages that want a real anchor with Next client-nav
