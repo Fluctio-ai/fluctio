@@ -87,7 +87,16 @@ func (a *Agent) handleSlashCommand(msg bus.InboundMessage) slashResult {
 			a.clearGoalForSession(oldKey)
 		}
 		if msg.Channel == "web" {
-			// For web channel, don't delete the session file — frontend handles new session creation
+			// For web channel, don't delete the session file — frontend handles new session creation.
+			// Same snapshot semantics as the IM path below: the session the
+			// user is leaving should still enter cross-session recall. Without
+			// this, web sessions have no summary trigger on any practical
+			// timescale (/compact only summarizes when it actually pruned;
+			// the idle sweep needs 2h + a warmed user space), leaving the
+			// slow recall tier empty for web-only users.
+			if oldSess := a.sessions.Get(msg.Channel, msg.AccountID, msg.ChatID, msg.ProjectID); oldSess != nil {
+				a.maybeExtractSummary(oldSess, "new_session")
+			}
 			return slashResult{handled: true, reply: "__NEW_SESSION__"}
 		}
 		// Snapshot the soon-to-be-closed session into cross-session
