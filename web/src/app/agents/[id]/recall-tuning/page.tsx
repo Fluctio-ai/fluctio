@@ -310,7 +310,7 @@ export default function AgentRecallTuningPage() {
                   <div key={sm.id} className="border-b border-border/60 py-1.5 last:border-b-0 last:pb-0 first:pt-0">
                     <div className="flex items-baseline gap-2">
                       <span
-                        className="w-8 shrink-0 text-right tabular-nums font-mono text-[11px] text-muted-foreground"
+                        className="w-8 shrink-0 text-right tabular-nums font-mono text-2xs text-muted-foreground"
                         title={t("recallTuning.relevanceHint")}
                       >
                         {sm.relevance != null ? sm.relevance.toFixed(2) : ""}

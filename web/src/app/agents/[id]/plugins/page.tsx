@@ -122,7 +122,7 @@ export default function AgentPluginsPage() {
                         {p.name || p.id}
                       </p>
                       {p.version && (
-                        <Badge variant="outline" className="mt-1 text-[10px]">
+                        <Badge variant="outline" className="mt-1 text-2xs">
                           v{p.version}
                         </Badge>
                       )}
@@ -140,7 +140,7 @@ export default function AgentPluginsPage() {
                     {p.description}
                   </p>
                 )}
-                <code className="text-[10px] text-muted-foreground/70 mt-3 block truncate">
+                <code className="text-2xs text-muted-foreground/70 mt-3 block truncate">
                   {p.id}
                 </code>
               </div>

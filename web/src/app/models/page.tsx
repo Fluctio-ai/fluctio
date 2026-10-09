@@ -432,9 +432,9 @@ export default function ModelsPage() {
             <Cpu className="h-4 w-4 text-primary" />
             <h3 className="font-medium">{inAgentContext ? tt("models.activeModel") : tt("models.defaultModel")}</h3>
             {!isSuperAdmin && (inheriting ? (
-              <Badge variant="outline" className="text-[10px]">{tt("models.inheriting")}</Badge>
+              <Badge variant="outline" className="text-2xs">{tt("models.inheriting")}</Badge>
             ) : (
-              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px]">{tt("models.override")}</Badge>
+              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-2xs">{tt("models.override")}</Badge>
             ))}
           </div>
           {overridden && (
@@ -669,9 +669,9 @@ export default function ModelsPage() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-sm font-medium text-muted-foreground">{tt("models.modelN", { n: idx + 1 })}</span>
-                      {tm?.status === "testing" && (<Badge variant="outline" className="text-[10px]"><Loader2 className="mr-1 size-3 animate-spin" /> {tt("models.testing")}</Badge>)}
-                      {tm?.status === "success" && (<Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]"><Check className="mr-1 size-3" /> {tt("models.connected")}</Badge>)}
-                      {tm?.status === "error" && (<Badge variant="outline" className="border-destructive/40 text-destructive text-[10px]" title={tm.error}>{tt("models.failed")}</Badge>)}
+                      {tm?.status === "testing" && (<Badge variant="outline" className="text-2xs"><Loader2 className="mr-1 size-3 animate-spin" /> {tt("models.testing")}</Badge>)}
+                      {tm?.status === "success" && (<Badge className="bg-success/15 text-success hover:bg-success/15 text-2xs"><Check className="mr-1 size-3" /> {tt("models.connected")}</Badge>)}
+                      {tm?.status === "error" && (<Badge variant="outline" className="border-destructive/40 text-destructive text-2xs" title={tm.error}>{tt("models.failed")}</Badge>)}
                     </div>
                     <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:text-destructive" onClick={() => handleRemoveModel(idx)}>
                       <Trash2 className="h-3 w-3 mr-1" />{tt("models.removeModel")}

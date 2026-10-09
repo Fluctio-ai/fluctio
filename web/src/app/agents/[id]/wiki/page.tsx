@@ -65,26 +65,29 @@ const PAGE_TYPE_SECTIONS = (t: ReturnType<typeof useT>) => [
   { type: "source", label: t("wiki.source"), icon: BookOpenIcon },
 ];
 
-// Graph palette per resolved theme. The WebGL engine can't read CSS
-// variables, so colors are resolved here; node fills mirror the chart
-// ring in globals.css (cyan/blue/violet/rose/green, no amber) with a
-// darker step for the light canvas and a brighter one for the dark —
-// the same family the workflow node kinds use, so the two graphs read
-// as one system. Selection rides the surge-cyan brand axis; the dark
-// bg carries the deep-water cast instead of pure black.
-const graphTheme = (isDark: boolean): import("@/components/wiki-graph/engine").GraphTheme => ({
-  bg: isDark ? "#0a0e11" : "#ffffff",
-  node: "#6b7280",
-  label: isDark ? "#e5e7eb" : "#1f2937",
-  edge: isDark ? "#555" : "#9ca3af",
-  edgeHover: isDark ? "#9ca3af" : "#4b5563",
-  selectedBorder: isDark ? "#22d3ee" : "#0e7490",
+// Graph palette. The WebGL engine can't read CSS variables at paint time,
+// so the values live as --graph-* tokens in globals.css (light + dark) and
+// are resolved here via getComputedStyle; the setTheme effect re-resolves
+// on resolvedTheme change, which hot-swaps the palette. Node fills mirror
+// the chart ring (cyan/blue/violet/rose/green, no amber) — the same family
+// the workflow node kinds use, so the two graphs read as one system.
+// Selection rides the surge-cyan brand axis.
+const cssVar = (name: string): string =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const graphTheme = (): import("@/components/wiki-graph/engine").GraphTheme => ({
+  bg: cssVar("--graph-bg"),
+  node: cssVar("--graph-node"),
+  label: cssVar("--graph-label"),
+  edge: cssVar("--graph-edge"),
+  edgeHover: cssVar("--graph-edge-hover"),
+  selectedBorder: cssVar("--graph-selected"),
   typeColors: {
-    overview: isDark ? "#22d3ee" : "#0891b2",
-    entity: isDark ? "#60a5fa" : "#1d4ed8",
-    concept: isDark ? "#2dd4bf" : "#0d9488",
-    source: isDark ? "#a78bfa" : "#7c3aed",
-    query: isDark ? "#fb7185" : "#e11d48",
+    overview: cssVar("--graph-type-overview"),
+    entity: cssVar("--graph-type-entity"),
+    concept: cssVar("--graph-type-concept"),
+    source: cssVar("--graph-type-source"),
+    query: cssVar("--graph-type-query"),
   },
 });
 
@@ -328,7 +331,7 @@ export default function WikiPage() {
       const g = await getWikiGraph(agentId);
       if (cancelled || !graphRef.current) return;
       const engine = await WikiGraphEngine.create(graphRef.current, {
-        theme: graphTheme(resolvedTheme !== "light"),
+        theme: graphTheme(),
         onNodeClick: (id: string) => {
           // Toggle: clicking the already-selected node deselects it.
           if (id === selectedPageIdRef.current) clearPageSelection();
@@ -368,7 +371,7 @@ export default function WikiPage() {
 
   // Theme swap is hot: the WebGL engine recolors without rebuilding.
   useEffect(() => {
-    engineRef.current?.setTheme(graphTheme(resolvedTheme !== "light"));
+    engineRef.current?.setTheme(graphTheme());
   }, [resolvedTheme]);
 
   // Selection sync: focus + highlight the matching node whenever the

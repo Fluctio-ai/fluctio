@@ -601,7 +601,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                     ) : (
                       <div className="flex h-20 w-28 flex-col items-center justify-center gap-1 p-2 text-center">
                         <FileIcon className="size-5 text-muted-foreground" />
-                        <span className="w-full truncate text-[10px] text-muted-foreground">{a.file_name}</span>
+                        <span className="w-full truncate text-2xs text-muted-foreground">{a.file_name}</span>
                       </div>
                     )}
                     <div className="absolute inset-x-0 bottom-0 flex justify-end gap-0.5 bg-background/80 p-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -796,7 +796,7 @@ function BoardCard({
       <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
         <GripVerticalIcon className="size-3.5 shrink-0 cursor-grab text-muted-foreground/50 group-hover:text-muted-foreground" aria-hidden />
         <span className="text-xs font-medium">{t("knowledge.notes.tabBoard")}</span>
-        <span className="text-[11px] tabular-nums text-muted-foreground">
+        <span className="text-2xs tabular-nums text-muted-foreground">
           {t("knowledge.notes.boardElements", { n: count })}
         </span>
         <span className="flex-1" />

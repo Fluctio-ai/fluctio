@@ -21,12 +21,7 @@ interface AuthGuardProps {
 const ADMIN_PATH_PREFIXES = [
   "/admin/",
   "/skills",
-  "/providers",
-  "/channels",
-  "/channels-config",
-  "/plugins",
   "/tools",
-  "/cron",
 ];
 
 function isAdminPath(pathname: string): boolean {

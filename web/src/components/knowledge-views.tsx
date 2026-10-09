@@ -1552,7 +1552,11 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
             />
           </div>
         ) : (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4">
+        // Kanban columns: single stack below sm — phone drag-and-drop
+        // doesn't exist (HTML5 DnD is pointer-only), so the side-by-side
+        // column model buys nothing there and 2-up squeezed cards into
+        // 4-line wraps. sm keeps 2-up, lg restores the 4-column board.
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-4">
           {TODO_STATUSES.map((st) => (
             <div
               key={st}
@@ -1677,8 +1681,13 @@ function TodoCard({
       title={t("knowledge.move")}
       className="group rounded-lg border bg-background p-2.5 text-sm shadow-sm cursor-grab active:cursor-grabbing hover:border-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2 transition-colors"
     >
+      {src.status === "cancelled" && (
+        <span className="mb-1.5 inline-flex items-center rounded-md border border-border px-1.5 py-0.5 text-2xs text-muted-foreground">
+          {t("knowledge.status_cancelled")}
+        </span>
+      )}
       <DocMarkdown
-        className={cn(src.status === "cancelled" && "opacity-60 [&_*]:line-through")}
+        className={cn(src.status === "cancelled" && "opacity-75")}
         text={content}
       />
       {src.end_at && (
@@ -1712,7 +1721,7 @@ function statusAccent(s: TodoStatus): string {
     case "done":
       return "text-success";
     case "cancelled":
-      return "text-muted-foreground line-through";
+      return "text-muted-foreground";
   }
   return "";
 }
@@ -2305,7 +2314,7 @@ function TodoCalendar({
       <div className="overflow-hidden rounded-lg border">
         <div className="grid grid-cols-7 border-b bg-muted/30">
           {dowLabelList.map((d, i) => (
-            <div key={i} className="py-1 text-center text-[11px] font-medium text-muted-foreground">{d}</div>
+            <div key={i} className="py-1 text-center text-2xs font-medium text-muted-foreground">{d}</div>
           ))}
         </div>
         <div className="grid grid-cols-7 gap-px bg-border">
@@ -2329,7 +2338,7 @@ function TodoCalendar({
                 )}
               >
                 <span className={cn(
-                  "mb-0.5 inline-flex size-5 items-center justify-center self-start rounded-full text-[11px]",
+                  "mb-0.5 inline-flex size-5 items-center justify-center self-start rounded-full text-2xs",
                   k === todayK
                     ? "bg-primary font-semibold text-primary-foreground"
                     : inMonth ? "text-foreground/70" : "text-muted-foreground/50",
@@ -2353,7 +2362,7 @@ function TodoCalendar({
                               type="button"
                               onClick={(e) => { e.stopPropagation(); onOpenItem(seg.item); }}
                               className={cn(
-                                "flex min-h-[32px] items-center gap-1 overflow-hidden px-1 text-left text-[10px] leading-tight sm:text-[11px]",
+                                "flex min-h-[32px] items-center gap-1 overflow-hidden px-1 text-left text-2xs leading-tight sm:text-2xs",
                                 seg.isStart && "rounded-l-sm pl-1.5",
                                 seg.isEnd && "rounded-r-sm pr-1.5",
                                 statusChipBg(st),
@@ -2378,7 +2387,7 @@ function TodoCalendar({
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); openDay(k); }}
-                      className="text-left text-[10px] text-muted-foreground hover:text-foreground"
+                      className="text-left text-2xs text-muted-foreground hover:text-foreground"
                     >
                       +{hidden}
                     </button>
@@ -2502,7 +2511,7 @@ function GanttRow({
                 // ganttBarStyle); the name-column dot and the overdue marker
                 // stay as secondary cues, cancelled keeps its strike-through.
                 className={cn(
-                  "absolute inset-y-2 flex items-center gap-1 overflow-hidden rounded-sm px-1.5 text-left text-[10px] font-medium ring-1 ring-inset",
+                  "absolute inset-y-2 flex items-center gap-1 overflow-hidden rounded-sm px-1.5 text-left text-2xs font-medium ring-1 ring-inset",
                   ganttBarStyle(st),
                   st === "cancelled" && "opacity-60 line-through",
                 )}
@@ -2737,22 +2746,22 @@ function TodoGantt({
               <div className="grid flex-1" style={gridCols}>
                 {gran === "day" ? (
                   Array.from({ length: 24 }, (_, i) => (
-                    <div key={i} className="py-1 text-center text-[10px] text-foreground/70">{i}</div>
+                    <div key={i} className="py-1 text-center text-2xs text-foreground/70">{i}</div>
                   ))
                 ) : gran === "week" ? (
                   dayCells.map(({ k, n }, i) => (
                     <div key={i} className={cn(
-                      "flex flex-col items-center py-1 text-[10px]",
+                      "flex flex-col items-center py-1 text-2xs",
                       k === todayK ? "font-semibold text-primary" : "text-foreground/70",
                     )}>
                       <span className="text-muted-foreground">{dows[i]}</span>
-                      <span className="text-[11px] font-medium">{n}</span>
+                      <span className="text-2xs font-medium">{n}</span>
                     </div>
                   ))
                 ) : (
                   dayCells.map(({ k, n, weekend }, i) => (
                     <div key={i} className={cn(
-                      "py-1 text-center text-[10px]",
+                      "py-1 text-center text-2xs",
                       k === todayK ? "font-semibold text-primary" : weekend ? "text-muted-foreground" : "text-foreground/70",
                     )}>
                       {n}

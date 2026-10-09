@@ -304,7 +304,7 @@ export default function AgentRegexHooksPage() {
                 <div className="flex items-center gap-2 min-w-0">
                   <Terminal className="size-3.5 text-muted-foreground shrink-0" />
                   <code className="text-sm font-mono truncate">{s.name}</code>
-                  <span className="text-[10px] text-muted-foreground">{(s.size / 1024).toFixed(1)} KB</span>
+                  <span className="text-2xs text-muted-foreground">{(s.size / 1024).toFixed(1)} KB</span>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
@@ -511,27 +511,27 @@ function HookRow({
             {hook.continueOnMatch && (
               <Badge
                 variant="outline"
-                className="inline-flex items-center gap-1 text-[10px]"
+                className="inline-flex items-center gap-1 text-2xs"
               >
                 <Zap className="size-3" />
                 {t("regexHooks.badgeContinue")}
               </Badge>
             )}
             {!hook.enabled && (
-              <Badge variant="secondary" className="text-[10px]">
+              <Badge variant="secondary" className="text-2xs">
                 {t("regexHooks.badgeDisabled")}
               </Badge>
             )}
           </div>
           <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <RegexIcon className="size-3.5 mt-0.5 shrink-0" />
-            <code className="font-mono text-[11px] break-all">
+            <code className="font-mono text-2xs break-all">
               {hook.pattern}
             </code>
           </div>
           <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <Terminal className="size-3.5 mt-0.5 shrink-0" />
-            <code className="font-mono text-[11px] break-all">
+            <code className="font-mono text-2xs break-all">
               {hook.cliCommand}
             </code>
           </div>

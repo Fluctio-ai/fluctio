@@ -360,11 +360,11 @@ export default function AgentContextPage() {
           title={t("context.promptMode")}
           badge={
             promptMode === "" || promptMode === "agent" ? (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-2xs">
                 {t("context.default")}
               </Badge>
             ) : (
-              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px]">
+              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-2xs">
                 {t(MODE_LABEL_KEY[promptMode])}
               </Badge>
             )
@@ -399,12 +399,12 @@ export default function AgentContextPage() {
           </div>
           <div>
             <strong>{t("context.modeChatbot")}</strong> — {t("context.chatbotDescP1")}{" "}
-            <code className="text-[10px]">image_gen</code>,{" "}
-            <code className="text-[10px]">tts</code>,{" "}
-            <code className="text-[10px]">write_file</code>,{" "}
-            <code className="text-[10px]">edit_file</code>{" "}
+            <code className="text-2xs">image_gen</code>,{" "}
+            <code className="text-2xs">tts</code>,{" "}
+            <code className="text-2xs">write_file</code>,{" "}
+            <code className="text-2xs">edit_file</code>{" "}
             {t("context.chatbotDescP2")}{" "}
-            <code className="text-[10px]">memory_search</code>{" "}
+            <code className="text-2xs">memory_search</code>{" "}
             {t("context.chatbotDescP3")}
           </div>
           <div>
@@ -415,7 +415,7 @@ export default function AgentContextPage() {
           <Puzzle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span>
             {t("context.pluginToolsNote")}{" "}
-            <code className="text-[11px]">
+            <code className="text-2xs">
               ~/.fluctio/plugins/fluctio-plugin-demo
             </code>{" "}
             {t("context.pluginToolsExample")}
@@ -430,11 +430,11 @@ export default function AgentContextPage() {
           title={t("context.guidance")}
           badge={
             guidance === "guided" ? (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-2xs">
                 {t("context.default")}
               </Badge>
             ) : (
-              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px]">
+              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-2xs">
                 {t("context.guidanceAutonomous")}
               </Badge>
             )
@@ -561,8 +561,8 @@ export default function AgentContextPage() {
           desc={
             <>
               {t("context.autoPersistDescP1")}{" "}
-              <code className="text-[10px]">write_file</code> /{" "}
-              <code className="text-[10px]">edit_file</code>{" "}
+              <code className="text-2xs">write_file</code> /{" "}
+              <code className="text-2xs">edit_file</code>{" "}
               {t("context.autoPersistDescP2")}
             </>
           }
@@ -672,7 +672,7 @@ export default function AgentContextPage() {
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{opt.label}</span>
                     {opt.value === "balanced" && (compactionRadio === "" || compactionRadio === "balanced") && (
-                      <Badge variant="outline" className="text-[10px]">
+                      <Badge variant="outline" className="text-2xs">
                         {t("context.compactionDefault")}
                       </Badge>
                     )}

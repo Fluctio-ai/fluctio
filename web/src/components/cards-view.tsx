@@ -341,7 +341,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
           </div>
         )}
         {stats && stats.streak_days > 0 && (
-          <Badge variant="outline" className="gap-1 border-warning/40 px-1.5 py-0 text-[11px] text-warning">
+          <Badge variant="outline" className="gap-1 border-warning/40 px-1.5 py-0 text-2xs text-warning">
             <FlameIcon className="size-3" />
             {t("cards.streakDays", { n: stats.streak_days })}
           </Badge>
@@ -442,17 +442,17 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                       <LayersIcon className="size-3 shrink-0" />
                       {t(`cards.source.${c.source_type}`)}
                       {due === "overdue" && (
-                        <Badge variant="outline" className="border-destructive/40 px-1 py-0 text-[10px] text-destructive">
+                        <Badge variant="outline" className="border-destructive/40 px-1 py-0 text-2xs text-destructive">
                           {t("cards.overdue")}
                         </Badge>
                       )}
                       {due === "today" && (
-                        <Badge variant="outline" className="border-warning/50 px-1 py-0 text-[10px] text-warning">
+                        <Badge variant="outline" className="border-warning/50 px-1 py-0 text-2xs text-warning">
                           {t("cards.dueToday")}
                         </Badge>
                       )}
                       {c.status === "mastered" && (
-                        <Badge variant="outline" className="border-success/40 px-1 py-0 text-[10px] text-success">
+                        <Badge variant="outline" className="border-success/40 px-1 py-0 text-2xs text-success">
                           {t("cards.mastered")}
                         </Badge>
                       )}
@@ -490,7 +490,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
             <Button variant="ghost" size="sm" className="h-7 px-2 md:hidden" onClick={() => setSelected(null)}>
               <ArrowLeftIcon className="size-4" />
             </Button>
-            <Badge variant="outline" className="px-1.5 py-0 text-[11px]">
+            <Badge variant="outline" className="px-1.5 py-0 text-2xs">
               {t(`cards.source.${selected.source_type}`)}
               {selected.source_type === "diary" && selected.source_ref ? ` · ${selected.source_ref}` : ""}
               {selected.source_type === "wiki" && wikiTitle ? ` · ${wikiTitle}` : ""}
@@ -597,7 +597,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                         <Badge
                           variant="outline"
                           className={cn(
-                            "px-1.5 py-0 text-[10px]",
+                            "px-1.5 py-0 text-2xs",
                             rv.grade === "remembered" && "border-success/40 text-success",
                             rv.grade === "fuzzy" && "border-warning/50 text-warning",
                             rv.grade === "forgot" && "border-destructive/40 text-destructive",

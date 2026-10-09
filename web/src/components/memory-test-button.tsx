@@ -84,7 +84,7 @@ export function MemoryTestButton({
         {status === "testing" ? t("models.testing") : t("models.testConnection")}
       </Button>
       {status === "success" && (
-        <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">
+        <Badge className="bg-success/15 text-success hover:bg-success/15 text-2xs">
           <Check className="mr-1 size-3" />
           {t("models.connected")}
           {dimResult ? ` · ${dimResult}d` : ""}
@@ -93,7 +93,7 @@ export function MemoryTestButton({
       {status === "error" && (
         <Badge
           variant="outline"
-          className="border-destructive/40 text-destructive text-[10px] max-w-[260px] truncate"
+          className="border-destructive/40 text-destructive text-2xs max-w-[260px] truncate"
           title={error || undefined}
         >
           {t("models.failed")}: {error}

@@ -250,7 +250,7 @@ export default function AgentSkillsPage() {
                   </div>
                   <div>
                     <p className="text-sm font-medium">{skill.name}</p>
-                    <Badge variant="outline" className="mt-1 text-[10px]">
+                    <Badge variant="outline" className="mt-1 text-2xs">
                       {skill.type || t("skills.typeBadge")}
                     </Badge>
                   </div>
@@ -289,7 +289,7 @@ export default function AgentSkillsPage() {
               </p>
               {(skillEntries[skill.name]?.apiKey ||
                 Object.keys(skillEntries[skill.name]?.env || {}).length > 0) && (
-                <div className="mt-2 inline-flex items-center gap-1 text-[10px] text-success">
+                <div className="mt-2 inline-flex items-center gap-1 text-2xs text-success">
                   <Check className="h-3 w-3" />
                   {t("skills.configured")}
                 </div>
@@ -462,7 +462,7 @@ export default function AgentSkillsPage() {
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle className="font-mono">{viewTarget?.name}</DialogTitle>
-            <DialogDescription className="font-mono text-[11px] break-all">{viewTarget?.location}</DialogDescription>
+            <DialogDescription className="font-mono text-2xs break-all">{viewTarget?.location}</DialogDescription>
           </DialogHeader>
           <div className="max-h-[65vh] overflow-y-auto -mx-1 px-1">
             {viewError ? (
@@ -669,7 +669,7 @@ function InstallSkillDialog({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium truncate">{r.skillId}</p>
-                          <span className="text-[10px] text-muted-foreground">
+                          <span className="text-2xs text-muted-foreground">
                             {r.installs.toLocaleString()} {t("skills.installs")}
                           </span>
                         </div>
@@ -720,7 +720,7 @@ function InstallSkillDialog({
         <div className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
           <div>
             <p className="text-xs font-medium">{t("skills.installGithubTitle")}</p>
-            <p className="text-[11px] text-muted-foreground">{t("skills.githubHint")}</p>
+            <p className="text-2xs text-muted-foreground">{t("skills.githubHint")}</p>
           </div>
           <div className="flex gap-2">
             <Input

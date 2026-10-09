@@ -321,7 +321,7 @@ function ProviderFields({
         <div className="space-y-2">
           <Label>{tt("tools.defaultModel")}</Label>
           <Input value={defaultModel} onChange={(e) => setOption("model", e.target.value)} placeholder={provider.models[0]} className="font-mono text-sm" />
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-2xs text-muted-foreground">
             {tt("tools.defaultModelHint", { provider: provider.name, models: provider.models.join(", ") })}
           </p>
         </div>

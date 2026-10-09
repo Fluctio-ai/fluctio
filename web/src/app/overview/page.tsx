@@ -65,7 +65,7 @@ export default function OverviewPage() {
       // Skeleton approximates the stats area with the common denominator —
       // two cards in the base 2-col grid every role renders; admins expand
       // to 4–5 cards when live data lands.
-      <div className="p-6 space-y-6 max-w-5xl mx-auto">
+      <div className="p-6 space-y-6 max-w-6xl mx-auto">
         <div className="space-y-2">
           <Skeleton className="h-8 w-48" />
           <Skeleton className="h-4 w-72 max-w-full" />
@@ -75,7 +75,7 @@ export default function OverviewPage() {
             <div key={i} className="rounded-lg border border-border bg-card p-5">
               <div className="flex items-center justify-between mb-3">
                 <Skeleton className="h-4 w-16" />
-                <Skeleton className="size-8 rounded-full" />
+                <Skeleton className="size-8 rounded-lg" />
               </div>
               <Skeleton className="h-8 w-14" />
               <Skeleton className="mt-2 h-3 w-20" />
@@ -112,7 +112,7 @@ export default function OverviewPage() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+    <div className="p-6 space-y-6 max-w-6xl mx-auto motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-200">
       {/* Header */}
       <div>
         <h2 className="text-2xl font-semibold tracking-tight">{t("overview.title")}</h2>
@@ -127,16 +127,16 @@ export default function OverviewPage() {
         className={`grid gap-4 grid-cols-2 ${
           isAdmin
             ? showChannels
-              ? "md:grid-cols-5"
-              : "md:grid-cols-4"
-            : "md:grid-cols-2"
+              ? "lg:grid-cols-5"
+              : "lg:grid-cols-4"
+            : "lg:grid-cols-2"
         }`}
       >
         {/* Agents */}
         <div className="rounded-lg border border-border bg-card p-5">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-muted-foreground">{t("overview.agents")}</span>
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
               <Bot className="h-4 w-4 text-primary" />
             </div>
           </div>
@@ -151,8 +151,8 @@ export default function OverviewPage() {
           <div className="rounded-lg border border-border bg-card p-5">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-muted-foreground">{t("overview.users")}</span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                <Users className="h-4 w-4 text-muted-foreground" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                <Users className="h-4 w-4 text-primary" />
               </div>
             </div>
             <p className="text-3xl font-semibold tracking-tight">
@@ -167,8 +167,8 @@ export default function OverviewPage() {
           <div className="rounded-lg border border-border bg-card p-5">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-muted-foreground">{t("overview.imUsers")}</span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                <Smartphone className="h-4 w-4 text-muted-foreground" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                <Smartphone className="h-4 w-4 text-primary" />
               </div>
             </div>
             <p className="text-3xl font-semibold tracking-tight">
@@ -183,8 +183,8 @@ export default function OverviewPage() {
           <div className="rounded-lg border border-border bg-card p-5">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-muted-foreground">{t("overview.chats")}</span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                <MessagesSquare className="h-4 w-4 text-muted-foreground" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                <MessagesSquare className="h-4 w-4 text-primary" />
               </div>
             </div>
             <p className="text-3xl font-semibold tracking-tight">
@@ -199,8 +199,8 @@ export default function OverviewPage() {
           <div className="rounded-lg border border-border bg-card p-5">
             <div className="flex items-center justify-between mb-3">
               <span className="text-sm text-muted-foreground">{t("overview.channels")}</span>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted">
-                <Radio className="h-4 w-4 text-muted-foreground" />
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
+                <Radio className="h-4 w-4 text-primary" />
               </div>
             </div>
             <p className="text-3xl font-semibold tracking-tight">{channelCount}</p>
@@ -256,7 +256,7 @@ export default function OverviewPage() {
             )}
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm text-muted-foreground">{t("overview.runtime")}</span>
-              <span className="text-sm truncate">
+              <span className={`text-sm truncate ${runtime?.enabled ? "text-success" : "text-muted-foreground"}`}>
                 {runtime?.enabled
                   ? `${runtime.backend === "e2b" ? "E2B" : "Docker"}${
                       runtime.image ? ` (${runtime.image})` : ""

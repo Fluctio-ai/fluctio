@@ -442,7 +442,7 @@ function ConnectedCard({
         <label className="flex items-center justify-between gap-2 rounded-md bg-muted/30 px-3 py-2 cursor-pointer">
           <div className="min-w-0 space-y-0.5">
             <span className="text-xs font-medium block">{t("channels.qqUseMarkdown")}</span>
-            <span className="text-[11px] text-muted-foreground block">{t("channels.qqUseMarkdownHint")}</span>
+            <span className="text-2xs text-muted-foreground block">{t("channels.qqUseMarkdownHint")}</span>
           </div>
           <Switch
             checked={!!channel.useMarkdown}

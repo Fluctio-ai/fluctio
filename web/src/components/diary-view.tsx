@@ -263,7 +263,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
               <ChevronRightIcon className="h-4 w-4" />
             </button>
           </div>
-          <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-muted-foreground">
+          <div className="grid grid-cols-7 gap-1 text-center text-2xs text-muted-foreground">
             {WEEKDAYS.map((w) => (
               <div key={w}>{w}</div>
             ))}
@@ -284,7 +284,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
                     selectDate(d.date);
                   }}
                   className={cn(
-                    "h-7 rounded text-[10px] tabular-nums flex items-center justify-center transition-all",
+                    "h-7 rounded text-2xs tabular-nums flex items-center justify-center transition-all",
                     d.date > todayCST()
                       ? "opacity-30 text-muted-foreground cursor-default"
                       : d.empty
@@ -300,7 +300,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
               ),
             )}
           </div>
-          <p className="text-[10px] text-muted-foreground">{t("diary.heatHint")}</p>
+          <p className="text-2xs text-muted-foreground">{t("diary.heatHint")}</p>
           <div className="flex items-center gap-1.5 pt-1">
             <input
               type="date"
@@ -560,7 +560,7 @@ function ThemeCard({ agentId, theme }: { agentId: string; theme: DiaryTheme }) {
             <a
               key={i}
               href={`/agents/${agentId}/chat/${encodeURIComponent(seg.session)}#seq-${seg.start}`}
-              className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary hover:bg-primary/20"
+              className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 font-mono text-2xs font-semibold text-primary hover:bg-primary/20"
             >
               #{seg.start === seg.end ? `seq-${seg.start}` : `seq-${seg.start}~${seg.end}`}
             </a>

@@ -312,7 +312,7 @@ export function CardDeck({
                 </span>
 
                 <div className="mb-3 flex items-center gap-1.5">
-                  <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                  <Badge variant="outline" className="px-1.5 py-0 text-2xs text-muted-foreground">
                     {t(`cards.source.${card.source_type}`)}
                   </Badge>
                   {card.review_count > 0 && (
@@ -380,7 +380,7 @@ export function CardDeck({
               onClick={() => grade("forgot", "button")}
             >
               <span className="text-sm">{t("cards.grade.forgot")}</span>
-              <span className="text-[10px] opacity-60">←</span>
+              <span className="text-2xs opacity-60">←</span>
             </Button>
             <Button
               variant="outline"
@@ -389,7 +389,7 @@ export function CardDeck({
               onClick={() => grade("fuzzy", "button")}
             >
               <span className="text-sm">{t("cards.grade.fuzzy")}</span>
-              <span className="text-[10px] opacity-60">↓</span>
+              <span className="text-2xs opacity-60">↓</span>
             </Button>
             <Button
               variant="outline"
@@ -398,7 +398,7 @@ export function CardDeck({
               onClick={() => grade("remembered", "button")}
             >
               <span className="text-sm">{t("cards.grade.remembered")}</span>
-              <span className="text-[10px] opacity-60">→</span>
+              <span className="text-2xs opacity-60">→</span>
             </Button>
           </div>
         </div>

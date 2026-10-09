@@ -63,7 +63,7 @@ function AgentAvatar({
   if (!agent.avatarUrl || failed) {
     return (
       <div
-        className="flex shrink-0 items-center justify-center rounded-xl bg-primary/10 dark:bg-primary/15 border border-primary/15"
+        className="flex shrink-0 items-center justify-center rounded-lg bg-primary/10 dark:bg-primary/15 border border-primary/15"
         style={{ width: size, height: size }}
       >
         <Bot className="text-primary" style={{ width: size * 0.5, height: size * 0.5 }} />
@@ -76,7 +76,7 @@ function AgentAvatar({
     <img
       src={url}
       alt={agent.name || agent.id}
-      className="shrink-0 rounded-xl object-cover"
+      className="shrink-0 rounded-lg object-cover"
       style={{ width: size, height: size }}
       onError={() => setFailed(true)}
     />
@@ -247,7 +247,7 @@ export default function AgentsPage() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+    <div className="p-6 space-y-6 max-w-6xl mx-auto motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-200">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">{t("agentsPage.title")}</h2>
@@ -262,7 +262,7 @@ export default function AgentsPage() {
       </div>
 
       {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {[1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-48" />
           ))}
@@ -316,32 +316,28 @@ export default function AgentsPage() {
           </div>
         )}
         {(activeTab === "own" || !(isAdmin && otherAgents.length > 0)) && ownedAgents.length > 0 && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {ownedAgents.map((agent) => (
             <div
               key={agent.id}
               className="group flex h-full flex-col rounded-lg border border-border bg-card p-5 transition-colors hover:bg-muted/50 cursor-pointer"
               onClick={() => (window.location.href = `/agents/${agent.id}/chat/`)}
             >
-              <div className="flex items-start justify-between mb-4">
-                <AgentAvatar agent={agent} bust={avatarBust[agent.id]} size={48} />
-                <Badge variant="outline" className="bg-muted/60 text-muted-foreground">
+              <div className="flex items-center gap-3 mb-3">
+                <AgentAvatar agent={agent} bust={avatarBust[agent.id]} size={40} />
+                <p className="min-w-0 flex-1 truncate font-medium">{agent.name || agent.id}</p>
+                <Badge variant="outline" className="shrink-0 bg-muted/60 text-muted-foreground">
                   {t("agentsPage.private")}
                 </Badge>
               </div>
-              <p className="text-base font-medium mb-1 truncate">{agent.name || agent.id}</p>
-              <p
-                className={`font-mono text-xs text-muted-foreground truncate ${
-                  agent.description ? "" : "mb-3"
-                }`}
-              >
-                {agent.id}
-              </p>
               {agent.description && (
-                <p className="mt-2 mb-3 text-sm text-muted-foreground line-clamp-2">
+                <p className="mb-2 text-sm text-muted-foreground line-clamp-2">
                   {agent.description}
                 </p>
               )}
+              <p className="font-mono text-2xs text-muted-foreground truncate">
+                {agent.id}
+              </p>
               {/* mt-auto pins the action row to the card bottom so cards
                   with no description don't shrink — keeps the grid row
                   aligned regardless of content length. */}
@@ -377,7 +373,7 @@ export default function AgentsPage() {
         )}
 
         {isAdmin && otherAgents.length > 0 && activeTab === "others" && (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {otherAgents.map((agent) => (
                 <div
                   key={agent.id}
@@ -386,34 +382,30 @@ export default function AgentsPage() {
                     (window.location.href = `/agents/${agent.id}/chat/`)
                   }
                 >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-zinc-500 to-zinc-700 size-12">
-                      <Bot className="text-white size-6" />
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="flex shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-muted-foreground/60 to-muted-foreground/80 size-10">
+                      <Bot className="text-background size-5" />
                     </div>
+                    <p className="min-w-0 flex-1 truncate font-medium">
+                      {agent.name || agent.id}
+                    </p>
                     <Badge
                       variant="outline"
-                      className="max-w-[60%] bg-muted/40 text-muted-foreground"
+                      className="max-w-[45%] shrink-0 bg-muted/40 text-muted-foreground"
                     >
                       <span className="truncate">
                         {t("agentsPage.ownerPrefix", { owner: agent.ownerDisplayName || agent.ownerUsername || agent.userId })}
                       </span>
                     </Badge>
                   </div>
-                  <p className="text-base font-medium mb-1 truncate">
-                    {agent.name || agent.id}
-                  </p>
-                  <p
-                    className={`font-mono text-xs text-muted-foreground truncate ${
-                      agent.description ? "" : "mb-3"
-                    }`}
-                  >
-                    {agent.id}
-                  </p>
                   {agent.description && (
-                    <p className="mt-2 mb-3 text-sm text-muted-foreground line-clamp-2">
+                    <p className="mb-2 text-sm text-muted-foreground line-clamp-2">
                       {agent.description}
                     </p>
                   )}
+                  <p className="font-mono text-2xs text-muted-foreground truncate">
+                    {agent.id}
+                  </p>
                   <div className="mt-auto pt-3 border-t border-border">
                     <p className="text-xs text-muted-foreground">
                       {t("agentsPage.clickToChatHint")}

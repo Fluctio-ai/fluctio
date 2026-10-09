@@ -181,7 +181,7 @@ export function ConfigureSkillDialog({
                   className="font-mono text-xs"
                 />
                 {spec.description && (
-                  <p className="text-[11px] text-muted-foreground/70">
+                  <p className="text-2xs text-muted-foreground/70">
                     {spec.description}
                   </p>
                 )}

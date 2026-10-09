@@ -241,9 +241,9 @@ export default function AgentMemoryPage() {
           title={t("memory.embedding") || "Embedding"}
           badge={
             (!embCustom ? !!(sysEmbedding?.enabled && sysEmbedding?.model) : embedding.enabled) ? (
-              <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">{t("memory.configured") || "configured"}</Badge>
+              <Badge className="bg-success/15 text-success hover:bg-success/15 text-2xs">{t("memory.configured") || "configured"}</Badge>
             ) : (
-              <Badge variant="outline" className="text-muted-foreground text-[10px]">{t("memory.notConfigured") || "not configured"}</Badge>
+              <Badge variant="outline" className="text-muted-foreground text-2xs">{t("memory.notConfigured") || "not configured"}</Badge>
             )
           }
           desc={t("memory.embeddingDesc")}
@@ -323,9 +323,9 @@ export default function AgentMemoryPage() {
           title={t("memory.reranker") || "Reranker"}
           badge={
             (!rerCustom ? !!(sysReranker?.enabled && sysReranker?.model) : reranker.enabled) ? (
-              <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">{t("memory.configured") || "configured"}</Badge>
+              <Badge className="bg-success/15 text-success hover:bg-success/15 text-2xs">{t("memory.configured") || "configured"}</Badge>
             ) : (
-              <Badge variant="outline" className="text-muted-foreground text-[10px]">{t("memory.notConfigured") || "not configured"}</Badge>
+              <Badge variant="outline" className="text-muted-foreground text-2xs">{t("memory.notConfigured") || "not configured"}</Badge>
             )
           }
           desc={t("memory.rerankerDesc")}

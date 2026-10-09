@@ -190,6 +190,10 @@ select option {
   --radius-3xl: calc(var(--radius) * 2);   /* 24px */
   --radius-4xl: calc(var(--radius) * 2.5); /* 30px */
   --font-heading: var(--font-heading), "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* Sub-xs size for badges, heatmap cells, and mono annotations — replaces
+     the scattered text-2xs/text-2xs arbitrary values. */
+  --text-2xs: 0.6875rem;                   /* 11px */
+  --text-2xs--line-height: 1rem;           /* 16px */
 }
 
 /* Light theme — Geist-inspired: pure neutral grayscale (chroma≈0) with a
@@ -236,6 +240,50 @@ select option {
   --chart-3: oklch(0.55 0.18 305);         /* violet */
   --chart-4: oklch(0.62 0.2 350);          /* rose */
   --chart-5: oklch(0.55 0.12 180);         /* teal */
+
+  /* Canvas-painted palettes — vis-network (workflow) and the WebGL wiki
+     graph can't follow CSS vars at paint time, so their pages resolve these
+     tokens via getComputedStyle (the wiki graph re-resolves on theme change).
+     Workflow chips are theme-invariant by design: each bg holds its 13px
+     label at ≥4.5:1 on BOTH the light and dark canvas. */
+  --wf-node-llm: #0e7490;                /* cyan-700 — surge-cyan brand axis */
+  --wf-node-llm-fg: #ffffff;
+  --wf-node-tool: #115e59;               /* teal-800 — clear of kb-search teal */
+  --wf-node-tool-fg: #ffffff;
+  --wf-node-code: #aa4d00;               /* amber-900 */
+  --wf-node-code-fg: #ffffff;
+  --wf-node-form: #1d4ed8;               /* blue-700 — chart-ring blue */
+  --wf-node-form-fg: #ffffff;
+  --wf-node-reply: #06b6d4;              /* cyan — light chip, dark label */
+  --wf-node-reply-fg: #171717;
+  --wf-node-question-rewrite: #7e22ce;   /* violet-700 */
+  --wf-node-question-rewrite-fg: #ffffff;
+  --wf-node-http: #f97316;               /* orange — light chip, dark label */
+  --wf-node-http-fg: #171717;
+  --wf-node-kb-search: #14b8a6;          /* teal — light chip, dark label */
+  --wf-node-kb-search-fg: #171717;
+  --wf-node-set: #4d4d4d;                /* Geist gray-900 */
+  --wf-node-set-fg: #ffffff;
+  --wf-node-condition: #b91c1c;          /* red-700 */
+  --wf-node-condition-fg: #ffffff;
+  --wf-node-fallback: #6b7280;
+  --wf-node-fallback-fg: #ffffff;
+  --wf-node-border: #374151;
+
+  /* Wiki knowledge-graph palette (light steps) — node fills mirror the
+     chart ring (cyan/blue/violet/rose/green, no amber); selection rides the
+     surge-cyan primary axis. */
+  --graph-bg: #ffffff;
+  --graph-node: #6b7280;
+  --graph-label: #1f2937;
+  --graph-edge: #9ca3af;
+  --graph-edge-hover: #4b5563;
+  --graph-selected: var(--primary);
+  --graph-type-overview: var(--chart-1);
+  --graph-type-entity: #1d4ed8;          /* blue-700 */
+  --graph-type-concept: #0d9488;         /* teal-600 */
+  --graph-type-source: #7c3aed;          /* violet-600 */
+  --graph-type-query: #e11d48;           /* rose-600 */
 
   --radius: 0.75rem;                       /* 12px base — Geist md; anchors 2xl+ tiers */
 
@@ -303,6 +351,21 @@ select option {
   --chart-3: oklch(0.72 0.16 305);         /* violet */
   --chart-4: oklch(0.75 0.15 350);         /* rose */
   --chart-5: oklch(0.72 0.13 180);         /* teal */
+
+  /* Wiki knowledge-graph palette (dark steps) — same families as light,
+     lifted to dark-canvas lightness; bg keeps the deep-water cast instead
+     of pure black. Workflow chips stay theme-invariant (see :root). */
+  --graph-bg: #0a0e11;
+  --graph-node: #6b7280;
+  --graph-label: #e5e7eb;
+  --graph-edge: #555555;
+  --graph-edge-hover: #9ca3af;
+  --graph-selected: var(--primary);
+  --graph-type-overview: var(--primary);
+  --graph-type-entity: #60a5fa;          /* blue-400 */
+  --graph-type-concept: #2dd4bf;         /* teal-400 */
+  --graph-type-source: #a78bfa;          /* violet-400 */
+  --graph-type-query: #fb7185;           /* rose-400 */
 
   --sidebar: oklch(0.178 0.01 230);
   --sidebar-foreground: oklch(0.985 0 0);

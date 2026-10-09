@@ -290,20 +290,20 @@ function JobRow({
             <span className="font-medium truncate">{job.name || job.id}</span>
             <Badge
               variant="outline"
-              className="inline-flex items-center gap-1 text-[10px]"
+              className="inline-flex items-center gap-1 text-2xs"
             >
               {typeIcon(job.type)}
               {job.type}
             </Badge>
-            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-2xs">
               {fmtSchedule(job, t)}
             </code>
             {job.channel && (
-              <span className="text-[11px] text-muted-foreground">
+              <span className="text-2xs text-muted-foreground">
                 {t("scheduler.via")} {job.channel}
               </span>
             )}
-            <label className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer">
+            <label className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer">
               <Switch
                 checked={!!job.silent}
                 disabled={silentBusy}
@@ -317,7 +317,7 @@ function JobRow({
             <MessageSquare className="size-3.5 mt-0.5 shrink-0" />
             <span className="break-words">{job.message}</span>
           </div>
-          <div className="flex gap-4 text-[11px] text-muted-foreground/80">
+          <div className="flex gap-4 text-2xs text-muted-foreground/80">
             <span>
               {t("scheduler.lastRun")}:{" "}
               <span className="font-mono">{fmtRelative(job.lastRun, t)}</span>

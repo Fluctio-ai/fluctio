@@ -2810,7 +2810,7 @@ export function ChatScreen() {
         >
           <div className="mx-auto max-w-2xl space-y-3">
             {isEmpty && (
-              <div className="py-8 text-center">
+              <div className="pb-10 pt-8 text-center motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
                 <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
                   {heroTitle}
                 </h1>
@@ -3065,11 +3065,11 @@ export function ChatScreen() {
                       )}
                       {msg.role === "agent" && msg.metadata?.knowledgeSources && msg.metadata.knowledgeSources.length > 0 && (
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          <span className="text-[11px] text-muted-foreground">{t("knowledge.sourcesLabel")}</span>
+                          <span className="text-2xs text-muted-foreground">{t("knowledge.sourcesLabel")}</span>
                           {msg.metadata.knowledgeSources.map((src) => (
                             <span
                               key={src.id}
-                              className="rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+                              className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary"
                               title={knowledgeSourceLabel(src)}
                             >
                               {src.id}
@@ -3105,7 +3105,7 @@ export function ChatScreen() {
                               className="h-8"
                             >
                               <span>{opt.label_zh}</span>
-                              <span className="opacity-60 ml-1 text-[10px]">{opt.label_en}</span>
+                              <span className="opacity-60 ml-1 text-2xs">{opt.label_en}</span>
                             </Button>
                           ))}
                         </div>
@@ -3157,7 +3157,7 @@ export function ChatScreen() {
                         <>
                           {msg.timestamp > 0 && (
                             <span
-                              className="opacity-0 group-hover:opacity-100 text-[10px] text-muted-foreground/60 transition-all"
+                              className="opacity-0 group-hover:opacity-100 text-2xs text-muted-foreground/60 transition-all"
                               title={formatDateTime(msg.timestamp)}
                             >
                               {formatTime(msg.timestamp)}
@@ -3186,7 +3186,7 @@ export function ChatScreen() {
                         <>
                           {msg.timestamp > 0 && (
                             <span
-                              className="text-[10px] text-muted-foreground/60"
+                              className="text-2xs text-muted-foreground/60"
                               title={formatDateTime(msg.timestamp)}
                             >
                               {formatTime(msg.timestamp)}
@@ -3302,8 +3302,10 @@ export function ChatScreen() {
             )}
             <div
               className={
-                "border border-border bg-card focus-within:ring-2 focus-within:ring-ring/20 transition-shadow " +
-                (isEmpty ? "rounded-2xl px-5 pt-4 pb-3" : "rounded-xl px-4 py-3")
+                "border border-border bg-card focus-within:ring-1 focus-within:ring-primary/50 transition-shadow " +
+                (isEmpty
+                  ? "rounded-2xl px-5 pt-4 pb-3 motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-200 motion-safe:delay-75"
+                  : "rounded-xl px-4 py-3")
               }
             >
               {attachments.length > 0 && (
@@ -3448,7 +3450,7 @@ export function ChatScreen() {
                         }}
                         disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                         size="icon"
-                        className="h-9 w-9 shrink-0"
+                        className="h-9 w-9 shrink-0 active:scale-95"
                         aria-label={t("chat.sendMessage")}
                       >
                         <Send className="h-4 w-4 -translate-x-px translate-y-px" />
@@ -3526,7 +3528,7 @@ export function ChatScreen() {
                       }}
                       disabled={(!input.trim() && attachments.length === 0) || !canSendComposer}
                       size="icon"
-                      className="h-8 w-8 shrink-0"
+                      className="h-8 w-8 shrink-0 active:scale-95"
                       aria-label={t("chat.sendMessage")}
                     >
                       <Send className="h-4 w-4 -translate-x-px translate-y-px" />
@@ -3549,7 +3551,7 @@ export function ChatScreen() {
         {isEmpty && !urlSessionId && selectedAgent && (
           <div
             className={
-              "shrink-0 px-4 pb-8 pt-6 " +
+              "shrink-0 px-4 pb-8 pt-4 " +
               (input.trim() || attachments.length > 0 ? "hidden" : "")
             }
           >
@@ -3797,7 +3799,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
               // glyph carries the round number — gives the bundle's
               // expanded view a built-in step indicator without an
               // extra "ROUND N" label row above each card.
-              <span className="h-5 w-5 shrink-0 inline-flex items-center justify-center rounded-full bg-info/10 text-[11px] font-semibold text-info dark:text-info">
+              <span className="h-5 w-5 shrink-0 inline-flex items-center justify-center rounded-full bg-info/10 text-2xs font-semibold text-info dark:text-info">
                 {roundIndex}
               </span>
             ) : isRH ? (
@@ -3815,7 +3817,7 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
                   ? `Executed ${tools.length} tool${tools.length > 1 ? "s" : ""}`
                   : `Running tools (${doneCount}/${tools.length})...`)}
             </span>
-            <span className="text-muted-foreground/60 text-[11px] flex-1 text-left truncate">
+            <span className="text-muted-foreground/60 text-2xs flex-1 text-left truncate">
               {tools.map((tc) => isRH ? tc.name.replace(/^regex_hook:\s*/, "") : tc.name).join(", ")}
             </span>
             {groupOpen ? (
@@ -3851,14 +3853,14 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
                     })()}
                     {tc.metadata?.sandbox && (
                       <span
-                        className="flex items-center gap-0.5 rounded bg-success/10 px-1 py-0.5 text-[10px] font-medium text-success dark:text-success"
+                        className="flex items-center gap-0.5 rounded bg-success/10 px-1 py-0.5 text-2xs font-medium text-success dark:text-success"
                         title={t("chat.sandboxedExec")}
                       >
                         <ShieldCheck className="h-2.5 w-2.5" />
                         sandbox
                       </span>
                     )}
-                    <span className="text-muted-foreground/50 font-mono truncate flex-1 text-left text-[11px]">
+                    <span className="text-muted-foreground/50 font-mono truncate flex-1 text-left text-2xs">
                       {(() => {
                         try {
                           const args = JSON.parse(tc.arguments);
@@ -4095,7 +4097,7 @@ function BuildLogView({ text }: { text: string }) {
   return (
     <pre
       ref={ref}
-      className="h-full w-full overflow-auto whitespace-pre-wrap break-words bg-zinc-950 px-4 py-3 text-left font-mono text-[11px] leading-relaxed text-zinc-300"
+      className="h-full w-full overflow-auto whitespace-pre-wrap break-words bg-card px-4 py-3 text-left font-mono text-2xs leading-relaxed text-card-foreground"
     >
       {text || "Starting build…"}
     </pre>
@@ -4126,7 +4128,7 @@ function FilesPanel({ agentId, files, onOpenFile }: { agentId: string; files: Pr
               >
                 <div className="text-sm font-medium text-foreground truncate">{basename}</div>
                 {f.size !== undefined && (
-                  <div className="text-[11px] text-muted-foreground/70">{formatBytes(f.size)}</div>
+                  <div className="text-2xs text-muted-foreground/70">{formatBytes(f.size)}</div>
                 )}
               </button>
               <a
@@ -5129,7 +5131,7 @@ function FileViewer({ agentId, file, onClose }: { agentId: string; file: Produce
             <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
             <span className="font-medium text-sm truncate">{basename}</span>
             {file.size !== undefined && (
-              <span className="text-[11px] text-muted-foreground shrink-0">{formatBytes(file.size)}</span>
+              <span className="text-2xs text-muted-foreground shrink-0">{formatBytes(file.size)}</span>
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">

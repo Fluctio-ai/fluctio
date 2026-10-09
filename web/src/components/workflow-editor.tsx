@@ -60,26 +60,25 @@ type AnyEdge = {
   [k: string]: unknown;
 };
 
-// Categorical node-kind colors for the canvas. Derived from the committed
-// Geist families (docs/design.md 700–900 steps) so every chip carries its
-// 13px label at ≥4.5:1 on BOTH the light and dark canvas — vis-network
-// paints to <canvas>, so CSS vars can't reach it and the pairs must be
-// literal. The four core kinds take the primary slots (llm rides the
-// surge-cyan brand axis; form takes the chart-ring blue). Legacy kinds
-// keep distinct hues, deepened where white text wouldn't pass.
-const NODE_COLORS: Record<string, { bg: string; fg: string }> = {
-  llm: { bg: "#0e7490", fg: "#ffffff" },               // cyan-700 — surge-cyan brand axis
-  tool: { bg: "#115e59", fg: "#ffffff" },              // teal-800 — cyan-adjacent, clear of kb_search teal-500
-  code: { bg: "#aa4d00", fg: "#ffffff" },              // amber-900
-  form: { bg: "#1d4ed8", fg: "#ffffff" },              // blue-700 — chart-ring blue
-  reply: { bg: "#06b6d4", fg: "#171717" },             // cyan — light chip, dark label
-  question_rewrite: { bg: "#7e22ce", fg: "#ffffff" },  // violet-700 — chart-ring violet
-  http: { bg: "#f97316", fg: "#171717" },              // orange — light chip, dark label
-  kb_search: { bg: "#14b8a6", fg: "#171717" },         // teal — light chip, dark label
-  set: { bg: "#4d4d4d", fg: "#ffffff" },               // Geist gray-900
-  condition: { bg: "#b91c1c", fg: "#ffffff" },         // red-700
+// Categorical node-kind colors for the canvas. The values are --wf-node-*
+// tokens in globals.css (a single set for both themes: every chip carries
+// its 13px label at ≥4.5:1 on BOTH the light and dark canvas). vis-network
+// paints to <canvas>, so CSS vars can't reach it at paint time — resolve
+// them lazily via getComputedStyle inside the canvas setup effect. The four
+// core kinds take the primary slots (llm rides the surge-cyan brand axis;
+// form takes the chart-ring blue). Legacy kinds keep distinct hues,
+// deepened where white text wouldn't pass.
+const cssVar = (name: string): string =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const nodeColor = (kind: string): { bg: string; fg: string } => {
+  const token = `--wf-node-${kind.replace(/_/g, "-")}`;
+  const bg = cssVar(token);
+  if (!bg) {
+    return { bg: cssVar("--wf-node-fallback"), fg: cssVar("--wf-node-fallback-fg") };
+  }
+  return { bg, fg: cssVar(`${token}-fg`) };
 };
-const NODE_FALLBACK_COLOR = { bg: "#6b7280", fg: "#ffffff" };
 const LANGS = ["python", "sh"];
 const TYPES = ["string", "number", "integer", "boolean", "object", "array"];
 const OPS = [">", "<", ">=", "<=", "==", "!=", "contain", "not_contain"];
@@ -218,31 +217,40 @@ export function WorkflowEditor({
         // Restore saved positions when this workflow was laid out (or edited)
         // before; seed them into the DataSet so the rebuild renders nodes where
         // the user left them instead of re-running auto-layout. Nodes without a
-        // saved position (newly added / renamed) land near the saved centroid.
+        // saved position (newly added / renamed) seed in a column to the right
+        // of the saved bounding box.
         const saved = loadNodePositions(agentId, wfID);
         const seeded = Object.keys(saved).length > 0;
-        let cx = 0;
-        let cy = 0;
+        // Unsaved nodes (newly added / renamed) seed in a column to the
+        // right of the saved bounding box. The old centroid scatter with
+        // 60px steps overlapped the ≥120px-wide node chips (and each
+        // other), which is what stacked nodes on first open.
+        let maxX = 0;
+        let minY = 0;
         if (seeded) {
-          for (const p of Object.values(saved)) {
-            cx += p.x;
-            cy += p.y;
-          }
-          cx /= Object.keys(saved).length;
-          cy /= Object.keys(saved).length;
+          const pts = Object.values(saved);
+          maxX = Math.max(...pts.map((p) => p.x));
+          minY = Math.min(...pts.map((p) => p.y));
         }
+        let unsaved = 0;
         const nodes = new DataSet(
-          def.nodes!.map((n, i) => {
-            const c = NODE_COLORS[n.kind] || NODE_FALLBACK_COLOR;
+          def.nodes!.map((n) => {
+            const c = nodeColor(n.kind);
             const pos =
               saved[n.name] ??
               (seeded
-                ? { x: cx + (i % 5) * 60, y: cy + Math.floor(i / 5) * 60 }
+                ? { x: maxX + 220, y: minY + unsaved++ * 120 }
                 : undefined);
             return {
               id: n.name,
               label: `${n.name}\n(${n.kind})`,
-              color: { background: c.bg, border: "#374151" },
+              color: {
+                background: c.bg,
+                border: cssVar("--wf-node-border"),
+                // Selection ring rides the surge-cyan focus axis — readable
+                // on every chip hue in both themes.
+                highlight: { background: c.bg, border: cssVar("--ring") },
+              },
               // Label color must be explicit: vis defaults to dark gray,
               // which fails on the darker chips and in dark mode.
               font: { size: 13, color: c.fg },
@@ -257,15 +265,20 @@ export function WorkflowEditor({
           containerRef.current,
           { nodes, edges },
           {
-            nodes: { shape: "box", margin: 12, font: { size: 13 } },
+            // widthConstraint.minimum keeps one-word kinds (set, http) a
+            // readable chip; no maximum so long names widen the box instead
+            // of clipping.
+            nodes: { shape: "box", margin: 14, widthConstraint: { minimum: 120 }, font: { size: 13 } },
             edges: { arrows: "to", font: { size: 11, align: "middle" }, smooth: { enabled: true, type: "cubicBezier", forceDirection: "horizontal" } },
             // Left-to-right hierarchical layout with generous separation so
             // edges run long enough for their `when` labels to render fully —
-            // first view only. With saved positions we skip auto-layout (and
-            // physics) entirely so the seeds are honored verbatim.
+            // first view only. nodeSpacing clears the widest chips so same-
+            // level nodes can't touch. With saved positions we skip
+            // auto-layout (and physics) entirely so the seeds are honored
+            // verbatim.
             layout: seeded
               ? { hierarchical: { enabled: false } }
-              : { hierarchical: { direction: "LR", levelSeparation: 260, nodeSpacing: 150, sortMethod: "directed" } },
+              : { hierarchical: { direction: "LR", levelSeparation: 300, nodeSpacing: 220, sortMethod: "directed" } },
             physics: { enabled: !seeded },
             interaction: { hover: true },
           },
@@ -988,7 +1001,7 @@ function SessionPicker({ agentId, channel, chatId, account, onChange }: {
               className="rounded-md block w-full text-left px-1 py-0.5 hover:bg-muted"
             >
               <div>{s.title || s.preview || s.chatId}</div>
-              <div className="text-muted-foreground text-[10px]">{s.channel} · {(s.chatId || "").slice(0, 16)}</div>
+              <div className="text-muted-foreground text-2xs">{s.channel} · {(s.chatId || "").slice(0, 16)}</div>
             </button>
           ))}
         </div>
@@ -1050,7 +1063,7 @@ function ArticlePicker({ agentId, multiple, value, onChange }: {
           {selected.map((id) => {
             const s = srcs.find((x) => x.id === id);
             return (
-              <span key={id} className="text-[10px] bg-muted px-1 rounded flex items-center gap-0.5">
+              <span key={id} className="text-2xs bg-muted px-1 rounded flex items-center gap-0.5">
                 {(s?.title || id).slice(0, 16)}
                 <button type="button" onMouseDown={(e) => { e.preventDefault(); pick(id); }} className="text-destructive">✕</button>
               </span>

@@ -626,11 +626,11 @@ export default function AgentModelsPage() {
           title={t("models.activeModel")}
           badge={
             inheriting ? (
-              <Badge variant="outline" className="text-[10px]">
+              <Badge variant="outline" className="text-2xs">
                 {t("models.inheriting")}
               </Badge>
             ) : (
-              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px]">
+              <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-2xs">
                 {t("models.override")}
               </Badge>
             )
@@ -681,7 +681,7 @@ export default function AgentModelsPage() {
               {t("models.usingSystemDefault")}
               {systemDefault ? (
                 <>
-                  : <code className="text-[11px]">{systemDefault}</code>
+                  : <code className="text-2xs">{systemDefault}</code>
                 </>
               ) : (
                 <> {t("models.noneConfigured")}</>
@@ -692,12 +692,12 @@ export default function AgentModelsPage() {
           ) : (
             <>
               {t("models.overrideAppliesTo")} <strong>{agentName || t("models.thisAgent")}</strong>{" "}
-              {t("models.only")} {t("models.overrideInFormat")} <code className="text-[11px]">provider/modelId</code>.
+              {t("models.only")} {t("models.overrideInFormat")} <code className="text-2xs">provider/modelId</code>.
               {systemDefault && (
                 <>
                   {" "}
                   {t("models.clearingFallsBack")}{" "}
-                  <code className="text-[11px]">{systemDefault}</code>.
+                  <code className="text-2xs">{systemDefault}</code>.
                 </>
               )}
             </>
@@ -752,7 +752,7 @@ export default function AgentModelsPage() {
                     <div className="flex items-center gap-2">
                       {provider.name}
                       {editable && systemProviders.includes(provider.name) && (
-                        <Badge variant="outline" className="text-[10px]">
+                        <Badge variant="outline" className="text-2xs">
                           {t("models.shadowsSystem")}
                         </Badge>
                       )}
@@ -888,7 +888,7 @@ export default function AgentModelsPage() {
                 className="font-mono text-sm placeholder:text-muted-foreground/70"
               />
               {editingName && (
-                <p className="text-[11px] text-muted-foreground/60">
+                <p className="text-2xs text-muted-foreground/60">
                   {t("models.keepExistingKey")}
                 </p>
               )}
@@ -966,7 +966,7 @@ export default function AgentModelsPage() {
                         className="flex items-center justify-between w-full px-2.5 py-1.5 rounded-md text-xs hover:bg-accent font-mono"
                       >
                         <span>{fm.id}</span>
-                        <span className="text-muted-foreground text-[10px]">
+                        <span className="text-muted-foreground text-2xs">
                           {fm.contextWindow >= 1000 ? `${Math.round(fm.contextWindow / 1000)}K` : fm.contextWindow || "—"}
                         </span>
                       </button>
@@ -991,17 +991,17 @@ export default function AgentModelsPage() {
                         {t("models.modelN", { n: idx + 1 })}
                       </span>
                       {test?.status === "testing" && (
-                        <Badge variant="outline" className="text-[10px]">
+                        <Badge variant="outline" className="text-2xs">
                           <Loader2 className="mr-1 size-3 animate-spin" /> {t("models.testing")}
                         </Badge>
                       )}
                       {test?.status === "success" && (
-                        <Badge className="bg-success/15 text-success hover:bg-success/15 text-[10px]">
+                        <Badge className="bg-success/15 text-success hover:bg-success/15 text-2xs">
                           <Check className="mr-1 size-3" /> {t("models.connected")}
                         </Badge>
                       )}
                       {test?.status === "error" && (
-                        <Badge variant="outline" className="border-destructive/40 text-destructive text-[10px]" title={test.error}>
+                        <Badge variant="outline" className="border-destructive/40 text-destructive text-2xs" title={test.error}>
                           {t("models.failed")}
                         </Badge>
                       )}
@@ -1060,7 +1060,7 @@ export default function AgentModelsPage() {
                               className="flex items-center justify-between px-2.5 py-1.5 text-xs hover:bg-accent cursor-pointer font-mono"
                             >
                               <span>{mid}</span>
-                              <span className="text-muted-foreground text-[10px]">
+                              <span className="text-muted-foreground text-2xs">
                                 {builtinModels[mid].contextWindow >= 1000 ? `${Math.round(builtinModels[mid].contextWindow / 1000)}K` : builtinModels[mid].contextWindow}
                               </span>
                             </li>
