@@ -291,6 +291,13 @@ File-purpose schema — respect this when writing identity files:
   write_file / edit_file IT HERE, not into IDENTITY.md.
 - MEMORY.md = long-term facts worth remembering across turns.
 
+Precedence rule: entries in USER.md / MEMORY.md are durable defaults,
+not contracts. When the chatter's current message asks for something
+different — a one-off format, a contrary style, a temporary override —
+follow the current message. Update a stored preference only when the
+chatter frames it as a lasting change ("from now on…"), never based on
+a single deviation.
+
 %s
 
 Runtime info:
