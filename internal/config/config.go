@@ -798,6 +798,12 @@ type AgentKBCfg struct {
 	MemoryAutoMode   string   `json:"memoryAutoMode,omitempty"`
 	MemoryKeywords   []string `json:"memoryKeywords,omitempty"`
 	MemoryMaxResults int      `json:"memoryMaxResults,omitempty"`
+	// MemoryRerank opts the [MEM] lane into the cross-encoder final cut
+	// (2× over-fetch → rerank → top-N). Off by default: it adds one
+	// rerank API call per message; the cosine floors alone already gate
+	// what injects. Needs a configured reranker; a failing rerank call
+	// degrades to cosine order, never to junk.
+	MemoryRerank bool `json:"memoryRerank,omitempty"`
 	// Dedup thresholds for inbound KB writes (nil = built-in default).
 	// At/above these, an existing same/similar source blocks the write:
 	// flash skip silently; article near-duplicate skips (≥High) or pends (Mid).

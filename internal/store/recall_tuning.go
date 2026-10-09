@@ -171,6 +171,7 @@ type RecallEvent struct {
 	Explored   bool    // true if this was an ε-greedy exploration
 	SummaryIDs []int64 // surfaced summary IDs
 	CreatedAt  time.Time
+	Vote       *bool   // latest 👍/👎 on this event (nil = not voted) — display state
 }
 
 // GetAgentMMRLambda returns the agent's current best MMR lambda, or
@@ -394,22 +395,47 @@ func (d *DBStore) GetRecallStats(ctx context.Context, agentID string) (RecallSta
 }
 
 // ListRecentRecallEvents returns the agent's most recent recall events
-// (newest first), for the tuning panel's manual-feedback section.
-func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, limit int) ([]RecallEvent, error) {
+// (newest first), for the test page's audit list. days > 0 keeps only
+// events newer than that many days; 0 = no time filter. Each event carries
+// the latest 👍/👎 direction (nil = not voted) so the UI can show the
+// current vote state.
+func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, limit, days int) ([]RecallEvent, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	q := `SELECT recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids, created_at
-		FROM memory_recall_events
-		WHERE agent_id = ?
-		ORDER BY created_at DESC LIMIT ?`
-	if d.dialect == "postgres" {
-		q = `SELECT recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids, created_at
-			FROM memory_recall_events
-			WHERE agent_id = $1
-			ORDER BY created_at DESC LIMIT $2`
+	// Latest feedback per event: feedback rows are append-only (re-voting
+	// inserts), so the highest id wins.
+	voteSub := `(SELECT f.up FROM memory_recall_feedback f
+		WHERE f.recall_id = memory_recall_events.recall_id
+		ORDER BY f.id DESC LIMIT 1)`
+	// Optional time filter; placeholder index is dialect-dependent.
+	whereTime := ""
+	args := []any{agentID}
+	if days > 0 {
+		before := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+		if d.dialect == "postgres" {
+			whereTime = fmt.Sprintf(" AND created_at > $%d", len(args)+1)
+		} else {
+			whereTime = " AND created_at > ?"
+		}
+		args = append(args, before)
 	}
-	rows, err := d.db.QueryContext(ctx, q, agentID, limit)
+	limitPh := "?"
+	if d.dialect == "postgres" {
+		limitPh = fmt.Sprintf("$%d", len(args)+1)
+	}
+	args = append(args, limit)
+	q := `SELECT recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids, created_at, ` + voteSub + `
+		FROM memory_recall_events
+		WHERE agent_id = ?` + whereTime + `
+		ORDER BY created_at DESC LIMIT ` + limitPh
+	if d.dialect == "postgres" {
+		q = `SELECT recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids, created_at, ` + voteSub + `
+			FROM memory_recall_events
+			WHERE agent_id = $1` + whereTime + `
+			ORDER BY created_at DESC LIMIT ` + limitPh
+	}
+	rows, err := d.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -422,9 +448,14 @@ func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, li
 			consumed    int
 			summaryJSON string
 			scoresJSON  string
+			vote        sql.NullInt64
 		)
-		if err := rows.Scan(&ev.RecallID, &ev.AgentID, &ev.UserID, &ev.SessionKey, &ev.Query, &scoresJSON, &consumed, &ev.Lambda, &explored, &summaryJSON, &ev.CreatedAt); err != nil {
+		if err := rows.Scan(&ev.RecallID, &ev.AgentID, &ev.UserID, &ev.SessionKey, &ev.Query, &scoresJSON, &consumed, &ev.Lambda, &explored, &summaryJSON, &ev.CreatedAt, &vote); err != nil {
 			return nil, err
+		}
+		if vote.Valid {
+			v := vote.Int64 != 0
+			ev.Vote = &v
 		}
 		ev.Explored = explored != 0
 		ev.Consumed = consumed != 0
@@ -438,6 +469,44 @@ func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, li
 		out = append(out, ev)
 	}
 	return out, rows.Err()
+}
+
+// PruneRecallEvents deletes memory_recall_events older than `before` (and
+// feedback rows whose event is gone — feedback is only meaningful joined to
+// its event), capped per pass so a large backlog can't pin the write lock.
+// Returns the number of deleted events. Audit data, not source data: the
+// summaries themselves stay.
+func (d *DBStore) PruneRecallEvents(ctx context.Context, before time.Time, cap int) (int64, error) {
+	if cap <= 0 {
+		cap = 1000
+	}
+	delEvents := func() (int64, error) {
+		q := `DELETE FROM memory_recall_events WHERE id IN (
+			SELECT id FROM memory_recall_events WHERE created_at < ? LIMIT ?)`
+		if d.dialect == "postgres" {
+			q = `DELETE FROM memory_recall_events WHERE id IN (
+				SELECT id FROM memory_recall_events WHERE created_at < $1 LIMIT $2)`
+		}
+		res, err := d.db.ExecContext(ctx, q, before, cap)
+		if err != nil {
+			return 0, err
+		}
+		return res.RowsAffected()
+	}
+	n, err := delEvents()
+	if err != nil || n == 0 {
+		return n, err
+	}
+	// Orphaned feedback: no matching event left.
+	fq := `DELETE FROM memory_recall_feedback WHERE recall_id NOT IN (SELECT recall_id FROM memory_recall_events)`
+	if d.dialect == "postgres" {
+		fq = `DELETE FROM memory_recall_feedback WHERE recall_id NOT IN (SELECT recall_id FROM memory_recall_events)`
+	}
+	if _, ferr := d.db.ExecContext(ctx, fq); ferr != nil {
+		// Events are gone; orphan feedback is harmless until the next pass.
+		return n, nil
+	}
+	return n, nil
 }
 
 // PreviewRecall runs a basic recall (FTS + scoring) for the tuning panel's

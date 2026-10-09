@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useState, useCallback, type ReactNode } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useT } from "@/lib/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Database, Sparkles, Search, Loader2 } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   getAgentRecallTuning,
-  setAgentRecallTuning,
-  setAgentRecallMinRelevance,
   getRecentRecalls,
   sendRecallFeedback,
   previewRecall,
@@ -20,21 +25,18 @@ import {
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { PageHeader, SettingsCard, CardHead } from "@/components/settings-ui";
 
-// Per-agent recall-tuning panel — surfaces the otherwise-black-box MMR
-// lambda bandit (current lambda, recall counts, per-lambda feedback) and
-// a test box to preview which summaries a query recalls. Read-only
-// scoring state + a coverage preview (excludes vector/reranker/MMR).
+// Per-agent recall test page — a query box to preview which memories a
+// message recalls, plus the audit list of what the lanes actually injected
+// (👍/👎 still feeds the background lambda bandit). The tuning knobs that
+// used to live here (manual lambda, absolute relevance threshold, MMR
+// formulas, bandit stats) never produced a perceptible effect at personal
+// scale and misled more than they helped — semantic ranking + injection
+// floors decide relevance now, so there is nothing left to tune by hand.
 export default function AgentRecallTuningPage() {
   const t = useT();
   const agentId = useAgentIdFromURL();
   const [state, setState] = useState<RecallTuningState | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // manual lambda override
-  const [lambdaInput, setLambdaInput] = useState("");
-  const [savingLambda, setSavingLambda] = useState(false);
-  const [minRelevance, setMinRelevance] = useState(0);
-  const [savingMinRelevance, setSavingMinRelevance] = useState(false);
 
   // test box
   const [testQuery, setTestQuery] = useState("");
@@ -42,6 +44,9 @@ export default function AgentRecallTuningPage() {
   const [testing, setTesting] = useState(false);
   const [testNote, setTestNote] = useState<string | null>(null);
   const [recalls, setRecalls] = useState<RecallEventView[] | null>(null);
+  // Audit-list time filter (days; 0 = all time). Server-side so the fetch
+  // cap (100) isn't wasted on months of history the filter would hide.
+  const [days, setDays] = useState("0");
 
   const refresh = useCallback(async () => {
     try {
@@ -51,44 +56,18 @@ export default function AgentRecallTuningPage() {
     }
   }, [agentId]);
 
-  const refreshRecalls = useCallback(async () => {
-    const res = await getRecentRecalls(agentId);
+  const refreshRecalls = useCallback(async (d: string) => {
+    const res = await getRecentRecalls(agentId, {
+      limit: 100,
+      days: d === "0" ? undefined : Number(d),
+    });
     setRecalls(res.events ?? []);
   }, [agentId]);
 
   useEffect(() => {
     refresh();
-    refreshRecalls();
-  }, [refresh, refreshRecalls]);
-
-  useEffect(() => {
-    if (state?.mmr_lambda != null) setLambdaInput(state.mmr_lambda.toFixed(2));
-    if (state?.min_relevance != null) setMinRelevance(state.min_relevance);
-  }, [state?.mmr_lambda, state?.min_relevance]);
-
-  const saveLambda = async () => {
-    const v = parseFloat(lambdaInput);
-    if (Number.isNaN(v) || v < 0 || v > 1) return;
-    setSavingLambda(true);
-    try {
-      await setAgentRecallTuning(agentId, v);
-      await refresh();
-    } finally {
-      setSavingLambda(false);
-    }
-  };
-
-  const saveMinRelevance = async (v: number) => {
-    const clamped = Math.max(0, Math.min(1, v));
-    setMinRelevance(clamped);
-    setSavingMinRelevance(true);
-    try {
-      await setAgentRecallMinRelevance(agentId, clamped);
-      await refresh();
-    } finally {
-      setSavingMinRelevance(false);
-    }
-  };
+    refreshRecalls(days);
+  }, [refresh, refreshRecalls, days]);
 
   const runTest = async () => {
     if (!testQuery.trim()) return;
@@ -105,9 +84,18 @@ export default function AgentRecallTuningPage() {
   };
 
   const vote = async (recallId: string, up: boolean) => {
+    // Optimistic mark so the click is visible immediately; the refetch
+    // confirms with the server's latest-vote state.
+    setRecalls((rs) =>
+      rs?.map((rc) =>
+        rc.recall_id === recallId
+          ? { ...rc, vote: up ? ("up" as const) : ("down" as const) }
+          : rc,
+      ) ?? rs,
+    );
     await sendRecallFeedback(recallId, up);
     await refresh();
-    await refreshRecalls();
+    await refreshRecalls(days);
   };
 
   if (loading) return <Skeleton className="h-40 w-full" />;
@@ -119,135 +107,12 @@ export default function AgentRecallTuningPage() {
     );
   }
 
-  const exploreRate = state.total_recalls
-    ? (state.bandit_explored_recalls ?? 0) / state.total_recalls
-    : 0;
-
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
       <PageHeader
         title={t("recallTuning.title")}
         desc={t("recallTuning.description")}
       />
-
-      {/* Stat strip — one card, four columns; dividers instead of
-          per-tile borders so it reads as a single band, not nested
-          cards. */}
-      <SettingsCard>
-        <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 sm:divide-x sm:divide-border">
-          <Stat
-            label={t("recallTuning.currentLambda")}
-            value={state.mmr_lambda?.toFixed(2) ?? "—"}
-            icon={<Sparkles className="h-4 w-4" />}
-          />
-          <Stat
-            label={t("recallTuning.totalRecalls")}
-            value={String(state.total_recalls ?? 0)}
-            icon={<Database className="h-4 w-4" />}
-          />
-          <Stat
-            label={t("recallTuning.consumedRate")}
-            value={
-              state.total_recalls
-                ? `${(((state.consumed_recalls ?? 0) / state.total_recalls) * 100).toFixed(0)}%`
-                : "—"
-            }
-            icon={<Sparkles className="h-4 w-4" />}
-          />
-          <Stat
-            label={t("recallTuning.exploreRate")}
-            value={`${(exploreRate * 100).toFixed(0)}%`}
-            icon={<Sparkles className="h-4 w-4" />}
-          />
-        </div>
-      </SettingsCard>
-
-      <SettingsCard>
-        <CardHead title={t("recallTuning.setLambda")} />
-        <div className="mt-4 flex gap-2">
-          <Input
-            value={lambdaInput}
-            onChange={(e) => setLambdaInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") saveLambda();
-            }}
-            placeholder="0.0 – 1.0"
-          />
-          <Button onClick={saveLambda} disabled={savingLambda || !lambdaInput}>
-            {savingLambda ? <Loader2 className="h-4 w-4 animate-spin" /> : t("recallTuning.save")}
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">{t("recallTuning.lambdaHint")}</p>
-        <div className="mt-3 space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-          <div className="font-mono">{t("recallTuning.formulaMmrRel")}</div>
-          <div className="font-mono">{t("recallTuning.formulaMmrMaxSim")}</div>
-          <div className="font-mono">{t("recallTuning.formulaMmrScore")}</div>
-          <div>{t("recallTuning.formulaMmrBalance")}</div>
-        </div>
-      </SettingsCard>
-
-      <SettingsCard>
-        <CardHead
-          title={t("recallTuning.minRelevance")}
-          control={
-            <span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
-              {savingMinRelevance ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : null}
-              {(minRelevance * 100).toFixed(0)}%
-            </span>
-          }
-        />
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={Math.round(minRelevance * 100)}
-          onChange={(e) => setMinRelevance(Number(e.target.value) / 100)}
-          onPointerUp={() => saveMinRelevance(minRelevance)}
-          onBlur={() => saveMinRelevance(minRelevance)}
-          className="mt-4 w-full accent-primary"
-        />
-        <div className="mt-3 space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-          <div className="font-mono">{t("recallTuning.formulaVec")}</div>
-          <div className="font-mono">{t("recallTuning.formulaRerank")}</div>
-          <div>{t("recallTuning.formulaThreshold")}</div>
-        </div>
-        <p className="mt-2 text-xs text-muted-foreground">{t("recallTuning.minRelevanceHint")}</p>
-      </SettingsCard>
-
-      <SettingsCard>
-        <CardHead title={t("recallTuning.feedbackStats")} />
-        {(state.feedback_stats?.length ?? 0) === 0 ? (
-          <p className="mt-4 text-sm text-muted-foreground">{t("recallTuning.noFeedback")}</p>
-        ) : (
-          <table className="mt-4 w-full text-sm">
-            <thead>
-              <tr className="text-left text-muted-foreground">
-                <th className="py-1">{t("recallTuning.lambda")}</th>
-                <th className="py-1">{t("recallTuning.ups")}</th>
-                <th className="py-1">{t("recallTuning.downs")}</th>
-                <th className="py-1">{t("recallTuning.winRate")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {state.feedback_stats!.map((s) => {
-                const total = s.ups + s.downs;
-                const rate = total ? (s.ups / total) * 100 : 0;
-                return (
-                  <tr key={s.lambda} className="border-t">
-                    <td className="py-1">{s.lambda.toFixed(2)}</td>
-                    <td className="py-1">{s.ups}</td>
-                    <td className="py-1">{s.downs}</td>
-                    <td className="py-1">{rate.toFixed(0)}%</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </SettingsCard>
 
       <SettingsCard>
         <CardHead title={t("recallTuning.testBox")} />
@@ -285,7 +150,30 @@ export default function AgentRecallTuningPage() {
       </SettingsCard>
 
       <SettingsCard>
-        <CardHead title={t("recallTuning.recentRecalls")} />
+        <CardHead
+          title={t("recallTuning.recentRecalls")}
+          control={
+            <div className="flex items-center gap-2">
+              {recalls && (
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {recalls.length}
+                </span>
+              )}
+              <Select value={days} onValueChange={(v) => v && setDays(v)}>
+                <SelectTrigger className="h-7 w-auto text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">{t("recallTuning.filterAll")}</SelectItem>
+                  <SelectItem value="1">{t("recallTuning.filter24h")}</SelectItem>
+                  <SelectItem value="7">{t("recallTuning.filter7d")}</SelectItem>
+                  <SelectItem value="30">{t("recallTuning.filter30d")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          }
+        />
+        <p className="mt-2 text-xs text-muted-foreground">{t("recallTuning.auditNote")}</p>
         {(recalls?.length ?? 0) === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">{t("recallTuning.noRecalls")}</p>
         ) : (
@@ -321,10 +209,18 @@ export default function AgentRecallTuningPage() {
                   </div>
                 ))}
                 <div className="mt-1 flex gap-2">
-                  <Button size="sm" variant="outline" onClick={() => vote(rc.recall_id, true)}>
+                  <Button
+                    size="sm"
+                    variant={rc.vote === "up" ? "default" : "outline"}
+                    onClick={() => vote(rc.recall_id, true)}
+                  >
                     👍
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => vote(rc.recall_id, false)}>
+                  <Button
+                    size="sm"
+                    variant={rc.vote === "down" ? "default" : "outline"}
+                    onClick={() => vote(rc.recall_id, false)}
+                  >
                     👎
                   </Button>
                 </div>
@@ -333,20 +229,6 @@ export default function AgentRecallTuningPage() {
           </ul>
         )}
       </SettingsCard>
-    </div>
-  );
-}
-
-function Stat({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
-  return (
-    // Borderless inside the stat-strip card; the strip's divide-x
-    // separates columns so the tiles don't nest cards.
-    <div className="sm:px-4 sm:first:pl-0 sm:last:pr-0">
-      <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
-        {icon}
-        {label}
-      </div>
-      <div className="text-xl font-semibold">{value}</div>
     </div>
   );
 }

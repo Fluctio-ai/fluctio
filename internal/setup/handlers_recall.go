@@ -3,6 +3,7 @@ package setup
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
@@ -160,30 +161,42 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 		if emb.Available() {
 			hits, err := db.SearchConversationSummariesFTS(ctx, id, req.Query, limit*3)
 			if err == nil {
-				if vecs, e := emb.Embed(ctx, []string{req.Query}); e == nil && len(vecs) == 1 {
-					// Apply the same min_relevance vector-distance filter the
-					// live memory_search tool uses, so the test box reflects reality.
-					minRel, _ := db.GetAgentMinRelevance(ctx, id)
-					if vecScored, ve := db.SearchConversationSummariesVectorScored(ctx, vecs[0], limit*3); ve == nil && len(vecScored) > 0 {
-						var scopedIDs []int64
-						for _, sh := range vecScored {
-							if minRel > 0 && (1/(1+sh.Distance)) < minRel {
-								continue
-							}
-							scopedIDs = append(scopedIDs, sh.ID)
+				vecs, e := emb.Embed(ctx, []string{req.Query})
+				if e != nil || len(vecs) != 1 {
+					// Embedding failed with vectorization on: say so —
+					// don't silently preview keyword-only results as if
+					// the full path ran.
+					note := "embedding call failed — vector recall and MMR excluded (keyword-only preview)"
+					if e != nil {
+						note += ": " + e.Error()
+					}
+					jsonResponse(w, http.StatusOK, map[string]any{
+						"ok": true, "results": formatRecallHits(hits), "mode": "degraded", "note": note,
+					})
+					return
+				}
+				// Apply the same min_relevance vector-distance filter the
+				// live memory_search tool uses, so the test box reflects reality.
+				minRel, _ := db.GetAgentMinRelevance(ctx, id)
+				if vecScored, ve := db.SearchConversationSummariesVectorScored(ctx, vecs[0], limit*3); ve == nil && len(vecScored) > 0 {
+					var scopedIDs []int64
+					for _, sh := range vecScored {
+						if minRel > 0 && (1/(1+sh.Distance)) < minRel {
+							continue
 						}
-						if len(scopedIDs) > 0 {
-							if vecHits, fe := db.GetConversationSummariesByIDs(ctx, scopedIDs); fe == nil {
-								hits = mergeRecallPool(hits, vecHits, id, limit*3)
-							}
+						scopedIDs = append(scopedIDs, sh.ID)
+					}
+					if len(scopedIDs) > 0 {
+						if vecHits, fe := db.GetConversationSummariesByIDs(ctx, scopedIDs); fe == nil {
+							hits = mergeRecallPool(hits, vecHits, id, limit*3)
 						}
 					}
-					if len(hits) > limit {
-						if embMap, ee := db.GetConversationSummaryEmbeddings(ctx, recallHitIDs(hits)); ee == nil && len(embMap) >= limit {
-							lambda, _ := db.GetAgentMMRLambda(ctx, id)
-							if mmr := tools.SelectMMR(hits, embMap, vecs[0], lambda, limit); len(mmr) >= limit {
-								hits = mmr
-							}
+				}
+				if len(hits) > limit {
+					if embMap, ee := db.GetConversationSummaryEmbeddings(ctx, recallHitIDs(hits)); ee == nil && len(embMap) >= limit {
+						lambda, _ := db.GetAgentMMRLambda(ctx, id)
+						if mmr := tools.SelectMMR(hits, embMap, vecs[0], lambda, limit); len(mmr) >= limit {
+							hits = mmr
 						}
 					}
 				}
@@ -298,7 +311,24 @@ func (s *Server) handleListRecallEvents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ctx := r.Context()
-	events, err := db.ListRecentRecallEvents(ctx, id, 20)
+	// ?limit= caps the audit list (default 100 — the page filters by time
+	// client-side too); ?days=0 shows all time, >0 only the last N days.
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	days := 0
+	if v := r.URL.Query().Get("days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			days = n
+		}
+	}
+	events, err := db.ListRecentRecallEvents(ctx, id, limit, days)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -336,11 +366,20 @@ func (s *Server) handleListRecallEvents(w http.ResponseWriter, r *http.Request) 
 				sums = append(sums, item)
 			}
 		}
-		out = append(out, map[string]any{
+		item := map[string]any{
 			"recall_id": ev.RecallID, "lambda": ev.Lambda, "bandit_explored": ev.Explored,
 			"query": ev.Query, "session_key": ev.SessionKey, "consumed": ev.Consumed,
 			"created_at": ev.CreatedAt, "summaries": sums,
-		})
+		}
+		// Current vote state (latest 👍/👎), so the UI can mark voted rows.
+		if ev.Vote != nil {
+			if *ev.Vote {
+				item["vote"] = "up"
+			} else {
+				item["vote"] = "down"
+			}
+		}
+		out = append(out, item)
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "events": out})
 }

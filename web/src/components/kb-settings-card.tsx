@@ -16,7 +16,7 @@ import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { SaveButton } from "@/components/save-button";
-import { SettingsCard, CardHead, Field, GroupLabel, GroupHead, NumberField } from "@/components/settings-ui";
+import { SettingsCard, CardHead, Field, GroupLabel, GroupHead, NumberField, ToggleRow } from "@/components/settings-ui";
 import { channelLabel } from "@/components/channel-icon";
 import { BookOpen } from "lucide-react";
 
@@ -89,6 +89,13 @@ export function KBSettingsCard() {
   const [ftKeywords, setFtKeywords] = useState("");
   const [ftMaxResults, setFtMaxResults] = useState(3);
   const [ftThreshold, setFtThreshold] = useState(0.6);
+  // Memory lane — runs OUTSIDE the KB gate (a KB-disabled agent still
+  // recalls conversation summaries), so its controls render regardless of
+  // the card's master switch.
+  const [memAutoMode, setMemAutoMode] = useState("always");
+  const [memKeywords, setMemKeywords] = useState("");
+  const [memMaxResults, setMemMaxResults] = useState(3);
+  const [memRerank, setMemRerank] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
 
   useEffect(() => {
@@ -114,6 +121,10 @@ export function KBSettingsCard() {
           setFtKeywords((kb.flashTodoKeywords ?? []).join(", "));
           setFtMaxResults(kb.flashTodoMaxResults || 3);
           setFtThreshold(kb.flashTodoThreshold ?? 0.6);
+          setMemAutoMode(kb.memoryAutoMode || "always");
+          setMemKeywords((kb.memoryKeywords ?? []).join(", "));
+          setMemMaxResults(kb.memoryMaxResults || 3);
+          setMemRerank(kb.memoryRerank ?? false);
         }
         setConfigLoaded(true);
       })
@@ -147,6 +158,13 @@ export function KBSettingsCard() {
           .filter(Boolean),
         flashTodoMaxResults: ftMaxResults,
         flashTodoThreshold: ftThreshold,
+        memoryAutoMode: memAutoMode,
+        memoryKeywords: memKeywords
+          .split(/[,\n]/)
+          .map((s) => s.trim())
+          .filter(Boolean),
+        memoryMaxResults: memMaxResults,
+        memoryRerank: memRerank,
       },
     } as any);
     if (res?.error) throw new Error(res.error);
@@ -169,6 +187,10 @@ export function KBSettingsCard() {
     ftKeywords,
     ftMaxResults,
     ftThreshold,
+    memAutoMode,
+    memKeywords,
+    memMaxResults,
+    memRerank,
   ]);
 
   // Keyword mode is a contract: no keywords = recall silently never
@@ -179,6 +201,7 @@ export function KBSettingsCard() {
     kbEnabled && autoMode === "keyword" && !keywords.trim();
   const ftKeywordsInvalid =
     kbEnabled && ftEnabled && ftAutoMode === "keyword" && !ftKeywords.trim();
+  const memKeywordsInvalid = memAutoMode === "keyword" && !memKeywords.trim();
 
   return (
     <SettingsCard className="space-y-4">
@@ -194,6 +217,40 @@ export function KBSettingsCard() {
           />
         }
       />
+
+      {/* Memory recall — always visible: the lane runs outside the KB gate,
+          so its trigger mode is the control, not a switch. This is the
+          [MEM] injection every message carries. */}
+      <div className="space-y-4 border-t border-border pt-4">
+        <GroupHead title={t("knowledge.memoryRecall")} desc={t("knowledge.memoryRecallDesc")} />
+        <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
+          <Tabs value={memAutoMode} onValueChange={(v) => v && setMemAutoMode(v)}>
+            <TabsList>
+              {modeOptions.map((o) => (
+                <TabsTrigger key={o.value} value={o.value}>
+                  {o.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </Field>
+        {memAutoMode !== "disabled" && (
+          <Field label={t("knowledge.maxResults")}>
+            <NumberField min={1} max={10} value={memMaxResults} onChange={setMemMaxResults} />
+          </Field>
+        )}
+        {memAutoMode !== "disabled" && (
+          <ToggleRow
+            title={t("knowledge.memRerank")}
+            hint={t("knowledge.memRerankDesc")}
+            checked={memRerank}
+            onCheckedChange={setMemRerank}
+          />
+        )}
+        {memAutoMode === "keyword" && (
+          <KeywordField value={memKeywords} onChange={setMemKeywords} invalid={memKeywordsInvalid} />
+        )}
+      </div>
 
       {kbEnabled && (
         <div className="space-y-4 border-t border-border pt-4">
@@ -243,25 +300,9 @@ export function KBSettingsCard() {
               type="range"
               min={0}
               max={100}
-              step={10}
+              step={5}
               value={Math.round(wikiRatio * 100)}
               onChange={(e) => setWikiRatio(Number(e.target.value) / 100)}
-              className="w-full accent-primary"
-            />
-          </Field>
-
-          <Field
-            label={t("knowledge.threshold")}
-            hint={t("knowledge.thresholdDesc")}
-            labelTrailing={threshold.toFixed(2)}
-          >
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={threshold}
-              onChange={(e) => setThreshold(Number(e.target.value))}
               className="w-full accent-primary"
             />
           </Field>
@@ -295,21 +336,6 @@ export function KBSettingsCard() {
                     onChange={setFtMaxResults}
                   />
                 </Field>
-                <Field
-                  label={t("knowledge.threshold")}
-                  hint={t("knowledge.ftThresholdDesc")}
-                  labelTrailing={ftThreshold.toFixed(2)}
-                >
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={ftThreshold}
-                    onChange={(e) => setFtThreshold(Number(e.target.value))}
-                    className="w-full accent-primary"
-                  />
-                </Field>
                 {ftAutoMode === "keyword" && (
                   <KeywordField
                     value={ftKeywords}
@@ -319,6 +345,49 @@ export function KBSettingsCard() {
                 )}
               </>
             )}
+          </div>
+
+          {/* Recall floors live together, not inside each group: they share
+              one semantic (below floor → don't inject) and one tuning
+              occasion ("too noisy / missing hits"), and scattering them
+              across lanes made each look like an independent knob. */}
+          <div className="space-y-4 border-t border-border pt-4">
+            <GroupHead
+              title={t("knowledge.advThresholds")}
+              desc={t("knowledge.advThresholdsDesc")}
+            />
+            <div className="grid grid-cols-2 gap-4">
+              <Field
+                label={t("knowledge.wikiThresholdLabel")}
+                hint={t("knowledge.thresholdDesc")}
+                labelTrailing={threshold.toFixed(2)}
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={threshold}
+                  onChange={(e) => setThreshold(Number(e.target.value))}
+                  className="w-full accent-primary"
+                />
+              </Field>
+              <Field
+                label={t("knowledge.ftThresholdLabel")}
+                hint={t("knowledge.ftThresholdDesc")}
+                labelTrailing={ftThreshold.toFixed(2)}
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={ftThreshold}
+                  onChange={(e) => setFtThreshold(Number(e.target.value))}
+                  className="w-full accent-primary"
+                />
+              </Field>
+            </div>
           </div>
 
           {/* Search behavior + todo reminders each get their own labeled
@@ -392,7 +461,7 @@ export function KBSettingsCard() {
       <div className="flex justify-end border-t border-border pt-4">
         <SaveButton
           onSave={handleSave}
-          disabled={!configLoaded || wikiKeywordsInvalid || ftKeywordsInvalid}
+          disabled={!configLoaded || wikiKeywordsInvalid || ftKeywordsInvalid || memKeywordsInvalid}
         />
       </div>
     </SettingsCard>

@@ -1749,6 +1749,13 @@ export interface AgentKBCfg {
   flashTodoKeywords?: string[];
   flashTodoMaxResults?: number;
   flashTodoThreshold?: number;
+  // Memory auto-recall group — conversation summaries injected per message.
+  // Runs outside the KB gate (enabled !== required); empty mode = "always".
+  memoryAutoMode?: string;
+  memoryKeywords?: string[];
+  memoryMaxResults?: number;
+  /** Opt the [MEM] lane into the cross-encoder final cut (2× over-fetch → rerank → top-N). */
+  memoryRerank?: boolean;
   /** IM channel for due-todo reminders (wechat/qq/telegram/...). Default wechat. */
   reminderChannel?: string;
   // Dedup thresholds for inbound KB writes (nil/undefined = built-in default
@@ -2499,11 +2506,18 @@ export type RecallEventView = {
   consumed?: boolean;
   created_at: string;
   summaries: RecallSummaryPreview[];
+  /** Latest 👍/👎 on this event (absent = not voted). */
+  vote?: "up" | "down";
 };
 export async function getRecentRecalls(
   agentId: string,
+  opts?: { limit?: number; days?: number },
 ): Promise<{ ok?: boolean; events?: RecallEventView[]; error?: string }> {
-  const res = await apiFetch(`/api/agents/${agentId}/recall-events`);
+  const qs = new URLSearchParams();
+  if (opts?.limit) qs.set("limit", String(opts.limit));
+  if (opts?.days) qs.set("days", String(opts.days));
+  const suffix = qs.size ? `?${qs.toString()}` : "";
+  const res = await apiFetch(`/api/agents/${agentId}/recall-events${suffix}`);
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
   return res.json().catch(() => ({ ok: false }));
 }

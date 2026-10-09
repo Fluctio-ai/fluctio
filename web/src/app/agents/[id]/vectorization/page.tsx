@@ -408,11 +408,11 @@ export default function AgentMemoryPage() {
           {wikiEmbedding && (
             <>
               <Field
-                label={t("memory.wikiThreshold") || "相似度阈值"}
-                hint={t("memory.wikiThresholdDesc") || "wiki 生成与搜索时的 cosine 门槛；越高越严格（结果更少更准）。默认 0.45。"}
+                label={t("memory.wikiThreshold") || "Wiki 生成参考门槛"}
+                hint={t("memory.wikiThresholdDesc") || "自动生成 wiki 页时，会把已有页面作为参考喂给生成模型（帮新页面归类、建立关联）。只有语义相似度 ≥ 此值的已有页面才入选参考清单；低于它的只是不进参考，新页面照常生成。默认 0.45。"}
                 labelTrailing={wikiThreshold.toFixed(2)}
               >
-                <input type="range" min="0" max="1" step="0.05" value={wikiThreshold}
+                <input type="range" min="0" max="1" step="0.01" value={wikiThreshold}
                   onChange={(e) => setWikiThreshold(parseFloat(e.target.value))}
                   className="w-full accent-primary" />
               </Field>

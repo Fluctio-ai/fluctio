@@ -884,6 +884,15 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runSessionEventsRetention(ctx)
 	}()
+	// recall-event audit retention: memory_recall_events is one row per
+	// recalled message (the [MEM] lane records these too), so it grows
+	// steadily; anything older than the window has no audit value.
+	// Disabled when FLUCTIO_RECALL_EVENTS_RETENTION_HOURS<=0.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runRecallEventRetention(ctx)
+	}()
 	// memory consolidation: daily deterministic prune of conversation
 	// summaries (supersede purge, stale episodic eviction, per-agent
 	// quota). Disabled when FLUCTIO_MEMORY_CONSOLIDATION_HOURS<=0.

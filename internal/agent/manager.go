@@ -258,6 +258,10 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		// Wire the relational store onto the tool registry so memory_search
 		// + fetch_messages can query conversation_summaries / session_messages.
 		// *store.DBStore satisfies the tools.Searcher interfaces implicitly.
+		// reranker is hoisted out of the store block below so the [MEM]
+		// lane's searcher shares the registry's instance (one reranker,
+		// one place it's built).
+		var reranker embedding.Reranker
 		if db, ok := m.opts.dataStore.(*store.DBStore); ok {
 			ag.registry.SetMessageFetcher(db)
 			ag.registry.SetSummarySearcher(db)
@@ -303,7 +307,8 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				}
 				if vec.Reranker.Enabled {
 					rr := vec.Reranker
-					ag.registry.SetReranker(embedding.NewJinaReranker(rr.APIBase, rr.APIKey, rr.Model))
+					reranker = embedding.NewJinaReranker(rr.APIBase, rr.APIKey, rr.Model)
+					ag.registry.SetReranker(reranker)
 				}
 			}
 		}
@@ -319,10 +324,22 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		// the relational store. Memory recall is a memory feature, not a
 		// KB one, so it and the auto-query hook below sit outside the KB
 		// gate — a KB-disabled agent still recalls conversation summaries.
+		// The searcher is semantic when the agent has an embedder: FTS
+		// gathers candidates, cosine re-ranks, injection floors drop the
+		// unclear ones (silence over junk); FTS order stands only when
+		// vectorization is off, where it is the designed path.
 		var memSearch kb.MemoryAutoSearcher
 		if db, ok := m.opts.dataStore.(*store.DBStore); ok && db != nil {
 			memSearch = func(ctx context.Context, agentID, query string, limit int) ([]kb.MemoryRecallHit, error) {
-				hits, err := db.SearchConversationSummariesFTS(ctx, agentID, query, limit)
+				// Cross-encoder final cut is opt-in (kb.memoryRerank): one
+				// extra rerank call per message buys better ordering among
+				// the floor-survivors. rc.KB read per call so the toggle is
+				// live without a rebuild.
+				useRR := reranker
+				if rc.KB == nil || !rc.KB.MemoryRerank {
+					useRR = nil
+				}
+				hits, err := tools.SemanticMemRecall(ctx, db, ag.embedder, useRR, agentID, m.uid, query, limit)
 				if err != nil {
 					return nil, err
 				}
@@ -393,14 +410,10 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					}
 					return 0.5
 				}, func() float64 {
-					// Prefer the vectorization-page WikiThreshold (unified
-					// wiki recall cutoff); fall back to the legacy KB-config
-					// Threshold, then the 0.45 default.
-					var v config.VectorCfg
-					_ = scope.SettingInto(context.Background(), m.opts.dataStore, "vectorization", m.uid, rc.ID, &v)
-					if v.WikiThreshold > 0 {
-						return v.WikiThreshold
-					}
+					// The KB-config Threshold is the single recall gate — one
+					// home: the Knowledge tab's advanced thresholds group. The
+					// vectorization page's wikiThreshold is generation-only
+					// (wiki autogen), never a recall knob.
 					if kbCfg.Threshold != nil {
 						return *kbCfg.Threshold
 					}
@@ -438,10 +451,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					return kb.AutoQueryCfg{}
 				}
 				threshold := 0.45
-				var v config.VectorCfg
-				if scope.SettingInto(context.Background(), m.opts.dataStore, "vectorization", m.uid, rc.ID, &v) == nil && v.WikiThreshold > 0 {
-					threshold = v.WikiThreshold
-				} else if kbCfg.Threshold != nil {
+				if kbCfg.Threshold != nil {
 					threshold = *kbCfg.Threshold
 				}
 				ftThreshold := 0.6

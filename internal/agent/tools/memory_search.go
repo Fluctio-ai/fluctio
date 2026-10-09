@@ -219,28 +219,41 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 				// is monotonic in distance, a coarse far-hit gate; the
 				// cross-encoder reranker does the precise gate downstream).
 				if r.vecDB != nil && r.embedder != nil && r.embedder.Available() {
+					// Vectorization is configured, so the vector lane is a
+					// first-class path, not an enhancement. A failed embed or
+					// KNN fails the tool instead of silently degrading to
+					// keyword-only results — silent degradation was the
+					// junk-recall root cause (2026-10-09). Keyword recall is
+					// the designed path only when no embedder is configured.
 					vecs, embErr := r.embedder.Embed(ctx, []string{args.Query})
-					if embErr == nil && len(vecs) == 1 {
-						queryEmb = vecs[0]
-						vecScored, vecErr := r.vecDB.SearchConversationSummariesVectorScored(ctx, vecs[0], poolSize)
-						if vecErr == nil && len(vecScored) > 0 {
-							minRel := r.memoryMinRelevance()
-							var scopedIDs []int64
-							for _, sh := range vecScored {
-								if minRel > 0 && (1/(1+sh.Distance)) < minRel {
-									continue
-								}
-								scopedIDs = append(scopedIDs, sh.ID)
+					if embErr != nil || len(vecs) != 1 {
+						if embErr == nil {
+							embErr = fmt.Errorf("unexpected embedding count %d", len(vecs))
+						}
+						return "", fmt.Errorf("vector recall unavailable, refusing keyword-only degradation: %w", embErr)
+					}
+					queryEmb = vecs[0]
+					vecScored, vecErr := r.vecDB.SearchConversationSummariesVectorScored(ctx, vecs[0], poolSize)
+					if vecErr != nil {
+						return "", fmt.Errorf("vector recall unavailable, refusing keyword-only degradation: %w", vecErr)
+					}
+					if len(vecScored) > 0 {
+						minRel := r.memoryMinRelevance()
+						var scopedIDs []int64
+						for _, sh := range vecScored {
+							if minRel > 0 && (1/(1+sh.Distance)) < minRel {
+								continue
 							}
-							if len(scopedIDs) > 0 {
-								// Active-only fetch (agent + superseded filters live
-								// in the store now): a state flip (installed→removed)
-								// must not surface both sides as equally valid
-								// memories.
-								vecHits, fetchErr := r.vecDB.GetActiveSummariesByIDs(ctx, r.agentID, scopedIDs)
-								if fetchErr == nil {
-									hits = mergeSummaryResults(hits, vecHits, poolSize)
-								}
+							scopedIDs = append(scopedIDs, sh.ID)
+						}
+						if len(scopedIDs) > 0 {
+							// Active-only fetch (agent + superseded filters live
+							// in the store now): a state flip (installed→removed)
+							// must not surface both sides as equally valid
+							// memories.
+							vecHits, fetchErr := r.vecDB.GetActiveSummariesByIDs(ctx, r.agentID, scopedIDs)
+							if fetchErr == nil {
+								hits = mergeSummaryResults(hits, vecHits, poolSize)
 							}
 						}
 					}
@@ -477,6 +490,138 @@ func applyRelativeFloor(hits []store.ConversationSummary, scores map[int64]float
 		}
 	}
 	return out
+}
+
+// memInjectAbsFloor is the absolute cosine floor for the [MEM] auto-recall
+// injection lane. Auto-recall is unrequested context: a hit must beat this
+// floor AND the relative floor (recallRelFloorAlpha × best) to be injected
+// at all — when nothing qualifies the lane stays silent (the owner's
+// explicit preference: no junk over silence). 0.5 sits above the noise band
+// the 2026-08-18 audit caught ("小毛驴飞天图片" cleared a 0.45 gate for
+// "芃芃 学习") while keeping the genuine hits observed on bge-m3
+// (0.53–0.65 for related query/summary pairs).
+const memInjectAbsFloor = 0.5
+
+// SemanticMemRecall is the [MEM] auto-recall lane's searcher. FTS gathers a
+// broad candidate pool; when an embedder is configured the query embedding
+// re-ranks candidates by cosine and the injection floors drop everything not
+// clearly relevant. Survivors (up to 2× limit) then go through the
+// cross-encoder when one is configured — the reranker picks the final top-K
+// order, so the lane gets precision at the cost of one rerank call per
+// message. Without an embedder, plain FTS order stands: vector off means
+// lexical IS the designed path, not a degradation. Recall events are
+// recorded on the semantic path so the tuning page audits what the user
+// actually sees injected.
+func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Embedder, rr embedding.Reranker, agentID, userID, query string, limit int) ([]store.ConversationSummary, error) {
+	poolLimit := limit * 3
+	if poolLimit < 10 {
+		poolLimit = 10
+	}
+	hits, err := db.SearchConversationSummariesFTS(ctx, agentID, query, poolLimit)
+	if err != nil {
+		return nil, err
+	}
+	if emb == nil || !emb.Available() {
+		if len(hits) > limit {
+			hits = hits[:limit]
+		}
+		return hits, nil
+	}
+	vecs, embErr := emb.Embed(ctx, []string{query})
+	if embErr != nil || len(vecs) != 1 {
+		// Vector is configured but the call failed: no silent lexical
+		// degradation — return the error; the hook injects nothing.
+		if embErr == nil {
+			embErr = fmt.Errorf("unexpected embedding count %d", len(vecs))
+		}
+		return nil, fmt.Errorf("embedding failed: %w", embErr)
+	}
+	embMap, _ := db.GetConversationSummaryEmbeddings(ctx, summaryIDs(hits))
+	type scoredHit struct {
+		hit store.ConversationSummary
+		cos float64
+	}
+	scored := make([]scoredHit, 0, len(hits))
+	for _, h := range hits {
+		// Summaries without embeddings can't be judged — drop rather than
+		// inject unverified.
+		if v, ok := embMap[h.ID]; ok && len(v) == len(vecs[0]) {
+			scored = append(scored, scoredHit{h, cosineSim(vecs[0], v)})
+		}
+	}
+	if len(scored) == 0 {
+		return nil, nil
+	}
+	sort.Slice(scored, func(i, j int) bool { return scored[i].cos > scored[j].cos })
+	floor := memInjectAbsFloor
+	if rel := recallRelFloorAlpha * scored[0].cos; rel > floor {
+		floor = rel
+	}
+	// Survivors pass the floors; over-fetch 2× the limit so the reranker
+	// (when configured) chooses the final cut from real alternatives
+	// rather than ratifying cosine's first picks.
+	overFetch := limit * 2
+	kept := make([]store.ConversationSummary, 0, overFetch)
+	scores := make(map[int64]float64, overFetch)
+	for _, sh := range scored {
+		if sh.cos < floor {
+			break
+		}
+		kept = append(kept, sh.hit)
+		// Audit scores stay on the cosine scale (the floor's scale) even
+		// when a reranker reorders — mixing scales in one column would
+		// make threshold calibration meaningless.
+		scores[sh.hit.ID] = math.Round(sh.cos*10000) / 10000
+		if len(kept) >= overFetch {
+			break
+		}
+	}
+	if len(kept) == 0 {
+		return nil, nil
+	}
+	// Cross-encoder final cut: rerank the survivors, keep top `limit`.
+	// Relevance was already gated by the cosine floors, so a rerank
+	// failure degrades only the ORDER (fall back to cosine order), never
+	// the silence guarantee.
+	if rr != nil && rr.Available() && len(kept) > 1 {
+		docs := make([]string, len(kept))
+		for i, h := range kept {
+			docs[i] = h.Summary
+		}
+		if reranked, rerr := rr.Rerank(ctx, query, docs, limit); rerr == nil && len(reranked) > 0 {
+			ordered := reorderByRerank(kept, reranked)
+			if len(ordered) > limit {
+				ordered = ordered[:limit]
+			}
+			kept = ordered
+		}
+	}
+	if len(kept) > limit {
+		kept = kept[:limit]
+	}
+	// Trim audit scores to what was actually injected.
+	for id := range scores {
+		injected := false
+		for _, h := range kept {
+			if h.ID == id {
+				injected = true
+				break
+			}
+		}
+		if !injected {
+			delete(scores, id)
+		}
+	}
+	_ = db.InsertRecallEvent(ctx, store.RecallEvent{
+		RecallID:   newRecallID(),
+		AgentID:    agentID,
+		UserID:     userID,
+		Query:      query,
+		Scores:     scores,
+		Lambda:     store.DefaultMMRLambda,
+		SummaryIDs: summaryIDs(kept),
+	})
+	return kept, nil
 }
 
 // reorderByRerank reorders hits according to the reranker's scored indices.

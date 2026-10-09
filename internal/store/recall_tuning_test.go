@@ -105,8 +105,9 @@ func TestInsertRecallEvent(t *testing.T) {
 		t.Errorf("scores round-trip = %v, want {10:0.83 20:0.51 30:0.42}", backScores)
 	}
 
-	// ListRecentRecallEvents must return the audit columns too.
-	events, err := db.ListRecentRecallEvents(ctx, "agent-1", 5)
+	// ListRecentRecallEvents must return the audit columns too (days=0: no
+	// time filter).
+	events, err := db.ListRecentRecallEvents(ctx, "agent-1", 5, 0)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

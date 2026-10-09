@@ -172,8 +172,12 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 	otherLimit := limit - sourceLimit
 
 	// Vector path: when an embedder is wired up, recall by semantic
-	// similarity and (optionally) cross-encoder re-rank. Falls through to
-	// the keyword path on any failure (off / unconfigured / empty store).
+	// similarity and (optionally) cross-encoder re-rank. An empty result
+	// set is a valid verdict — "nothing relevant" — and does NOT fall back
+	// to the keyword path: silent lexical degradation was the source of
+	// junk injections (2026-10-09, threshold-filtered vector lanes fell
+	// through to bigram-overlap junk every turn). The keyword path runs
+	// only when no embedder is configured, where it is the designed path.
 	if s.embedder != nil && s.embedder.Available() {
 		wikiRR := s.searchWikiByVector(ctx, agentID, query, limit, preFilterLimit, threshold)
 		// Flash/todo sources skip wiki generation, so searchWikiByVector can't
@@ -184,23 +188,22 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 		// a saved link can surface with the rest. Vector-only (no keyword
 		// fallback) — matches flash/todo's split-search treatment.
 		bmRR := s.searchBookmarksByVector(ctx, agentID, query, limit, threshold)
-		if len(wikiRR) > 0 || len(ftRR) > 0 || len(bmRR) > 0 {
-			merged := mergeKBResults(wikiRR, ftRR, limit)
-			if len(bmRR) > 0 {
-				merged = mergeKBResults(merged, bmRR, limit)
-			}
-			slog.Info("kb search: vector path (wiki+flash/todo+bookmark)", "agent", agentID, "wiki", len(wikiRR), "flashtodo", len(ftRR), "bookmark", len(bmRR), "results", len(merged))
-			return merged, nil
+		merged := mergeKBResults(wikiRR, ftRR, limit)
+		if len(bmRR) > 0 {
+			merged = mergeKBResults(merged, bmRR, limit)
 		}
+		slog.Info("kb search: vector path (wiki+flash/todo+bookmark)", "agent", agentID, "wiki", len(wikiRR), "flashtodo", len(ftRR), "bookmark", len(bmRR), "results", len(merged))
+		return merged, nil
 	}
 
-	// Wiki-only fallback (no embedder): source pages + concept/entity/query
-	// pages, each bigram-scored within its bucket. kb_entries (article chunks)
-	// is NOT searched here — it's exposed as a separate on-demand tool
-	// (SearchRawKB) for when wiki's summary isn't detailed enough. Flashes and
-	// todos don't live in wiki, so searchWikiByType alone would miss them —
-	// recall them by keyword and merge so they stay discoverable even without
-	// vectorization (the vector path above covers them when an embedder is on).
+	// Keyword path — only without an embedder: source pages +
+	// concept/entity/query pages, each bigram-scored within its bucket.
+	// kb_entries (article chunks) is NOT searched here — it's exposed as a
+	// separate on-demand tool (SearchRawKB) for when wiki's summary isn't
+	// detailed enough. Flashes and todos don't live in wiki, so
+	// searchWikiByType alone would miss them — recall them by keyword and
+	// merge so they stay discoverable even without vectorization (the
+	// vector path above covers them when an embedder is on).
 	results := s.searchWikiByType(ctx, agentID, query, sourceLimit, otherLimit, preFilterLimit, threshold)
 	if ftRR := s.searchFlashTodoByKeyword(ctx, agentID, query, limit, threshold); len(ftRR) > 0 {
 		results = mergeKBResults(results, ftRR, limit)
@@ -238,12 +241,11 @@ func (s *KBStore) SearchSplit(ctx context.Context, agentID, query string, wikiLi
 	var results []KBResult
 	if wikiLimit > 0 {
 		if s.embedder != nil && s.embedder.Available() {
-			if vv := s.searchWikiByVector(ctx, agentID, query, wikiLimit, 0, wikiThreshold); len(vv) > 0 {
-				results = append(results, vv...)
-			} else {
-				sourceLimit := int(math.Round(float64(wikiLimit) * 0.5))
-				results = append(results, s.searchWikiByType(ctx, agentID, query, sourceLimit, wikiLimit-sourceLimit, 0, wikiThreshold)...)
-			}
+			// Vector verdict is final: empty means "nothing relevant" — no
+			// lexical fallback while vectorization is on (the fallback was
+			// the junk-injection source whenever the threshold filtered the
+			// vector lane empty).
+			results = append(results, s.searchWikiByVector(ctx, agentID, query, wikiLimit, 0, wikiThreshold)...)
 		} else {
 			sourceLimit := int(math.Round(float64(wikiLimit) * 0.5))
 			results = append(results, s.searchWikiByType(ctx, agentID, query, sourceLimit, wikiLimit-sourceLimit, 0, wikiThreshold)...)
@@ -268,13 +270,14 @@ func (s *KBStore) SearchRawKB(ctx context.Context, agentID, query string, source
 	}
 	sourceIDs = s.resolveSourceIDs(ctx, agentID, sourceIDs)
 	// Vector path: when an embedder is wired, cosine-search chunk vectors
-	// within the requested sources (and optionally re-rank). Falls back to
-	// keyword LIKE on any failure (off / unconfigured / empty store).
+	// within the requested sources (and optionally re-rank). Empty is a
+	// valid verdict — no keyword fallback while vectorization is on; the
+	// LIKE path below serves the no-embedder configuration (and the
+	// query-less "list the source's chunks" form).
 	if s.embedder != nil && s.embedder.Available() && strings.TrimSpace(query) != "" {
-		if rr := s.searchRawByVector(ctx, agentID, query, sourceIDs, limit); len(rr) > 0 {
-			slog.Info("kb raw search: vector path", "agent", agentID, "results", len(rr))
-			return rr, nil
-		}
+		rr := s.searchRawByVector(ctx, agentID, query, sourceIDs, limit)
+		slog.Info("kb raw search: vector path", "agent", agentID, "results", len(rr))
+		return rr, nil
 	}
 	return s.searchLike(ctx, agentID, query, sourceIDs, limit)
 }
