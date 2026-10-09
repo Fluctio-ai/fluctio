@@ -64,10 +64,16 @@ export default function AgentRecallTuningPage() {
     setRecalls(res.events ?? []);
   }, [agentId]);
 
+  // The tuning fetch is an availability probe (the page renders no stats),
+  // so it runs once on mount; the audit list refetches when the filter
+  // changes.
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  useEffect(() => {
     refreshRecalls(days);
-  }, [refresh, refreshRecalls, days]);
+  }, [refreshRecalls, days]);
 
   const runTest = async () => {
     if (!testQuery.trim()) return;
@@ -94,7 +100,6 @@ export default function AgentRecallTuningPage() {
       ) ?? rs,
     );
     await sendRecallFeedback(recallId, up);
-    await refresh();
     await refreshRecalls(days);
   };
 

@@ -4,9 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -100,17 +97,4 @@ func workflowRetentionHours() (success, failed int) {
 // (a form may wait forever).
 func workflowFormTimeoutHours() int {
 	return readRetentionHours("FLUCTIO_WORKFLOW_FORM_TIMEOUT_HOURS", 24)
-}
-
-func readRetentionHours(env string, def int) int {
-	v := strings.TrimSpace(os.Getenv(env))
-	if v == "" {
-		return def
-	}
-	h, err := strconv.Atoi(v)
-	if err != nil {
-		slog.Warn("invalid env, disabling sweep", "env", env, "value", v)
-		return -1
-	}
-	return h
 }

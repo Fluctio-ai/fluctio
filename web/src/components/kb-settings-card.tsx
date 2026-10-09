@@ -235,17 +235,17 @@ export function KBSettingsCard() {
           </Tabs>
         </Field>
         {memAutoMode !== "disabled" && (
-          <Field label={t("knowledge.maxResults")}>
-            <NumberField min={1} max={10} value={memMaxResults} onChange={setMemMaxResults} />
-          </Field>
-        )}
-        {memAutoMode !== "disabled" && (
-          <ToggleRow
-            title={t("knowledge.memRerank")}
-            hint={t("knowledge.memRerankDesc")}
-            checked={memRerank}
-            onCheckedChange={setMemRerank}
-          />
+          <>
+            <Field label={t("knowledge.maxResults")}>
+              <NumberField min={1} max={10} value={memMaxResults} onChange={setMemMaxResults} />
+            </Field>
+            <ToggleRow
+              title={t("knowledge.memRerank")}
+              hint={t("knowledge.memRerankDesc")}
+              checked={memRerank}
+              onCheckedChange={setMemRerank}
+            />
+          </>
         )}
         {memAutoMode === "keyword" && (
           <KeywordField value={memKeywords} onChange={setMemKeywords} invalid={memKeywordsInvalid} />

@@ -56,6 +56,9 @@ func (d *DBStore) migrateRecallTuning(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_recall_event_recall_id ON memory_recall_events(recall_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_recall_event_agent ON memory_recall_events(agent_id, created_at)`,
+		// The retention sweep prunes by created_at alone (no agent
+		// predicate), which the composite agent index can't serve.
+		`CREATE INDEX IF NOT EXISTS idx_recall_event_created ON memory_recall_events(created_at)`,
 		`CREATE TABLE IF NOT EXISTS memory_recall_feedback (
 			id         INTEGER PRIMARY KEY,
 			recall_id  TEXT NOT NULL,
@@ -408,33 +411,21 @@ func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, li
 	voteSub := `(SELECT f.up FROM memory_recall_feedback f
 		WHERE f.recall_id = memory_recall_events.recall_id
 		ORDER BY f.id DESC LIMIT 1)`
-	// Optional time filter; placeholder index is dialect-dependent.
-	whereTime := ""
 	args := []any{agentID}
+	whereTime := ""
 	if days > 0 {
+		// created_at is a CURRENT_TIMESTAMP string — compare in the same
+		// "YYYY-MM-DD HH:MM:SS" UTC shape (see PruneSessionEvents) so the
+		// filter doesn't depend on driver time.Time serialization.
 		before := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
-		if d.dialect == "postgres" {
-			whereTime = fmt.Sprintf(" AND created_at > $%d", len(args)+1)
-		} else {
-			whereTime = " AND created_at > ?"
-		}
-		args = append(args, before)
+		whereTime = " AND created_at > " + d.ph(len(args)+1)
+		args = append(args, before.UTC().Format("2006-01-02 15:04:05"))
 	}
-	limitPh := "?"
-	if d.dialect == "postgres" {
-		limitPh = fmt.Sprintf("$%d", len(args)+1)
-	}
-	args = append(args, limit)
 	q := `SELECT recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids, created_at, ` + voteSub + `
 		FROM memory_recall_events
-		WHERE agent_id = ?` + whereTime + `
-		ORDER BY created_at DESC LIMIT ` + limitPh
-	if d.dialect == "postgres" {
-		q = `SELECT recall_id, agent_id, user_id, session_key, query, scores, consumed, lambda, explored, summary_ids, created_at, ` + voteSub + `
-			FROM memory_recall_events
-			WHERE agent_id = $1` + whereTime + `
-			ORDER BY created_at DESC LIMIT ` + limitPh
-	}
+		WHERE agent_id = ` + d.ph(1) + whereTime + `
+		ORDER BY created_at DESC LIMIT ` + d.ph(len(args)+1)
+	args = append(args, limit)
 	rows, err := d.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -473,40 +464,45 @@ func (d *DBStore) ListRecentRecallEvents(ctx context.Context, agentID string, li
 
 // PruneRecallEvents deletes memory_recall_events older than `before` (and
 // feedback rows whose event is gone — feedback is only meaningful joined to
-// its event), capped per pass so a large backlog can't pin the write lock.
-// Returns the number of deleted events. Audit data, not source data: the
-// summaries themselves stay.
-func (d *DBStore) PruneRecallEvents(ctx context.Context, before time.Time, cap int) (int64, error) {
-	if cap <= 0 {
-		cap = 1000
+// its event), in bounded batches so a large backlog can't pin the write lock
+// (same shape as PruneSessionEvents). Returns the number of deleted events.
+// Audit data, not source data: the summaries themselves stay.
+func (d *DBStore) PruneRecallEvents(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	if batchSize <= 0 {
+		batchSize = 1000
 	}
-	delEvents := func() (int64, error) {
-		q := `DELETE FROM memory_recall_events WHERE id IN (
-			SELECT id FROM memory_recall_events WHERE created_at < ? LIMIT ?)`
-		if d.dialect == "postgres" {
-			q = `DELETE FROM memory_recall_events WHERE id IN (
-				SELECT id FROM memory_recall_events WHERE created_at < $1 LIMIT $2)`
-		}
-		res, err := d.db.ExecContext(ctx, q, before, cap)
+	// created_at is a SQLite CURRENT_TIMESTAMP string — format `before` to
+	// match so the compare doesn't depend on driver time.Time serialization.
+	beforeStr := before.UTC().Format("2006-01-02 15:04:05")
+	var total int64
+	for {
+		res, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM memory_recall_events WHERE id IN (
+				SELECT id FROM memory_recall_events WHERE created_at < %s LIMIT %s)`,
+				d.ph(1), d.ph(2)),
+			beforeStr, batchSize)
 		if err != nil {
-			return 0, err
+			return total, err
 		}
-		return res.RowsAffected()
+		n, _ := res.RowsAffected()
+		total += n
+		if n < int64(batchSize) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
 	}
-	n, err := delEvents()
-	if err != nil || n == 0 {
-		return n, err
+	if total == 0 {
+		return 0, nil
 	}
-	// Orphaned feedback: no matching event left.
-	fq := `DELETE FROM memory_recall_feedback WHERE recall_id NOT IN (SELECT recall_id FROM memory_recall_events)`
-	if d.dialect == "postgres" {
-		fq = `DELETE FROM memory_recall_feedback WHERE recall_id NOT IN (SELECT recall_id FROM memory_recall_events)`
-	}
-	if _, ferr := d.db.ExecContext(ctx, fq); ferr != nil {
-		// Events are gone; orphan feedback is harmless until the next pass.
-		return n, nil
-	}
-	return n, nil
+	// Orphaned feedback: no matching event left. Dialect-free (no
+	// placeholders); a hiccup is harmless — the next pass retries.
+	_, _ = d.db.ExecContext(ctx,
+		`DELETE FROM memory_recall_feedback WHERE recall_id NOT IN (SELECT recall_id FROM memory_recall_events)`)
+	return total, nil
 }
 
 // PreviewRecall runs a basic recall (FTS + scoring) for the tuning panel's

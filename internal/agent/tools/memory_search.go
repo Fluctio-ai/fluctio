@@ -225,17 +225,20 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 					// keyword-only results — silent degradation was the
 					// junk-recall root cause (2026-10-09). Keyword recall is
 					// the designed path only when no embedder is configured.
+					vecFail := func(err error) (string, error) {
+						return "", fmt.Errorf("vector recall unavailable, refusing keyword-only degradation: %w", err)
+					}
 					vecs, embErr := r.embedder.Embed(ctx, []string{args.Query})
 					if embErr != nil || len(vecs) != 1 {
 						if embErr == nil {
 							embErr = fmt.Errorf("unexpected embedding count %d", len(vecs))
 						}
-						return "", fmt.Errorf("vector recall unavailable, refusing keyword-only degradation: %w", embErr)
+						return vecFail(embErr)
 					}
 					queryEmb = vecs[0]
 					vecScored, vecErr := r.vecDB.SearchConversationSummariesVectorScored(ctx, vecs[0], poolSize)
 					if vecErr != nil {
-						return "", fmt.Errorf("vector recall unavailable, refusing keyword-only degradation: %w", vecErr)
+						return vecFail(vecErr)
 					}
 					if len(vecScored) > 0 {
 						minRel := r.memoryMinRelevance()
@@ -521,6 +524,12 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 	if err != nil {
 		return nil, err
 	}
+	if len(hits) == 0 {
+		// FTS is the only candidate source — no pool means nothing to
+		// rank, so skip the embed call entirely (common for fresh agents
+		// or queries with no lexical overlap).
+		return nil, nil
+	}
 	if emb == nil || !emb.Available() {
 		if len(hits) > limit {
 			hits = hits[:limit]
@@ -599,25 +608,18 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 	if len(kept) > limit {
 		kept = kept[:limit]
 	}
-	// Trim audit scores to what was actually injected.
-	for id := range scores {
-		injected := false
-		for _, h := range kept {
-			if h.ID == id {
-				injected = true
-				break
-			}
-		}
-		if !injected {
-			delete(scores, id)
-		}
+	// Audit only what was actually injected — built forward from kept
+	// rather than pruned out of the survivor map.
+	injected := make(map[int64]float64, len(kept))
+	for _, h := range kept {
+		injected[h.ID] = scores[h.ID]
 	}
 	_ = db.InsertRecallEvent(ctx, store.RecallEvent{
 		RecallID:   newRecallID(),
 		AgentID:    agentID,
 		UserID:     userID,
 		Query:      query,
-		Scores:     scores,
+		Scores:     injected,
 		Lambda:     store.DefaultMMRLambda,
 		SummaryIDs: summaryIDs(kept),
 	})
