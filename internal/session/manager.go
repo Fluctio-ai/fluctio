@@ -1173,9 +1173,7 @@ func (m *Manager) ListWebSessions() []WebSession {
 			if preview == "" {
 				preview = "[image]"
 			}
-			if len(preview) > 100 {
-				preview = preview[:100] + "..."
-			}
+			preview = truncateRunes(preview, 100)
 			thumb = img
 			break
 		}
@@ -1188,10 +1186,7 @@ func (m *Manager) ListWebSessions() []WebSession {
 		// Read title from metadata file, fallback to preview
 		title := m.readSessionTitle(sessionId)
 		if title == "" {
-			title = preview
-			if len(title) > 60 {
-				title = title[:60] + "..."
-			}
+			title = truncateRunes(preview, 60)
 		}
 
 		sessions = append(sessions, WebSession{

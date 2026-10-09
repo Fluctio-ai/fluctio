@@ -309,9 +309,7 @@ func (a *StoreAdapter) BuildWebSession(ctx context.Context, m store.SessionMeta)
 		if preview == "" {
 			preview = "[image]"
 		}
-		if len(preview) > 100 {
-			preview = preview[:100] + "..."
-		}
+		preview = truncateRunes(preview, 100)
 		thumb = img
 		break
 	}
@@ -332,6 +330,17 @@ func (a *StoreAdapter) BuildWebSession(ctx context.Context, m store.SessionMeta)
 		CreatedAt:     m.UpdatedAt.UnixMilli(),
 		UpdatedAt:     m.UpdatedAt.UnixMilli(),
 	}
+}
+
+// truncateRunes shortens s to at most n runes, appending "..." only when
+// it actually cut. Rune-wise, never byte-wise: s is user text, and a byte
+// cut can split a multi-byte UTF-8 character into mojibake at the boundary.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "..."
 }
 
 // displaySessionTitle normalizes legacy rows that persisted the opaque

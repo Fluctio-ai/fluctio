@@ -1,6 +1,10 @@
 package session
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestDisplaySessionTitle(t *testing.T) {
 	tests := []struct {
@@ -45,5 +49,22 @@ func TestDisplaySessionTitle(t *testing.T) {
 				t.Fatalf("displaySessionTitle() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	// The reported bug: byte-wise cuts split multi-byte UTF-8 chars and the
+	// sidebar showed mojibake at the truncation point.
+	cjk := strings.Repeat("故", 120) // 120 runes, 360 bytes
+	got := truncateRunes(cjk, 60)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateRunes produced invalid UTF-8: %q", got)
+	}
+	if want := strings.Repeat("故", 60) + "..."; got != want {
+		t.Fatalf("truncateRunes(120 CJK, 60) = %q, want %q", got, want)
+	}
+	short := "短标题"
+	if got := truncateRunes(short, 60); got != short {
+		t.Fatalf("truncateRunes(short) = %q, want unchanged %q", got, short)
 	}
 }
