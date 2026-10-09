@@ -144,11 +144,23 @@ func gatewayCmd() *cobra.Command {
 }
 
 func runGateway(port int) error {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
-
 	env := config.LoadEnv()
+
+	// Log level: FLUCTIO_LOG_LEVEL was loaded into env but never applied
+	// (the handler was hardcoded to Info), so the documented knob did
+	// nothing. Apply it now; unknown values fall back to Info.
+	level := slog.LevelInfo
+	if env.Log.Level != "" {
+		if err := level.UnmarshalText([]byte(env.Log.Level)); err != nil {
+			level = slog.LevelInfo
+		}
+	}
+	if env.Log.Debug {
+		level = slog.LevelDebug
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	})))
 
 	// Short-lived public image URL bridge (vision fallback for endpoints
 	// that only accept http(s) URLs). No-op unless
