@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,12 @@ type HTTPClient struct {
 	client  *http.Client
 	mu      sync.Mutex
 	nextID  int
+	// sessionID is the Mcp-Session-Id negotiated during initialize.
+	// Stateful Streamable HTTP servers (the go-sdk/TS-SDK default) assign
+	// one on initialize and require it echoed on every later request — a
+	// POST without it spins up a fresh, uninitialized session and the
+	// call fails. Guarded by mu.
+	sessionID string
 }
 
 // NewHTTPClient creates a new HTTP MCP client.
@@ -73,8 +80,22 @@ func (c *HTTPClient) sendRequest(method string, params interface{}) (*jsonRPCRes
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	// Streamable HTTP transport (MCP spec) requires POST requests to accept
+	// both media types; servers built on the official SDKs reject the
+	// handshake with "HTTP 400: Accept must contain both ..." otherwise.
+	// Set before user headers so an explicit Accept in the server config
+	// can still override.
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range c.headers {
 		httpReq.Header.Set(k, v)
+	}
+	// Echo the negotiated session on subsequent requests; see the
+	// sessionID field comment.
+	c.mu.Lock()
+	sid := c.sessionID
+	c.mu.Unlock()
+	if sid != "" {
+		httpReq.Header.Set("Mcp-Session-Id", sid)
 	}
 
 	resp, err := c.client.Do(httpReq)
@@ -83,15 +104,41 @@ func (c *HTTPClient) sendRequest(method string, params interface{}) (*jsonRPCRes
 	}
 	defer resp.Body.Close()
 
+	// The server assigns the session on initialize; remember it before
+	// any early return so even a failing first ListTools keeps it.
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
+		c.mu.Lock()
+		c.sessionID = sid
+		c.mu.Unlock()
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		// Bounded read for the error body only — the happy paths below
+		// must not drain (or block on) the stream before deciding how to
+		// consume it.
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Streamable HTTP servers may answer with either a plain JSON body or
+	// an SSE stream (Content-Type: text/event-stream) whose "data:" lines
+	// carry the JSON-RPC response. The SSE path scans line by line and
+	// returns as soon as the response carrying our ID shows up, so a
+	// server that keeps the stream open for notifications doesn't pin the
+	// caller until the client timeout — which a ReadAll-first approach
+	// would do, since it blocks until EOF.
+	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		return readSSEResponse(resp.Body, id)
+	}
+
 	// Bounded read: a hostile/misbehaving server must not be able to
 	// balloon the gateway's memory through an endless response.
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	var rpcResp jsonRPCResponse
@@ -104,6 +151,40 @@ func (c *HTTPClient) sendRequest(method string, params interface{}) (*jsonRPCRes
 	}
 
 	return &rpcResp, nil
+}
+
+// readSSEResponse extracts the JSON-RPC response with the given ID from an
+// SSE-formatted body. Lines other than "data:" payloads (event:/comments/
+// pings) and payloads that don't unmarshal to our response are skipped, so
+// server-initiated notifications on the same stream don't confuse the match.
+func readSSEResponse(body io.Reader, id int) (*jsonRPCResponse, error) {
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 1024*1024), 5*1024*1024)
+	for scanner.Scan() {
+		payload, ok := strings.CutPrefix(strings.TrimSpace(scanner.Text()), "data:")
+		if !ok {
+			continue
+		}
+		payload = strings.TrimSpace(payload)
+		if payload == "" {
+			continue
+		}
+		var rpcResp jsonRPCResponse
+		if err := json.Unmarshal([]byte(payload), &rpcResp); err != nil {
+			continue
+		}
+		if rpcResp.ID != id {
+			continue
+		}
+		if rpcResp.Error != nil {
+			return nil, fmt.Errorf("RPC error %d: %s", rpcResp.Error.Code, rpcResp.Error.Message)
+		}
+		return &rpcResp, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read sse stream: %w", err)
+	}
+	return nil, fmt.Errorf("SSE stream ended without response for id %d", id)
 }
 
 // Connect initializes the connection with the MCP server.
