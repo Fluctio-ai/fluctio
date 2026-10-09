@@ -315,6 +315,25 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		// consumption of the hook's outputs (SkipLLM/PrebuiltContent/
 		// Messages rewrite) lands in slice 4b-2; until then the hook
 		// populates HookContext fields the loop doesn't yet read.
+		// Memory auto-recall searcher: conversation-summary lookup over
+		// the relational store. Built outside the KB gate below because
+		// memory recall is a memory feature, not a KB feature — agents
+		// with the knowledge base disabled still register the recall
+		// lane at the end of this block.
+		var memSearch kb.MemoryAutoSearcher
+		if db, ok := m.opts.dataStore.(*store.DBStore); ok && db != nil {
+			memSearch = func(ctx context.Context, agentID, query string, limit int) ([]kb.MemoryRecallHit, error) {
+				hits, err := db.SearchConversationSummariesFTS(ctx, agentID, query, limit)
+				if err != nil {
+					return nil, err
+				}
+				out := make([]kb.MemoryRecallHit, 0, len(hits))
+				for _, h := range hits {
+					out = append(out, kb.MemoryRecallHit{ID: h.ID, Topic: h.Topic, Summary: h.Summary})
+				}
+				return out, nil
+			}
+		}
 		if rc.KB != nil && rc.KB.Enabled {
 			var kbStore *kb.KBStore
 			if dbs, ok := m.opts.dataStore.(*store.DBStore); ok {
@@ -361,23 +380,6 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			insightMaxTokens := kb.DefaultInsightMaxTokens
 			if kbCfg != nil && kbCfg.InsightMaxTokens > 0 {
 				insightMaxTokens = kbCfg.InsightMaxTokens
-			}
-			// Memory auto-recall lane: FTS over conversation summaries
-			// (precise lexical match, superseded rows filtered in the
-			// store). Wired only when the agent has a relational store.
-			var memSearch kb.MemoryAutoSearcher
-			if db, ok := m.opts.dataStore.(*store.DBStore); ok && db != nil {
-				memSearch = func(ctx context.Context, agentID, query string, limit int) ([]kb.MemoryRecallHit, error) {
-					hits, err := db.SearchConversationSummariesFTS(ctx, agentID, query, limit)
-					if err != nil {
-						return nil, err
-					}
-					out := make([]kb.MemoryRecallHit, 0, len(hits))
-					for _, h := range hits {
-						out = append(out, kb.MemoryRecallHit{ID: h.ID, Topic: h.Topic, Summary: h.Summary})
-					}
-					return out, nil
-				}
 			}
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
 				threshold := 0.45
@@ -470,6 +472,43 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					}, messages, 4)
 				}), rc.Model, insightMaxTokens)
 			}
+		}
+		// The KB gate above owns the full auto-query hook (KB + memory
+		// lanes). When the knowledge base is disabled that hook was never
+		// registered — and the memory lane lived (and died) with it, so
+		// agents with KB off never recalled conversation summaries at all
+		// (LIFT eval: summaries on disk, zero recalls). Register a
+		// memory-only variant here. The KB lanes self-gate on
+		// cfg.Enabled / store == nil, so a zero config keeps them off.
+		if (rc.KB == nil || !rc.KB.Enabled) && memSearch != nil {
+			memCfg := config.AgentKBCfg{}
+			if rc.KB != nil {
+				memCfg = *rc.KB
+			}
+			memHook := kb.AutoQueryHook(nil, rc.ID, func() kb.AutoQueryCfg {
+				return kb.AutoQueryCfg{
+					Enabled:          false,
+					MemoryAutoMode:   memCfg.MemoryAutoMode,
+					MemoryKeywords:   memCfg.MemoryKeywords,
+					MemoryMaxResults: memCfg.MemoryMaxResults,
+				}
+			}, memSearch)
+			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {
+				kbHC := &kb.HookContext{
+					Messages: hc.Messages,
+					Source:   hc.Source,
+					ChatOnly: hc.ChatOnly,
+				}
+				memHook(ctx, kbHC)
+				hc.Messages = kbHC.Messages
+				for _, stc := range kbHC.SyntheticToolCalls {
+					hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
+						Name:   stc.Name,
+						Args:   stc.Args,
+						Result: stc.Result,
+					})
+				}
+			})
 		}
 		// Date line in the chatter's timezone — needs dataStore for the
 		// scope-prefs lookup, hence wired here and re-applied by
