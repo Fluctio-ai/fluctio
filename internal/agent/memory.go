@@ -593,7 +593,10 @@ func (a *Agent) tryAutoTitle(ctx context.Context, messages []provider.Message) {
 	}
 	sessionUserTurns := 0
 	for _, m := range messages {
-		if m.Role == "user" {
+		// Injected [MEM]/[KB] context blocks are user-role but not user
+		// turns (kb tags them OriginInjected); goal_context continuations
+		// still count, as before.
+		if m.Role == "user" && m.Origin != provider.OriginInjected {
 			sessionUserTurns++
 		}
 	}

@@ -135,7 +135,10 @@ func recoverToolCallsFromContent(content string) ([]provider.ToolCall, string) {
 			continue
 		}
 		calls = append(calls, provider.ToolCall{
-			ID:   fmt.Sprintf("recovered_%d", i),
+			// Unique per recovery, not just per index: recovery can fire on
+			// two turns of one session, and the Responses API rejects
+			// replayed history that reuses a call_id.
+			ID:   newSyntheticCallID(fmt.Sprintf("recovered_%d", i)),
 			Type: "function",
 			Function: provider.FunctionCall{
 				Name:      name,

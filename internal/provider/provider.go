@@ -62,6 +62,7 @@ const (
 	OriginCron        = "cron"       // scheduled-task trigger — a cron-fired inbound, not a real user turn
 	OriginTurnAbort   = "turn_abort" // turn-abort boundary marker (crash heal / stopped turn) — LLM-visible, rendered as a UI notice
 	OriginProjectCard = "project_card" // first-turn PROJECT.md snapshot — injected orientation context, not a real user turn
+	OriginInjected    = "injected"     // auto-query context block ([MEM]/[KB]) injected into the working set — not a real user turn
 )
 
 // Message represents a chat message.
@@ -92,9 +93,11 @@ type Message struct {
 	// Origin distinguishes runtime-injected messages from real user /
 	// assistant exchanges. Empty (OriginUser) is the default. Set today
 	// by the /goal continuation path (OriginGoalContext), cron-fired
-	// inbounds (OriginCron), and the turn-abort boundary markers written
+	// inbounds (OriginCron), the turn-abort boundary markers written
 	// by Session.healInterruptedTurn / PadOrphanToolResultsAndMarkAborted
-	// (OriginTurnAbort).
+	// (OriginTurnAbort), the first-turn PROJECT.md snapshot
+	// (OriginProjectCard), and the auto-query context blocks the KB and
+	// memory lanes inject before the model call (OriginInjected).
 	// User-visible history (WebChatHistory) and the FTS index filter
 	// on this so synthetic prompts don't pollute either view. Rides
 	// as part of the JSONB sessions.messages working set and as a

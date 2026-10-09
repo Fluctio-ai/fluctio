@@ -4206,11 +4206,9 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 	// never sampled at all (LIFT eval: W1/W2 preference corrections
 	// dropped because only W3's window happened to hit the boundary).
 	// Counted from the messages runPostTurn already holds, so no extra
-	// session bookkeeping is needed. Only OriginUser counts as a real turn
-	// — but the auto-query hook's [MEM]/[KB] context blocks are user-role
-	// with an empty Origin (kb/hook.go injectMEMContext / injectKBContext),
-	// so a recall-heavy session still counts them and fires early. Tagging
-	// those injections with a non-user origin is the remaining fix.
+	// session bookkeeping is needed. Only OriginUser counts as a real turn:
+	// the auto-query lane's [MEM]/[KB] context blocks are tagged
+	// OriginInjected, so a recall-heavy session no longer inflates this.
 	willFire := false
 	sessionUserTurns := 0
 	for _, m := range messages {

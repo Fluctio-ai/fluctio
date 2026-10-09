@@ -381,6 +381,11 @@ func injectMEMContext(hc *HookContext, hits []MemoryRecallHit) {
 	memMsg := provider.Message{
 		Role:    "user",
 		Content: sb.String(),
+		// Runtime injection, not a user turn: keeps the block out of web
+		// history, the FTS index, the diary, and the auto-persist /
+		// auto-title turn counts. The synthetic memory_search pair emitted
+		// alongside it is the visible form.
+		Origin: provider.OriginInjected,
 	}
 
 	insertContextMessage(hc, "[MEM]", memMsg)
@@ -482,6 +487,8 @@ func injectKBContext(hc *HookContext, results []KBResult, citations []string) {
 	kbMsg := provider.Message{
 		Role:    "user",
 		Content: sb.String(),
+		// Same as the [MEM] injection: runtime context, not a user turn.
+		Origin: provider.OriginInjected,
 	}
 
 	insertContextMessage(hc, "[KB]", kbMsg)
