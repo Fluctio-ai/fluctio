@@ -6,7 +6,7 @@ settings:
 
 overrides:
   mermaid: ^11.16.1
-  hono: ^4.13.5
+  hono: ^4.13.7
   dompurify: ^3.4.13
   postcss: ^8.5.23
   fast-uri@3: ^3.1.6
@@ -511,7 +511,7 @@ packages:
     resolution: {integrity: sha512-dSneS5qhiauZWGDCeK4o695Xd9nUNjviSZCMQrj10eetr8Uln1ucn6bbphOM6UynAMMtNIzZNSpL9vnASJwrPQ==}
     engines: {node: '>=18.14.1'}
     peerDependencies:
-      hono: ^4.13.5
+      hono: ^4.13.7
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
