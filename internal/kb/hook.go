@@ -349,7 +349,7 @@ func insertContextMessage(hc *HookContext, marker string, msg provider.Message) 
 // across ReAct iterations). Parallel to injectKBContext.
 func injectMEMContext(hc *HookContext, hits []MemoryRecallHit) {
 	var sb strings.Builder
-	sb.WriteString("[MEM] The following are memories recalled from past conversations with this user (summaries, not verbatim quotes). Use them if relevant to the user's message. If you need more memories or the full text of one, call memory_search / memory_fetch.\n\n")
+	sb.WriteString("[MEM] Memories recalled from past conversations with this user (summaries, not verbatim quotes). Entries that record how this user wants things done are durable preferences: apply them to your current work by default, unless the user's latest message overrides them. If you need more memories or the full text of one, call memory_search / memory_fetch.\n\n")
 	// Total budget on top of the per-item clip: even clipped, a large hit
 	// set can inject several KB into every qualifying turn. Stop at the
 	// budget (always keeping at least one hit) and tell the model how to
@@ -381,6 +381,10 @@ func injectMEMContext(hc *HookContext, hits []MemoryRecallHit) {
 // memory_search result (UI visibility of the auto-recall).
 func buildMemoryResultSummary(hits []MemoryRecallHit) string {
 	var sb strings.Builder
+	// Same durable-preference framing as the [MEM] injection: without a
+	// directive header the model treats recalled items as background
+	// trivia instead of applying them (observed on sub-flagship models).
+	sb.WriteString("Recalled from past conversations — durable preferences and facts. Apply the preference-type entries to the current task unless the user says otherwise:\n\n")
 	for i, h := range hits {
 		// Same 300-byte clip as the [MEM] injection: this renders into the
 		// synthetic tool_result the model also sees, and it must not be the
