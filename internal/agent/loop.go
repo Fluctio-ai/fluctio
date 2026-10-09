@@ -3107,8 +3107,12 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	if reply, hookName, matched, feedToLLM := a.matchRegexHooks(ctx, msg.Text); matched {
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 		userMsg := buildUserMessage(msg, a.model)
-		toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
-		toolResMsg := provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"}
+		// Unique per firing: one session can trip the same hook on
+		// several turns, and the Responses API rejects replayed history
+		// with duplicate call_ids (same class as the synth- pair fix).
+		hookCallID := fmt.Sprintf("regex-hook-%d", time.Now().UnixNano())
+		toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: hookCallID, Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
+		toolResMsg := provider.Message{Role: "tool", ToolCallID: hookCallID, Content: "matched"}
 		replyMsg := provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()}
 		if feedToLLM {
 			sess.BeginTurn()
@@ -3123,8 +3127,8 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			// set / summary / recall. emitEvent below still surfaces it live.
 			sess.AppendArchivedHidden([]provider.Message{userMsg, toolCallMsg, toolResMsg, replyMsg})
 		}
-		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "arguments": msg.Text}})
-		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "result": "matched"}})
+		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": hookCallID, "name": "regex_hook: " + hookName, "arguments": msg.Text}})
+		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": hookCallID, "name": "regex_hook: " + hookName, "result": "matched"}})
 		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
 		emitEvent(ctx, ChatEvent{Type: "done"})
 		return reply
@@ -4263,8 +4267,12 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	if reply, hookName, matched, feedToLLM := a.matchRegexHooks(ctx, msg.Text); matched {
 		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
 		userMsg := buildUserMessage(msg, a.model)
-		toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: "regex-hook-0", Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
-		toolResMsg := provider.Message{Role: "tool", ToolCallID: "regex-hook-0", Content: "matched"}
+		// Unique per firing: one session can trip the same hook on
+		// several turns, and the Responses API rejects replayed history
+		// with duplicate call_ids (same class as the synth- pair fix).
+		hookCallID := fmt.Sprintf("regex-hook-%d", time.Now().UnixNano())
+		toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: hookCallID, Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
+		toolResMsg := provider.Message{Role: "tool", ToolCallID: hookCallID, Content: "matched"}
 		replyMsg := provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()}
 		if feedToLLM {
 			sess.BeginTurn()
@@ -4279,8 +4287,8 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			// set / summary / recall. emitEvent below still surfaces it live.
 			sess.AppendArchivedHidden([]provider.Message{userMsg, toolCallMsg, toolResMsg, replyMsg})
 		}
-		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "arguments": msg.Text}})
-		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": "regex-hook-0", "name": "regex_hook: " + hookName, "result": "matched"}})
+		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": hookCallID, "name": "regex_hook: " + hookName, "arguments": msg.Text}})
+		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": hookCallID, "name": "regex_hook: " + hookName, "result": "matched"}})
 		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
 		emitEvent(ctx, ChatEvent{Type: "done"})
 		ch := make(chan provider.StreamChunk, 2)
