@@ -539,9 +539,11 @@ func NewAgentWithFullCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bu
 		}
 	}
 
-	// Set memory auto-persist defaults
+	// Set memory auto-persist defaults. Cadence is per-session user
+	// turns; 2 keeps short task conversations (where the user's final
+	// corrections land) inside the sampling window.
 	if ag.memoryCfg.AutoPersist.EveryNTurns == 0 {
-		ag.memoryCfg.AutoPersist.EveryNTurns = 5
+		ag.memoryCfg.AutoPersist.EveryNTurns = 2
 	}
 
 	return ag
@@ -708,7 +710,7 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 		ag.memoryCfg.AutoPersist.Enabled = *rc.AutoPersist
 	}
 	if ag.memoryCfg.AutoPersist.EveryNTurns == 0 {
-		ag.memoryCfg.AutoPersist.EveryNTurns = 5
+		ag.memoryCfg.AutoPersist.EveryNTurns = 2
 	}
 
 	// message tool — registered HERE (post-Agent) so the closure can read
@@ -4190,22 +4192,28 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 		}
 	}
 
-	// Auto-persist memory every N user turns. Single-user flatten dropped
-	// the per-chatter durable DB counter (CountChatterUserMessages); the
-	// cadence now keys on a.turnCount, the in-memory turn counter that
-	// resets on daemon restart / agent eviction. With a single user that
-	// only delays a persist by at most EveryNTurns — acceptable vs.
-	// threading a session_key into runPostTurn just to re-count user
-	// messages from the DB.
+	// Auto-persist memory every N user turns OF THIS SESSION. The previous
+	// agent-global turnCount diluted short sessions: a 2-3 turn
+	// conversation whose feedback landed between global boundaries was
+	// never sampled at all (LIFT eval: W1/W2 preference corrections
+	// dropped because only W3's window happened to hit the boundary).
+	// Count user turns from the messages runPostTurn already holds —
+	// synthetic injections are excluded via Origin — so no extra session
+	// bookkeeping is needed.
 	willFire := false
-	turns := int(a.turnCount.Load())
+	sessionUserTurns := 0
+	for _, m := range messages {
+		if m.Role == "user" && m.Origin == provider.OriginUser {
+			sessionUserTurns++
+		}
+	}
 	if a.memoryCfg.AutoPersist.Enabled && a.memoryCfg.AutoPersist.EveryNTurns > 0 {
-		willFire = turns > 0 && turns%a.memoryCfg.AutoPersist.EveryNTurns == 0
+		willFire = sessionUserTurns > 0 && sessionUserTurns%a.memoryCfg.AutoPersist.EveryNTurns == 0
 	}
 	slog.Info("auto-persist gate",
 		"agent", a.name,
 		"enabled", a.memoryCfg.AutoPersist.Enabled,
-		"turns", turns,
+		"turns", sessionUserTurns,
 		"every_n_turns", a.memoryCfg.AutoPersist.EveryNTurns,
 		"will_fire", willFire)
 	if willFire {
@@ -4213,7 +4221,7 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 		if model == "" {
 			model = a.model
 		}
-		slog.Info("auto-persist firing", "agent", a.name, "model", model, "turns", turns, "messages", len(messages))
+		slog.Info("auto-persist firing", "agent", a.name, "model", model, "turns", sessionUserTurns, "messages", len(messages))
 		go AutoPersistMemory(ctx, chatterMem, a.bgProvider(), model, messages)
 	}
 

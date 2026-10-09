@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/llmjson"
@@ -337,6 +337,9 @@ Keep ONLY items directly supported by the conversation above. Reject:
 - credentials, tokens, or other secrets
 - transient context (one-off task state, today's conditions)
 - claims about people other than the user
+User preferences and correction feedback about how the user wants things
+done (formats, styles, workflows) are DURABLE preferences, not transient
+context — keep them even when they were stated about a specific artifact.
 Output JSON only (no markdown fences):
 {"memory_facts": [...kept facts...], "user_notes": [...kept notes...]}
 Empty arrays when nothing survives.`,
@@ -344,7 +347,7 @@ Empty arrays when nothing survives.`,
 
 	resp, err := prov.Chat(provider.WithJSONMode(provider.WithNoThinking(ctx)), []provider.Message{
 		{Role: "user", Content: prompt},
-	}, nil, model, 200, 0.3)
+	}, nil, model, 1000, 0.3)
 	if err != nil {
 		return persistExtraction{}, fmt.Errorf("audit LLM call: %w", err)
 	}
@@ -353,10 +356,49 @@ Empty arrays when nothing survives.`,
 		return persistExtraction{}, fmt.Errorf("audit parse: %w", err)
 	}
 	// Intersect with the proposal set: the auditor filters, it never adds.
+	// Matching is normalized (case/punctuation-insensitive) with
+	// containment fallback: the audit LLM routinely rephrases an item
+	// ("用户偏好…" vs "用户希望…"), and the previous exact-match
+	// intersection silently dropped every reworded item — in LIFT-style
+	// evaluation this killed 100% of proposed user_notes.
+	normalize := func(s string) string {
+		var b strings.Builder
+		for _, r := range strings.ToLower(s) {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}
+	match := func(item string, allowed []string) bool {
+		ni := normalize(item)
+		if ni == "" {
+			return false
+		}
+		for _, cand := range allowed {
+			nc := normalize(cand)
+			if nc == "" {
+				continue
+			}
+			if ni == nc {
+				return true
+			}
+			// Containment only for substantial stems — a 2-char stem
+			// would match almost everything.
+			shorter, longer := ni, nc
+			if len(longer) < len(shorter) {
+				shorter, longer = longer, shorter
+			}
+			if len(shorter) >= 6 && strings.Contains(longer, shorter) {
+				return true
+			}
+		}
+		return false
+	}
 	filter := func(items, allowed []string) []string {
 		out := make([]string, 0, len(items))
 		for _, item := range items {
-			if slices.Contains(allowed, item) {
+			if match(item, allowed) {
 				out = append(out, item)
 			}
 		}
@@ -412,6 +454,8 @@ Current USER.md:
 Recent conversation:
 %s
 
+Keep each item concise: one sentence, prefer raw data summaries over
+restating the material verbatim.
 Output JSON only (no markdown fences):
 {"memory_facts": ["fact1", "fact2"], "user_notes": ["note1"]}
 If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
@@ -426,7 +470,7 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
 
 	resp, err := prov.Chat(provider.WithJSONMode(provider.WithNoThinking(ctx)), []provider.Message{
 		{Role: "user", Content: extractPrompt},
-	}, nil, model, 200, 0.3)
+	}, nil, model, 1000, 0.3)
 	if err != nil {
 		// Warn (not Debug) — invisible failures here are exactly
 		// the "I turned the switch on but nothing got persisted"

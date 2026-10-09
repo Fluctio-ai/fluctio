@@ -287,7 +287,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					ag.memoryCfg.AutoPersist.Enabled = *rc.AutoPersist
 				}
 				if ag.memoryCfg.AutoPersist.EveryNTurns == 0 {
-					ag.memoryCfg.AutoPersist.EveryNTurns = 5
+					ag.memoryCfg.AutoPersist.EveryNTurns = 2
 				}
 				ag.summaryModel = mem.SummaryModel
 				// Vector config (embedding/reranker) lives under its own
