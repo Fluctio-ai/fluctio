@@ -3494,7 +3494,11 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			kbSources = hcBefore.KnowledgeSources
 		}
 		for _, stc := range hcBefore.SyntheticToolCalls {
-			tcID := "synth-" + stc.Name
+			// Per-injection unique id: the lane can inject the same tool
+			// name more than once per session (one per distinct query),
+			// and the Responses API rejects replayed history with
+			// duplicate call_ids.
+			tcID := fmt.Sprintf("synth-%s-%d", stc.Name, time.Now().UnixNano())
 			emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": tcID, "name": stc.Name, "arguments": stc.Args}})
 			emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": tcID, "name": stc.Name, "result": stc.Result}})
 			asstMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: tcID, Type: "function", Function: provider.FunctionCall{Name: stc.Name, Arguments: stc.Args}}}, Timestamp: time.Now().UnixMilli()}
