@@ -16,11 +16,6 @@ import (
 // before any bandit tuning has selected a better value for an agent.
 const DefaultMMRLambda = 0.6
 
-// DefaultMinRelevance is the lowest similarity/rerank score a memory recall
-// hit must clear to be returned. 0 = no filtering (current behavior); a
-// higher value drops irrelevant hits.
-const DefaultMinRelevance = 0.0
-
 // migrateRecallTuning creates the tables that back the bandit-style MMR
 // lambda optimization:
 //   - agent_recall_tuning: one row per agent holding the current best
@@ -170,7 +165,7 @@ type RecallEvent struct {
 	Query      string  // trigger query text (audit: judge relevance of the surfaced set)
 	Scores     map[int64]float64 // summary_id → relevance of each surfaced hit (audit + calibration)
 	Consumed   bool    // recall.consumed: surfaced memory was actually used (fetched/referenced)
-	Lambda     float64 // the MMR lambda actually used
+	Lambda     float64 // the MMR lambda actually used; 0 on lanes without MMR (the [MEM] auto-injection lane) — its events never feed the λ bandit
 	Explored   bool    // true if this was an ε-greedy exploration
 	SummaryIDs []int64 // surfaced summary IDs
 	CreatedAt  time.Time
@@ -209,40 +204,6 @@ func (d *DBStore) SetAgentMMRLambda(ctx context.Context, agentID string, lambda 
 		`INSERT INTO agent_recall_tuning (agent_id, mmr_lambda) VALUES (?, ?)
 		 ON CONFLICT(agent_id) DO UPDATE SET mmr_lambda = excluded.mmr_lambda, updated_at = CURRENT_TIMESTAMP`,
 		agentID, lambda)
-	return err
-}
-
-// GetAgentMinRelevance returns the agent's memory-recall relevance threshold
-// (the lowest rerank/similarity score a hit must clear), or DefaultMinRelevance.
-func (d *DBStore) GetAgentMinRelevance(ctx context.Context, agentID string) (float64, error) {
-	var v float64
-	q := `SELECT min_relevance FROM agent_recall_tuning WHERE agent_id = ?`
-	if d.dialect == "postgres" {
-		q = `SELECT min_relevance FROM agent_recall_tuning WHERE agent_id = $1`
-	}
-	err := d.db.QueryRowContext(ctx, q, agentID).Scan(&v)
-	if err == sql.ErrNoRows {
-		return DefaultMinRelevance, nil
-	}
-	if err != nil {
-		return DefaultMinRelevance, err
-	}
-	return v, nil
-}
-
-// SetAgentMinRelevance upserts the agent's memory-recall relevance threshold.
-func (d *DBStore) SetAgentMinRelevance(ctx context.Context, agentID string, v float64) error {
-	if d.dialect == "postgres" {
-		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO agent_recall_tuning (agent_id, min_relevance) VALUES ($1, $2)
-			 ON CONFLICT (agent_id) DO UPDATE SET min_relevance = EXCLUDED.min_relevance, updated_at = CURRENT_TIMESTAMP`,
-			agentID, v)
-		return err
-	}
-	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO agent_recall_tuning (agent_id, min_relevance) VALUES (?, ?)
-		 ON CONFLICT(agent_id) DO UPDATE SET min_relevance = excluded.min_relevance, updated_at = CURRENT_TIMESTAMP`,
-		agentID, v)
 	return err
 }
 
@@ -374,27 +335,6 @@ func (d *DBStore) MarkRecallEventsConsumed(ctx context.Context, recallIDs []stri
 	q := `UPDATE memory_recall_events SET consumed = 1 WHERE recall_id IN (` + strings.Join(placeholders, ",") + `)`
 	_, err := d.db.ExecContext(ctx, q, args...)
 	return err
-}
-
-// RecallStats summarizes one agent's recall activity for the tuning panel.
-type RecallStats struct {
-	TotalRecalls    int
-	ExploredRecalls int
-	ConsumedRecalls int
-}
-
-// GetRecallStats returns total + explored + consumed recall counts for an
-// agent. Consumed = recalls whose surfaced memory was actually fetched —
-// the adoption north-star; Recall@K without consumption is a process
-// metric.
-func (d *DBStore) GetRecallStats(ctx context.Context, agentID string) (RecallStats, error) {
-	var s RecallStats
-	q := `SELECT COUNT(*), COALESCE(SUM(explored), 0), COALESCE(SUM(consumed), 0) FROM memory_recall_events WHERE agent_id = ?`
-	if d.dialect == "postgres" {
-		q = `SELECT COUNT(*), COALESCE(SUM(explored), 0), COALESCE(SUM(consumed), 0) FROM memory_recall_events WHERE agent_id = $1`
-	}
-	err := d.db.QueryRowContext(ctx, q, agentID).Scan(&s.TotalRecalls, &s.ExploredRecalls, &s.ConsumedRecalls)
-	return s, err
 }
 
 // ListRecentRecallEvents returns the agent's most recent recall events

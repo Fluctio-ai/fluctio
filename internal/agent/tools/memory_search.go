@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -135,12 +136,6 @@ type SummarySearcher interface {
 // SetSummarySearcher on the registry after Agent construction (the
 // relational store isn't available at registration time). Until wired,
 // the tool falls back to the legacy JSONL scan / FTS5 index.
-// Cross-session recall via conversation_summaries is enabled by calling
-// SetSummarySearcher on the registry after Agent construction (the
-// relational store isn't available at registration time). Until wired,
-// the tool falls back to the legacy JSONL scan / FTS5 index.
-// The relevance threshold is wired post-construction via
-// SetMemoryMinRelevance (same pattern — DBStore isn't available here).
 func RegisterMemorySearch(r *Registry, workspace string, fts ...FTSSearcher) {
 	var searcher FTSSearcher
 	if len(fts) > 0 {
@@ -215,9 +210,9 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 				// SearchConversationSummariesVectorScored is a GLOBAL KNN (vec0
 				// can't filter by metadata), so the fetched rows MUST be
 				// re-scoped to agent here — keep only this agent's summaries.
-				// The distance also drives the relevance threshold (1/(1+d)
-				// is monotonic in distance, a coarse far-hit gate; the
-				// cross-encoder reranker does the precise gate downstream).
+				// Gating happens downstream (relative floor, reranker): the raw
+				// KNN distance is a scale-trap (1/(1+L2) vs cosine) and no
+				// longer gates here.
 				if r.vecDB != nil && r.embedder != nil && r.embedder.Available() {
 					// Vectorization is configured, so the vector lane is a
 					// first-class path, not an enhancement. A failed embed or
@@ -241,12 +236,8 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 						return vecFail(vecErr)
 					}
 					if len(vecScored) > 0 {
-						minRel := r.memoryMinRelevance()
-						var scopedIDs []int64
+						scopedIDs := make([]int64, 0, len(vecScored))
 						for _, sh := range vecScored {
-							if minRel > 0 && (1/(1+sh.Distance)) < minRel {
-								continue
-							}
 							scopedIDs = append(scopedIDs, sh.ID)
 						}
 						if len(scopedIDs) > 0 {
@@ -286,17 +277,6 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 					}
 					scored, rerankErr := r.reranker.Rerank(ctx, args.Query, docs, limit)
 					if rerankErr == nil {
-						// Relevance threshold: drop hits whose cross-encoder
-						// score is below the agent's configured min. 0 = off.
-						if minRel := r.memoryMinRelevance(); minRel > 0 {
-							kept := scored[:0]
-							for _, s := range scored {
-								if s.Score >= minRel {
-									kept = append(kept, s)
-								}
-							}
-							scored = kept
-						}
 						hits = reorderByRerank(hits, scored)
 					}
 				}
@@ -505,6 +485,11 @@ func applyRelativeFloor(hits []store.ConversationSummary, scores map[int64]float
 // (0.53–0.65 for related query/summary pairs).
 const memInjectAbsFloor = 0.5
 
+// ErrEmbeddingFailed marks "an embedder is configured but the call
+// failed", so callers (the recall test box) can distinguish it from store
+// failures and degrade transparently instead of surfacing a bare 500.
+var ErrEmbeddingFailed = errors.New("embedding call failed")
+
 // SemanticMemRecall is the [MEM] auto-recall lane's searcher. FTS gathers a
 // broad candidate pool; when an embedder is configured the query embedding
 // re-ranks candidates by cosine and the injection floors drop everything not
@@ -513,9 +498,10 @@ const memInjectAbsFloor = 0.5
 // order, so the lane gets precision at the cost of one rerank call per
 // message. Without an embedder, plain FTS order stands: vector off means
 // lexical IS the designed path, not a degradation. Recall events are
-// recorded on the semantic path so the tuning page audits what the user
-// actually sees injected.
-func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Embedder, rr embedding.Reranker, agentID, userID, query string, limit int) ([]store.ConversationSummary, error) {
+// recorded on the semantic path (record=true) so the tuning page audits
+// what the user actually sees injected; previews (the recall test box) pass
+// record=false so a test query doesn't pollute the audit list.
+func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Embedder, rr embedding.Reranker, agentID, userID, query string, limit int, record bool) ([]store.ConversationSummary, error) {
 	poolLimit := limit * 3
 	if poolLimit < 10 {
 		poolLimit = 10
@@ -543,7 +529,7 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 		if embErr == nil {
 			embErr = fmt.Errorf("unexpected embedding count %d", len(vecs))
 		}
-		return nil, fmt.Errorf("embedding failed: %w", embErr)
+		return nil, fmt.Errorf("%w: %w", ErrEmbeddingFailed, embErr)
 	}
 	embMap, _ := db.GetConversationSummaryEmbeddings(ctx, summaryIDs(hits))
 	type scoredHit struct {
@@ -609,20 +595,23 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 		kept = kept[:limit]
 	}
 	// Audit only what was actually injected — built forward from kept
-	// rather than pruned out of the survivor map.
-	injected := make(map[int64]float64, len(kept))
-	for _, h := range kept {
-		injected[h.ID] = scores[h.ID]
+	// rather than pruned out of the survivor map. Lambda stays zero: this
+	// lane has no MMR, so recording the default would pretend a knob was
+	// in play (and its votes must not feed the tool lane's λ bandit).
+	if record {
+		injected := make(map[int64]float64, len(kept))
+		for _, h := range kept {
+			injected[h.ID] = scores[h.ID]
+		}
+		_ = db.InsertRecallEvent(ctx, store.RecallEvent{
+			RecallID:   newRecallID(),
+			AgentID:    agentID,
+			UserID:     userID,
+			Query:      query,
+			Scores:     injected,
+			SummaryIDs: summaryIDs(kept),
+		})
 	}
-	_ = db.InsertRecallEvent(ctx, store.RecallEvent{
-		RecallID:   newRecallID(),
-		AgentID:    agentID,
-		UserID:     userID,
-		Query:      query,
-		Scores:     injected,
-		Lambda:     store.DefaultMMRLambda,
-		SummaryIDs: summaryIDs(kept),
-	})
 	return kept, nil
 }
 

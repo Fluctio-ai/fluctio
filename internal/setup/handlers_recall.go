@@ -2,6 +2,7 @@ package setup
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,10 +16,12 @@ import (
 
 // handleRecallFeedback records a thumbs-up/down against a recall_id and
 // then checks whether accumulated feedback now justifies promoting the
-// agent's MMR lambda (stage 2b bandit upgrade). The recall_id — minted
-// by memory_search when it surfaces summaries — is the only routing key:
-// the server resolves the agent from the recall event, so the client
-// cannot forge an agent_id.
+// agent's MMR lambda (stage 2b bandit upgrade). Votes are always kept as
+// audit state; only votes on ε-greedy-EXPLORED tool-lane recalls count
+// toward λ (GetLambdaFeedbackStats filters explored=1) — the [MEM]
+// injection lane has no λ, so its votes are pure audit marks. The
+// recall_id is the only routing key: the server resolves the agent from
+// the recall event, so the client cannot forge an agent_id.
 func (s *Server) handleRecallFeedback(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RecallID string `json:"recall_id"`
@@ -68,62 +71,28 @@ func (s *Server) handleRecallFeedback(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetRecallTuning returns the agent's current bandit state for the
-// memory-tuning panel: current MMR lambda, recall counts (total + how
-// many were ε-greedy explorations), and per-lambda feedback stats. Makes
-// the otherwise-black-box λ optimization observable.
+// handleGetRecallTuning is the recall-test page's availability probe. The
+// page renders no stats anymore (semantic floors, not knobs, decide
+// relevance), so this only confirms the store is up — no COUNT/JOIN queries
+// behind a probe.
 func (s *Server) handleGetRecallTuning(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.requireAgentOwner(w, r, id) == nil {
 		return
 	}
-	db, ok := s.dataStore.(*store.DBStore)
-	if !ok || db == nil {
+	if db, ok := s.dataStore.(*store.DBStore); !ok || db == nil {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "store not available"})
 		return
 	}
-	ctx := r.Context()
-	lambda, err := db.GetAgentMMRLambda(ctx, id)
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-	minRelevance, err := db.GetAgentMinRelevance(ctx, id)
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-	stats, err := db.GetRecallStats(ctx, id)
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-		return
-	}
-	fbStats, err := db.GetLambdaFeedbackStats(ctx, id)
-	if err != nil {
-		fbStats = nil // best-effort: feedback stats are non-critical for display
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{
-		"ok":            true,
-		"mmr_lambda":    lambda,
-		"min_relevance": minRelevance,
-		"total_recalls": stats.TotalRecalls,
-		// bandit_explored_recalls: how many recalls used an ε-greedy
-		// exploration lambda (the only ones the implicit-feedback sweep and
-		// bandit statistics look at). NOT "viewed by user".
-		"bandit_explored_recalls": stats.ExploredRecalls,
-		// consumed_recalls: recalls whose surfaced memory was actually
-		// fetched (fetch_messages followed the pointer) — the adoption
-		// north-star. Recall@K without consumption is a process metric.
-		"consumed_recalls": stats.ConsumedRecalls,
-		"feedback_stats":   fbStats,
-	})
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// handleRecallTest runs a recall preview for the tuning panel's test box.
-// When the agent has embedding enabled it reproduces the full memory_search
-// path (FTS + vector recall + MMR with the agent's current lambda) so the
-// user can see the lambda's diversity effect. Otherwise it falls back to a
-// basic FTS + scoring preview.
+// handleRecallTest previews what a message would inject by running the
+// production [MEM] lane itself — tools.SemanticMemRecall with recording
+// off — so the test box can never drift from what chat actually does
+// (it used to be a third hand-copied pipeline: KNN + min_relevance + MMR,
+// none of which the injection lane has). Rerank mirrors production: only
+// when a reranker is configured AND kb.memoryRerank is on.
 func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rec := s.requireAgentOwner(w, r, id)
@@ -153,92 +122,73 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 		limit = 10
 	}
 
-	// Full path when embedding is configured + reachable.
+	// Same construction the agent manager does: probe the configured
+	// embedder once, reranker only under the opt-in toggle.
+	var emb embedding.Embedder
+	semantic := false
 	var vec config.VectorCfg
 	if err := scope.SettingInto(ctx, db, "vectorization", s.effectiveUserID(r), id, &vec); err == nil && vec.Embedding.Enabled {
-		emb := embedding.ProbeEmbedder(ctx, embedding.NewOpenAICompatEmbedder(
+		emb = embedding.ProbeEmbedder(ctx, embedding.NewOpenAICompatEmbedder(
 			vec.Embedding.APIBase, vec.Embedding.APIKey, vec.Embedding.Model, vec.Embedding.Dim, vec.Embedding.DimEnabled))
-		if emb.Available() {
-			hits, err := db.SearchConversationSummariesFTS(ctx, id, req.Query, limit*3)
-			if err == nil {
-				vecs, e := emb.Embed(ctx, []string{req.Query})
-				if e != nil || len(vecs) != 1 {
-					// Embedding failed with vectorization on: say so —
-					// don't silently preview keyword-only results as if
-					// the full path ran.
-					note := "embedding call failed — vector recall and MMR excluded (keyword-only preview)"
-					if e != nil {
-						note += ": " + e.Error()
-					}
-					jsonResponse(w, http.StatusOK, map[string]any{
-						"ok": true, "results": formatRecallHits(hits), "mode": "degraded", "note": note,
-					})
-					return
-				}
-				// Apply the same min_relevance vector-distance filter the
-				// live memory_search tool uses, so the test box reflects reality.
-				minRel, _ := db.GetAgentMinRelevance(ctx, id)
-				if vecScored, ve := db.SearchConversationSummariesVectorScored(ctx, vecs[0], limit*3); ve == nil && len(vecScored) > 0 {
-					var scopedIDs []int64
-					for _, sh := range vecScored {
-						if minRel > 0 && (1/(1+sh.Distance)) < minRel {
-							continue
-						}
-						scopedIDs = append(scopedIDs, sh.ID)
-					}
-					if len(scopedIDs) > 0 {
-						if vecHits, fe := db.GetConversationSummariesByIDs(ctx, scopedIDs); fe == nil {
-							hits = mergeRecallPool(hits, vecHits, id, limit*3)
-						}
-					}
-				}
-				if len(hits) > limit {
-					if embMap, ee := db.GetConversationSummaryEmbeddings(ctx, recallHitIDs(hits)); ee == nil && len(embMap) >= limit {
-						lambda, _ := db.GetAgentMMRLambda(ctx, id)
-						if mmr := tools.SelectMMR(hits, embMap, vecs[0], lambda, limit); len(mmr) >= limit {
-							hits = mmr
-						}
-					}
-				}
+		semantic = emb.Available()
+	}
+	var rr embedding.Reranker
+	if semantic && vec.Reranker.Enabled && agentKBRerankEnabled(rec) {
+		rr = embedding.NewJinaReranker(vec.Reranker.APIBase, vec.Reranker.APIKey, vec.Reranker.Model)
+	}
+
+	hits, err := tools.SemanticMemRecall(ctx, db, emb, rr, id, s.effectiveUserID(r), req.Query, limit, false)
+	if err != nil {
+		if errors.Is(err, tools.ErrEmbeddingFailed) {
+			// Embedding endpoint is down with vectorization on: say so —
+			// don't silently preview keyword-only results as if the full
+			// path ran.
+			fts, ferr := db.PreviewRecall(ctx, id, req.Query, limit)
+			if ferr != nil {
+				jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": ferr.Error()})
+				return
 			}
 			jsonResponse(w, http.StatusOK, map[string]any{
-				"ok": true, "results": formatRecallHits(hits), "mode": "full",
+				"ok": true, "results": formatRecallHits(fts), "mode": "degraded",
+				"note": "embedding call failed — semantic recall excluded (keyword-only preview): " + err.Error(),
 			})
 			return
 		}
-	}
-
-	// Fallback: basic FTS + scoring (no vector/MMR).
-	hits, err := db.PreviewRecall(ctx, id, req.Query, limit)
-	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
+	if !semantic {
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"ok": true, "results": formatRecallHits(hits), "mode": "basic",
+			"note": "embedding disabled; plain FTS order, no semantic floors",
+		})
+		return
+	}
 	jsonResponse(w, http.StatusOK, map[string]any{
-		"ok": true, "results": formatRecallHits(hits), "mode": "basic",
-		"note": "embedding disabled; excludes vector recall and MMR",
+		"ok": true, "results": formatRecallHits(hits), "mode": "full",
 	})
 }
 
-// mergeRecallPool re-scopes the global vector KNN results to this agent
-// (vec0 KNN is global) and fuses with the FTS lane via the same RRF the
-// live memory_search tool uses, so the test box reflects reality.
-func mergeRecallPool(fts, vec []store.ConversationSummary, agentID string, limit int) []store.ConversationSummary {
-	scoped := make([]store.ConversationSummary, 0, len(vec))
-	for _, h := range vec {
-		if h.AgentID == agentID {
-			scoped = append(scoped, h)
-		}
+// agentKBRerankEnabled reads the agent's kb.memoryRerank toggle from its
+// config blob (round-trip through JSON into the typed config, same pattern
+// as the KB insight settings read).
+func agentKBRerankEnabled(rec *store.AgentRecord) bool {
+	if rec == nil || rec.Config == nil {
+		return false
 	}
-	return tools.FuseSummariesRRF(fts, scoped, limit)
-}
-
-func recallHitIDs(hits []store.ConversationSummary) []int64 {
-	ids := make([]int64, len(hits))
-	for i, h := range hits {
-		ids[i] = h.ID
+	raw, ok := rec.Config["kb"]
+	if !ok || raw == nil {
+		return false
 	}
-	return ids
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return false
+	}
+	var cfg config.AgentKBCfg
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		return false
+	}
+	return cfg.MemoryRerank
 }
 
 func formatRecallHits(hits []store.ConversationSummary) []map[string]any {
@@ -263,8 +213,7 @@ func (s *Server) handlePutRecallTuning(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		MmrLambda   *float64 `json:"mmr_lambda,omitempty"`
-		MinRelevance *float64 `json:"min_relevance,omitempty"`
+		MmrLambda *float64 `json:"mmr_lambda,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid request"})
@@ -272,10 +221,6 @@ func (s *Server) handlePutRecallTuning(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.MmrLambda != nil && (*req.MmrLambda < 0 || *req.MmrLambda > 1) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "mmr_lambda must be in [0,1]"})
-		return
-	}
-	if req.MinRelevance != nil && (*req.MinRelevance < 0 || *req.MinRelevance > 1) {
-		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "min_relevance must be in [0,1]"})
 		return
 	}
 	db, ok := s.dataStore.(*store.DBStore)
@@ -289,13 +234,7 @@ func (s *Server) handlePutRecallTuning(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.MinRelevance != nil {
-		if err := db.SetAgentMinRelevance(r.Context(), id, *req.MinRelevance); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-			return
-		}
-	}
-	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "mmr_lambda": req.MmrLambda, "min_relevance": req.MinRelevance})
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "mmr_lambda": req.MmrLambda})
 }
 
 // handleListRecallEvents returns the agent's recent recalls with summary

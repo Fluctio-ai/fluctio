@@ -2412,19 +2412,13 @@ export async function getAgentMemory(agentId: string): Promise<{ memory?: AgentM
   return res.json().catch(() => ({}));
 }
 
-export type RecallFeedbackStat = { lambda: number; ups: number; downs: number };
 export type RecallTuningState = {
   ok?: boolean;
-  mmr_lambda?: number;
-  min_relevance?: number;
-  total_recalls?: number;
-  bandit_explored_recalls?: number;
-  consumed_recalls?: number;
-  feedback_stats?: RecallFeedbackStat[];
   error?: string;
 };
-// getAgentRecallTuning reads the agent's bandit state (current MMR lambda,
-// recall counts, per-lambda feedback) for the recall-tuning panel.
+// getAgentRecallTuning is the recall-test page's availability probe — the
+// page renders no tuning stats (there is nothing left to tune by hand), it
+// only needs to know the store is reachable.
 export async function getAgentRecallTuning(agentId: string): Promise<RecallTuningState> {
   const res = await apiFetch(`/api/agents/${agentId}/recall-tuning`);
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
@@ -2471,21 +2465,6 @@ export async function setAgentRecallTuning(
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ mmr_lambda: mmrLambda }),
-  });
-  if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-  return res.json().catch(() => ({ ok: false }));
-}
-
-// setAgentRecallMinRelevance sets the memory-recall relevance threshold
-// (0..1; 0 = no filter). Drops hits whose similarity is below it.
-export async function setAgentRecallMinRelevance(
-  agentId: string,
-  minRelevance: number,
-): Promise<{ ok?: boolean; error?: string }> {
-  const res = await apiFetch(`/api/agents/${agentId}/recall-tuning`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ min_relevance: minRelevance }),
   });
   if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
   return res.json().catch(() => ({ ok: false }));

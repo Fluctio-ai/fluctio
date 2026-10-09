@@ -26,12 +26,14 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { PageHeader, SettingsCard, CardHead } from "@/components/settings-ui";
 
 // Per-agent recall test page — a query box to preview which memories a
-// message recalls, plus the audit list of what the lanes actually injected
-// (👍/👎 still feeds the background lambda bandit). The tuning knobs that
-// used to live here (manual lambda, absolute relevance threshold, MMR
-// formulas, bandit stats) never produced a perceptible effect at personal
-// scale and misled more than they helped — semantic ranking + injection
-// floors decide relevance now, so there is nothing left to tune by hand.
+// message recalls (the backend runs the production [MEM] lane with
+// recording off, so this can never drift from chat behavior), plus the
+// audit list of what the lanes actually injected. 👍/👎 are audit marks
+// (only votes on ε-greedy-explored memory_search recalls feed the λ
+// bandit; the injection lane has no λ). The tuning knobs that used to
+// live here never produced a perceptible effect at personal scale and
+// misled more than they helped — semantic ranking + injection floors
+// decide relevance now, so there is nothing left to tune by hand.
 export default function AgentRecallTuningPage() {
   const t = useT();
   const agentId = useAgentIdFromURL();
@@ -187,7 +189,10 @@ export default function AgentRecallTuningPage() {
               <li key={rc.recall_id} className="rounded border p-2 text-sm">
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span className="font-mono">{new Date(rc.created_at).toLocaleString()}</span>
-                  <span>λ={rc.lambda.toFixed(2)}</span>
+                  {/* λ only exists on memory_search-tool recalls; the [MEM]
+                      injection lane has no MMR and records 0 — don't show a
+                      fake knob value on those rows. */}
+                  {rc.lambda > 0 && <span>λ={rc.lambda.toFixed(2)}</span>}
                   {rc.bandit_explored && (
                     <span className="rounded bg-muted px-1">{t("recallTuning.banditExplored")}</span>
                   )}
