@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/llmjson"
@@ -384,12 +385,13 @@ Empty arrays when nothing survives.`,
 				return true
 			}
 			// Containment only for substantial stems — a 2-char stem
-			// would match almost everything.
+			// would match almost everything. Counted in runes, not bytes:
+			// a 2-char CJK stem is 6 bytes and would slip a byte test.
 			shorter, longer := ni, nc
 			if len(longer) < len(shorter) {
 				shorter, longer = longer, shorter
 			}
-			if len(shorter) >= 6 && strings.Contains(longer, shorter) {
+			if utf8.RuneCountInString(shorter) >= 6 && strings.Contains(longer, shorter) {
 				return true
 			}
 		}

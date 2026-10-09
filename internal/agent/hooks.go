@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -30,6 +31,15 @@ type SyntheticToolCall struct {
 	Name   string
 	Args   string
 	Result string
+}
+
+// newSyntheticCallID mints the call_id for a synthetic tool_call/tool_result
+// pair injected into the transcript (regex hooks, auto-query injections). It
+// must be unique per injection, not just per tool name: one session can
+// inject the same tool on several turns, and the Responses API rejects
+// replayed history that reuses a call_id.
+func newSyntheticCallID(prefix string) string {
+	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
 // HookContext carries data available to hooks at each hook point.

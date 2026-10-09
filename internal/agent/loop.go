@@ -3082,6 +3082,35 @@ func popLang(params map[string]any) string {
 	return ""
 }
 
+// handleRegexHookReply records a regex-hook exchange into the session and
+// emits its live events. Shared by HandleMessage and HandleMessageStream,
+// which differ only in how they hand the reply back to the caller.
+func (a *Agent) handleRegexHookReply(ctx context.Context, msg bus.InboundMessage, reply, hookName string, feedToLLM bool) {
+	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
+	userMsg := buildUserMessage(msg, a.model)
+	callID := newSyntheticCallID("regex-hook")
+	toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: callID, Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
+	toolResMsg := provider.Message{Role: "tool", ToolCallID: callID, Content: "matched"}
+	replyMsg := provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()}
+	if feedToLLM {
+		sess.BeginTurn()
+		sess.Append(userMsg)
+		sess.Append(toolCallMsg)
+		sess.Append(toolResMsg)
+		sess.Append(replyMsg)
+		sess.EndTurn()
+	} else {
+		// FeedToLLM=false: archive the exchange hidden (llm_visible=0) so it
+		// shows in web history but stays out of the LLM working set / summary
+		// / recall. The events below still surface it live.
+		sess.AppendArchivedHidden([]provider.Message{userMsg, toolCallMsg, toolResMsg, replyMsg})
+	}
+	emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": callID, "name": "regex_hook: " + hookName, "arguments": msg.Text}})
+	emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": callID, "name": "regex_hook: " + hookName, "result": "matched"}})
+	emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
+	emitEvent(ctx, ChatEvent{Type: "done"})
+}
+
 func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) string {
 	a.persistInboundImages(&msg)
 	// Lift the chatter's UI locale out of Params (where the web client
@@ -3105,32 +3134,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// instead of the LLM. Evaluated before slash commands so fixed-format
 	// messages (e.g. "翻译 xxx") bypass the agent loop entirely.
 	if reply, hookName, matched, feedToLLM := a.matchRegexHooks(ctx, msg.Text); matched {
-		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
-		userMsg := buildUserMessage(msg, a.model)
-		// Unique per firing: one session can trip the same hook on
-		// several turns, and the Responses API rejects replayed history
-		// with duplicate call_ids (same class as the synth- pair fix).
-		hookCallID := fmt.Sprintf("regex-hook-%d", time.Now().UnixNano())
-		toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: hookCallID, Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
-		toolResMsg := provider.Message{Role: "tool", ToolCallID: hookCallID, Content: "matched"}
-		replyMsg := provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()}
-		if feedToLLM {
-			sess.BeginTurn()
-			sess.Append(userMsg)
-			sess.Append(toolCallMsg)
-			sess.Append(toolResMsg)
-			sess.Append(replyMsg)
-			sess.EndTurn()
-		} else {
-			// FeedToLLM=false: archive the exchange hidden (llm_visible=0)
-			// so it shows in web history but stays out of the LLM working
-			// set / summary / recall. emitEvent below still surfaces it live.
-			sess.AppendArchivedHidden([]provider.Message{userMsg, toolCallMsg, toolResMsg, replyMsg})
-		}
-		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": hookCallID, "name": "regex_hook: " + hookName, "arguments": msg.Text}})
-		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": hookCallID, "name": "regex_hook: " + hookName, "result": "matched"}})
-		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
-		emitEvent(ctx, ChatEvent{Type: "done"})
+		a.handleRegexHookReply(ctx, msg, reply, hookName, feedToLLM)
 		return reply
 	}
 	// Check for slash commands first. Empty reply means "handled but
@@ -3498,11 +3502,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			kbSources = hcBefore.KnowledgeSources
 		}
 		for _, stc := range hcBefore.SyntheticToolCalls {
-			// Per-injection unique id: the lane can inject the same tool
-			// name more than once per session (one per distinct query),
-			// and the Responses API rejects replayed history with
-			// duplicate call_ids.
-			tcID := fmt.Sprintf("synth-%s-%d", stc.Name, time.Now().UnixNano())
+			tcID := newSyntheticCallID("synth-" + stc.Name)
 			emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": tcID, "name": stc.Name, "arguments": stc.Args}})
 			emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": tcID, "name": stc.Name, "result": stc.Result}})
 			asstMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: tcID, Type: "function", Function: provider.FunctionCall{Name: stc.Name, Arguments: stc.Args}}}, Timestamp: time.Now().UnixMilli()}
@@ -4205,9 +4205,12 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 	// conversation whose feedback landed between global boundaries was
 	// never sampled at all (LIFT eval: W1/W2 preference corrections
 	// dropped because only W3's window happened to hit the boundary).
-	// Count user turns from the messages runPostTurn already holds —
-	// synthetic injections are excluded via Origin — so no extra session
-	// bookkeeping is needed.
+	// Counted from the messages runPostTurn already holds, so no extra
+	// session bookkeeping is needed. Only OriginUser counts as a real turn
+	// — but the auto-query hook's [MEM]/[KB] context blocks are user-role
+	// with an empty Origin (kb/hook.go injectMEMContext / injectKBContext),
+	// so a recall-heavy session still counts them and fires early. Tagging
+	// those injections with a non-user origin is the remaining fix.
 	willFire := false
 	sessionUserTurns := 0
 	for _, m := range messages {
@@ -4265,38 +4268,8 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// Regex hooks: intercept messages matching a pattern and execute CLI
 	// instead of the LLM.
 	if reply, hookName, matched, feedToLLM := a.matchRegexHooks(ctx, msg.Text); matched {
-		sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
-		userMsg := buildUserMessage(msg, a.model)
-		// Unique per firing: one session can trip the same hook on
-		// several turns, and the Responses API rejects replayed history
-		// with duplicate call_ids (same class as the synth- pair fix).
-		hookCallID := fmt.Sprintf("regex-hook-%d", time.Now().UnixNano())
-		toolCallMsg := provider.Message{Role: "assistant", Content: "", ToolCalls: []provider.ToolCall{{ID: hookCallID, Type: "function", Function: provider.FunctionCall{Name: "regex_hook: " + hookName, Arguments: regexHookArgs(msg.Text)}}}, Timestamp: time.Now().UnixMilli()}
-		toolResMsg := provider.Message{Role: "tool", ToolCallID: hookCallID, Content: "matched"}
-		replyMsg := provider.Message{Role: "assistant", Content: reply, Timestamp: time.Now().UnixMilli()}
-		if feedToLLM {
-			sess.BeginTurn()
-			sess.Append(userMsg)
-			sess.Append(toolCallMsg)
-			sess.Append(toolResMsg)
-			sess.Append(replyMsg)
-			sess.EndTurn()
-		} else {
-			// FeedToLLM=false: archive the exchange hidden (llm_visible=0)
-			// so it shows in web history but stays out of the LLM working
-			// set / summary / recall. emitEvent below still surfaces it live.
-			sess.AppendArchivedHidden([]provider.Message{userMsg, toolCallMsg, toolResMsg, replyMsg})
-		}
-		emitEvent(ctx, ChatEvent{Type: "tool_call", Data: map[string]any{"id": hookCallID, "name": "regex_hook: " + hookName, "arguments": msg.Text}})
-		emitEvent(ctx, ChatEvent{Type: "tool_result", Data: map[string]any{"id": hookCallID, "name": "regex_hook: " + hookName, "result": "matched"}})
-		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": reply}})
-		emitEvent(ctx, ChatEvent{Type: "done"})
-		ch := make(chan provider.StreamChunk, 2)
-		go func() {
-			ch <- provider.StreamChunk{Content: reply, Done: true}
-			close(ch)
-		}()
-		return provider.NewStreamReader(ch)
+		a.handleRegexHookReply(ctx, msg, reply, hookName, feedToLLM)
+		return a.stringStream(reply)
 	}
 	// Reuse setup logic from HandleMessage. Empty reply is "handled
 	// but silent" — see the HandleMessage twin. Still emit a Done

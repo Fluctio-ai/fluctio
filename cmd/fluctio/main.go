@@ -148,13 +148,11 @@ func runGateway(port int) error {
 
 	// Log level: FLUCTIO_LOG_LEVEL was loaded into env but never applied
 	// (the handler was hardcoded to Info), so the documented knob did
-	// nothing. Apply it now; unknown values fall back to Info.
+	// nothing. Apply it now; UnmarshalText leaves the receiver untouched
+	// on an unknown/empty name, so Info is the fallback for free, and
+	// FLUCTIO_DEBUG_MODE still wins.
 	level := slog.LevelInfo
-	if env.Log.Level != "" {
-		if err := level.UnmarshalText([]byte(env.Log.Level)); err != nil {
-			level = slog.LevelInfo
-		}
-	}
+	_ = level.UnmarshalText([]byte(env.Log.Level))
 	if env.Log.Debug {
 		level = slog.LevelDebug
 	}

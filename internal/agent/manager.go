@@ -307,19 +307,18 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				}
 			}
 		}
-		// KB auto-query hook + knowledgebase_* tools: when the agent's
-		// file config enables KB, register a BeforeModelCall hook that
-		// searches the KB and injects results (augment) or short-circuits
-		// the LLM (strict), plus the knowledgebase_search/add/list/delete
-		// tools so the model can query the KB explicitly. Loop-side
+		// KB auto-query hook + knowledgebase_* tools: the hook searches the
+		// KB and injects results (augment) or short-circuits the LLM (strict);
+		// it is registered below for any agent with a KB store or a memory
+		// searcher. The knowledgebase_search/add/list/delete tools (inside the
+		// KB gate below) let the model query the KB explicitly. Loop-side
 		// consumption of the hook's outputs (SkipLLM/PrebuiltContent/
 		// Messages rewrite) lands in slice 4b-2; until then the hook
 		// populates HookContext fields the loop doesn't yet read.
 		// Memory auto-recall searcher: conversation-summary lookup over
-		// the relational store. Built outside the KB gate below because
-		// memory recall is a memory feature, not a KB feature — agents
-		// with the knowledge base disabled still register the recall
-		// lane at the end of this block.
+		// the relational store. Memory recall is a memory feature, not a
+		// KB one, so it and the auto-query hook below sit outside the KB
+		// gate — a KB-disabled agent still recalls conversation summaries.
 		var memSearch kb.MemoryAutoSearcher
 		if db, ok := m.opts.dataStore.(*store.DBStore); ok && db != nil {
 			memSearch = func(ctx context.Context, agentID, query string, limit int) ([]kb.MemoryRecallHit, error) {
@@ -334,8 +333,11 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				return out, nil
 			}
 		}
+		// kbStore stays nil for a KB-disabled agent: the auto-query hook
+		// registered after this gate self-gates its KB lanes on store == nil,
+		// so the memory recall lane no longer lives and dies with the KB.
+		var kbStore *kb.KBStore
 		if rc.KB != nil && rc.KB.Enabled {
-			var kbStore *kb.KBStore
 			if dbs, ok := m.opts.dataStore.(*store.DBStore); ok {
 				kbStore = kb.NewKBStore(dbs.DB(), dbs.Dialect())
 				// Cascade wiki cleanup on delete so the agent-tool delete path
@@ -381,7 +383,60 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			if kbCfg != nil && kbCfg.InsightMaxTokens > 0 {
 				insightMaxTokens = kbCfg.InsightMaxTokens
 			}
+			// Register KB tools so the agent can search/add/list/delete
+			// knowledge-base entries during chat turns.
+			if kbStore != nil {
+				ag.kbStore = kbStore
+				kb.RegisterKBTools(ag.registry, kbStore, rc.ID, func() float64 {
+					if kbCfg.WikiRatio != nil {
+						return *kbCfg.WikiRatio
+					}
+					return 0.5
+				}, func() float64 {
+					// Prefer the vectorization-page WikiThreshold (unified
+					// wiki recall cutoff); fall back to the legacy KB-config
+					// Threshold, then the 0.45 default.
+					var v config.VectorCfg
+					_ = scope.SettingInto(context.Background(), m.opts.dataStore, "vectorization", m.uid, rc.ID, &v)
+					if v.WikiThreshold > 0 {
+						return v.WikiThreshold
+					}
+					if kbCfg.Threshold != nil {
+						return *kbCfg.Threshold
+					}
+					return 0.45
+				}, kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
+					return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
+						// Use ag's own provider (from providerForAgent, e.g. its
+						// ccw/glm-5.2 instance) — NOT the buildAgent `prov` arg,
+						// which is the shared default provider and doesn't recognize a
+						// per-agent model like glm-5.2 (returns "Unsupported model").
+						// bgProvider: insights consume raw article/conversation
+						// content, so they must honor the PII scrubbing switch.
+						// JSON mode: insight payloads embed article quotes, where
+						// unescaped quotes are likeliest to break the parse.
+						resp, err := ag.bgProvider().Chat(provider.WithJSONMode(ctx), msgs, nil, rc.Model, insightMaxTokens, 0.3)
+						if err != nil {
+							return "", err
+						}
+						return resp.Content, nil
+					}, messages, 4)
+				}), rc.Model, insightMaxTokens)
+			}
+		}
+		// Auto-query hook: the KB lanes when kbStore is wired, the memory
+		// recall lane when memSearch is. Registered once, outside the KB
+		// gate — each lane self-gates inside kb.AutoQueryHook (store == nil
+		// / cfg.Enabled), so a KB-disabled agent still recalls conversation
+		// summaries. Registering a no-op hook when neither is wired would
+		// only cost a config lookup per model call.
+		if kbStore != nil || memSearch != nil {
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
+				kbCfg := rc.KB
+				if kbCfg == nil {
+					// No KB config: memory lane only, at its defaults.
+					return kb.AutoQueryCfg{}
+				}
 				threshold := 0.45
 				var v config.VectorCfg
 				if scope.SettingInto(context.Background(), m.opts.dataStore, "vectorization", m.uid, rc.ID, &v) == nil && v.WikiThreshold > 0 {
@@ -431,83 +486,6 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					})
 				}
 				hc.KnowledgeSources = kbHC.KnowledgeSources
-			})
-			// Register KB tools so the agent can search/add/list/delete
-			// knowledge-base entries during chat turns.
-			if kbStore != nil {
-				ag.kbStore = kbStore
-				kb.RegisterKBTools(ag.registry, kbStore, rc.ID, func() float64 {
-					if kbCfg.WikiRatio != nil {
-						return *kbCfg.WikiRatio
-					}
-					return 0.5
-				}, func() float64 {
-					// Prefer the vectorization-page WikiThreshold (unified
-					// wiki recall cutoff); fall back to the legacy KB-config
-					// Threshold, then the 0.45 default.
-					var v config.VectorCfg
-					_ = scope.SettingInto(context.Background(), m.opts.dataStore, "vectorization", m.uid, rc.ID, &v)
-					if v.WikiThreshold > 0 {
-						return v.WikiThreshold
-					}
-					if kbCfg.Threshold != nil {
-						return *kbCfg.Threshold
-					}
-					return 0.45
-				}, kb.InsightInvoker(func(ctx context.Context, messages []provider.Message) (string, error) {
-					return wiki.InvokeWithRetry(ctx, func(ctx context.Context, msgs []provider.Message) (string, error) {
-						// Use ag's own provider (from providerForAgent, e.g. its
-						// ccw/glm-5.2 instance) — NOT the buildAgent `prov` arg,
-						// which is the shared default provider and doesn't recognize a
-						// per-agent model like glm-5.2 (returns "Unsupported model").
-						// bgProvider: insights consume raw article/conversation
-						// content, so they must honor the PII scrubbing switch.
-						// JSON mode: insight payloads embed article quotes, where
-						// unescaped quotes are likeliest to break the parse.
-						resp, err := ag.bgProvider().Chat(provider.WithJSONMode(ctx), msgs, nil, rc.Model, insightMaxTokens, 0.3)
-						if err != nil {
-							return "", err
-						}
-						return resp.Content, nil
-					}, messages, 4)
-				}), rc.Model, insightMaxTokens)
-			}
-		}
-		// The KB gate above owns the full auto-query hook (KB + memory
-		// lanes). When the knowledge base is disabled that hook was never
-		// registered — and the memory lane lived (and died) with it, so
-		// agents with KB off never recalled conversation summaries at all
-		// (LIFT eval: summaries on disk, zero recalls). Register a
-		// memory-only variant here. The KB lanes self-gate on
-		// cfg.Enabled / store == nil, so a zero config keeps them off.
-		if (rc.KB == nil || !rc.KB.Enabled) && memSearch != nil {
-			memCfg := config.AgentKBCfg{}
-			if rc.KB != nil {
-				memCfg = *rc.KB
-			}
-			memHook := kb.AutoQueryHook(nil, rc.ID, func() kb.AutoQueryCfg {
-				return kb.AutoQueryCfg{
-					Enabled:          false,
-					MemoryAutoMode:   memCfg.MemoryAutoMode,
-					MemoryKeywords:   memCfg.MemoryKeywords,
-					MemoryMaxResults: memCfg.MemoryMaxResults,
-				}
-			}, memSearch)
-			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {
-				kbHC := &kb.HookContext{
-					Messages: hc.Messages,
-					Source:   hc.Source,
-					ChatOnly: hc.ChatOnly,
-				}
-				memHook(ctx, kbHC)
-				hc.Messages = kbHC.Messages
-				for _, stc := range kbHC.SyntheticToolCalls {
-					hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
-						Name:   stc.Name,
-						Args:   stc.Args,
-						Result: stc.Result,
-					})
-				}
 			})
 		}
 		// Date line in the chatter's timezone — needs dataStore for the
