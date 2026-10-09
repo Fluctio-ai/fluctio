@@ -100,3 +100,43 @@ func TestListConversationSummariesNeedingVectorScanShape(t *testing.T) {
 		t.Fatalf("inserted summary not returned by the backfill picker")
 	}
 }
+
+// Chinese queries carry no spaces: the old strings.Fields pre-filter
+// turned a whole sentence into one unmatchable term, so the recall lane
+// returned nothing and injected no memory for CJK users. The pre-filter
+// now reuses the scorer's CJK bigram tokenizer.
+func TestSearchConversationSummariesFTSCJKBigramQuery(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	seed := []ConversationSummary{
+		{AgentID: "a1", SessionKey: "s1", Topic: "周报需单独一行标注出报日期",
+			Summary: "用户要求销售周报在正文开始前单独写一行出报日期", Keywords: []string{"周报", "日期"},
+			SeqStart: 1, SeqEnd: 5, Kind: "durable"},
+		{AgentID: "a1", SessionKey: "s2", Topic: "无关主题",
+			Summary: "完全无关的内容", Keywords: []string{},
+			SeqStart: 1, SeqEnd: 2, Kind: "episodic"},
+	}
+	for _, s := range seed {
+		if _, err := db.InsertConversationSummary(ctx, s); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	// No spaces anywhere in the query.
+	hits, err := db.SearchConversationSummariesFTS(ctx, "a1",
+		"这是本周的客服数据，给我整理一份客服周报，存到 report.md", 10)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) == 0 || hits[0].Topic != "周报需单独一行标注出报日期" {
+		t.Fatalf("hits=%d first=%q, want the 周报 summary recalled first",
+			len(hits), firstTopicOr(hits))
+	}
+	for _, h := range hits {
+		if h.Topic == "无关主题" {
+			t.Fatalf("unrelated summary passed the pre-filter")
+		}
+	}
+}

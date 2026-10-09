@@ -183,8 +183,18 @@ func (d *DBStore) SearchConversationSummariesFTS(
 		fetchLimit = 10
 	}
 
-	// Tokenize the query into space-separated terms for LIKE pre-filter.
-	terms := strings.Fields(query)
+	// Tokenize the query for the LIKE pre-filter. strings.Fields is
+	// useless for CJK: a Chinese sentence has no spaces, so it became one
+	// long term that could never match — the candidate set stayed empty
+	// and reRankSummaries never saw anything (the recall lane injected
+	// nothing for Chinese queries). Reuse the scorer's own tokenizer
+	// (CJK bigrams + latin words, stopwords dropped) so recall and
+	// scoring agree on what a term is; the rerank below still imposes
+	// precision on the broadened candidate set.
+	terms := tokenizeSummary(query)
+	if len(terms) > 60 {
+		terms = terms[:60] // bound the clause count for very long queries
+	}
 	if len(terms) == 0 {
 		terms = []string{query}
 	}
