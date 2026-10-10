@@ -15,8 +15,8 @@ import {
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
-import { SaveButton } from "@/components/save-button";
-import { SettingsCard, CardHead, Field, GroupLabel, GroupHead, NumberField, ToggleRow } from "@/components/settings-ui";
+import { useAutoSave } from "@/hooks/use-auto-save";
+import { SettingsCard, CardHead, Field, GroupLabel, GroupHead, NumberField, ToggleRow, SaveStatus } from "@/components/settings-ui";
 import { channelLabel } from "@/components/channel-icon";
 import { BookOpen } from "lucide-react";
 
@@ -52,7 +52,8 @@ function KeywordField({
 // Settings dialog's Knowledge tab. The data-source *list* is browsed
 // from /knowledge/ instead; this card is only the retrieval behavior
 // (enable, trigger mode, max results, wiki/concept ratio, threshold,
-// keywords, search/no-result action) plus its own Save button.
+// keywords, search/no-result action). Every edit auto-saves (debounced);
+// keyword-mode drafts with an empty keyword list stay local until valid.
 export function KBSettingsCard() {
   const t = useT();
   const agentId = useAgentIdFromURL();
@@ -98,38 +99,46 @@ export function KBSettingsCard() {
   const [memRerank, setMemRerank] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
 
+  const loadConfig = useCallback(
+    () =>
+      !agentId
+        ? Promise.resolve()
+        : getAgentConfig(agentId)
+            .then((cfg) => {
+              const kb = cfg.kb;
+              if (kb) {
+                setKbEnabled(kb.enabled ?? false);
+                setAutoMode(kb.autoMode ?? "always");
+                setKeywords((kb.keywords ?? []).join(", "));
+                setMaxResults(kb.maxResults || 5);
+                setSearchMode(kb.searchMode ?? "augment");
+                setEmptyAction(kb.emptyAction ?? "llm");
+                setWikiRatio(kb.wikiRatio ?? 0.5);
+                setThreshold(kb.threshold ?? 0.45);
+                setReminderChannel(kb.reminderChannel || "wechat");
+                setArticleDupHigh(kb.articleDupHigh ?? 0.90);
+                setArticleDupMid(kb.articleDupMid ?? 0.72);
+                setFlashDupThreshold(kb.flashDupThreshold ?? 0.85);
+                setFtEnabled(kb.flashTodoEnabled ?? false);
+                setFtAutoMode(kb.flashTodoAutoMode ?? "disabled");
+                setFtKeywords((kb.flashTodoKeywords ?? []).join(", "));
+                setFtMaxResults(kb.flashTodoMaxResults || 3);
+                setFtThreshold(kb.flashTodoThreshold ?? 0.6);
+                setMemAutoMode(kb.memoryAutoMode || "always");
+                setMemKeywords((kb.memoryKeywords ?? []).join(", "));
+                setMemMaxResults(kb.memoryMaxResults || 3);
+                setMemRerank(kb.memoryRerank ?? false);
+              }
+              setConfigLoaded(true);
+            })
+            // Keep the card disabled when the config can't be fetched.
+            .catch(() => {}),
+    [agentId],
+  );
+
   useEffect(() => {
-    if (!agentId) return;
-    getAgentConfig(agentId)
-      .then((cfg) => {
-        const kb = cfg.kb;
-        if (kb) {
-          setKbEnabled(kb.enabled ?? false);
-          setAutoMode(kb.autoMode ?? "always");
-          setKeywords((kb.keywords ?? []).join(", "));
-          setMaxResults(kb.maxResults || 5);
-          setSearchMode(kb.searchMode ?? "augment");
-          setEmptyAction(kb.emptyAction ?? "llm");
-          setWikiRatio(kb.wikiRatio ?? 0.5);
-          setThreshold(kb.threshold ?? 0.45);
-          setReminderChannel(kb.reminderChannel || "wechat");
-          setArticleDupHigh(kb.articleDupHigh ?? 0.90);
-          setArticleDupMid(kb.articleDupMid ?? 0.72);
-          setFlashDupThreshold(kb.flashDupThreshold ?? 0.85);
-          setFtEnabled(kb.flashTodoEnabled ?? false);
-          setFtAutoMode(kb.flashTodoAutoMode ?? "disabled");
-          setFtKeywords((kb.flashTodoKeywords ?? []).join(", "));
-          setFtMaxResults(kb.flashTodoMaxResults || 3);
-          setFtThreshold(kb.flashTodoThreshold ?? 0.6);
-          setMemAutoMode(kb.memoryAutoMode || "always");
-          setMemKeywords((kb.memoryKeywords ?? []).join(", "));
-          setMemMaxResults(kb.memoryMaxResults || 3);
-          setMemRerank(kb.memoryRerank ?? false);
-        }
-        setConfigLoaded(true);
-      })
-      .catch(() => {});
-  }, [agentId]);
+    void loadConfig();
+  }, [loadConfig]);
 
   const handleSave = useCallback(async () => {
     if (!agentId) return;
@@ -195,13 +204,21 @@ export function KBSettingsCard() {
 
   // Keyword mode is a contract: no keywords = recall silently never
   // fires (groupTriggered's containsAnyKeyword over an empty list is
-  // always false). Block saving and flag the input instead of letting
-  // the user discover it weeks later.
+  // always false). Keep such drafts local (blocked) and flag the input
+  // instead of persisting a config the user discovers is inert weeks
+  // later; the next valid edit persists everything.
   const wikiKeywordsInvalid =
     kbEnabled && autoMode === "keyword" && !keywords.trim();
   const ftKeywordsInvalid =
     kbEnabled && ftEnabled && ftAutoMode === "keyword" && !ftKeywords.trim();
   const memKeywordsInvalid = memAutoMode === "keyword" && !memKeywords.trim();
+
+  const { failed, saved, wrap } = useAutoSave({
+    loaded: configLoaded,
+    blocked: wikiKeywordsInvalid || ftKeywordsInvalid || memKeywordsInvalid,
+    save: handleSave,
+    reload: loadConfig,
+  });
 
   return (
     <SettingsCard className="space-y-4">
@@ -210,11 +227,19 @@ export function KBSettingsCard() {
         title={t("knowledge.autoQuery")}
         desc={t("knowledge.autoQueryDesc")}
         control={
-          <Switch
-            checked={kbEnabled}
-            onCheckedChange={setKbEnabled}
-            disabled={!configLoaded}
-          />
+          <div className="flex items-center gap-2">
+            <SaveStatus
+              failed={failed}
+              saved={saved}
+              failedLabel={t("common.saveFailed")}
+              savedLabel={t("common.saved")}
+            />
+            <Switch
+              checked={kbEnabled}
+              onCheckedChange={wrap(setKbEnabled)}
+              disabled={!configLoaded}
+            />
+          </div>
         }
       />
 
@@ -224,7 +249,7 @@ export function KBSettingsCard() {
       <div className="space-y-4 border-t border-border pt-4">
         <GroupHead title={t("knowledge.memoryRecall")} desc={t("knowledge.memoryRecallDesc")} />
         <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
-          <Tabs value={memAutoMode} onValueChange={(v) => v && setMemAutoMode(v)}>
+          <Tabs value={memAutoMode} onValueChange={(v) => v && wrap(setMemAutoMode)(v)}>
             <TabsList>
               {modeOptions.map((o) => (
                 <TabsTrigger key={o.value} value={o.value}>
@@ -237,18 +262,18 @@ export function KBSettingsCard() {
         {memAutoMode !== "disabled" && (
           <>
             <Field label={t("knowledge.maxResults")}>
-              <NumberField min={1} max={10} value={memMaxResults} onChange={setMemMaxResults} />
+              <NumberField min={1} max={10} value={memMaxResults} onChange={wrap(setMemMaxResults)} />
             </Field>
             <ToggleRow
               title={t("knowledge.memRerank")}
               hint={t("knowledge.memRerankDesc")}
               checked={memRerank}
-              onCheckedChange={setMemRerank}
+              onCheckedChange={wrap(setMemRerank)}
             />
           </>
         )}
         {memAutoMode === "keyword" && (
-          <KeywordField value={memKeywords} onChange={setMemKeywords} invalid={memKeywordsInvalid} />
+          <KeywordField value={memKeywords} onChange={wrap(setMemKeywords)} invalid={memKeywordsInvalid} />
         )}
       </div>
 
@@ -256,7 +281,7 @@ export function KBSettingsCard() {
         <div className="space-y-4 border-t border-border pt-4">
           <GroupLabel>{t("knowledge.wikiRecall")}</GroupLabel>
           <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
-            <Tabs value={autoMode} onValueChange={(v) => v && setAutoMode(v)}>
+            <Tabs value={autoMode} onValueChange={(v) => v && wrap(setAutoMode)(v)}>
               <TabsList>
                 {modeOptions.map((o) => (
                   <TabsTrigger key={o.value} value={o.value}>
@@ -271,7 +296,7 @@ export function KBSettingsCard() {
               min={1}
               max={20}
               value={maxResults}
-              onChange={setMaxResults}
+              onChange={wrap(setMaxResults)}
             />
           </Field>
 
@@ -281,7 +306,7 @@ export function KBSettingsCard() {
           {autoMode === "keyword" && (
             <KeywordField
               value={keywords}
-              onChange={setKeywords}
+              onChange={wrap(setKeywords)}
               invalid={wikiKeywordsInvalid}
             />
           )}
@@ -302,7 +327,7 @@ export function KBSettingsCard() {
               max={100}
               step={5}
               value={Math.round(wikiRatio * 100)}
-              onChange={(e) => setWikiRatio(Number(e.target.value) / 100)}
+              onChange={(e) => wrap(setWikiRatio)(Number(e.target.value) / 100)}
               className="w-full accent-primary"
             />
           </Field>
@@ -312,13 +337,13 @@ export function KBSettingsCard() {
               title={t("knowledge.flashRecall")}
               desc={t("knowledge.flashRecallDesc")}
               control={
-                <Switch checked={ftEnabled} onCheckedChange={setFtEnabled} />
+                <Switch checked={ftEnabled} onCheckedChange={wrap(setFtEnabled)} />
               }
             />
             {ftEnabled && (
               <>
                 <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
-                  <Tabs value={ftAutoMode} onValueChange={(v) => v && setFtAutoMode(v)}>
+                  <Tabs value={ftAutoMode} onValueChange={(v) => v && wrap(setFtAutoMode)(v)}>
                     <TabsList>
                       {modeOptions.map((o) => (
                         <TabsTrigger key={o.value} value={o.value}>
@@ -333,13 +358,13 @@ export function KBSettingsCard() {
                     min={1}
                     max={20}
                     value={ftMaxResults}
-                    onChange={setFtMaxResults}
+                    onChange={wrap(setFtMaxResults)}
                   />
                 </Field>
                 {ftAutoMode === "keyword" && (
                   <KeywordField
                     value={ftKeywords}
-                    onChange={setFtKeywords}
+                    onChange={wrap(setFtKeywords)}
                     invalid={ftKeywordsInvalid}
                   />
                 )}
@@ -368,7 +393,7 @@ export function KBSettingsCard() {
                   max={1}
                   step={0.01}
                   value={threshold}
-                  onChange={(e) => setThreshold(Number(e.target.value))}
+                  onChange={(e) => wrap(setThreshold)(Number(e.target.value))}
                   className="w-full accent-primary"
                 />
               </Field>
@@ -383,7 +408,7 @@ export function KBSettingsCard() {
                   max={1}
                   step={0.01}
                   value={ftThreshold}
-                  onChange={(e) => setFtThreshold(Number(e.target.value))}
+                  onChange={(e) => wrap(setFtThreshold)(Number(e.target.value))}
                   className="w-full accent-primary"
                 />
               </Field>
@@ -397,13 +422,13 @@ export function KBSettingsCard() {
             <GroupLabel>{t("knowledge.dedupThresholds")}</GroupLabel>
             <div className="grid grid-cols-2 gap-4">
               <Field label={<span className="text-xs">{t("knowledge.dedupArticleHigh")}</span>}>
-                <NumberField min={0} max={1} value={articleDupHigh} onChange={setArticleDupHigh} />
+                <NumberField min={0} max={1} value={articleDupHigh} onChange={wrap(setArticleDupHigh)} />
               </Field>
               <Field label={<span className="text-xs">{t("knowledge.dedupArticleMid")}</span>}>
-                <NumberField min={0} max={1} value={articleDupMid} onChange={setArticleDupMid} />
+                <NumberField min={0} max={1} value={articleDupMid} onChange={wrap(setArticleDupMid)} />
               </Field>
               <Field label={<span className="text-xs">{t("knowledge.dedupFlash")}</span>}>
-                <NumberField min={0} max={1} value={flashDupThreshold} onChange={setFlashDupThreshold} />
+                <NumberField min={0} max={1} value={flashDupThreshold} onChange={wrap(setFlashDupThreshold)} />
               </Field>
             </div>
           </div>
@@ -412,7 +437,7 @@ export function KBSettingsCard() {
             <GroupLabel>{t("knowledge.searchBehavior")}</GroupLabel>
             <div className="grid grid-cols-2 gap-4">
               <Field label={t("knowledge.searchMode")}>
-                <Select value={searchMode} onValueChange={(v) => v && setSearchMode(v)}>
+                <Select value={searchMode} onValueChange={(v) => v && wrap(setSearchMode)(v)}>
                   <SelectTrigger>
                     <SelectValue>{searchModeLabel}</SelectValue>
                   </SelectTrigger>
@@ -423,7 +448,7 @@ export function KBSettingsCard() {
                 </Select>
               </Field>
               <Field label={t("knowledge.noResultAction")}>
-                <Select value={emptyAction} onValueChange={(v) => v && setEmptyAction(v)}>
+                <Select value={emptyAction} onValueChange={(v) => v && wrap(setEmptyAction)(v)}>
                   <SelectTrigger>
                     <SelectValue>{emptyActionLabel}</SelectValue>
                   </SelectTrigger>
@@ -439,7 +464,7 @@ export function KBSettingsCard() {
           <div className="space-y-4 border-t border-border pt-4">
             <GroupLabel>{t("knowledge.todoReminders")}</GroupLabel>
             <Field label={t("knowledge.reminderChannel")} hint={t("knowledge.reminderChannelDesc")}>
-              <Select value={reminderChannel} onValueChange={(v) => v && setReminderChannel(v)}>
+              <Select value={reminderChannel} onValueChange={(v) => v && wrap(setReminderChannel)(v)}>
                 <SelectTrigger>
                   <SelectValue>{(v: unknown) => channelLabel(v as string)}</SelectValue>
                 </SelectTrigger>
@@ -457,13 +482,6 @@ export function KBSettingsCard() {
           </div>
         </div>
       )}
-
-      <div className="flex justify-end border-t border-border pt-4">
-        <SaveButton
-          onSave={handleSave}
-          disabled={!configLoaded || wikiKeywordsInvalid || ftKeywordsInvalid || memKeywordsInvalid}
-        />
-      </div>
     </SettingsCard>
   );
 }

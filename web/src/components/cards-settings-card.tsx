@@ -15,8 +15,8 @@ import { channelLabel } from "@/components/channel-icon";
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
-import { SaveButton } from "@/components/save-button";
-import { SettingsCard, CardHead, Field, GroupHead, NumberField } from "@/components/settings-ui";
+import { useAutoSave } from "@/hooks/use-auto-save";
+import { SettingsCard, CardHead, Field, GroupHead, NumberField, SaveStatus } from "@/components/settings-ui";
 
 // CardsSettingsCard — Q&A flashcard config. Lives in the Settings dialog's
 // Knowledge tab next to DiarySettingsCard. Generation: nightly LLM pass
@@ -35,24 +35,32 @@ export function CardsSettingsCard() {
   const [pushChannel, setPushChannel] = useState("wechat");
   const [configLoaded, setConfigLoaded] = useState(false);
 
+  const loadConfig = useCallback(
+    () =>
+      !agentId
+        ? Promise.resolve()
+        : getAgentConfig(agentId)
+            .then((cfg) => {
+              const c = cfg.cards;
+              if (c) {
+                setEnabled(c.enabled ?? false);
+                setCronTime(c.cronTime || "03:00");
+                setDailyLimit(c.dailyLimit || 10);
+                setReviewLimit(c.reviewLimit || 20);
+                setPushEnabled(c.pushEnabled ?? false);
+                setPushTime(c.pushTime || "09:00");
+                setPushChannel(c.pushChannel || "wechat");
+              }
+              setConfigLoaded(true);
+            })
+            // Keep the card disabled when the config can't be fetched.
+            .catch(() => {}),
+    [agentId],
+  );
+
   useEffect(() => {
-    if (!agentId) return;
-    getAgentConfig(agentId)
-      .then((cfg) => {
-        const c = cfg.cards;
-        if (c) {
-          setEnabled(c.enabled ?? false);
-          setCronTime(c.cronTime || "03:00");
-          setDailyLimit(c.dailyLimit || 10);
-          setReviewLimit(c.reviewLimit || 20);
-          setPushEnabled(c.pushEnabled ?? false);
-          setPushTime(c.pushTime || "09:00");
-          setPushChannel(c.pushChannel || "wechat");
-        }
-        setConfigLoaded(true);
-      })
-      .catch(() => {});
-  }, [agentId]);
+    void loadConfig();
+  }, [loadConfig]);
 
   const handleSave = useCallback(async () => {
     if (!agentId) return;
@@ -70,6 +78,12 @@ export function CardsSettingsCard() {
     if (res?.error) throw new Error(res.error);
   }, [agentId, enabled, cronTime, dailyLimit, reviewLimit, pushEnabled, pushTime, pushChannel]);
 
+  const { failed, saved, wrap } = useAutoSave({
+    loaded: configLoaded,
+    save: handleSave,
+    reload: loadConfig,
+  });
+
   return (
     <SettingsCard className="space-y-4">
       <CardHead
@@ -77,7 +91,15 @@ export function CardsSettingsCard() {
         title={t("cards.settings.title")}
         desc={t("cards.settings.desc")}
         control={
-          <Switch checked={enabled} onCheckedChange={setEnabled} disabled={!configLoaded} />
+          <div className="flex items-center gap-2">
+            <SaveStatus
+              failed={failed}
+              saved={saved}
+              failedLabel={t("common.saveFailed")}
+              savedLabel={t("common.saved")}
+            />
+            <Switch checked={enabled} onCheckedChange={wrap(setEnabled)} disabled={!configLoaded} />
+          </div>
         }
       />
 
@@ -88,7 +110,7 @@ export function CardsSettingsCard() {
               <Input
                 type="time"
                 value={cronTime}
-                onChange={(e) => setCronTime(e.target.value)}
+                onChange={(e) => wrap(setCronTime)(e.target.value)}
               />
             </Field>
             <Field label={t("cards.settings.dailyLimit")} hint={t("cards.settings.dailyLimitDesc")}>
@@ -96,7 +118,7 @@ export function CardsSettingsCard() {
                 min={1}
                 max={50}
                 value={dailyLimit}
-                onChange={setDailyLimit}
+                onChange={wrap(setDailyLimit)}
               />
             </Field>
             <Field label={t("cards.settings.reviewLimit")} hint={t("cards.settings.reviewLimitDesc")}>
@@ -104,7 +126,7 @@ export function CardsSettingsCard() {
                 min={1}
                 max={200}
                 value={reviewLimit}
-                onChange={setReviewLimit}
+                onChange={wrap(setReviewLimit)}
               />
             </Field>
           </div>
@@ -115,7 +137,7 @@ export function CardsSettingsCard() {
             <GroupHead
               title={t("cards.settings.push")}
               control={
-                <Switch checked={pushEnabled} onCheckedChange={setPushEnabled} />
+                <Switch checked={pushEnabled} onCheckedChange={wrap(setPushEnabled)} />
               }
             />
             {pushEnabled && (
@@ -124,11 +146,11 @@ export function CardsSettingsCard() {
                   <Input
                     type="time"
                     value={pushTime}
-                    onChange={(e) => setPushTime(e.target.value)}
+                    onChange={(e) => wrap(setPushTime)(e.target.value)}
                   />
                 </Field>
                 <Field label={t("cards.settings.pushChannel")}>
-                  <Select value={pushChannel} onValueChange={(v) => v && setPushChannel(v)}>
+                  <Select value={pushChannel} onValueChange={(v) => v && wrap(setPushChannel)(v)}>
                     <SelectTrigger>
                       <SelectValue>{(v: unknown) => channelLabel(v as string)}</SelectValue>
                     </SelectTrigger>
@@ -148,10 +170,6 @@ export function CardsSettingsCard() {
           </div>
         </div>
       )}
-
-      <div className="flex justify-end border-t border-border pt-4">
-        <SaveButton onSave={handleSave} disabled={!configLoaded} />
-      </div>
     </SettingsCard>
   );
 }

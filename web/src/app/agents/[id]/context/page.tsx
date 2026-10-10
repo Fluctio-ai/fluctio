@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -12,10 +12,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Brain, Check, Languages, Link2, MessageSquare, MessagesSquare, Puzzle, Archive, SlidersHorizontal } from "lucide-react";
+import { Brain, Languages, Link2, MessageSquare, MessagesSquare, Puzzle, Archive, SlidersHorizontal } from "lucide-react";
 import { getAgent, getAgentMemory, setAgentMemory, updateAgent, getCompactionPreview, type CompactionPreview, type AgentUpdatePayload } from "@/lib/api";
-import { SaveButton } from "@/components/save-button";
-import { PageHeader, SettingsCard, CardHead, Field, DecimalInput } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, CardHead, Field, DecimalInput, SaveStatus } from "@/components/settings-ui";
+import { useAutoSave } from "@/hooks/use-auto-save";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useT } from "@/lib/i18n";
@@ -92,6 +92,10 @@ export default function AgentContextPage() {
   const [maxTokens, setMaxTokens] = useState("");
   const [temperature, setTemperature] = useState("");
   const [maxToolIterations, setMaxIter] = useState("");
+  // Last-good snapshot of the three budgets — the rollback target when an
+  // auto-save fails (refetching the whole page would flash the skeleton
+  // mid-edit).
+  const genGoodRef = useRef({ mt: "", tp: "", it: "" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -117,9 +121,13 @@ export default function AgentContextPage() {
       setAutoTitleModel(at?.model || "");
       const lang = (agentRec?.config?.language as string) || "";
       setLanguage(lang === "en" || lang === "zh-CN" ? lang : "");
-      setMaxTokens(agentRec?.maxTokens ? String(agentRec.maxTokens) : "");
-      setTemperature(agentRec?.temperature ? String(agentRec.temperature) : "");
-      setMaxIter(agentRec?.maxToolIterations ? String(agentRec.maxToolIterations) : "");
+      const mt = agentRec?.maxTokens ? String(agentRec.maxTokens) : "";
+      const tp = agentRec?.temperature ? String(agentRec.temperature) : "";
+      const it = agentRec?.maxToolIterations ? String(agentRec.maxToolIterations) : "";
+      setMaxTokens(mt);
+      setTemperature(tp);
+      setMaxIter(it);
+      genGoodRef.current = { mt, tp, it };
       // Load compaction preview + derive the radio selection from the
       // saved state. If manualThreshold > 0, the "manual" radio is
       // selected and the input is pre-filled. Otherwise the saved mode
@@ -150,8 +158,8 @@ export default function AgentContextPage() {
 
   // Save the three generation/loop budgets together. Empty or non-positive
   // inputs clear the override (fall back to agents.defaults → system
-  // default of 8192 / 0.7 / 20). Throws on failure so SaveButton surfaces
-  // its error state.
+  // default of 8192 / 0.7 / 20). Throws on failure so the auto-save hook
+  // can surface its error state and roll the fields back.
   const saveGeneration = async () => {
     const patch: AgentUpdatePayload = {};
     const mt = parseInt(maxTokens, 10);
@@ -163,6 +171,28 @@ export default function AgentContextPage() {
     const res = await updateAgent(agentId, patch);
     if (res?.error) throw new Error(res.error);
   };
+
+  // Auto-save for the generation card — the only explicit-save holdout on
+  // this page. Every other control here persists on change; now the three
+  // budgets debounce-save on edit too, with the status surfacing in the
+  // page header next to the toggles' flash.
+  const {
+    failed: genFailed,
+    saved: genSaved,
+    wrap: wrapGen,
+  } = useAutoSave({
+    loaded: !loading,
+    save: saveGeneration,
+    reload: () => {
+      const g = genGoodRef.current;
+      setMaxTokens(g.mt);
+      setTemperature(g.tp);
+      setMaxIter(g.it);
+    },
+    onSaved: () => {
+      genGoodRef.current = { mt: maxTokens, tp: temperature, it: maxToolIterations };
+    },
+  });
 
   // Save memory.autoTitle (enabled + model). afterRounds / maxTries /
   // maxChars keep their defaults — only enabled + model are operator-
@@ -345,10 +375,13 @@ export default function AgentContextPage() {
         title={t("context.title")}
         desc={t("context.subtitle", { name: agentName || t("context.thisAgent") })}
         actions={
-          saved ? (
-            <span className="inline-flex items-center gap-1.5 text-xs text-success">
-              <Check className="h-3.5 w-3.5" /> {t("context.saved")}
-            </span>
+          genFailed || saved || genSaved ? (
+            <SaveStatus
+              failed={genFailed}
+              saved={saved || genSaved}
+              failedLabel={t("common.saveFailed")}
+              savedLabel={t("common.saved")}
+            />
           ) : undefined
         }
       />
@@ -476,27 +509,24 @@ export default function AgentContextPage() {
           <Field label={t("context.maxTokens")} hint={t("context.maxTokensHint")}>
             <DecimalInput
               value={maxTokens}
-              onChange={setMaxTokens}
+              onChange={wrapGen(setMaxTokens)}
               placeholder="8192"
             />
           </Field>
           <Field label={t("context.temperature")} hint={t("context.temperatureHint")}>
             <DecimalInput
               value={temperature}
-              onChange={setTemperature}
+              onChange={wrapGen(setTemperature)}
               placeholder="0.7"
             />
           </Field>
           <Field label={t("context.maxIter")} hint={t("context.maxIterHint")}>
             <DecimalInput
               value={maxToolIterations}
-              onChange={setMaxIter}
+              onChange={wrapGen(setMaxIter)}
               placeholder="20"
             />
           </Field>
-        </div>
-        <div className="mt-4">
-          <SaveButton onSave={saveGeneration} />
         </div>
       </SettingsCard>
 

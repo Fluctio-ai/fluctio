@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { Check } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,34 @@ export function PageHeader({
       )}
     </div>
   );
+}
+
+// SaveStatus — the auto-save feedback chip, rendered at the top-right of
+// the scope it reports on (PageHeader actions / CardHead control, left of
+// the control itself). A red failure note wins over the transient green
+// "saved" tick; renders nothing while idle so the header stays clean.
+export function SaveStatus({
+  failed,
+  saved,
+  failedLabel,
+  savedLabel,
+}: {
+  failed?: boolean;
+  saved?: boolean;
+  failedLabel: React.ReactNode;
+  savedLabel: React.ReactNode;
+}) {
+  if (failed) {
+    return <span className="text-xs text-destructive">{failedLabel}</span>;
+  }
+  if (saved) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-success">
+        <Check className="h-3.5 w-3.5" /> {savedLabel}
+      </span>
+    );
+  }
+  return null;
 }
 
 export function SettingsCard({
