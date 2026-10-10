@@ -1754,6 +1754,8 @@ export interface AgentKBCfg {
   memoryAutoMode?: string;
   memoryKeywords?: string[];
   memoryMaxResults?: number;
+  /** Absolute cosine floor for the [MEM] injection lane, same semantics as threshold/flashTodoThreshold. Default 0.5. */
+  memoryThreshold?: number;
   /** Opt the [MEM] lane into the cross-encoder final cut (2× over-fetch → rerank → top-N). */
   memoryRerank?: boolean;
   /** IM channel for due-todo reminders (wechat/qq/telegram/...). Default wechat. */

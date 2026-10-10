@@ -330,10 +330,16 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				// the floor-survivors. rc.KB read per call so the toggle is
 				// live without a rebuild.
 				useRR := reranker
-				if rc.KB == nil || !rc.KB.MemoryRerank {
-					useRR = nil
+				var memFloor *float64
+				if rc.KB != nil {
+					if !rc.KB.MemoryRerank {
+						useRR = nil
+					}
+					// Floor pointer rides the same per-call read; the
+					// tighten-only clamp lives inside SemanticMemRecall.
+					memFloor = rc.KB.MemoryThreshold
 				}
-				hits, err := tools.SemanticMemRecall(ctx, db, ag.embedder, useRR, agentID, m.uid, query, limit, true)
+				hits, err := tools.SemanticMemRecall(ctx, db, ag.embedder, useRR, agentID, m.uid, query, limit, memFloor, true)
 				if err != nil {
 					return nil, err
 				}

@@ -48,6 +48,40 @@ function KeywordField({
   );
 }
 
+// MEM_FLOOR_MIN mirrors tools.memInjectAbsFloor — the hard minimum the
+// backend's tighten-only clamp enforces on the memory recall floor.
+const MEM_FLOOR_MIN = 0.5;
+
+// ThresholdSlider — the Field + range pair every recall-floor knob uses;
+// a lane adds a six-line call instead of another JSX clone.
+function ThresholdSlider({
+  label,
+  hint,
+  value,
+  onChange,
+  min = 0,
+}: {
+  label: string;
+  hint?: string;
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+}) {
+  return (
+    <Field label={label} hint={hint} labelTrailing={value.toFixed(2)}>
+      <input
+        type="range"
+        min={min}
+        max={1}
+        step={0.01}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-primary"
+      />
+    </Field>
+  );
+}
+
 // KBSettingsCard — the KB auto-query configuration card. Lives in the
 // Settings dialog's Knowledge tab. The data-source *list* is browsed
 // from /knowledge/ instead; this card is only the retrieval behavior
@@ -96,6 +130,7 @@ export function KBSettingsCard() {
   const [memAutoMode, setMemAutoMode] = useState("always");
   const [memKeywords, setMemKeywords] = useState("");
   const [memMaxResults, setMemMaxResults] = useState(3);
+  const [memThreshold, setMemThreshold] = useState(MEM_FLOOR_MIN);
   const [memRerank, setMemRerank] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
 
@@ -127,6 +162,7 @@ export function KBSettingsCard() {
                 setMemAutoMode(kb.memoryAutoMode || "always");
                 setMemKeywords((kb.memoryKeywords ?? []).join(", "));
                 setMemMaxResults(kb.memoryMaxResults || 3);
+                setMemThreshold(Math.max(MEM_FLOOR_MIN, kb.memoryThreshold ?? MEM_FLOOR_MIN));
                 setMemRerank(kb.memoryRerank ?? false);
               }
               setConfigLoaded(true);
@@ -173,6 +209,7 @@ export function KBSettingsCard() {
           .map((s) => s.trim())
           .filter(Boolean),
         memoryMaxResults: memMaxResults,
+        memoryThreshold: memThreshold,
         memoryRerank: memRerank,
       },
     } as any);
@@ -199,6 +236,7 @@ export function KBSettingsCard() {
     memAutoMode,
     memKeywords,
     memMaxResults,
+    memThreshold,
     memRerank,
   ]);
 
@@ -372,49 +410,6 @@ export function KBSettingsCard() {
             )}
           </div>
 
-          {/* Recall floors live together, not inside each group: they share
-              one semantic (below floor → don't inject) and one tuning
-              occasion ("too noisy / missing hits"), and scattering them
-              across lanes made each look like an independent knob. */}
-          <div className="space-y-4 border-t border-border pt-4">
-            <GroupHead
-              title={t("knowledge.advThresholds")}
-              desc={t("knowledge.advThresholdsDesc")}
-            />
-            <div className="grid grid-cols-2 gap-4">
-              <Field
-                label={t("knowledge.wikiThresholdLabel")}
-                hint={t("knowledge.thresholdDesc")}
-                labelTrailing={threshold.toFixed(2)}
-              >
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={threshold}
-                  onChange={(e) => wrap(setThreshold)(Number(e.target.value))}
-                  className="w-full accent-primary"
-                />
-              </Field>
-              <Field
-                label={t("knowledge.ftThresholdLabel")}
-                hint={t("knowledge.ftThresholdDesc")}
-                labelTrailing={ftThreshold.toFixed(2)}
-              >
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={ftThreshold}
-                  onChange={(e) => wrap(setFtThreshold)(Number(e.target.value))}
-                  className="w-full accent-primary"
-                />
-              </Field>
-            </div>
-          </div>
-
           {/* Search behavior + todo reminders each get their own labeled
               group — they used to float unlabeled after the dedup block
               and read as dedup sub-fields. */}
@@ -479,6 +474,49 @@ export function KBSettingsCard() {
                 </SelectContent>
               </Select>
             </Field>
+          </div>
+        </div>
+      )}
+
+      {/* Recall floors live together, not inside each lane's group: they
+          share one semantic (below floor → don't inject) and one tuning
+          occasion ("too noisy / missing hits"). Each slider renders only
+          while its lane is live — a floor the lane can't use would
+          autosave an inert value (the keyword-contract hazard above), so
+          the group itself hides when every lane is off. The memory lane
+          runs outside the KB gate, hence the group's ungated placement. */}
+      {(kbEnabled || memAutoMode !== "disabled") && (
+        <div className="space-y-4 border-t border-border pt-4">
+          <GroupHead
+            title={t("knowledge.advThresholds")}
+            desc={t("knowledge.advThresholdsDesc")}
+          />
+          <div className="grid grid-cols-2 gap-4">
+            {kbEnabled && (
+              <>
+                <ThresholdSlider
+                  label={t("knowledge.wikiThresholdLabel")}
+                  hint={t("knowledge.thresholdDesc")}
+                  value={threshold}
+                  onChange={wrap(setThreshold)}
+                />
+                <ThresholdSlider
+                  label={t("knowledge.ftThresholdLabel")}
+                  hint={t("knowledge.ftThresholdDesc")}
+                  value={ftThreshold}
+                  onChange={wrap(setFtThreshold)}
+                />
+              </>
+            )}
+            {memAutoMode !== "disabled" && (
+              <ThresholdSlider
+                label={t("knowledge.memThresholdLabel")}
+                hint={t("knowledge.memThresholdDesc")}
+                value={memThreshold}
+                onChange={wrap(setMemThreshold)}
+                min={MEM_FLOOR_MIN}
+              />
+            )}
           </div>
         </div>
       )}

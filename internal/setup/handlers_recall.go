@@ -92,7 +92,8 @@ func (s *Server) handleGetRecallTuning(w http.ResponseWriter, r *http.Request) {
 // off — so the test box can never drift from what chat actually does
 // (it used to be a third hand-copied pipeline: KNN + min_relevance + MMR,
 // none of which the injection lane has). Rerank mirrors production: only
-// when a reranker is configured AND kb.memoryRerank is on.
+// when a reranker is configured AND kb.memoryRerank is on; the absolute
+// floor mirrors it too (kb.memoryThreshold, 0.5 default).
 func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rec := s.requireAgentOwner(w, r, id)
@@ -132,12 +133,14 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 			vec.Embedding.APIBase, vec.Embedding.APIKey, vec.Embedding.Model, vec.Embedding.Dim, vec.Embedding.DimEnabled))
 		semantic = emb.Available()
 	}
+	// One decode serves both kb.* reads (rerank toggle + floor pointer).
+	kbCfg := agentKBCfg(rec)
 	var rr embedding.Reranker
-	if semantic && vec.Reranker.Enabled && agentKBRerankEnabled(rec) {
+	if semantic && vec.Reranker.Enabled && kbCfg.MemoryRerank {
 		rr = embedding.NewJinaReranker(vec.Reranker.APIBase, vec.Reranker.APIKey, vec.Reranker.Model)
 	}
 
-	hits, err := tools.SemanticMemRecall(ctx, db, emb, rr, id, s.effectiveUserID(r), req.Query, limit, false)
+	hits, err := tools.SemanticMemRecall(ctx, db, emb, rr, id, s.effectiveUserID(r), req.Query, limit, kbCfg.MemoryThreshold, false)
 	if err != nil {
 		if errors.Is(err, tools.ErrEmbeddingFailed) {
 			// Embedding endpoint is down with vectorization on: say so —
@@ -169,26 +172,20 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// agentKBRerankEnabled reads the agent's kb.memoryRerank toggle from its
-// config blob (round-trip through JSON into the typed config, same pattern
-// as the KB insight settings read).
-func agentKBRerankEnabled(rec *store.AgentRecord) bool {
-	if rec == nil || rec.Config == nil {
-		return false
-	}
-	raw, ok := rec.Config["kb"]
-	if !ok || raw == nil {
-		return false
-	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return false
-	}
+// agentKBCfg decodes the agent's "kb" config blob. Any miss or parse
+// failure returns the zero config, whose nil/zero fields carry the
+// built-in defaults — one decode helper instead of a hand-rolled
+// round-trip per kb.* reader.
+func agentKBCfg(rec *store.AgentRecord) config.AgentKBCfg {
 	var cfg config.AgentKBCfg
-	if err := json.Unmarshal(b, &cfg); err != nil {
-		return false
+	if rec != nil && rec.Config != nil {
+		if raw, ok := rec.Config["kb"]; ok && raw != nil {
+			if b, err := json.Marshal(raw); err == nil {
+				_ = json.Unmarshal(b, &cfg)
+			}
+		}
 	}
-	return cfg.MemoryRerank
+	return cfg
 }
 
 func formatRecallHits(hits []store.ConversationSummary) []map[string]any {

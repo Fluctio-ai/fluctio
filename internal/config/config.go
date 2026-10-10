@@ -798,6 +798,12 @@ type AgentKBCfg struct {
 	MemoryAutoMode   string   `json:"memoryAutoMode,omitempty"`
 	MemoryKeywords   []string `json:"memoryKeywords,omitempty"`
 	MemoryMaxResults int      `json:"memoryMaxResults,omitempty"`
+	// MemoryThreshold ∈ [0.5,1]: absolute cosine floor for the [MEM]
+	// lane's injection, tighten-only (nil = 0.5, the built-in hard
+	// minimum — unlike Threshold/FlashTodoThreshold it cannot be
+	// lowered). The relative floor (0.75 × the query's best cosine)
+	// still applies on top of whichever is higher.
+	MemoryThreshold *float64 `json:"memoryThreshold,omitempty"`
 	// MemoryRerank opts the [MEM] lane into the cross-encoder final cut
 	// (2× over-fetch → rerank → top-N). Off by default: it adds one
 	// rerank API call per message; the cosine floors alone already gate

@@ -485,6 +485,19 @@ func applyRelativeFloor(hits []store.ConversationSummary, scores map[int64]float
 // (0.53–0.65 for related query/summary pairs).
 const memInjectAbsFloor = 0.5
 
+// MemRecallFloor resolves the agent-configured absolute cosine floor for
+// the [MEM] lane. Tighten-only: the built-in 0.5 is a hard minimum — a
+// configured value can raise the floor but never lower it. The absolute
+// floor is the lane's anti-junk guard on weak-best queries, exactly where
+// the relative floor (0.75 × a low best) offers no protection. Inputs
+// above 1 clamp to 1 (total silence).
+func MemRecallFloor(p *float64) float64 {
+	if p == nil {
+		return memInjectAbsFloor
+	}
+	return min(1, max(memInjectAbsFloor, *p))
+}
+
 // ErrEmbeddingFailed marks "an embedder is configured but the call
 // failed", so callers (the recall test box) can distinguish it from store
 // failures and degrade transparently instead of surfacing a bare 500.
@@ -496,12 +509,16 @@ var ErrEmbeddingFailed = errors.New("embedding call failed")
 // clearly relevant. Survivors (up to 2× limit) then go through the
 // cross-encoder when one is configured — the reranker picks the final top-K
 // order, so the lane gets precision at the cost of one rerank call per
-// message. Without an embedder, plain FTS order stands: vector off means
-// lexical IS the designed path, not a degradation. Recall events are
+// message. absFloor is the lane's configured floor pointer
+// (kb.memoryThreshold, nil = built-in 0.5); MemRecallFloor applies the
+// tighten-only clamp here — the single enforcement point, so callers
+// can't feed an unclamped value. Without an embedder, plain FTS order
+// stands: vector off means lexical IS the designed path, not a
+// degradation. Recall events are
 // recorded on the semantic path (record=true) so the tuning page audits
 // what the user actually sees injected; previews (the recall test box) pass
 // record=false so a test query doesn't pollute the audit list.
-func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Embedder, rr embedding.Reranker, agentID, userID, query string, limit int, record bool) ([]store.ConversationSummary, error) {
+func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Embedder, rr embedding.Reranker, agentID, userID, query string, limit int, absFloor *float64, record bool) ([]store.ConversationSummary, error) {
 	poolLimit := limit * 3
 	if poolLimit < 10 {
 		poolLimit = 10
@@ -548,7 +565,7 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 		return nil, nil
 	}
 	sort.Slice(scored, func(i, j int) bool { return scored[i].cos > scored[j].cos })
-	floor := memInjectAbsFloor
+	floor := MemRecallFloor(absFloor)
 	if rel := recallRelFloorAlpha * scored[0].cos; rel > floor {
 		floor = rel
 	}
