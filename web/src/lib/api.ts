@@ -1481,7 +1481,7 @@ export async function uploadAgentFiles(
 // into one request per contained file so LocalFS and S3 behave alike.
 export async function deleteAgentFile(agentId: string, path: string): Promise<void> {
   const res = await apiFetch(
-    `/api/agents/${encodeURIComponent(agentId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+    `/api/agents/${encodeURIComponent(agentId)}/files/${path.split("/").map(encodePathSegment).join("/")}`,
     { method: "DELETE" },
   );
   if (!res.ok) {
@@ -3537,13 +3537,39 @@ export async function getAgentTokenUsage(
   return res.json();
 }
 
+// encodePathSegment percent-encodes one path segment but leaves existing
+// %XX escapes alone: model-emitted markdown URLs often arrive already
+// percent-encoded, and re-encoding turns %E5.. into %25E5.. — the file API
+// would then look for a literal "%E5.." filename and 404.
+function encodePathSegment(seg: string): string {
+  let out = "";
+  let i = 0;
+  while (i < seg.length) {
+    const m = /^%[0-9A-Fa-f]{2}/.exec(seg.slice(i));
+    if (m) {
+      out += m[0];
+      i += 3;
+    } else {
+      // Encode the run up to the next '%' in one call so surrogate
+      // pairs (emoji in filenames) stay intact for encodeURIComponent.
+      // Search from i+1: a literal '%' that isn't a valid escape must
+      // advance the cursor (as its own run) or the loop would spin.
+      const next = seg.indexOf("%", i + 1);
+      const end = next === -1 ? seg.length : next;
+      out += encodeURIComponent(seg.slice(i, end));
+      i = end;
+    }
+  }
+  return out;
+}
+
 // Build a same-origin URL to a workspace file. Deliberately carries NO bearer
 // token: the web UI is same-origin and the auth middleware reads the session
 // cookie, so <img src>, <a href>, and direct downloads authenticate by cookie
 // like every other API call. (Putting `?token=<bearer>` in a URL leaked a full
 // API credential via Referer, browser history, and reverse-proxy access logs.)
 export function fileUrl(agentId: string, path: string, download = false): string {
-  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const encoded = path.split("/").map(encodePathSegment).join("/");
   const params = new URLSearchParams();
   if (download) params.set("download", "1");
   const qs = params.toString();
