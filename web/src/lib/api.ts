@@ -3540,27 +3540,14 @@ export async function getAgentTokenUsage(
 // encodePathSegment percent-encodes one path segment but leaves existing
 // %XX escapes alone: model-emitted markdown URLs often arrive already
 // percent-encoded, and re-encoding turns %E5.. into %25E5.. — the file API
-// would then look for a literal "%E5.." filename and 404.
+// would then look for a literal "%E5.." filename and 404. %-free runs (and
+// a lone '%' that starts no escape) go through encodeURIComponent, which
+// also keeps surrogate pairs (emoji in filenames) intact.
 function encodePathSegment(seg: string): string {
-  let out = "";
-  let i = 0;
-  while (i < seg.length) {
-    const m = /^%[0-9A-Fa-f]{2}/.exec(seg.slice(i));
-    if (m) {
-      out += m[0];
-      i += 3;
-    } else {
-      // Encode the run up to the next '%' in one call so surrogate
-      // pairs (emoji in filenames) stay intact for encodeURIComponent.
-      // Search from i+1: a literal '%' that isn't a valid escape must
-      // advance the cursor (as its own run) or the loop would spin.
-      const next = seg.indexOf("%", i + 1);
-      const end = next === -1 ? seg.length : next;
-      out += encodeURIComponent(seg.slice(i, end));
-      i = end;
-    }
-  }
-  return out;
+  return seg.replace(
+    /%[0-9A-Fa-f]{2}|[^%]+|%/g,
+    (m) => (m[0] === "%" && m.length === 3 ? m : encodeURIComponent(m)),
+  );
 }
 
 // Build a same-origin URL to a workspace file. Deliberately carries NO bearer
