@@ -42,16 +42,17 @@ RUN apt-get update \
 # Debian Bookworm enforces PEP 668 on the system Python;
 # `--break-system-packages` is the documented escape hatch and safe
 # inside a container.
-# Pin the whole camoufox stack. camoufox-cli declares `playwright` and
-# `camoufox[geoip]` with NO version bounds, so pip pulls the newest combo
-# (camoufox 0.5.3 + camoufox-cli 0.7.0) whose install step crashes with
-# `ModuleNotFoundError: No module named 'camoufox.locale'` — 0.5.x dropped
-# the locale submodule camoufox-cli still imports. It also pulls
-# playwright 1.61+, whose `setDefaultViewport` sends an `isMobile` field
-# the Camoufox Firefox patch rejects ("not described in this scheme"),
-# killing every `camoufox-cli open` at Browser.new_page. Lock to the last
-# known-good combo (the fcd343d :latest image shipped this): camoufox
-# 0.4.11 + camoufox-cli 0.6.0 + playwright<1.50.
+# Pin the whole camoufox stack. PyPI deleted every camoufox-cli release
+# older than 0.7.0 (Oct 2026), so the previous 0.6.0 pin became
+# unresolvable and broke CI. 0.7.0 leaves camoufox unpinned — pip then
+# pulls camoufox 0.5.x, whose install step crashes with
+# `ModuleNotFoundError: No module named 'camoufox.locale'` (0.5.x dropped
+# the locale submodule). 0.7.6 pins camoufox[geoip]==0.4.11 itself, which
+# matches our explicit camoufox pin. Playwright stays pinned too: 1.61+
+# `setDefaultViewport` sends an `isMobile` field the Camoufox Firefox patch
+# rejects ("not described in this scheme"), killing every `camoufox-cli
+# open` at Browser.new_page; 1.52.0 is upstream's own pin and well under
+# that break.
 #
 # pdf-inspector: Firecrawl's Rust PDF→Markdown engine with PyO3 bindings.
 # Ships prebuilt Linux x86_64 wheels (no Rust toolchain at build time) and
@@ -62,8 +63,8 @@ RUN apt-get update \
 # points the agent at `pdf_inspector.process_pdf` for /workspace PDFs.
 RUN pip install --break-system-packages --no-cache-dir \
         'camoufox==0.4.11' \
-        'camoufox-cli==0.6.0' \
-        'playwright<1.50' \
+        'camoufox-cli==0.7.6' \
+        'playwright==1.52.0' \
         uv \
         requests \
         pillow \
