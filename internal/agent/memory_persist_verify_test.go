@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,9 +12,11 @@ import (
 
 // persistStubProvider fakes the audit-side Chat call: fixed content or a
 // fixed error, and a call counter so tests can assert fail-closed/no-call
-// behavior.
+// behavior. resps, when set, serves a response sequence (extra calls
+// error out) for the two-call extract+audit flow.
 type persistStubProvider struct {
 	resp     string
+	resps    []string
 	err      error
 	calls    int
 	lastBody string
@@ -26,6 +29,12 @@ func (p *persistStubProvider) Chat(_ context.Context, messages []provider.Messag
 	}
 	if p.err != nil {
 		return nil, p.err
+	}
+	if len(p.resps) > 0 {
+		if p.calls > len(p.resps) {
+			return nil, fmt.Errorf("unexpected Chat call %d", p.calls)
+		}
+		return &provider.Response{Content: p.resps[p.calls-1]}, nil
 	}
 	return &provider.Response{Content: p.resp}, nil
 }

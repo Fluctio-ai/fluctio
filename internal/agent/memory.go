@@ -294,10 +294,23 @@ func (m *Memory) LoadUserFile() string {
 // AutoPersistMemory uses an LLM to extract facts from recent messages and
 // append them to MEMORY.md and USER.md. Called every N turns.
 // persistExtraction is the auto-persist LLM's parsed output: candidate
-// additions for MEMORY.md and USER.md.
+// additions for MEMORY.md and USER.md, plus in-place updates that merge
+// fresh conversation information into existing entries (mem0-style
+// UPDATE — near-duplicates die at write time instead of accumulating
+// for the daily tidy sweep).
 type persistExtraction struct {
-	MemoryFacts []string `json:"memory_facts"`
-	UserNotes   []string `json:"user_notes"`
+	MemoryFacts   []string        `json:"memory_facts"`
+	UserNotes     []string        `json:"user_notes"`
+	MemoryUpdates []persistUpdate `json:"memory_updates"`
+	UserUpdates   []persistUpdate `json:"user_updates"`
+}
+
+// persistUpdate rewrites one existing entry: Target is an exact unique
+// substring of the old entry as it appears in the file, New is the
+// merged entry text.
+type persistUpdate struct {
+	Target string `json:"target"`
+	New    string `json:"new"`
 }
 
 // verifyPersistedMemories is the second, independent LLM pass between
@@ -311,11 +324,12 @@ type persistExtraction struct {
 // delayed, not lost. The auditor also cannot invent items: kept output is
 // intersected with the proposal set.
 func verifyPersistedMemories(ctx context.Context, prov provider.Provider, model, evidence string, proposed persistExtraction) (persistExtraction, error) {
-	if len(proposed.MemoryFacts) == 0 && len(proposed.UserNotes) == 0 {
+	if len(proposed.MemoryFacts) == 0 && len(proposed.UserNotes) == 0 &&
+		len(proposed.MemoryUpdates) == 0 && len(proposed.UserUpdates) == 0 {
 		return proposed, nil
 	}
-	listJSON := func(items []string) string {
-		b, err := json.Marshal(items)
+	marshal := func(v any) string {
+		b, err := json.Marshal(v)
 		if err != nil {
 			return "[]"
 		}
@@ -333,6 +347,12 @@ Proposed MEMORY.md facts:
 Proposed USER.md notes:
 %s
 
+Proposed MEMORY.md updates (rewriting an existing entry, target → new):
+%s
+
+Proposed USER.md updates (target → new):
+%s
+
 Keep ONLY items directly supported by the conversation above. Reject:
 - speculation or inference beyond what participants actually said
 - credentials, tokens, or other secrets
@@ -341,10 +361,14 @@ Keep ONLY items directly supported by the conversation above. Reject:
 User preferences and correction feedback about how the user wants things
 done (formats, styles, workflows) are DURABLE preferences, not transient
 context — keep them even when they were stated about a specific artifact.
+For updates: keep one only when the rewritten entry's NEW information is
+supported by the conversation — information carried over from the old
+entry is already trusted storage.
 Output JSON only (no markdown fences):
-{"memory_facts": [...kept facts...], "user_notes": [...kept notes...]}
+{"memory_facts": [...kept facts...], "user_notes": [...kept notes...], "memory_updates": [...kept updates, target and new verbatim...], "user_updates": [...kept updates...]}
 Empty arrays when nothing survives.`,
-		evidence, listJSON(proposed.MemoryFacts), listJSON(proposed.UserNotes))
+		evidence, marshal(proposed.MemoryFacts), marshal(proposed.UserNotes),
+		marshal(proposed.MemoryUpdates), marshal(proposed.UserUpdates))
 
 	resp, err := prov.Chat(provider.WithJSONMode(provider.WithNoThinking(ctx)), []provider.Message{
 		{Role: "user", Content: prompt},
@@ -406,9 +430,27 @@ Empty arrays when nothing survives.`,
 		}
 		return out
 	}
+	// Updates intersect on both fields: the new text fuzzy (the auditor
+	// rephrases, same as facts), the target exactly — targets are verbatim
+	// file quotes, and a fuzzy target match could redirect a rewrite onto
+	// the wrong entry.
+	filterUpdates := func(items, allowed []persistUpdate) []persistUpdate {
+		out := make([]persistUpdate, 0, len(items))
+		for _, u := range items {
+			for _, a := range allowed {
+				if u.Target == a.Target && match(u.New, []string{a.New}) {
+					out = append(out, u)
+					break
+				}
+			}
+		}
+		return out
+	}
 	return persistExtraction{
-		MemoryFacts: filter(kept.MemoryFacts, proposed.MemoryFacts),
-		UserNotes:   filter(kept.UserNotes, proposed.UserNotes),
+		MemoryFacts:   filter(kept.MemoryFacts, proposed.MemoryFacts),
+		UserNotes:     filter(kept.UserNotes, proposed.UserNotes),
+		MemoryUpdates: filterUpdates(kept.MemoryUpdates, proposed.MemoryUpdates),
+		UserUpdates:   filterUpdates(kept.UserUpdates, proposed.UserUpdates),
 	}, nil
 }
 
@@ -446,6 +488,12 @@ func AutoPersistMemory(ctx context.Context, mem *Memory, prov provider.Provider,
 	extractPrompt := fmt.Sprintf(`Analyze this conversation and extract:
 1. Key facts, decisions, or learnings worth remembering (for MEMORY.md)
 2. User preferences, profile details, or work style notes (for USER.md)
+3. Updates to EXISTING entries: when the conversation supersedes or
+   extends an entry shown below, propose rewriting that entry instead of
+   appending a near-duplicate. Target must be an exact substring copied
+   verbatim from the file (appearing exactly once); new merges the old
+   entry's information with the fresh details into one line, same
+   language as the old entry.
 
 Current MEMORY.md:
 %s
@@ -459,8 +507,8 @@ Recent conversation:
 Keep each item concise: one sentence, prefer raw data summaries over
 restating the material verbatim.
 Output JSON only (no markdown fences):
-{"memory_facts": ["fact1", "fact2"], "user_notes": ["note1"]}
-If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
+{"memory_facts": ["fact1", "fact2"], "user_notes": ["note1"], "memory_updates": [{"target": "old entry substring", "new": "rewritten entry"}], "user_updates": []}
+If nothing worth saving, output: {"memory_facts": [], "user_notes": [], "memory_updates": [], "user_updates": []}`,
 	// Feed a wide window of the current files (not the old 500 chars):
 	// the extractor can only skip facts it can see are already stored,
 	// and a blind window is what kept duplicates accumulating. The daily
@@ -499,7 +547,9 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
 	slog.Info("auto-persist: extracted",
 		"model", model,
 		"memory_facts", len(result.MemoryFacts),
-		"user_notes", len(result.UserNotes))
+		"user_notes", len(result.UserNotes),
+		"memory_updates", len(result.MemoryUpdates),
+		"user_updates", len(result.UserUpdates))
 
 	// Verification gate before any write (see verifyPersistedMemories).
 	// Fail-closed on audit errors: skip this round, items re-proposed next
@@ -511,48 +561,144 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": []}`,
 			"proposed_facts", len(result.MemoryFacts), "proposed_notes", len(result.UserNotes))
 		return
 	}
-	if len(verified.MemoryFacts) != len(result.MemoryFacts) || len(verified.UserNotes) != len(result.UserNotes) {
+	if len(verified.MemoryFacts) != len(result.MemoryFacts) || len(verified.UserNotes) != len(result.UserNotes) ||
+		len(verified.MemoryUpdates) != len(result.MemoryUpdates) || len(verified.UserUpdates) != len(result.UserUpdates) {
 		slog.Info("auto-persist: audit filtered proposals",
 			"facts", fmt.Sprintf("%d→%d", len(result.MemoryFacts), len(verified.MemoryFacts)),
-			"notes", fmt.Sprintf("%d→%d", len(result.UserNotes), len(verified.UserNotes)))
+			"notes", fmt.Sprintf("%d→%d", len(result.UserNotes), len(verified.UserNotes)),
+			"updates", fmt.Sprintf("%d→%d",
+				len(result.MemoryUpdates)+len(result.UserUpdates),
+				len(verified.MemoryUpdates)+len(verified.UserUpdates)))
 	}
 	result = verified
 
-	// Append new memory facts
-	if len(result.MemoryFacts) > 0 {
-		var memSB strings.Builder
-		memSB.WriteString(currentMemory)
-		if currentMemory != "" && !strings.HasSuffix(currentMemory, "\n") {
-			memSB.WriteString("\n")
-		}
-		memSB.WriteString(fmt.Sprintf("\n## Auto-persisted: %s\n", time.Now().Format("2006-01-02 15:04")))
-		for _, fact := range result.MemoryFacts {
-			memSB.WriteString(fmt.Sprintf("- %s\n", fact))
-		}
-		if err := mem.SaveMemoryWithScan(memSB.String()); err != nil {
-			slog.Warn("auto-persist: failed to save MEMORY.md", "error", err)
-		} else {
-			slog.Info("auto-persist: updated MEMORY.md", "facts", len(result.MemoryFacts))
-		}
+	// In-place updates first (mem0-style UPDATE): merge fresh conversation
+	// information into existing entries so near-duplicates never get
+	// appended. Fail-closed per update — see ApplyEntryEdits.
+	currentMemory, memRewritten := applyMemoryUpdates(currentMemory, result.MemoryUpdates)
+	currentUser, userRewritten := applyMemoryUpdates(currentUser, result.UserUpdates)
+	// The replaced-away texts are not recoverable from the file itself
+	// (unlike the tidy sweep's MEMORY.archive.md), so the log is their
+	// only audit trail — echo them verbatim.
+	for _, old := range memRewritten {
+		slog.Info("auto-persist: rewrote MEMORY.md entry", "old", old)
+	}
+	for _, old := range userRewritten {
+		slog.Info("auto-persist: rewrote USER.md entry", "old", old)
 	}
 
-	// Append user notes
-	if len(result.UserNotes) > 0 {
-		var userSB strings.Builder
-		userSB.WriteString(currentUser)
-		if currentUser != "" && !strings.HasSuffix(currentUser, "\n") {
-			userSB.WriteString("\n")
+	// appendPersisted rewrites a memory file with any new items appended
+	// under a dated section — one helper for both MEMORY.md and USER.md,
+	// whose write blocks were otherwise copy-paste.
+	appendPersisted := func(current string, items, rewritten []string, save func(string) error, name string) {
+		if len(items) == 0 && len(rewritten) == 0 {
+			return
 		}
-		userSB.WriteString(fmt.Sprintf("\n## Auto-persisted: %s\n", time.Now().Format("2006-01-02 15:04")))
-		for _, note := range result.UserNotes {
-			userSB.WriteString(fmt.Sprintf("- %s\n", note))
+		var sb strings.Builder
+		sb.WriteString(current)
+		if current != "" && !strings.HasSuffix(current, "\n") {
+			sb.WriteString("\n")
 		}
-		if err := mem.SaveUserFile(userSB.String()); err != nil {
-			slog.Warn("auto-persist: failed to save USER.md", "error", err)
+		if len(items) > 0 {
+			sb.WriteString(fmt.Sprintf("\n## Auto-persisted: %s\n", time.Now().Format("2006-01-02 15:04")))
+		}
+		for _, item := range items {
+			sb.WriteString(fmt.Sprintf("- %s\n", item))
+		}
+		if err := save(sb.String()); err != nil {
+			slog.Warn("auto-persist: failed to save "+name, "error", err)
 		} else {
-			slog.Info("auto-persist: updated USER.md", "notes", len(result.UserNotes))
+			slog.Info("auto-persist: updated "+name, "items", len(items), "rewrites", len(rewritten))
 		}
 	}
+	appendPersisted(currentMemory, result.MemoryFacts, memRewritten, mem.SaveMemoryWithScan, "MEMORY.md")
+	appendPersisted(currentUser, result.UserNotes, userRewritten, mem.SaveUserFile, "USER.md")
+}
+
+// maxPersistUpdates bounds how many in-place rewrites one auto-persist
+// round may apply. Half the tidy sweep's cap on purpose: tidy edits are
+// archived to MEMORY.archive.md and reversible, these write-time
+// rewrites are not — the irreversible path gets the tighter bound.
+const maxPersistUpdates = 5
+
+// EntryEdit is one surgical edit on a memory markdown file, shared by
+// this package's auto-persist updates and the gateway's daily tidy
+// sweep: Op "remove" deletes the entry, "replace" swaps it for New.
+type EntryEdit struct {
+	Op     string `json:"op"`     // "remove" | "replace"
+	Target string `json:"target"` // exact unique substring of the entry to act on
+	New    string `json:"new"`    // replacement entry text (replace only)
+}
+
+// MinEntryTargetLen is the shortest edit target allowed — below this,
+// "appears exactly once" is luck rather than evidence.
+const MinEntryTargetLen = 12
+
+// ApplyEntryEdits applies at most maxEdits edits sequentially and returns
+// the edited text plus the verbatim old entries that left the file
+// (removed targets and replaced-away targets) for the audit log / archive.
+// Fail-closed per edit: a target that is too short, absent, or not
+// unique in the current text is skipped — never guessed at.
+func ApplyEntryEdits(text string, edits []EntryEdit, maxEdits int) (string, []string) {
+	var applied []string
+	for i, e := range edits {
+		if i >= maxEdits {
+			break
+		}
+		target := strings.TrimSpace(e.Target)
+		if len(target) < MinEntryTargetLen {
+			continue
+		}
+		if strings.Count(text, target) != 1 {
+			continue
+		}
+		switch e.Op {
+		case "remove":
+			text = removeEntryLine(text, target)
+		case "replace":
+			if strings.TrimSpace(e.New) == "" {
+				continue // replace-to-empty would be a covert remove
+			}
+			text = strings.Replace(text, target, e.New, 1)
+		default:
+			continue
+		}
+		applied = append(applied, target)
+	}
+	return text, applied
+}
+
+// removeEntryLine deletes target from text. When the rest of target's
+// region (the entry's line, extended past a multiline target) is nothing
+// but a bullet marker, the whole line goes with it so removals don't
+// leave "- " husks behind.
+func removeEntryLine(text, target string) string {
+	idx := strings.Index(text, target)
+	lineStart := strings.LastIndexByte(text[:idx], '\n') + 1
+	rest := idx + len(target)
+	lineEnd := len(text)
+	if i := strings.IndexByte(text[rest:], '\n'); i >= 0 {
+		lineEnd = rest + i
+	}
+	leftover := strings.TrimSpace(text[lineStart:idx] + text[rest:lineEnd])
+	if leftover == "" || leftover == "-" || leftover == "*" {
+		if lineEnd < len(text) {
+			lineEnd++ // take the line's newline too
+		}
+		return text[:lineStart] + text[lineEnd:]
+	}
+	return text[:idx] + text[rest:]
+}
+
+// applyMemoryUpdates rewrites existing entries in place through the
+// shared fail-closed engine, capped at maxPersistUpdates per round.
+// Returns the edited text and the verbatim old texts that left the file.
+func applyMemoryUpdates(text string, updates []persistUpdate) (string, []string) {
+	edits := make([]EntryEdit, 0, len(updates))
+	for _, u := range updates {
+		edits = append(edits, EntryEdit{Op: "replace", Target: u.Target, New: u.New})
+	}
+	return ApplyEntryEdits(text, edits, maxPersistUpdates)
 }
 
 func truncateStr(s string, n int) string {

@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/agent"
 	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // runMemoryTidy runs the MEMORY.md consolidation sweep on a daily cadence
@@ -20,10 +22,11 @@ import (
 // never rewrites existing entries), ships in every turn's system prompt,
 // and its extraction prompt only ever sees the first 500 chars of the
 // current file — so beyond that line, duplicate and outdated facts keep
-// accumulating. This sweep feeds the WHOLE file to an LLM that merges,
-// prunes and tightens it. Probes at boot so a long-standby instance
-// clears its backlog immediately. Disabled when
-// FLUCTIO_MEMORY_TIDY_HOURS<=0 (default 24).
+// accumulating. This sweep feeds the WHOLE file to an LLM that proposes
+// bounded surgical ops (merge / update / remove); whatever an op prunes
+// lands verbatim in MEMORY.archive.md, so consolidation is reversible.
+// Probes at boot so a long-standby instance clears its backlog
+// immediately. Disabled when FLUCTIO_MEMORY_TIDY_HOURS<=0 (default 24).
 func (g *Gateway) runMemoryTidy(ctx context.Context) {
 	hours := memoryTidyHours()
 	if hours <= 0 {
@@ -61,18 +64,29 @@ func (g *Gateway) tidyMemoryFilesOnce(ctx context.Context) {
 	}
 }
 
-// memoryTidyResult is the tidy LLM's parsed output. Dropped entries are
-// echoed back verbatim so each sweep's information loss is auditable in
-// the log.
+// memoryTidyResult is the tidy LLM's parsed output: surgical edits
+// (agent.EntryEdit, applied via agent.ApplyEntryEdits) — not a
+// full-file rewrite — so a bad pass can only touch the entries it
+// explicitly targets (the Hermes memory-tool add/replace/remove model).
 type memoryTidyResult struct {
-	Tidied  string   `json:"tidied"`
-	Dropped []string `json:"dropped"`
-	Merged  int      `json:"merged"`
+	Ops []agent.EntryEdit `json:"ops"`
 }
 
+const (
+	// maxTidyOpsPerRun bounds the blast radius of one pass (hermes-dreaming
+	// caps changes per run the same way, tighter).
+	maxTidyOpsPerRun = 10
+	// memoryArchiveFile receives everything a tidy pass pruned, verbatim.
+	// It is NOT injected into the system prompt — demote-not-delete (Letta
+	// archival memory / Zep invalid_at edges): pruning is reversible at
+	// zero runtime cost, which is what licenses the relaxed PRUNE rules in
+	// the prompt below.
+	memoryArchiveFile = "MEMORY.archive.md"
+)
+
 // tidyAgentMemory consolidates one agent's MEMORY.md in place. Fail-closed
-// throughout: LLM/parse failure, an empty result, or a result that didn't
-// actually shrink the file all skip the write — a bad tidy can destroy
+// throughout: LLM/parse failure, zero applicable ops, or a result that
+// would empty the file all skip the write — a bad tidy can destroy
 // long-term memory, while a skipped tidy only costs one more day of
 // growth. The write is also abandoned when the file changed on disk during
 // the LLM call (a concurrent auto-persist append) so this sweep can't
@@ -89,28 +103,40 @@ func (g *Gateway) tidyAgentMemory(ctx context.Context, agentID string, minChars 
 		return
 	}
 
-	callCtx, cancel := context.WithTimeout(provider.WithJSONMode(provider.WithNoThinking(ctx)), 3*time.Minute)
-	defer cancel()
+	tidyMemoryWithProvider(ctx, g.store, agentID, prov, model, original)
+}
 
-	// Output budget scales with the input: the tidied file is roughly the
-	// original's size, and Chinese text runs ~1.5 chars/token, so half the
-	// byte count (plus a floor) keeps the JSON from truncating mid-string.
-	maxTokens := 2048 + len(original)/2
-	prompt := fmt.Sprintf(`You are tidying MEMORY.md — the long-term memory file of an AI agent, injected into every conversation's system prompt. It grew by appends and now needs consolidation: dedupe, merge, prune, tighten — WITHOUT losing live information.
+// tidyMemoryWithProvider runs one consolidation pass over a MEMORY.md
+// snapshot: the LLM proposes bounded surgical ops, each op applies (or is
+// skipped) fail-closed, and whatever leaves the file lands verbatim in
+// MEMORY.archive.md. Split from tidyAgentMemory so tests can pass a stub
+// provider instead of a store-resolved one.
+func tidyMemoryWithProvider(ctx context.Context, st store.Store, agentID string, prov provider.Provider, model string, original []byte) {
+	// Output is a bounded ops list, not the whole file; the budget still
+	// scales with input so long entries can be quoted verbatim in targets.
+	maxTokens := 2048 + len(original)/4
+	prompt := fmt.Sprintf(`You are consolidating MEMORY.md — the long-term memory file of an AI agent, injected into every conversation's system prompt. It grew by appends. Return surgical edit operations; do NOT rewrite or re-output the whole file.
 
 Current MEMORY.md:
 %s
 
+Propose operations:
+- replace: merge duplicate or near-duplicate entries into one, update entries superseded by newer information, or tighten wordy entries. Target the OLD entry (an exact substring copied verbatim from the file); new is the rewritten entry, same language as the original, keeping its markdown bullet.
+- remove: delete an entry that is dead weight: clearly superseded by a newer entry on the same subject (entries often carry dates — the newer one wins), or clearly transient one-off task state.
+
 Rules:
-- MERGE: entries stating the same fact/preference/decision (possibly worded differently or dated differently) become ONE entry, keeping the most recent/correct details.
-- PRUNE: drop an entry ONLY when it is clearly superseded by a newer entry in this file, or clearly transient (one-off task state). When unsure, KEEP it.
-- TIGHTEN: rewrite wordy entries compactly, preserving their language (Chinese stays Chinese, English stays English).
-- NEVER invent new facts: the tidied file may only contain information present above.
+- Everything you remove or replace away is archived automatically and recoverable — prune dead weight instead of hoarding it. When genuinely unsure an entry is dead, prefer replace (tighten/merge) over remove.
+- Never invent facts: replacement text may only recombine information present in the file above.
+- A target must appear exactly once in the file or the operation is skipped — quote enough of the entry to be unambiguous.
+- At most %d operations. Proposing none is a valid, successful outcome.
 - Preserve the markdown structure (## sections, bullet lists).
 
 Output STRICT JSON only — no markdown fences, no commentary:
-{"tidied": "<the full tidied MEMORY.md content>", "dropped": ["<each pruned entry, verbatim, for the audit log>"], "merged": <number of entries merged away>}`,
-		string(original))
+{"ops": [{"op": "replace", "target": "<exact unique substring of the old entry>", "new": "<rewritten entry>"}, {"op": "remove", "target": "<exact unique substring of the entry>"}]}`,
+		string(original), maxTidyOpsPerRun)
+
+	callCtx, cancel := context.WithTimeout(provider.WithJSONMode(provider.WithNoThinking(ctx)), 3*time.Minute)
+	defer cancel()
 
 	resp, err := prov.Chat(callCtx, []provider.Message{
 		{Role: "user", Content: prompt},
@@ -125,21 +151,25 @@ Output STRICT JSON only — no markdown fences, no commentary:
 		slog.Warn("memory tidy: parse failed", "agent", agentID, "model", model, "error", err)
 		return
 	}
-	tidied := strings.TrimSpace(res.Tidied)
-	if tidied == "" {
-		slog.Warn("memory tidy: empty result, skipping write", "agent", agentID)
+	if len(res.Ops) == 0 {
+		slog.Info("memory tidy: nothing to do", "agent", agentID, "model", model)
 		return
 	}
-	if len(tidied) >= len(original) {
-		slog.Info("memory tidy: result did not shrink the file, skipping write",
-			"agent", agentID, "before", len(original), "after", len(tidied))
+
+	tidied, archived := agent.ApplyEntryEdits(string(original), res.Ops, maxTidyOpsPerRun)
+	if len(archived) == 0 {
+		slog.Info("memory tidy: no applicable operations", "agent", agentID, "proposed", len(res.Ops))
+		return
+	}
+	if strings.TrimSpace(tidied) == "" {
+		slog.Warn("memory tidy: operations emptied the file, skipping write", "agent", agentID)
 		return
 	}
 
 	// Re-read before writing: if a concurrent auto-persist appended to the
 	// file during the LLM call, give up this round instead of dropping the
 	// fresh facts (they'll ride the next sweep).
-	current, err := g.store.GetAgentFile(ctx, agentID, "MEMORY.md")
+	current, err := st.GetAgentFile(ctx, agentID, "MEMORY.md")
 	if err != nil || !bytes.Equal(current, original) {
 		slog.Info("memory tidy: file changed during tidy, deferring to next sweep", "agent", agentID)
 		return
@@ -151,16 +181,33 @@ Output STRICT JSON only — no markdown fences, no commentary:
 				"agent", agentID, "type", t.Type, "pattern", t.Pattern)
 		}
 	}
-	if err := g.store.SaveAgentFile(ctx, agentID, "MEMORY.md", []byte(tidied)); err != nil {
+	if err := st.SaveAgentFile(ctx, agentID, "MEMORY.md", []byte(tidied)); err != nil {
 		slog.Warn("memory tidy: save failed", "agent", agentID, "error", err)
 		return
 	}
+	archiveMemoryTidy(ctx, st, agentID, archived)
 	slog.Info("memory tidy: consolidated",
 		"agent", agentID,
-		"before", len(original), "after", len(tidied),
-		"dropped", len(res.Dropped), "merged", res.Merged)
-	for _, d := range res.Dropped {
-		slog.Info("memory tidy: dropped entry", "agent", agentID, "entry", d)
+		"applied", len(archived), "proposed", len(res.Ops),
+		"before", len(original), "after", len(tidied))
+	for _, e := range archived {
+		slog.Info("memory tidy: archived entry", "agent", agentID, "entry", e)
+	}
+}
+
+// archiveMemoryTidy appends the entries one pass pruned to
+// MEMORY.archive.md under a timestamped header. Archive failures are
+// logged, not fatal: the pruned entries are already echoed to the log as
+// their own audit trail.
+func archiveMemoryTidy(ctx context.Context, st store.Store, agentID string, entries []string) {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "\n## Archived %s\n", time.Now().UTC().Format("2006-01-02 15:04:05"))
+	for _, e := range entries {
+		fmt.Fprintf(&sb, "- %s\n", strings.TrimSpace(e))
+	}
+	prev, _ := st.GetAgentFile(ctx, agentID, memoryArchiveFile)
+	if err := st.SaveAgentFile(ctx, agentID, memoryArchiveFile, append(prev, []byte(sb.String())...)); err != nil {
+		slog.Warn("memory tidy: archive save failed", "agent", agentID, "error", err)
 	}
 }
 
