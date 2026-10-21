@@ -89,19 +89,21 @@ func SafeDialContext(ctx context.Context, network, addr string) (net.Conn, error
 }
 
 // SafeClient returns an *http.Client whose dialer and redirect policy
-// apply the SSRF guards above, with the branded User-Agent via Wrap.
-// timeout is the whole-request cap; 0 means no cap (caller supplies a
-// context deadline).
+// apply the SSRF guards above, with the browser-shaped fetch User-Agent
+// (FetchUserAgent): every caller routes through here to fetch web
+// content, the request class anti-bot layers block by UA. timeout is
+// the whole-request cap; 0 means no cap (caller supplies a context
+// deadline).
 func SafeClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
-		Transport: Wrap(&http.Transport{
+		Transport: wrapWith(&http.Transport{
 			DialContext:           SafeDialContext,
 			ForceAttemptHTTP2:     true,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 20 * time.Second,
 			IdleConnTimeout:       60 * time.Second,
-		}),
+		}, FetchUserAgent()),
 		// Cap redirect chains so an attacker can't follow a public URL
 		// into an internal one — each redirect target goes back through
 		// SafeDialContext, and bounded depth keeps the request finite.

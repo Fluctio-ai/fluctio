@@ -21,9 +21,8 @@ type webFetchArgs struct {
 }
 
 const (
-	defaultMaxLen  = 10000
-	fetchTimeout   = 30 * time.Second
-	fetchUserAgent = "Fluctio/1.0 (AI Agent Web Fetcher)"
+	defaultMaxLen = 10000
+	fetchTimeout  = 30 * time.Second
 )
 
 // safeFetchClient applies the shared SSRF dial guards (private /
@@ -190,7 +189,6 @@ func webFetchTool(ctx context.Context, r *Registry, rawArgs json.RawMessage) (st
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
-	req.Header.Set("User-Agent", fetchUserAgent)
 
 	resp, err := safeFetchClient.Do(req)
 	if err != nil {

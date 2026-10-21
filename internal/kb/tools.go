@@ -777,7 +777,6 @@ func FetchURLContent(ctx context.Context, rawURL string) (title, body string, er
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("User-Agent", httpclient.UserAgent())
 
 	resp, err := kbFetchClient.Do(req)
 	if err != nil {

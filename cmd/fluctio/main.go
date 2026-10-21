@@ -16,6 +16,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/daemon"
 	"github.com/fluctio-ai/fluctio/internal/gateway"
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 	"github.com/fluctio-ai/fluctio/internal/maintenance"
 	"github.com/fluctio-ai/fluctio/internal/pubimg"
 	"github.com/fluctio-ai/fluctio/internal/session"
@@ -96,6 +97,11 @@ func (a *apiResolver) DispatchLINEWebhook(accountID string, body []byte, signatu
 }
 
 func main() {
+	// Brand every outbound HTTP request (nil-Transport *http.Client and
+	// http.DefaultClient resolve DefaultTransport at request time) with
+	// "fluctio-agent/<version>" instead of Go's default "Go-http-client/1.1".
+	httpclient.Install()
+
 	rootCmd := &cobra.Command{
 		Use:   "fluctio",
 		Short: "Fluctio - Multi-User AI Agent Platform",

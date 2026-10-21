@@ -39,28 +39,53 @@ func UserAgent() string {
 	return userAgent.Load().(string)
 }
 
-// uaTransport sets User-Agent on every request unless the caller already
+// fetchUserAgent is the browser-shaped UA, built once like userAgent.
+var fetchUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+	"(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Fluctio/" + buildinfo.Version
+
+// FetchUserAgent returns a browser-shaped UA for fetching web content
+// (web_fetch, KB URL ingestion): sites and CDNs commonly block
+// self-declared bot agents outright but ignore unknown trailing UA
+// tokens, so the string looks like a stock Chrome request and appends
+// "Fluctio/<version>" at the end for honest identification. API-type
+// endpoints (LLM providers, channel bots, search APIs) should keep
+// using UserAgent().
+func FetchUserAgent() string {
+	return fetchUserAgent
+}
+
+// uaTransport sets a User-Agent on every request unless the caller already
 // set one (some SDKs / auth flows provide their own). Clones the request
 // before mutating headers so the caller's reused request isn't raced.
-type uaTransport struct{ base http.RoundTripper }
+type uaTransport struct {
+	ua   string
+	base http.RoundTripper
+}
 
 func (t uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if _, ok := req.Header["User-Agent"]; !ok {
 		clone := req.Clone(req.Context())
-		clone.Header.Set("User-Agent", UserAgent())
+		clone.Header.Set("User-Agent", t.ua)
 		req = clone
 	}
 	return t.base.RoundTrip(req)
+}
+
+// wrapWith returns a RoundTripper that injects ua on top of base. nil
+// base falls back to http.DefaultTransport's current value (captured at
+// call time).
+func wrapWith(base http.RoundTripper, ua string) http.RoundTripper {
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return uaTransport{ua: ua, base: base}
 }
 
 // Wrap returns a RoundTripper that injects the branded User-Agent on top
 // of base. nil base falls back to http.DefaultTransport's current value
 // (captured at call time).
 func Wrap(base http.RoundTripper) http.RoundTripper {
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	return uaTransport{base: base}
+	return wrapWith(base, UserAgent())
 }
 
 // Install replaces http.DefaultTransport with a UA-injecting wrapper so
@@ -76,7 +101,7 @@ func Install() {
 func NewClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout:   timeout,
-		Transport: Wrap(cloneDefault()),
+		Transport: Wrap(CloneDefault()),
 	}
 }
 
@@ -89,15 +114,19 @@ func NewClient(timeout time.Duration) *http.Client {
 // callers must NOT type-assert http.DefaultTransport themselves, because
 // Install() replaces it with a UA wrapper.
 func NewStreamingClient(headerTimeout time.Duration) *http.Client {
-	tr := cloneDefault()
+	tr := CloneDefault()
 	tr.ResponseHeaderTimeout = headerTimeout
 	return &http.Client{Transport: Wrap(tr)}
 }
 
-// cloneDefault returns a fresh *http.Transport with Go's sensible default
+// CloneDefault returns a fresh *http.Transport with Go's sensible default
 // tuning, independent of whatever http.DefaultTransport currently points
-// at (so wrapping DefaultTransport doesn't recurse).
-func cloneDefault() *http.Transport {
+// at (so wrapping DefaultTransport doesn't recurse). Exported for call
+// sites that need transport tuning (e.g. ResponseHeaderTimeout, forced
+// HTTP/1.1) and therefore can't type-assert http.DefaultTransport
+// themselves — after Install() it's a uaTransport, and asserting *http.Transport
+// there panics.
+func CloneDefault() *http.Transport {
 	if t, ok := http.DefaultTransport.(*http.Transport); ok {
 		return t.Clone()
 	}

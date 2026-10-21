@@ -40,7 +40,6 @@ func (d *Direct) Execute(ctx context.Context, req toolproviders.Request) (toolpr
 	if err != nil {
 		return toolproviders.Response{}, err
 	}
-	httpReq.Header.Set("User-Agent", httpclient.UserAgent())
 
 	resp, err := directFetchClient.Do(httpReq)
 	if err != nil {

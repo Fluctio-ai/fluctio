@@ -37,7 +37,9 @@ import (
 // conversation-summary extraction isn't cut off at 60s. Normal calls are
 // unaffected — they return headers in well under a second.
 func newLLMHTTPClient() *http.Client {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	// CloneDefault, not a raw DefaultTransport type-assertion — Install()
+	// wraps DefaultTransport in a uaTransport and the assertion panics.
+	tr := httpclient.CloneDefault()
 	tr.ResponseHeaderTimeout = 120 * time.Second
 	// Force HTTP/1.1 — LongCat's HTTP/2 path does not honor prompt
 	// caching (returns cached_tokens=0 over H2; H1 hits). Verified
