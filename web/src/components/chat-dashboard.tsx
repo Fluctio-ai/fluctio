@@ -101,11 +101,13 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
     listAgentCronJobs(agentId).then((js) =>
       alive && setCrons(js.filter((j) => j.enabled).slice(0, RECENT_SESSIONS)),
     );
-    getDiaryShelved(agentId).then((v) => {
-      if (!alive) return;
-      setNowTs(Date.now());
-      setShelved(v);
-    });
+    getDiaryShelved(agentId)
+      .then((v) => {
+        if (!alive) return;
+        setNowTs(Date.now());
+        setShelved(v);
+      })
+      .catch(() => alive && setShelved({ enabled: false, items: [] }));
     return () => {
       alive = false;
     };
@@ -127,20 +129,26 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
     return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" });
   };
 
+  // Hold the first paint until the shelved opt-in state lands: it decides
+  // the grid's column count (4 vs 5), and mounting at 4 columns then
+  // re-flowing to 5 once the fetch resolves reads as a layout glitch. The
+  // endpoint is a single-row LIMIT 1 query — never the slow leg — and a
+  // failure falls back to hidden (fail-closed, no teaser pane).
+  if (shelved === null) return null;
   // max-w-6xl: the panes need more room than the composer's max-w-2xl, but
   // stay centered under the hero for visual kinship. items-start lets each
   // pane keep its own content-driven height. The shelved pane is opt-in: a
   // fifth column appears only when the ledger feature is on.
-  const openCount = shelved?.items.filter((s) => s.status === "open").length ?? 0;
+  const openCount = shelved.items.filter((s) => s.status === "open").length;
   return (
     <div
       className={cn(
         "mx-auto grid w-full max-w-6xl items-start gap-4 md:grid-cols-2",
-        shelved?.enabled ? "xl:grid-cols-5" : "xl:grid-cols-4",
+        shelved.enabled ? "xl:grid-cols-5" : "xl:grid-cols-4",
       )}
     >
       {/* ── Shelved topics (opt-in; first — most time-sensitive) ── */}
-      {shelved?.enabled && (
+      {shelved.enabled && (
         <section className="dash-in flex min-h-40 flex-col overflow-hidden rounded-xl border bg-card">
           <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
             <ArchiveRestore className="size-4 text-muted-foreground" />
