@@ -11,11 +11,13 @@ import {
   deleteDiary,
   type DailyDiary,
   type DiaryTheme,
+  type DiaryShelved,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import {
   ArrowLeftIcon,
+  ArchiveRestoreIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   SparklesIcon,
@@ -24,6 +26,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { daysSince } from "@/lib/time";
 import { usePaneResize, PaneDivider } from "@/components/pane-divider";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 
@@ -524,6 +527,19 @@ function DiaryContent({ agentId, diary }: { agentId: string; diary: DailyDiary }
         </div>
       )}
 
+      {diary.shelved && diary.shelved.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+            <ArchiveRestoreIcon className="h-4 w-4" /> {t("diary.shelved")}
+          </h3>
+          <div className="space-y-2">
+            {diary.shelved.map((s, i) => (
+              <ShelvedCard key={i} agentId={agentId} item={s} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {diary.archives && diary.archives.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">{t("diary.archives")}</h3>
@@ -537,6 +553,49 @@ function DiaryContent({ agentId, diary }: { agentId: string; diary: DailyDiary }
         </div>
       )}
     </>
+  );
+}
+
+// ShelvedCard renders one shelved-ledger entry: the topic + the situation
+// when deferred + a #seq-N link back into that conversation (the way back
+// in — settling stays the user's own move). Resolved entries (picked back
+// up that day) render with the success tint as the closed loop.
+function ShelvedCard({ agentId, item }: { agentId: string; item: DiaryShelved }) {
+  const t = useT();
+  const days = daysSince(item.since, new Date(todayCST() + "T00:00:00").getTime());
+  const resolved = item.status === "resolved";
+  return (
+    <div
+      className={cn(
+        "rounded-lg border p-3",
+        resolved ? "border-success/30 bg-success/5" : "border-border bg-muted/30",
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">
+            {resolved && <span className="mr-1 text-success">✓</span>}
+            {item.topic}
+          </p>
+          {item.context && (
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{item.context}</p>
+          )}
+          <p className="mt-1 text-2xs text-muted-foreground">
+            {resolved
+              ? t("diary.shelvedResolved")
+              : t("diary.shelvedSince", { date: item.since, n: days })}
+          </p>
+        </div>
+        {item.session && (
+          <a
+            href={`/agents/${agentId}/chat/${encodeURIComponent(item.session)}#seq-${item.seq}`}
+            className="shrink-0 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 font-mono text-2xs font-semibold text-primary hover:bg-primary/20"
+          >
+            #seq-{item.seq}
+          </a>
+        )}
+      </div>
+    </div>
   );
 }
 

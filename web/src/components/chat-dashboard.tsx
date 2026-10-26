@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
+  ArchiveRestore,
   Flame,
   Layers,
   ListTodo,
@@ -27,13 +28,18 @@ import { ChannelIcon, channelLabel } from "@/components/channel-icon";
 import {
   type AgentCronJob,
   type ChatSessionEntry,
+  type DiaryShelved,
+  type DiaryShelvedView,
   type KBCardStats,
   type KBSource,
   getCardStats,
   getChatSessions,
+  getDiaryShelved,
   kbListTodos,
   listAgentCronJobs,
 } from "@/lib/api";
+import { daysSince } from "@/lib/time";
+import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n";
 
 // ChatDashboard — the agent board that replaces the blank Manus-style
@@ -66,6 +72,10 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
   const [todos, setTodos] = useState<KBSource[] | null | undefined>(undefined);
   const [sessions, setSessions] = useState<ChatSessionEntry[] | null>(null);
   const [crons, setCrons] = useState<AgentCronJob[] | null>(null);
+  // Shelved-topics ledger — null = still loading; {enabled:false} hides the
+  // pane outright (opt-in feature, no teaser). Open items link straight back
+  // into the deferred conversation's #seq anchor ("quick re-entry").
+  const [shelved, setShelved] = useState<DiaryShelvedView | null>(null);
   // "Now" for the relative timestamps — stamped alongside the async data
   // arrival (not during render: Date.now() there trips the purity lint
   // and risks hydration mismatch under static export). 0 = not yet
@@ -91,6 +101,11 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
     listAgentCronJobs(agentId).then((js) =>
       alive && setCrons(js.filter((j) => j.enabled).slice(0, RECENT_SESSIONS)),
     );
+    getDiaryShelved(agentId).then((v) => {
+      if (!alive) return;
+      setNowTs(Date.now());
+      setShelved(v);
+    });
     return () => {
       alive = false;
     };
@@ -112,11 +127,55 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
     return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" });
   };
 
+  // max-w-6xl: the panes need more room than the composer's max-w-2xl, but
+  // stay centered under the hero for visual kinship. items-start lets each
+  // pane keep its own content-driven height. The shelved pane is opt-in: a
+  // fifth column appears only when the ledger feature is on.
+  const openCount = shelved?.items.filter((s) => s.status === "open").length ?? 0;
   return (
-    // max-w-6xl: four panes need more room than the composer's max-w-2xl,
-    // but stay centered under the hero for visual kinship. items-start
-    // lets each pane keep its own content-driven height.
-    <div className="mx-auto grid w-full max-w-6xl items-start gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div
+      className={cn(
+        "mx-auto grid w-full max-w-6xl items-start gap-4 md:grid-cols-2",
+        shelved?.enabled ? "xl:grid-cols-5" : "xl:grid-cols-4",
+      )}
+    >
+      {/* ── Shelved topics (opt-in; first — most time-sensitive) ── */}
+      {shelved?.enabled && (
+        <section className="dash-in flex min-h-40 flex-col overflow-hidden rounded-xl border bg-card">
+          <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
+            <ArchiveRestore className="size-4 text-muted-foreground" />
+            {t("dashboard.shelved.title")}
+            {openCount > 0 && (
+              <span className="ml-auto rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+                {openCount}
+              </span>
+            )}
+          </div>
+          {shelved.items.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
+              <ArchiveRestore className="size-8 text-muted-foreground/50" />
+              <p className="text-sm text-muted-foreground">{t("dashboard.shelved.none")}</p>
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <ul className="max-h-[420px] divide-y divide-border/60 overflow-y-auto py-1 text-sm">
+                {[...shelved.items]
+                  .sort((a, b) => a.since.localeCompare(b.since))
+                  .map((s, i) => (
+                    <ShelvedRow key={i} agentId={agentId} item={s} nowTs={nowTs} />
+                  ))}
+              </ul>
+              <Link
+                href={`/agents/${agentId}/knowledge/diary`}
+                className="border-t border-border/60 px-4 py-2.5 text-xs text-primary hover:underline"
+              >
+                {t("dashboard.shelved.view")}
+              </Link>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* ── Today's cards ── */}
       <section className="dash-in flex min-h-40 flex-col overflow-hidden rounded-xl border bg-card">
         <div className="flex items-center gap-2 px-4 pt-3 text-sm font-medium">
@@ -284,6 +343,45 @@ function shortDateTime(iso: string, nowTs: number): string {
   return sameDay
     ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// ShelvedRow renders one ledger entry. Open rows are a deep link back into
+// the deferred conversation (the re-entry point — the ledger flags, never
+// acts); resolved rows render as the closed loop, no link needed.
+function ShelvedRow({
+  agentId,
+  item,
+  nowTs,
+}: {
+  agentId: string;
+  item: DiaryShelved;
+  nowTs: number;
+}) {
+  const t = useT();
+  if (item.status === "resolved") {
+    return (
+      <li className="flex items-center gap-2 px-4 py-2.5 text-muted-foreground">
+        <span className="text-success">✓</span>
+        <span className="min-w-0 flex-1 truncate">{item.topic}</span>
+        <span className="shrink-0 text-xs">{t("dashboard.shelved.resolved")}</span>
+      </li>
+    );
+  }
+  const days = nowTs === 0 ? 0 : daysSince(item.since, nowTs);
+  return (
+    <li>
+      <a
+        href={`/agents/${agentId}/chat/${encodeURIComponent(item.session)}#seq-${item.seq}`}
+        className="flex items-center gap-2 px-4 py-2.5 hover:bg-muted/40"
+        title={item.context || item.topic}
+      >
+        <span className="min-w-0 flex-1 truncate">{item.topic}</span>
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {t("dashboard.shelved.daysAgo", { n: days })}
+        </span>
+      </a>
+    </li>
+  );
 }
 
 // TodoRow renders one open KB todo: a hollow bullet for pending, the

@@ -11,6 +11,20 @@ const ASSETS: Record<string, string> = {
   qq: "/channels/qq.svg",
 };
 
+// PUSH_CHANNELS is the ordered option list for IM push-channel selects —
+// the single source of truth so a new channel adds its option once.
+// (cards-settings-card still hardcodes its copy; converge when next
+// touched.)
+export const PUSH_CHANNELS = [
+  { value: "wechat", label: "WeChat" },
+  { value: "qq", label: "QQ" },
+  { value: "telegram", label: "Telegram" },
+  { value: "discord", label: "Discord" },
+  { value: "slack", label: "Slack" },
+  { value: "feishu", label: "Feishu" },
+  { value: "line", label: "LINE" },
+] as const;
+
 // ChannelIcon renders the per-channel brand mark next to a chat title.
 // Returns null for web / unknown channels — web is the default place a
 // chat lives in this UI, so a generic globe glyph next to every web

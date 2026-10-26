@@ -35,7 +35,7 @@ func runDiaryForAgent(ctx context.Context, st store.Store, agentID, date string)
 		slog.Warn("diary: no provider/model resolvable, skipping", "agent", agentID)
 		return
 	}
-	entry, err := diary.Generate(ctx, dbs, agentID, date, prov, model, fc.Diary.ThinkingMode)
+	entry, err := diary.Generate(ctx, dbs, agentID, date, prov, model, fc.Diary.ThinkingMode, fc.Diary.ShelvedEnabled)
 	if err != nil {
 		slog.Warn("diary: generate failed", "agent", agentID, "date", date, "error", err)
 		return
@@ -46,7 +46,7 @@ func runDiaryForAgent(ctx context.Context, st store.Store, agentID, date string)
 	}
 	slog.Info("diary generated",
 		"agent", agentID, "date", date,
-		"themes", len(entry.Themes), "blindspots", len(entry.Blindspots))
+		"themes", len(entry.Themes), "blindspots", len(entry.Blindspots), "shelved", len(entry.Shelved))
 }
 
 // runDiaryCycle walks every agent with diary.enabled and, for each whose

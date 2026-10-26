@@ -35,6 +35,21 @@ type DiaryBlindspot struct {
 	Reason string `json:"reason"`
 }
 
+// DiaryShelved is one topic the user explicitly deferred ("回头再说") and
+// hasn't returned to — a rolling ledger carried across diaries: each day's
+// Pass 3 inherits the previous ledger, settles entries the day picked back
+// up (resolved, shown that day then retired), and drops open entries older
+// than the shelved window. It flags, never acts — the entry's Session/Seq
+// deep link is the user's way back into the deferred context.
+type DiaryShelved struct {
+	Topic   string `json:"topic"`
+	Context string `json:"context"` // one line: the situation when deferred
+	Since   string `json:"since"`   // YYYY-MM-DD first shelved
+	Session string `json:"session"` // deep-link target
+	Seq     int    `json:"seq"`
+	Status  string `json:"status"` // "open" | "resolved"
+}
+
 // DailyDiary is one day's generated diary for one agent.
 type DailyDiary struct {
 	AgentID     string           `json:"agentId"`
@@ -42,19 +57,20 @@ type DailyDiary struct {
 	Overview    string           `json:"overview"`
 	Themes      []DiaryTheme     `json:"themes"`
 	Blindspots  []DiaryBlindspot `json:"blindspots"`
+	Shelved     []DiaryShelved   `json:"shelved"`
 	Archives    []string         `json:"archives"`
 	Model       string           `json:"model"`
 	GeneratedAt time.Time        `json:"generatedAt"`
 }
 
-const dailyDiaryColumns = `agent_id, date, overview, themes, blindspots, archives, model, generated_at`
+const dailyDiaryColumns = `agent_id, date, overview, themes, blindspots, shelved, archives, model, generated_at`
 
 // scanDailyDiary scans one row from either a *sql.Row or *sql.Rows.
 func scanDailyDiary(s interface{ Scan(...any) error }) (DailyDiary, error) {
 	var dia DailyDiary
-	var overview, themesJSON, blindsJSON, archivesJSON, model sql.NullString
+	var overview, themesJSON, blindsJSON, shelvedJSON, archivesJSON, model sql.NullString
 	if err := s.Scan(
-		&dia.AgentID, &dia.Date, &overview, &themesJSON, &blindsJSON, &archivesJSON, &model, &dia.GeneratedAt,
+		&dia.AgentID, &dia.Date, &overview, &themesJSON, &blindsJSON, &shelvedJSON, &archivesJSON, &model, &dia.GeneratedAt,
 	); err != nil {
 		return dia, err
 	}
@@ -62,12 +78,16 @@ func scanDailyDiary(s interface{ Scan(...any) error }) (DailyDiary, error) {
 	dia.Model = model.String
 	_ = json.Unmarshal([]byte(themesJSON.String), &dia.Themes)
 	_ = json.Unmarshal([]byte(blindsJSON.String), &dia.Blindspots)
+	_ = json.Unmarshal([]byte(shelvedJSON.String), &dia.Shelved)
 	_ = json.Unmarshal([]byte(archivesJSON.String), &dia.Archives)
 	if dia.Themes == nil {
 		dia.Themes = []DiaryTheme{}
 	}
 	if dia.Blindspots == nil {
 		dia.Blindspots = []DiaryBlindspot{}
+	}
+	if dia.Shelved == nil {
+		dia.Shelved = []DiaryShelved{}
 	}
 	if dia.Archives == nil {
 		dia.Archives = []string{}
@@ -86,6 +106,14 @@ func (d *DBStore) InsertDailyDiary(ctx context.Context, dia DailyDiary) error {
 	if err != nil {
 		return fmt.Errorf("marshal blindspots: %w", err)
 	}
+	shelved := dia.Shelved
+	if shelved == nil {
+		shelved = []DiaryShelved{}
+	}
+	shelvedJSON, err := json.Marshal(shelved)
+	if err != nil {
+		return fmt.Errorf("marshal shelved: %w", err)
+	}
 	archives := dia.Archives
 	if archives == nil {
 		archives = []string{}
@@ -101,18 +129,19 @@ func (d *DBStore) InsertDailyDiary(ctx context.Context, dia DailyDiary) error {
 			overview = EXCLUDED.overview,
 			themes = EXCLUDED.themes,
 			blindspots = EXCLUDED.blindspots,
+			shelved = EXCLUDED.shelved,
 			archives = EXCLUDED.archives,
 			model = EXCLUDED.model,
 			generated_at = EXCLUDED.generated_at`
 	if d.dialect == "postgres" {
 		_, err = d.db.ExecContext(ctx, `INSERT INTO daily_diary (`+dailyDiaryColumns+`)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`+conflict,
-			dia.AgentID, dia.Date, dia.Overview, themesJSON, blindsJSON, archivesJSON, dia.Model, dia.GeneratedAt)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`+conflict,
+			dia.AgentID, dia.Date, dia.Overview, themesJSON, blindsJSON, shelvedJSON, archivesJSON, dia.Model, dia.GeneratedAt)
 		return err
 	}
 	_, err = d.db.ExecContext(ctx, `INSERT INTO daily_diary (`+dailyDiaryColumns+`)
-		VALUES (?,?,?,?,?,?,?,?)`+conflict,
-		dia.AgentID, dia.Date, dia.Overview, themesJSON, blindsJSON, archivesJSON, dia.Model, dia.GeneratedAt)
+		VALUES (?,?,?,?,?,?,?,?,?)`+conflict,
+		dia.AgentID, dia.Date, dia.Overview, themesJSON, blindsJSON, shelvedJSON, archivesJSON, dia.Model, dia.GeneratedAt)
 	return err
 }
 
@@ -175,4 +204,35 @@ func (d *DBStore) ListDailyDiaries(ctx context.Context, agentID, from, to string
 		out = append(out, dia)
 	}
 	return out, rows.Err()
+}
+
+// LatestShelvedLedger returns the most recent diary on-or-before `to`
+// (YYYY-MM-DD) that carries a non-empty shelved ledger — one narrow row
+// (date + shelved only), not a 30-day wide scan. The push sweep and the
+// Pass-3 inheritance both key on this "latest non-empty = chain head"
+// rule; empty ledgers (Pass 3 off/failed/cleared that day, stored as '[]')
+// are not chain heads. Returns (nil, "", nil) when no diary carries one.
+func (d *DBStore) LatestShelvedLedger(ctx context.Context, agentID, to string) ([]DiaryShelved, string, error) {
+	var q string
+	if d.dialect == "postgres" {
+		q = `SELECT date, shelved FROM daily_diary WHERE agent_id = $1 AND date <= $2
+			AND shelved IS NOT NULL AND shelved <> '' AND shelved <> '[]'
+			ORDER BY date DESC LIMIT 1`
+	} else {
+		q = `SELECT date, shelved FROM daily_diary WHERE agent_id = ? AND date <= ?
+			AND shelved IS NOT NULL AND shelved <> '' AND shelved <> '[]'
+			ORDER BY date DESC LIMIT 1`
+	}
+	var date string
+	var shelvedJSON sql.NullString
+	err := d.db.QueryRowContext(ctx, q, agentID, to).Scan(&date, &shelvedJSON)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	var out []DiaryShelved
+	_ = json.Unmarshal([]byte(shelvedJSON.String), &out)
+	return out, date, nil
 }

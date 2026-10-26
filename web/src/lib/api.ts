@@ -1777,6 +1777,14 @@ export interface AgentDiaryCfg {
   cronTime?: string;
   /** Blindspot-detection strength: ""/"blindspots" (default), "off", "deep". */
   thinkingMode?: string;
+  /** Opt-in shelved-topics ledger (Pass 3). Default off. */
+  shelvedEnabled?: boolean;
+  /** Opt-in daily IM nudge when the shelved ledger changes. Default off. */
+  shelvedPushEnabled?: boolean;
+  /** Shelved nudge time "HH:MM" UTC+8. Default "09:00". */
+  shelvedPushTime?: string;
+  /** Shelved nudge IM channel. Default "wechat". */
+  shelvedPushChannel?: string;
 }
 
 // AgentCardsCfg mirrors config.AgentCardsCfg — per-agent Q&A flashcard
@@ -1814,6 +1822,17 @@ export interface DiaryBlindspot {
   point: string;
   reason: string;
 }
+/** One shelved ("回头再说") topic on the rolling cross-diary ledger. */
+export interface DiaryShelved {
+  topic: string;
+  context: string;
+  /** YYYY-MM-DD first shelved. */
+  since: string;
+  /** Deep-link target back into the deferred conversation. */
+  session: string;
+  seq: number;
+  status: "open" | "resolved";
+}
 export interface DailyDiary {
   agentId: string;
   date: string;
@@ -1822,9 +1841,21 @@ export interface DailyDiary {
   generating?: boolean;
   themes: DiaryTheme[];
   blindspots: DiaryBlindspot[];
+  shelved: DiaryShelved[];
   archives: string[];
   model: string;
   generatedAt: string;
+}
+
+/** Live shelved-ledger view for the chat-dashboard pane. */
+export interface DiaryShelvedView {
+  enabled: boolean;
+  items: DiaryShelved[];
+}
+export async function getDiaryShelved(agentId: string): Promise<DiaryShelvedView> {
+  const res = await apiFetch(`/api/agents/${agentId}/diary/shelved`);
+  if (!res.ok) return { enabled: false, items: [] };
+  return res.json();
 }
 
 export async function listDiary(agentId: string, from?: string, to?: string): Promise<DailyDiary[]> {

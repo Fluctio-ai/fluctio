@@ -30,6 +30,12 @@ func (s *Server) diaryThinkingMode(agentID string) string {
 	return ""
 }
 
+// diaryShelvedEnabled reads the agent's opt-in shelved-topics switch.
+func (s *Server) diaryShelvedEnabled(agentID string) bool {
+	fc, _ := config.AgentFileConfigLoader(agentID, "")
+	return fc.Diary != nil && fc.Diary.ShelvedEnabled
+}
+
 // handleDiaryList GET /api/agents/{id}/diary?from=&to= — entries in
 // [from,to] (YYYY-MM-DD, UTC+8), newest first. Defaults to last 30 days.
 func (s *Server) handleDiaryList(w http.ResponseWriter, r *http.Request) {
@@ -130,6 +136,43 @@ func (s *Server) handleDiaryDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleDiaryShelved GET /api/agents/{id}/diary/shelved — the live
+// shelved-topics ledger for the chat-dashboard pane: the most recent
+// diary's entries with open ones rolled to today plus that diary's
+// resolved loop. enabled:false when the agent hasn't opted in, so the
+// pane hides entirely instead of rendering an empty teaser. The enabled
+// check reads the config blob off the agent record requireAgentOwner
+// already fetched — the config loader would re-scan the agents table.
+func (s *Server) handleDiaryShelved(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	rec := s.requireAgentOwner(w, r, agentID)
+	if rec == nil {
+		return
+	}
+	var dc config.AgentDiaryCfg
+	if blob, err := json.Marshal(rec.Config["diary"]); err == nil {
+		_ = json.Unmarshal(blob, &dc)
+	}
+	if !dc.ShelvedEnabled {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "items": []any{}})
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "items": []any{}})
+		return
+	}
+	ledger, _, err := diary.CurrentShelvedLedger(r.Context(), dbs, agentID, time.Now().In(diaryCST))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ledger == nil {
+		ledger = []store.DiaryShelved{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "items": ledger})
+}
+
 // handleDiaryGenerate POST /api/agents/{id}/diary/generate {"date":"..."} —
 // manually (re)generate one day's diary asynchronously. date defaults to
 // yesterday (UTC+8). Returns 202 immediately; the row appears via GET once
@@ -171,7 +214,7 @@ func (s *Server) handleDiaryGenerate(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("diary gen: no provider/model resolvable", "agent", agentID)
 			return
 		}
-		entry, err := diary.Generate(context.Background(), dbs, agentID, date, prov, model, s.diaryThinkingMode(agentID))
+		entry, err := diary.Generate(context.Background(), dbs, agentID, date, prov, model, s.diaryThinkingMode(agentID), s.diaryShelvedEnabled(agentID))
 		if err != nil {
 			slog.Warn("diary gen failed", "agent", agentID, "date", date, "error", err)
 			return

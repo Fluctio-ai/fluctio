@@ -71,16 +71,37 @@ type llmBlindspot struct {
 	Reason string `json:"reason"`
 }
 
+// shelvedWindowDays is how long an open shelved topic stays on the ledger
+// without being picked back up before it's treated as tacitly dropped.
+const shelvedWindowDays = 7
+
+// llmShelvedOut is the Pass-3 settlement response: which ledger entries the
+// day picked back up (by ledger id) plus freshly shelved topics (by
+// transcript idx). Historical entry fields never round-trip through the
+// LLM — the backend re-attaches them — so topic text stays stable across
+// days (the push sweep's change detection relies on that).
+type llmShelvedNew struct {
+	Topic     string `json:"topic"`
+	Context   string `json:"context"`
+	SourceIdx int    `json:"source_idx"`
+}
+type llmShelvedOut struct {
+	ResolvedIDs []int           `json:"resolved_ids"`
+	New         []llmShelvedNew `json:"new"`
+}
+
 // Generate produces one day's diary for an agent. `date` is YYYY-MM-DD
 // (UTC+8). Returns the persisted entry, or (nil, nil) when the day had
 // no messages worth a diary (the caller then leaves that day absent so
-// the UI shows "no diary" rather than an empty one).
+// the UI shows "no diary" rather than an empty one). shelvedEnabled gates
+// the opt-in Pass-3 shelved-topics ledger.
 func Generate(
 	ctx context.Context,
 	dbs *store.DBStore,
 	agentID, date string,
 	prov provider.Provider,
 	model, thinkingMode string,
+	shelvedEnabled bool,
 ) (*store.DailyDiary, error) {
 	day, err := time.ParseInLocation("2006-01-02", date, CST)
 	if err != nil {
@@ -187,6 +208,23 @@ func Generate(
 		blindspots = nil
 	}
 
+	// Pass 3 — shelved-topics ledger (opt-in). A failed settlement freezes
+	// rather than truncates: writing the inherited ledger verbatim keeps
+	// the cross-day chain intact (the upsert would otherwise reset it to
+	// []), same "must not sink the diary" posture as the blindspot pass.
+	var shelved []store.DiaryShelved
+	if shelvedEnabled {
+		ledger, lerr := collectShelvedLedger(ctx, dbs, agentID, day)
+		if lerr != nil {
+			slog.Warn("diary: shelved ledger load failed, starting empty", "agent", agentID, "date", date, "error", lerr)
+		}
+		shelved, err = settleShelved(ctx, prov, model, transcript, refs, ledger, day, thinkingMode)
+		if err != nil {
+			slog.Warn("diary: shelved pass failed, freezing ledger", "agent", agentID, "date", date, "error", err)
+			shelved = ledger
+		}
+	}
+
 	overview := buildOverview(mapped)
 
 	entry := store.DailyDiary{
@@ -195,6 +233,7 @@ func Generate(
 		Overview:    overview,
 		Themes:      mapped,
 		Blindspots:  blindspots,
+		Shelved:     shelved,
 		Model:       model,
 		GeneratedAt: time.Now(),
 	}
@@ -411,5 +450,173 @@ func callLLM(ctx context.Context, prov provider.Provider, model, prompt string, 
 		return "", err
 	}
 	return resp.Content, nil
+}
+
+// rollShelvedLedger carries a previous diary's ledger forward to today:
+// resolved entries retire (they were shown on the day they were picked up),
+// open entries older than the shelved window are treated as tacitly dropped.
+// Pure — the unit-testable core of the ledger chain.
+func rollShelvedLedger(prev []store.DiaryShelved, today time.Time) []store.DiaryShelved {
+	var out []store.DiaryShelved
+	for _, e := range prev {
+		if e.Status != "open" {
+			continue
+		}
+		since, err := time.ParseInLocation("2006-01-02", e.Since, CST)
+		if err != nil || today.Sub(since) > shelvedWindowDays*24*time.Hour {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// collectShelvedLedger loads the rolling ledger for a diary date: the
+// chain head (latest diary carrying a ledger) rolled to today. Empty
+// ledger when no earlier diary carries one.
+func collectShelvedLedger(ctx context.Context, dbs *store.DBStore, agentID string, today time.Time) ([]store.DiaryShelved, error) {
+	prev, _, err := dbs.LatestShelvedLedger(ctx, agentID, today.AddDate(0, 0, -1).Format("2006-01-02"))
+	if err != nil {
+		return nil, err
+	}
+	return rollShelvedLedger(prev, today), nil
+}
+
+// settleShelved runs Pass 3: settle the inherited ledger against today's
+// transcript (did any shelved topic get picked back up?) and detect newly
+// shelved ones. Output order: carried-open, then new, then resolved (shown
+// today as the closed loop, retired from tomorrow's ledger).
+func settleShelved(
+	ctx context.Context,
+	prov provider.Provider,
+	model, transcript string,
+	refs []idxRef,
+	ledger []store.DiaryShelved,
+	today time.Time,
+	thinkingMode string,
+) ([]store.DiaryShelved, error) {
+	type ledgerEntry struct {
+		ID      int    `json:"id"`
+		Topic   string `json:"topic"`
+		Context string `json:"context"`
+		Since   string `json:"since"`
+	}
+	le := make([]ledgerEntry, len(ledger))
+	for i, e := range ledger {
+		le[i] = ledgerEntry{ID: i, Topic: e.Topic, Context: e.Context, Since: e.Since}
+	}
+	ledgerJSON, _ := json.Marshal(le)
+	prompt := fmt.Sprintf(`下面是某用户今天的原始聊天记录（每条带 idx），以及一份"搁浅话题账本"——用户之前明确说过要回头处理、但至今没有后续的话题（每条带 id）。
+
+聊天记录:
+%s
+
+搁浅账本（可能为空）:
+%s
+
+任务:
+1. 结算: 逐条判断今天的记录是否实质回到了账本中的话题（同一话题有后续讨论或行动）。是 → 把该条 id 放进 resolved_ids。只是被顺带提到、没有实质进展的不算。
+2. 新搁浅: 从今天记录里找用户明确表达"稍后/回头/改天/有空再"处理某话题、且当天没有回到该话题的地方。只有 user 角色的表达才算；告别寒暄（"回头聊"）不算；assistant 单方面提议"可以以后展开"而用户没接话的不算；已在账本里的同一话题不要重复报。
+
+输出严格 JSON（不要 markdown 代码块）:
+{"resolved_ids":[0],"new":[{"topic":"一句话话题","context":"当时语境一句话","source_idx":0}]}
+
+要求:
+- 宁缺毋滥，new 0-5 条；没有真正的搁浅就返回空数组，严禁为凑数硬凑
+- resolved_ids 只放账本中存在的 id；没有就返回空数组
+- source_idx 填用户表达搁浅意图的那条记录 idx`, transcript, ledgerJSON)
+
+	resp, err := callLLM(ctx, prov, model, prompt, 2048, thinkingOff(thinkingMode, true))
+	if err != nil {
+		return nil, err
+	}
+	var parsed llmShelvedOut
+	if err := llmjson.UnmarshalLLM(resp, &parsed); err != nil {
+		return nil, fmt.Errorf("parse shelved: %w", err)
+	}
+	return assembleShelved(ledger, parsed, refs, today.Format("2006-01-02")), nil
+}
+
+// assembleShelved builds today's ledger from the settlement response —
+// carried-open entries keep their original fields verbatim, resolved trail
+// the list as the closed loop. Pure — the unit-testable core of Pass 3.
+func assembleShelved(ledger []store.DiaryShelved, parsed llmShelvedOut, refs []idxRef, dateStr string) []store.DiaryShelved {
+	resolved := map[int]bool{}
+	for _, id := range parsed.ResolvedIDs {
+		if id >= 0 && id < len(ledger) {
+			resolved[id] = true
+		}
+	}
+	out := make([]store.DiaryShelved, 0, len(ledger)+len(parsed.New))
+	known := map[string]bool{}
+	// Carried-open entries keep their original fields verbatim.
+	for i, e := range ledger {
+		if resolved[i] {
+			continue
+		}
+		known[e.Topic] = true
+		out = append(out, e)
+	}
+	// Newly shelved: needs a real topic and a valid transcript anchor (no
+	// deep link → no way back into the context → dropped, same discipline
+	// as the blindspot "must be grounded in the record" rule).
+	for _, n := range parsed.New {
+		topic := strings.TrimSpace(n.Topic)
+		if topic == "" || known[topic] || n.SourceIdx < 0 || n.SourceIdx >= len(refs) {
+			continue
+		}
+		known[topic] = true
+		out = append(out, store.DiaryShelved{
+			Topic:   topic,
+			Context: strings.TrimSpace(n.Context),
+			Since:   dateStr,
+			Session: refs[n.SourceIdx].Session,
+			Seq:     refs[n.SourceIdx].Seq,
+			Status:  "open",
+		})
+	}
+	// Resolved entries trail the list — visible today as the closed loop.
+	for i, e := range ledger {
+		if !resolved[i] {
+			continue
+		}
+		e.Status = "resolved"
+		out = append(out, e)
+	}
+	return out
+}
+
+// CurrentShelvedLedger returns the live ledger view for the dashboard pane
+// and the push sweep: the chain head's entries — open ones rolled to
+// today, plus its resolved entries (the fresh "picked back up" loop — they
+// retire from the next diary's ledger but stay visible until a newer head
+// takes over). Also returns the head's date (the push sweep's dedup key:
+// dedup by the change's identity, not by the push calendar day). (nil,
+// "", nil) when no diary carries a ledger.
+func CurrentShelvedLedger(ctx context.Context, dbs *store.DBStore, agentID string, today time.Time) ([]store.DiaryShelved, string, error) {
+	entries, date, err := dbs.LatestShelvedLedger(ctx, agentID, today.Format("2006-01-02"))
+	if err != nil {
+		return nil, "", err
+	}
+	out := rollShelvedLedger(entries, today)
+	for _, e := range entries {
+		if e.Status == "resolved" {
+			out = append(out, e)
+		}
+	}
+	return out, date, nil
+}
+
+// ShelvedLedgerChanged reports whether the ledger moved on its source
+// diary's date: a fresh shelve (open entry whose Since is that date) or a
+// pickup (resolved entry). The push sweep gates on this so a ledger that
+// merely rolls forward unchanged never nags.
+func ShelvedLedgerChanged(entries []store.DiaryShelved, diaryDate string) bool {
+	for _, e := range entries {
+		if e.Status == "resolved" || (e.Status == "open" && e.Since == diaryDate) {
+			return true
+		}
+	}
+	return false
 }
 

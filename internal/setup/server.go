@@ -499,6 +499,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Daily diary: per-agent themed daily-diary entries distilled from
 	// conversation_summaries, with a "you might have missed" section.
 	mux.HandleFunc("GET /api/agents/{id}/diary", auth(s.handleDiaryList))
+	mux.HandleFunc("GET /api/agents/{id}/diary/shelved", auth(s.handleDiaryShelved))
 	mux.HandleFunc("GET /api/agents/{id}/diary/{date}", auth(s.handleDiaryGet))
 	mux.HandleFunc("DELETE /api/agents/{id}/diary/{date}", auth(s.handleDiaryDelete))
 	mux.HandleFunc("POST /api/agents/{id}/diary/generate", auth(s.handleDiaryGenerate))

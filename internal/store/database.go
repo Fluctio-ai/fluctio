@@ -6134,12 +6134,35 @@ func (d *DBStore) migrateDailyDiary(ctx context.Context) error {
 		overview TEXT,
 		themes TEXT,
 		blindspots TEXT,
+		shelved TEXT,
 		archives TEXT,
 		model TEXT,
 		generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (agent_id, date)
 	)`); err != nil {
 		return fmt.Errorf("migrate daily_diary: %w", err)
+	}
+	// shelved column for pre-existing DBs (fresh ones have it from CREATE).
+	// Same tableHasColumn-gated ALTER pattern as kb_sources.
+	if has, err := d.tableHasColumn(ctx, "daily_diary", "shelved"); err != nil {
+		return fmt.Errorf("migrate daily_diary: %w", err)
+	} else if !has {
+		if _, err := d.db.ExecContext(ctx, `ALTER TABLE daily_diary ADD COLUMN shelved TEXT`); err != nil {
+			return fmt.Errorf("migrate daily_diary (shelved): %w", err)
+		}
+	}
+	// diary_shelved_push_runs records one daily shelved-ledger push per
+	// (agent, date): the push sweep's once-a-day dedup stamp (same role as
+	// kb_card_push_runs for the cards digest).
+	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS diary_shelved_push_runs (
+		agent_id TEXT NOT NULL,
+		date TEXT NOT NULL,
+		pushed_count INTEGER NOT NULL DEFAULT 0,
+		channel TEXT NOT NULL DEFAULT '',
+		pushed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (agent_id, date)
+	)`); err != nil {
+		return fmt.Errorf("migrate daily_diary (push runs): %w", err)
 	}
 	return nil
 }

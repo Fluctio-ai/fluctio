@@ -844,6 +844,22 @@ type AgentDiaryCfg struct {
 	//   "off": both passes without thinking — fastest, shallow blindspots.
 	//   "deep": both passes with thinking — slowest, deepest blindspots.
 	ThinkingMode string `json:"thinkingMode,omitempty"`
+	// ShelvedEnabled turns on the shelved-topics ledger (Pass 3): topics
+	// the user explicitly deferred ("回头再说") and hasn't returned to,
+	// rolled forward across diaries. Off by default — it tracks the user's
+	// own promises, which is reminder-flavored, so it's opt-in, never
+	// implicit.
+	ShelvedEnabled bool `json:"shelvedEnabled,omitempty"`
+	// ShelvedPush* mirror the cards push triple: a daily "still shelved"
+	// IM nudge. PushEnabled off by default — no proactive nags unless
+	// asked for.
+	ShelvedPushEnabled bool `json:"shelvedPushEnabled,omitempty"`
+	// ShelvedPushTime is the daily push time in "HH:MM" (UTC+8). Empty
+	// defaults to "09:00".
+	ShelvedPushTime string `json:"shelvedPushTime,omitempty"`
+	// ShelvedPushChannel is the IM channel the nudge pushes to. Empty
+	// defaults to "wechat".
+	ShelvedPushChannel string `json:"shelvedPushChannel,omitempty"`
 }
 
 // AgentCardsCfg is the per-agent Q&A flashcard configuration: nightly

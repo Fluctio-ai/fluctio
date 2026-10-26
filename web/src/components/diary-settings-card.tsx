@@ -13,10 +13,11 @@ import {
   selectLabel,
 } from "@/components/ui/select";
 import { getAgentConfig, updateAgent } from "@/lib/api";
+import { channelLabel, PUSH_CHANNELS } from "@/components/channel-icon";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { useAutoSave } from "@/hooks/use-auto-save";
-import { SettingsCard, CardHead, Field, SaveStatus } from "@/components/settings-ui";
+import { SettingsCard, CardHead, Field, GroupHead, SaveStatus } from "@/components/settings-ui";
 
 // DiarySettingsCard — daily-diary generation config. Lives in the
 // Settings dialog's Knowledge tab next to KBSettingsCard. When enabled,
@@ -34,6 +35,10 @@ export function DiarySettingsCard() {
   const [enabled, setEnabled] = useState(false);
   const [cronTime, setCronTime] = useState("02:30");
   const [thinkingMode, setThinkingMode] = useState("blindspots");
+  const [shelvedEnabled, setShelvedEnabled] = useState(false);
+  const [shelvedPushEnabled, setShelvedPushEnabled] = useState(false);
+  const [shelvedPushTime, setShelvedPushTime] = useState("09:00");
+  const [shelvedPushChannel, setShelvedPushChannel] = useState("wechat");
   const [configLoaded, setConfigLoaded] = useState(false);
 
   const loadConfig = useCallback(
@@ -47,6 +52,10 @@ export function DiarySettingsCard() {
                 setEnabled(d.enabled ?? false);
                 setCronTime(d.cronTime || "02:30");
                 setThinkingMode(d.thinkingMode || "blindspots");
+                setShelvedEnabled(d.shelvedEnabled ?? false);
+                setShelvedPushEnabled(d.shelvedPushEnabled ?? false);
+                setShelvedPushTime(d.shelvedPushTime || "09:00");
+                setShelvedPushChannel(d.shelvedPushChannel || "wechat");
               }
               setConfigLoaded(true);
             })
@@ -66,10 +75,14 @@ export function DiarySettingsCard() {
         enabled,
         cronTime,
         thinkingMode,
+        shelvedEnabled,
+        shelvedPushEnabled,
+        shelvedPushTime,
+        shelvedPushChannel,
       },
     } as any);
     if (res?.error) throw new Error(res.error);
-  }, [agentId, enabled, cronTime, thinkingMode]);
+  }, [agentId, enabled, cronTime, thinkingMode, shelvedEnabled, shelvedPushEnabled, shelvedPushTime, shelvedPushChannel]);
 
   const { failed, saved, wrap } = useAutoSave({
     loaded: configLoaded,
@@ -97,26 +110,77 @@ export function DiarySettingsCard() {
       />
 
       {enabled && (
-        <div className="grid grid-cols-2 gap-4 border-t border-border pt-4">
-          <Field label={t("diary.cronTime")} hint={t("diary.cronTimeDesc")}>
-            <Input
-              type="time"
-              value={cronTime}
-              onChange={(e) => wrap(setCronTime)(e.target.value)}
+        <div className="space-y-4 border-t border-border pt-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field label={t("diary.cronTime")} hint={t("diary.cronTimeDesc")}>
+              <Input
+                type="time"
+                value={cronTime}
+                onChange={(e) => wrap(setCronTime)(e.target.value)}
+              />
+            </Field>
+            <Field label={t("diary.thinkingMode")} hint={t("diary.thinkingModeDesc")}>
+              <Select value={thinkingMode} onValueChange={(v) => v && wrap(setThinkingMode)(v)}>
+                <SelectTrigger>
+                  <SelectValue>{thinkingModeLabel}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="off">{t("diary.modeOff")}</SelectItem>
+                  <SelectItem value="blindspots">{t("diary.modeBlindspots")}</SelectItem>
+                  <SelectItem value="deep">{t("diary.modeDeep")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+
+          {/* Shelved-topics ledger — opt-in (it tracks the user's own
+              "I'll get back to this" promises, so nothing runs implicitly).
+              Push group mirrors the cards digest shape. */}
+          <div className="space-y-4 border-t border-border pt-4">
+            <GroupHead
+              title={t("diary.shelvedTitle")}
+              desc={t("diary.shelvedDesc")}
+              control={
+                <Switch checked={shelvedEnabled} onCheckedChange={wrap(setShelvedEnabled)} />
+              }
             />
-          </Field>
-          <Field label={t("diary.thinkingMode")} hint={t("diary.thinkingModeDesc")}>
-            <Select value={thinkingMode} onValueChange={(v) => v && wrap(setThinkingMode)(v)}>
-              <SelectTrigger>
-                <SelectValue>{thinkingModeLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="off">{t("diary.modeOff")}</SelectItem>
-                <SelectItem value="blindspots">{t("diary.modeBlindspots")}</SelectItem>
-                <SelectItem value="deep">{t("diary.modeDeep")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
+            {shelvedEnabled && (
+              <div className="space-y-4">
+                <GroupHead
+                  title={t("diary.shelvedPush")}
+                  desc={t("diary.shelvedPushDesc")}
+                  control={
+                    <Switch checked={shelvedPushEnabled} onCheckedChange={wrap(setShelvedPushEnabled)} />
+                  }
+                />
+                {shelvedPushEnabled && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label={t("diary.shelvedPushTime")} hint={t("diary.shelvedPushTimeDesc")}>
+                      <Input
+                        type="time"
+                        value={shelvedPushTime}
+                        onChange={(e) => wrap(setShelvedPushTime)(e.target.value)}
+                      />
+                    </Field>
+                    <Field label={t("diary.shelvedPushChannel")}>
+                      <Select value={shelvedPushChannel} onValueChange={(v) => v && wrap(setShelvedPushChannel)(v)}>
+                        <SelectTrigger>
+                          <SelectValue>{(v: unknown) => channelLabel(v as string)}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PUSH_CHANNELS.map((c) => (
+                            <SelectItem key={c.value} value={c.value}>
+                              {c.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </SettingsCard>

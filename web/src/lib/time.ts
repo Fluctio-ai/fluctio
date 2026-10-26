@@ -18,3 +18,11 @@ export const pad2 = (n: number): string => String(n).padStart(2, "0");
 export function dayKey(d: Date): string {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 }
+
+// daysSince returns whole days elapsed from a YYYY-MM-DD calendar date to
+// nowMs, floored at 0. `nowMs` is a parameter (not Date.now() at call
+// sites) so renderers can thread their load-time stamp through and stay
+// purity-lint clean.
+export function daysSince(dateStr: string, nowMs: number): number {
+  return Math.max(0, Math.round((nowMs - new Date(dateStr + "T00:00:00").getTime()) / 86400000));
+}

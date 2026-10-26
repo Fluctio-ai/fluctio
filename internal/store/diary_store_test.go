@@ -35,8 +35,12 @@ func TestDailyDiaryRoundTrip(t *testing.T) {
 			},
 		}},
 		Blindspots: []DiaryBlindspot{{Point: "seq 锚点", Reason: "避免 LLM 编造行号"}},
-		Archives:   []string{},
-		Model:      "test/model",
+		Shelved: []DiaryShelved{
+			{Topic: "想重构推送架构", Context: "聊到一半被打断", Since: "2026-08-03", Session: "sess-1", Seq: 22, Status: "open"},
+			{Topic: "周报模板", Context: "上周五说改天弄", Since: "2026-07-30", Session: "sess-2", Seq: 7, Status: "resolved"},
+		},
+		Archives: []string{},
+		Model:    "test/model",
 	}
 	if err := db.InsertDailyDiary(ctx, d1); err != nil {
 		t.Fatalf("insert: %v", err)
@@ -60,6 +64,10 @@ func TestDailyDiaryRoundTrip(t *testing.T) {
 	}
 	if len(got.Blindspots) != 1 || got.Blindspots[0].Point != "seq 锚点" {
 		t.Errorf("blindspot mismatch: %+v", got.Blindspots)
+	}
+	if len(got.Shelved) != 2 || got.Shelved[0].Topic != "想重构推送架构" ||
+		got.Shelved[0].Seq != 22 || got.Shelved[1].Status != "resolved" {
+		t.Errorf("shelved mismatch: %+v", got.Shelved)
 	}
 
 	// Upsert (same agent+date) replaces mutable content.

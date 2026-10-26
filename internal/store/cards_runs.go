@@ -9,8 +9,9 @@ import (
 // daily-run helpers below may touch — the table name reaches SQL, so an
 // open-ended parameter would be an injection foot-gun.
 var dailyRunTables = map[string]bool{
-	"kb_card_gen_runs":  true,
-	"kb_card_push_runs": true,
+	"kb_card_gen_runs":         true,
+	"kb_card_push_runs":        true,
+	"diary_shelved_push_runs": true,
 }
 
 // HasDailyRun reports whether the (agent, date) marker row exists in one
@@ -51,6 +52,28 @@ func (d *DBStore) StampCardPushRun(ctx context.Context, agentID, date string, co
 			ON CONFLICT(agent_id, date) DO UPDATE SET pushed_count=excluded.pushed_count,
 				channel=excluded.channel, pushed_at=CURRENT_TIMESTAMP`,
 			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
+		agentID, date, count, channel)
+	return err
+}
+
+// StampShelvedPushRun upserts the once-a-day shelved-ledger push marker —
+// same semantics as StampCardPushRun for the diary shelved-topics nudge.
+func (d *DBStore) StampShelvedPushRun(ctx context.Context, agentID, date string, count int, channel string) error {
+	return d.stampDailyRun(ctx, "diary_shelved_push_runs", agentID, date, count, channel)
+}
+
+// stampDailyRun is the shared upsert behind the per-table stamp methods —
+// the table name reaches SQL, so it's validated against dailyRunTables.
+func (d *DBStore) stampDailyRun(ctx context.Context, table, agentID, date string, count int, channel string) error {
+	if !dailyRunTables[table] {
+		return fmt.Errorf("unknown daily-run table %q", table)
+	}
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`INSERT INTO %s (agent_id, date, pushed_count, channel, pushed_at)
+			VALUES (%s,%s,%s,%s,CURRENT_TIMESTAMP)
+			ON CONFLICT(agent_id, date) DO UPDATE SET pushed_count=excluded.pushed_count,
+				channel=excluded.channel, pushed_at=CURRENT_TIMESTAMP`,
+			table, d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
 		agentID, date, count, channel)
 	return err
 }

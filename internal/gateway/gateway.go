@@ -833,6 +833,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runCardsPushSweep(ctx)
 	}()
+	// Shelved-ledger nudge: half-hourly, every agent with diary
+	// shelvedPushEnabled gets one IM nudge after its pushTime on days the
+	// ledger changed — once a day, gated by diary_shelved_push_runs.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runShelvedPushSweep(ctx)
+	}()
 	// Implicit feedback sweep: periodically turns "did the user stay on the
 	// recalled topic?" into thumbs-up/down so the MMR-lambda bandit can tune
 	// without anyone clicking a button. Decoupled from chat traffic.
