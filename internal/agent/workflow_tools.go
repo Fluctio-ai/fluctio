@@ -173,14 +173,14 @@ func (a *Agent) registerWorkflowTools() {
 		}, tools.SourceWorkflow)
 	}
 	reg.RegisterFrom("workflow_resume",
-		"Resume a workflow run that is paused on a form node (status=waiting with pending_form). Relay the form's fields to the user in natural language, then call this tool with their answers: run_id from the waiting result, form = {field: value} for exactly the fields the user answered (omit the rest). Do NOT invent answers. The resumed result is terminal or waiting on the next form.",
+		"Resume a workflow run: either a run paused on a form (status=waiting with pending_form — relay the form's fields to the user in natural language, then call with form = {field: value} for exactly the fields the user answered, omit the rest; do NOT invent answers) or a FAILED run (status=failed — call with only run_id to resume from the failure: succeeded nodes replay from the snapshot, the failed node re-runs; a failed node declared non-idempotent refuses and returns needs_intervention). The resumed result is terminal or waiting on the next form.",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"run_id": map[string]any{"type": "string", "description": "run_id of the waiting run (from the workflow tool's waiting result)"},
-				"form":   map[string]any{"type": "object", "description": "answers keyed by the pending form's field names"},
+				"run_id": map[string]any{"type": "string", "description": "run_id of the waiting or failed run (from the workflow tool's result)"},
+				"form":   map[string]any{"type": "object", "description": "answers keyed by the pending form's field names (waiting runs only; omit for failed runs)"},
 			},
-			"required": []any{"run_id", "form"},
+			"required": []any{"run_id"},
 		},
 		func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var req struct {
@@ -189,7 +189,7 @@ func (a *Agent) registerWorkflowTools() {
 			}
 			if len(raw) > 0 {
 				if err := json.Unmarshal(raw, &req); err != nil || req.RunID == "" {
-					return "", fmt.Errorf("workflow_resume: bad args (want run_id + form)")
+					return "", fmt.Errorf("workflow_resume: bad args (want run_id [+ form])")
 				}
 			}
 			dbs, ok := a.dataStore.(*store.DBStore)
@@ -200,11 +200,17 @@ func (a *Agent) registerWorkflowTools() {
 			if err != nil {
 				return "", fmt.Errorf("workflow_resume: run %s not found", req.RunID)
 			}
-			if row.Status != string(workflow.StatusWaiting) {
-				return "", fmt.Errorf("workflow_resume: run %s is %s, not waiting on a form", req.RunID, row.Status)
-			}
-			if req.Form == nil {
-				req.Form = map[string]any{}
+			switch row.Status {
+			case string(workflow.StatusWaiting):
+				if req.Form == nil {
+					req.Form = map[string]any{}
+				}
+			case string(workflow.StatusFailed):
+				// Failed-run resume is formless — the failed node re-runs.
+				row.PendingFormNode = ""
+				req.Form = nil
+			default:
+				return "", fmt.Errorf("workflow_resume: run %s is %s, not resumable (want waiting or failed)", req.RunID, row.Status)
 			}
 			res, rerr := a.ResumeWorkflowStream(ctx, row.DefID, row.ID, row.PendingFormNode, req.Form, reg.EffectiveUserID(), row.SessionID, nil)
 			if rerr != nil {

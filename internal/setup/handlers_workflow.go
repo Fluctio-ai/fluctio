@@ -110,12 +110,15 @@ func (s *Server) handleWorkflowRunStream(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// --- M6 form resume (form 人机交互) ---
+// --- run resume (M6 form + failed-run resume, ADR 0002) ---
 
 // parseWorkflowResume is the shared pre-flight for both resume endpoints: the
-// agent resolves, the run exists under this workflow, it is in the waiting
-// state, and the body carries a "form" object. On failure it has already
-// written the JSON error response and returns ok=false.
+// agent resolves, the run exists under this workflow, and it is in a resumable
+// state — waiting (M6 form, body carries the answers) or failed (ADR 0002
+// resume-from-failure, formless; succeeded nodes replay from the snapshot and
+// the failed node re-runs at attempt+1, refused when it is non-idempotent).
+// On failure it has already written the JSON error response and returns
+// ok=false.
 func (s *Server) parseWorkflowResume(w http.ResponseWriter, r *http.Request) (ag AgentHandle, run store.WorkflowRunRow, form map[string]any, ok bool) {
 	ag = s.resolveAgent(r, r.PathValue("agentID"))
 	if ag == nil {
@@ -125,7 +128,7 @@ func (s *Server) parseWorkflowResume(w http.ResponseWriter, r *http.Request) (ag
 	var body struct {
 		Form map[string]any `json:"form"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad body (want {\"form\": {...}}): " + err.Error()})
 		return nil, run, nil, false
 	}
@@ -143,8 +146,14 @@ func (s *Server) parseWorkflowResume(w http.ResponseWriter, r *http.Request) (ag
 		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "run not found under this workflow"})
 		return nil, run, nil, false
 	}
-	if run.Status != string(workflow.StatusWaiting) {
-		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "run is not waiting for a form (status " + run.Status + ")"})
+	switch run.Status {
+	case string(workflow.StatusWaiting):
+	case string(workflow.StatusFailed):
+		// Failed-run resume is formless — the failed node re-runs, a form
+		// node reached later simply waits again.
+		return ag, run, nil, true
+	default:
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "run is not resumable (status " + run.Status + ")"})
 		return nil, run, nil, false
 	}
 	if body.Form == nil {

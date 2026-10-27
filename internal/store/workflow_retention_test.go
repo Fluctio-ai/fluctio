@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,6 +54,98 @@ func TestPruneWorkflowRunsSuccessWindow(t *testing.T) {
 	}
 	if rows, _ := db.ListWorkflowNodeOutputs(ctx, "old-ok"); len(rows) != 0 {
 		t.Errorf("old-ok node outputs not cascaded: %d rows left", len(rows))
+	}
+}
+
+// failStaleSeed inserts a 'running' run (no Finalize — that's the orphan
+// shape) and backdates its liveness: started_at, and optionally a node-output
+// row's created_at. Mirrors seedRun's direct-UPDATE approach.
+func failStaleSeed(t *testing.T, db *DBStore, id string, startedOffset time.Duration, withNodeOutput, staleOutput bool) {
+	t.Helper()
+	ctx := context.Background()
+	if err := db.CreateWorkflowRun(ctx, id, "def-1", 1, nil, "", "owner-1"); err != nil {
+		t.Fatalf("CreateWorkflowRun(%s): %v", id, err)
+	}
+	oldStart := time.Now().Add(startedOffset).UTC().Format(time.RFC3339)
+	if _, err := db.db.ExecContext(ctx, `UPDATE workflow_runs SET started_at = ? WHERE id = ?`, oldStart, id); err != nil {
+		t.Fatalf("backdate started_at(%s): %v", id, err)
+	}
+	if withNodeOutput {
+		if err := db.AppendWorkflowNodeOutput(ctx, id, "n1", 1, "succeeded", map[string]any{"v": 1}, ""); err != nil {
+			t.Fatalf("AppendWorkflowNodeOutput(%s): %v", id, err)
+		}
+		if staleOutput {
+			if _, err := db.db.ExecContext(ctx, `UPDATE workflow_node_outputs SET created_at = ? WHERE run_id = ?`, oldStart, id); err != nil {
+				t.Fatalf("backdate node output(%s): %v", id, err)
+			}
+		}
+	}
+}
+
+// AC — the stale sweep fails crash-orphaned 'running' runs (liveness = newest
+// node output, falling back to started_at) so the failed-run resume path can
+// pick them up, while genuinely progressing runs — including ones parked on a
+// form for days with a recent waiting row — stay untouched.
+func TestFailStaleRunningRuns(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	failStaleSeed(t, db, "dead-progress", -48*time.Hour, true, true)       // last output 48h ago → dead
+	failStaleSeed(t, db, "dead-no-output", -48*time.Hour, false, false)    // no attempts, started 48h ago → dead
+	failStaleSeed(t, db, "alive-progress", -48*time.Hour, true, false)     // started long ago, fresh output → alive
+	failStaleSeed(t, db, "form-park", -10*24*time.Hour, true, false)       // form-parked days ago, recent row → alive
+	if err := db.SetRunWaiting(ctx, "form-park", "n1", map[string]any{"type": "object"}); err != nil {
+		t.Fatalf("SetRunWaiting: %v", err)
+	}
+	failStaleSeed(t, db, "old-waiting", -48*time.Hour, true, true) // waiting owns TimeoutWaitingRuns, not this sweep
+	if err := db.SetRunWaiting(ctx, "old-waiting", "n1", map[string]any{"type": "object"}); err != nil {
+		t.Fatalf("SetRunWaiting: %v", err)
+	}
+	failStaleSeed(t, db, "old-succeeded", -48*time.Hour, true, true)
+	if err := db.FinalizeWorkflowRun(ctx, "old-succeeded", "succeeded", ""); err != nil {
+		t.Fatalf("FinalizeWorkflowRun: %v", err)
+	}
+
+	n, err := db.FailStaleRunningRuns(ctx, time.Now().Add(-24*time.Hour), "stale")
+	if err != nil {
+		t.Fatalf("FailStaleRunningRuns: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("flipped = %d, want 2 (dead-progress, dead-no-output)", n)
+	}
+
+	cases := []struct {
+		id, wantStatus, wantErrSub string
+	}{
+		{"dead-progress", "failed", "stale"},
+		{"dead-no-output", "failed", "stale"},
+		{"alive-progress", "running", ""},
+		{"form-park", "waiting", ""},
+		{"old-waiting", "waiting", ""},
+		{"old-succeeded", "succeeded", ""},
+	}
+	for _, c := range cases {
+		status, errMsg, err := db.GetWorkflowRun(ctx, c.id)
+		if err != nil {
+			t.Fatalf("GetWorkflowRun(%s): %v", c.id, err)
+		}
+		if status != c.wantStatus {
+			t.Errorf("%s status = %q, want %q", c.id, status, c.wantStatus)
+		}
+		if c.wantErrSub != "" && !strings.Contains(errMsg, c.wantErrSub) {
+			t.Errorf("%s error = %q, want substring %q", c.id, errMsg, c.wantErrSub)
+		}
+	}
+
+	// A flipped run carries finished_at (resumable-failed shape, not the
+	// lingering running/finished_at-NULL shape).
+	row, err := db.GetWorkflowRunRow(ctx, "dead-progress")
+	if err != nil {
+		t.Fatalf("GetWorkflowRunRow: %v", err)
+	}
+	if row.FinishedAt == "" {
+		t.Error("flipped run must record finished_at")
 	}
 }
 

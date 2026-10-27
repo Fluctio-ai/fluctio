@@ -31,3 +31,26 @@ func TestWorkflowRetentionHours(t *testing.T) {
 		})
 	}
 }
+
+// The stale-running reaper env follows the same contract as the other
+// workflow sweep envs: default 24h, "0" disables, bogus disables.
+func TestWorkflowStaleRunningHours(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     string
+		want    int
+	}{
+		{"default", "", 24},
+		{"zero disables", "0", 0},
+		{"negative disables", "-3", -3},
+		{"bogus disables", "garbage", -1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("FLUCTIO_WORKFLOW_STALE_RUNNING_HOURS", c.env)
+			if got := workflowStaleRunningHours(); got != c.want {
+				t.Errorf("got %d, want %d", got, c.want)
+			}
+		})
+	}
+}

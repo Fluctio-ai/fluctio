@@ -243,6 +243,32 @@ func (d *DBStore) TimeoutWaitingRuns(ctx context.Context, before time.Time, msg 
 	return res.RowsAffected()
 }
 
+// FailStaleRunningRuns flips 'running' runs whose last sign of life is older
+// than the cutoff to 'failed' — the reaper for runs orphaned by a daemon
+// crash (the runner only writes a terminal status if it survives to the end,
+// so without this a crashed run lingers as 'running' forever and is invisible
+// to the failed-run resume path). Liveness is the newest node-output row
+// (falling back to started_at for a run with no attempts yet), NOT
+// started_at itself: a run parked on a form for days or resumed long after
+// its original start keeps fresh rows and must not be mistaken for dead.
+// Returns the rows flipped.
+func (d *DBStore) FailStaleRunningRuns(ctx context.Context, before time.Time, msg string) (int64, error) {
+	res, err := d.db.ExecContext(ctx, fmt.Sprintf(
+		`UPDATE workflow_runs SET status = 'failed', error = %s, finished_at = %s
+		 WHERE status = 'running' AND id IN (
+		   SELECT r.id FROM workflow_runs r
+		   LEFT JOIN workflow_node_outputs o ON o.run_id = r.id
+		   GROUP BY r.id
+		   HAVING COALESCE(MAX(o.created_at), r.started_at) < %s
+		 )`,
+		d.ph(1), d.ph(2), d.ph(3)),
+		msg, nowRFC3339(), before.UTC().Format(time.RFC3339))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // GetWorkflowRun returns the run-level record, or ErrNotFound if it doesn't exist.
 func (d *DBStore) GetWorkflowRun(ctx context.Context, id string) (status, errMsg string, err error) {
 	err = d.db.QueryRowContext(ctx, fmt.Sprintf(

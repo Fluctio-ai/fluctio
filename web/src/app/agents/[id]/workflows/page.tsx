@@ -227,15 +227,16 @@ export default function WorkflowsPage() {
     }
   };
 
-  // onSubmitForm resumes the waiting run with the typed values. The resumed
-  // walk streams back through the same live-events surface; a failed resume
-  // (e.g. a required field missing) keeps the form up — the run stays waiting.
-  const onSubmitForm = async () => {
-    if (!agentId || !selected || !waitingForm) return;
-    const runID = waitingForm.runID;
+  // resumeRun drives both resume shapes through the same SSE surface: the
+  // waiting run with the user's typed form values, and the failed run
+  // formless (ADR 0002 resume-from-failure — succeeded nodes replay from
+  // the snapshot, the failed node re-runs). A result that parks on the
+  // next form reopens it; anything else prints as the last result.
+  const resumeRun = async (runID: string, values: Record<string, unknown>) => {
+    if (!agentId || !selected) return;
     setResuming(true);
     try {
-      await resumeWorkflowStream(agentId, selected, runID, formValues, (e) => {
+      await resumeWorkflowStream(agentId, selected, runID, values, (e) => {
         setLiveEvents((cur) => [...cur, e]);
         if (e.type === "result") {
           const wr = asWaitingResult(e.result);
@@ -259,6 +260,14 @@ export default function WorkflowsPage() {
     } finally {
       setResuming(false);
     }
+  };
+
+  // onSubmitForm resumes the waiting run with the typed values. A failed
+  // resume (e.g. a required field missing) keeps the form up — the run
+  // stays waiting.
+  const onSubmitForm = async () => {
+    if (!waitingForm) return;
+    await resumeRun(waitingForm.runID, formValues);
   };
 
   // Schedule management (ticket 10 UI): create/toggle/delete against the
@@ -610,6 +619,16 @@ export default function WorkflowsPage() {
                 <h3 className="font-semibold">{t("workflow.runDetail")}</h3>
                 {selRun.run.Error && (
                   <p className="text-sm text-destructive whitespace-pre-wrap">{selRun.run.Error}</p>
+                )}
+                {selRun.run.Status === "failed" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={resuming}
+                    onClick={() => resumeRun(selRun.run.ID, {})}
+                  >
+                    {t("workflow.resumeRetry")}
+                  </Button>
                 )}
                 <div className="space-y-1">
                   {selRun.nodes.map((n, i) => (

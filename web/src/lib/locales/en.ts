@@ -59,6 +59,7 @@ const en: Record<string, string> = {
   "workflow.history": "Run history",
   "workflow.noRuns": "No runs yet.",
   "workflow.runDetail": "Run detail",
+  "workflow.resumeRetry": "Resume from failure",
   "workflow.runFormHint": "Fill in the entry parameters and run",
   "workflow.schedules": "Schedules",
   "workflow.schedEmpty": "No schedules yet.",

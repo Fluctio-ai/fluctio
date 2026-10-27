@@ -59,6 +59,7 @@ const zhCN: Record<string, string> = {
   "workflow.history": "运行历史",
   "workflow.noRuns": "暂无运行记录。",
   "workflow.runDetail": "运行详情",
+  "workflow.resumeRetry": "从失败处续跑",
   "workflow.runFormHint": "填写入口参数后运行",
   "workflow.schedules": "定时计划",
   "workflow.schedEmpty": "暂无定时计划。",
