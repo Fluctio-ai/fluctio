@@ -200,17 +200,15 @@ func (a *Agent) registerWorkflowTools() {
 			if err != nil {
 				return "", fmt.Errorf("workflow_resume: run %s not found", req.RunID)
 			}
-			switch row.Status {
-			case string(workflow.StatusWaiting):
-				if req.Form == nil {
-					req.Form = map[string]any{}
-				}
-			case string(workflow.StatusFailed):
+			if !workflow.Status(row.Status).Resumable() {
+				return "", fmt.Errorf("workflow_resume: run %s is %s, not resumable (want waiting or failed)", req.RunID, row.Status)
+			}
+			if row.Status == string(workflow.StatusFailed) {
 				// Failed-run resume is formless — the failed node re-runs.
 				row.PendingFormNode = ""
 				req.Form = nil
-			default:
-				return "", fmt.Errorf("workflow_resume: run %s is %s, not resumable (want waiting or failed)", req.RunID, row.Status)
+			} else if req.Form == nil {
+				req.Form = map[string]any{}
 			}
 			res, rerr := a.ResumeWorkflowStream(ctx, row.DefID, row.ID, row.PendingFormNode, req.Form, reg.EffectiveUserID(), row.SessionID, nil)
 			if rerr != nil {

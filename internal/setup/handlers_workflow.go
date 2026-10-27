@@ -146,15 +146,14 @@ func (s *Server) parseWorkflowResume(w http.ResponseWriter, r *http.Request) (ag
 		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "run not found under this workflow"})
 		return nil, run, nil, false
 	}
-	switch run.Status {
-	case string(workflow.StatusWaiting):
-	case string(workflow.StatusFailed):
+	if !workflow.Status(run.Status).Resumable() {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "run is not resumable (status " + run.Status + ")"})
+		return nil, run, nil, false
+	}
+	if run.Status == string(workflow.StatusFailed) {
 		// Failed-run resume is formless — the failed node re-runs, a form
 		// node reached later simply waits again.
 		return ag, run, nil, true
-	default:
-		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "run is not resumable (status " + run.Status + ")"})
-		return nil, run, nil, false
 	}
 	if body.Form == nil {
 		body.Form = map[string]any{}

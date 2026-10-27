@@ -15,6 +15,16 @@ const (
 	StatusWaiting           Status = "waiting"            // M6: run paused on a form node; non-terminal, resumed via form values
 )
 
+// Resumable reports whether a run in this status accepts resume: waiting
+// (M6 form answers) or failed (ADR 0002 resume-from-failure). The resumable
+// SET lives here, next to the Status constants, so every entry point (HTTP
+// resume endpoints, the workflow_resume tool) gates on one predicate instead
+// of hand-rolled switches that drift apart. needs_intervention stays
+// terminal: resuming it would only re-hit the non-idempotent guard.
+func (st Status) Resumable() bool {
+	return st == StatusWaiting || st == StatusFailed
+}
+
 // NodeKind labels how a node executes: a tool node calls one registered tool,
 // an llm node makes a bare provider call, a code node runs a script in the
 // sandbox (spec decision 3). Domain kinds (M3) are first-class nodes with a

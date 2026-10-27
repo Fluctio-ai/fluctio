@@ -335,6 +335,22 @@ func TestRollbackLastUserPeelsAbortMarker(t *testing.T) {
 	if got := s4.GetMessages(); len(got) != 2 {
 		t.Errorf("marker without user tail: working set has %d, want 2", len(got))
 	}
+
+	// Stacked markers (claim resets at compaction, so two can pile up
+	// behind one unanswered turn) → the whole marker class peels with the
+	// turn, not just the newest one.
+	s5 := NewManager(dir).Get("web", "", "chat-rb-5", "")
+	s5.Append(provider.Message{Role: "user", Content: "unanswered"})
+	s5.Append(provider.Message{Role: "user", Content: turnAbortedCrashNote,
+		Origin: provider.OriginTurnAbort, Metadata: map[string]any{"turnAborted": true}})
+	s5.Append(provider.Message{Role: "user", Content: turnAbortedLostNote,
+		Origin: provider.OriginTurnAbort, Metadata: map[string]any{"turnAborted2": true}})
+	if n := s5.RollbackLastUser(); n != 3 {
+		t.Fatalf("stacked markers: removed %d, want 3", n)
+	}
+	if got := s5.GetMessages(); len(got) != 0 {
+		t.Errorf("stacked markers: working set has %d, want 0", len(got))
+	}
 }
 
 // TestPadOrphanToolResultsAndMarkAborted covers the turn-exit defer

@@ -683,26 +683,23 @@ func (s *Session) AppendClaimOnce(msg provider.Message, key string, marker any) 
 // consistent. Returns how many trailing messages it removed (0 = no-op).
 // Used by the web chat's "resend a failed message" flow.
 //
-// A crash-heal may have parked a turn-abort marker directly behind the
-// unanswered user turn (both are user-role); peeling the marker too keeps
-// the rollback on the user turn itself — otherwise the resend flow would
-// delete the marker and leave two back-to-back user turns, the very thing
-// this rollback exists to prevent.
+// Trailing turn-abort markers are runtime residue of that unanswered turn
+// (a crash-heal or a stopped turn parked them; compaction resets the claim,
+// so more than one is possible) — they belong to the class being rolled
+// back, not to the conversation, so the whole marker run is peeled before
+// requiring a real user tail. Peeling a marker with no user turn behind it
+// is a no-op: there is nothing to roll back.
 func (s *Session) RollbackLastUser() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.Messages) == 0 {
+	m := 0
+	for len(s.Messages) > m && s.Messages[len(s.Messages)-1-m].Origin == provider.OriginTurnAbort {
+		m++
+	}
+	if len(s.Messages) <= m || s.Messages[len(s.Messages)-1-m].Role != "user" {
 		return 0
 	}
-	n := 0
-	last := s.Messages[len(s.Messages)-1]
-	if last.Role == "user" && last.Origin == provider.OriginTurnAbort {
-		n = 1
-	}
-	if len(s.Messages) < n+1 || s.Messages[len(s.Messages)-n-1].Role != "user" {
-		return 0
-	}
-	n++
+	n := m + 1
 	s.Messages = s.Messages[:len(s.Messages)-n]
 	if s.store != nil {
 		s.store.SaveSession(s.ctx(), s.agentID, s.sessionKey, s.channel, s.accountID, s.chatID, s.projectID, s.Messages)
@@ -995,34 +992,41 @@ func (s *Session) PadOrphanToolResults(padText string) bool {
 // claim-gated (one per working set, compaction resets the claim). No-op on
 // clean histories, so it is safe to run on every fresh load.
 func (s *Session) healInterruptedTurn() {
+	// Pick the marker wording by crash shape; "" means a clean history.
+	// Dangling tool_calls get the crash note (pads first) — the deferred
+	// PadOrphanToolResults never ran (process death skips defers), and the
+	// next LLM request would carry an invalid assistant/tool sequence (the
+	// "restart kills a long task forever" failure mode). Otherwise, when
+	// the tail is a real user turn with no assistant reply behind it, the
+	// daemon died inside the LLM call itself: the lost-reply note — no tool
+	// was in flight, so there is nothing to pad and no partial side effects
+	// to verify.
+	note := ""
 	if s.PadOrphanToolResults(toolResultCrashNote) {
-		// One marker per working set (compaction resets the claim): stacking
-		// abort notes across repeated crashes adds context noise while the
-		// per-call crash pads already carry the interruption facts.
-		s.AppendClaimOnce(provider.Message{
-			Role:    "user",
-			Content: turnAbortedCrashNote,
-			Origin:  provider.OriginTurnAbort,
-		}, "turnAborted", true)
+		note = turnAbortedCrashNote
+	} else {
+		// Tail peek under the lock — GetMessages would copy the whole
+		// working set just to read the last element.
+		s.mu.Lock()
+		if n := len(s.Messages); n > 0 {
+			last := s.Messages[n-1]
+			if last.Role == "user" && last.Origin != provider.OriginTurnAbort {
+				note = turnAbortedLostNote
+			}
+		}
+		s.mu.Unlock()
+	}
+	if note == "" {
 		return
 	}
-	// Crash inside the LLM call: the last persisted message is a real user
-	// turn with no assistant reply behind it. Skip when the tail is already
-	// a marker (Origin-tagged) — an earlier heal claimed this window.
-	msgs := s.GetMessages()
-	if len(msgs) == 0 {
-		return
-	}
-	last := msgs[len(msgs)-1]
-	if last.Role != "user" || last.Origin == provider.OriginTurnAbort {
-		return
-	}
-	// Same claim key as the crash note: whichever shape fired first owns the
-	// single marker this window gets — a rarer double-crash before any
-	// compaction suppresses the second note rather than stacking two.
+	// One marker per working set (compaction resets the claim): whichever
+	// shape fired first owns the window's single marker — a rarer
+	// double-crash before any compaction suppresses the second note rather
+	// than stacking two, and the per-call crash pads already carry the
+	// interruption facts.
 	s.AppendClaimOnce(provider.Message{
 		Role:    "user",
-		Content: turnAbortedLostNote,
+		Content: note,
 		Origin:  provider.OriginTurnAbort,
 	}, "turnAborted", true)
 }

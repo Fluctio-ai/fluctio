@@ -4131,23 +4131,17 @@ func (d *DBStore) DeleteLastUserMessages(ctx context.Context, agentID, sessionKe
 	}
 	defer tx.Rollback()
 
+	sel := fmt.Sprintf(`SELECT seq, role FROM session_messages
+		 WHERE agent_id = %s AND session_key = %s
+		 ORDER BY seq DESC LIMIT 1`, d.ph(1), d.ph(2))
+	del := fmt.Sprintf(`DELETE FROM session_messages
+		 WHERE agent_id = %s AND session_key = %s AND seq = %s`, d.ph(1), d.ph(2), d.ph(3))
+
 	var deleted int64
 	for i := 0; i < limit; i++ {
 		var seq int64
 		var role string
-		if d.dialect == "postgres" {
-			err = tx.QueryRowContext(ctx,
-				`SELECT seq, role FROM session_messages
-				 WHERE agent_id = $1 AND session_key = $2
-				 ORDER BY seq DESC LIMIT 1`,
-				agentID, sessionKey).Scan(&seq, &role)
-		} else {
-			err = tx.QueryRowContext(ctx,
-				`SELECT seq, role FROM session_messages
-				 WHERE agent_id = ? AND session_key = ?
-				 ORDER BY seq DESC LIMIT 1`,
-				agentID, sessionKey).Scan(&seq, &role)
-		}
+		err = tx.QueryRowContext(ctx, sel, agentID, sessionKey).Scan(&seq, &role)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				break
@@ -4157,16 +4151,7 @@ func (d *DBStore) DeleteLastUserMessages(ctx context.Context, agentID, sessionKe
 		if role != "user" {
 			break
 		}
-		if d.dialect == "postgres" {
-			_, err = tx.ExecContext(ctx,
-				`DELETE FROM session_messages WHERE agent_id = $1 AND session_key = $2 AND seq = $3`,
-				agentID, sessionKey, seq)
-		} else {
-			_, err = tx.ExecContext(ctx,
-				`DELETE FROM session_messages WHERE agent_id = ? AND session_key = ? AND seq = ?`,
-				agentID, sessionKey, seq)
-		}
-		if err != nil {
+		if _, err := tx.ExecContext(ctx, del, agentID, sessionKey, seq); err != nil {
 			return deleted, err
 		}
 		deleted++
