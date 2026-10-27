@@ -204,6 +204,139 @@ func TestPadOrphanToolResultsStopNote(t *testing.T) {
 	}
 }
 
+// TestHealInterruptedTurnMarksLostReply covers the second crash shape: the
+// daemon died inside the LLM call itself, so no assistant message (and no
+// orphan tool_calls) was ever persisted — the history simply ends on a user
+// turn nobody answered. Heal must claim-append the lost-reply marker (no
+// partial-execution story: nothing was in flight), persist it, and stay
+// idempotent across a second restart.
+func TestHealInterruptedTurnMarksLostReply(t *testing.T) {
+	dir := t.TempDir()
+	key := "chat-lost-1"
+	writeSessionFile(t, filepath.Join(dir, key+".jsonl"), []provider.Message{
+		{Role: "user", Content: "summarize the doc"},
+	})
+
+	s := NewManager(dir).Get("web", "", key, "")
+	got := s.GetMessages()
+	if len(got) != 2 {
+		t.Fatalf("want 2 messages after heal (user + marker), got %d", len(got))
+	}
+	marker := got[1]
+	if marker.Role != "user" || marker.Metadata["turnAborted"] != true {
+		t.Errorf("marker wrong: role=%q metadata=%v", marker.Role, marker.Metadata)
+	}
+	if marker.Origin != provider.OriginTurnAbort {
+		t.Errorf("marker Origin = %q, want %q", marker.Origin, provider.OriginTurnAbort)
+	}
+	if marker.Content != turnAbortedLostNote {
+		t.Errorf("marker should use the lost-reply note, got %q", marker.Content)
+	}
+	if n := countFileLines(t, filepath.Join(dir, key+".jsonl")); n != 2 {
+		t.Errorf("want 2 lines persisted, got %d", n)
+	}
+
+	// Idempotent: the marker's claim lives in the persisted history, so a
+	// second restart must not stack another one.
+	got2 := NewManager(dir).Get("web", "", key, "").GetMessages()
+	if len(got2) != 2 {
+		t.Errorf("second restart re-healed: want 2 messages, got %d", len(got2))
+	}
+}
+
+// TestHealInterruptedTurnKeepsMarkerClaim: a tail that already carries an
+// abort marker (either flavor, e.g. an earlier heal or a stopped turn) must
+// not gain a second one — the claim is per working set, and the marker tail
+// itself is not an unanswered user turn.
+func TestHealInterruptedTurnKeepsMarkerClaim(t *testing.T) {
+	dir := t.TempDir()
+	key := "chat-claimed-1"
+	writeSessionFile(t, filepath.Join(dir, key+".jsonl"), []provider.Message{
+		{Role: "user", Content: "first question"},
+		{Role: "assistant", Content: "first answer"},
+		{Role: "user", Content: "second question (unanswered)"},
+		{Role: "user", Content: turnAbortedStopNote, Origin: provider.OriginTurnAbort,
+			Metadata: map[string]any{"turnAborted": true}},
+	})
+
+	s := NewManager(dir).Get("web", "", key, "")
+	if got := s.GetMessages(); len(got) != 4 {
+		t.Fatalf("heal touched a claimed tail: want 4 messages, got %d", len(got))
+	}
+
+	// Orphans get padded even when the marker is already claimed, but no
+	// second marker lands.
+	s.Append(provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{
+		{ID: "call_1", Type: "function", Function: provider.FunctionCall{Name: "exec", Arguments: "{}"}},
+	}})
+	s.healInterruptedTurn()
+	got := s.GetMessages()
+	markers := 0
+	for _, m := range got {
+		if m.Metadata["turnAborted"] == true {
+			markers++
+		}
+	}
+	if markers != 1 {
+		t.Errorf("want exactly 1 marker after orphan heal on claimed tail, got %d", markers)
+	}
+	if got[len(got)-1].ToolCallID != "call_1" {
+		t.Errorf("orphan pad missing at tail: %+v", got[len(got)-1])
+	}
+}
+
+// TestRollbackLastUserPeelsAbortMarker: the web resend flow rolls back the
+// trailing unanswered user turn — and, when a crash-heal parked its abort
+// marker directly behind, the marker too (both are user-role; leaving the
+// marker would delete it instead of the turn and strand two back-to-back
+// user turns). Returns how many messages it removed.
+func TestRollbackLastUserPeelsAbortMarker(t *testing.T) {
+	dir := t.TempDir()
+
+	// user + marker → both removed.
+	s := NewManager(dir).Get("web", "", "chat-rb-1", "")
+	s.Append(provider.Message{Role: "user", Content: "q"})
+	s.AppendClaimOnce(provider.Message{Role: "user", Content: turnAbortedLostNote,
+		Origin: provider.OriginTurnAbort}, "turnAborted", true)
+	if n := s.RollbackLastUser(); n != 2 {
+		t.Fatalf("marker+user: removed %d, want 2", n)
+	}
+	if got := s.GetMessages(); len(got) != 0 {
+		t.Errorf("marker+user: working set has %d messages, want 0", len(got))
+	}
+
+	// Plain unanswered user → single removal (unchanged behavior).
+	s2 := NewManager(dir).Get("web", "", "chat-rb-2", "")
+	s2.Append(provider.Message{Role: "user", Content: "hi"})
+	s2.Append(provider.Message{Role: "assistant", Content: "hello"})
+	s2.Append(provider.Message{Role: "user", Content: "unanswered"})
+	if n := s2.RollbackLastUser(); n != 1 {
+		t.Fatalf("plain user: removed %d, want 1", n)
+	}
+	if got := s2.GetMessages(); len(got) != 2 || got[1].Role != "assistant" {
+		t.Errorf("plain user: tail wrong: %+v", got)
+	}
+
+	// Assistant tail → no-op.
+	s3 := NewManager(dir).Get("web", "", "chat-rb-3", "")
+	s3.Append(provider.Message{Role: "assistant", Content: "hello"})
+	if n := s3.RollbackLastUser(); n != 0 {
+		t.Fatalf("assistant tail: removed %d, want 0", n)
+	}
+
+	// Marker NOT backed by a user turn → no-op (nothing to roll back).
+	s4 := NewManager(dir).Get("web", "", "chat-rb-4", "")
+	s4.Append(provider.Message{Role: "assistant", Content: "hello"})
+	s4.AppendClaimOnce(provider.Message{Role: "user", Content: turnAbortedStopNote,
+		Origin: provider.OriginTurnAbort}, "turnAborted", true)
+	if n := s4.RollbackLastUser(); n != 0 {
+		t.Fatalf("marker without user tail: removed %d, want 0", n)
+	}
+	if got := s4.GetMessages(); len(got) != 2 {
+		t.Errorf("marker without user tail: working set has %d, want 2", len(got))
+	}
+}
+
 // TestPadOrphanToolResultsAndMarkAborted covers the turn-exit defer
 // variant: pads the dangling call AND appends the stop-flavored
 // turn-aborted marker (user role, metadata) so the model sees an explicit

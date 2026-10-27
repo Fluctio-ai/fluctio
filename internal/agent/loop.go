@@ -857,12 +857,13 @@ func (a *Agent) RollbackPendingUserWeb(sessionId, projectIDHint string) bool {
 	if sess == nil {
 		return false
 	}
-	if !sess.RollbackLastUser() {
+	n := sess.RollbackLastUser()
+	if n == 0 {
 		return false
 	}
 	if a.dataStore != nil {
-		if _, err := a.dataStore.DeleteLastUserMessage(context.Background(), sess.AgentID(), sess.Key()); err != nil {
-			slog.Warn("rollback: delete last user archive row", "agent", a.name, "session", sess.Key(), "error", err)
+		if _, err := a.dataStore.DeleteLastUserMessages(context.Background(), sess.AgentID(), sess.Key(), n); err != nil {
+			slog.Warn("rollback: delete trailing user archive rows", "agent", a.name, "session", sess.Key(), "error", err)
 		}
 	}
 	return true

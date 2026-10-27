@@ -675,30 +675,41 @@ func (s *Session) AppendClaimOnce(msg provider.Message, key string, marker any) 
 	return true
 }
 
-// RollbackLastUser removes the trailing message iff it is an unanswered
-// user turn — the last message in the working set AND role=user (the
-// agent never replied, typically because the LLM call failed). It
-// persists the trimmed working set via SaveSession but does NOT touch
-// the session_messages archive; the caller deletes the matching orphan
-// row so history-reload stays consistent. Returns false (no-op) if the
-// last message isn't a user turn. Used by the web chat's "resend a
-// failed message" flow.
-func (s *Session) RollbackLastUser() bool {
+// RollbackLastUser removes the trailing unanswered user turn — the last
+// message in the working set AND role=user (the agent never replied,
+// typically because the LLM call failed). It persists the trimmed working
+// set via SaveSession but does NOT touch the session_messages archive; the
+// caller deletes the matching orphan rows so history-reload stays
+// consistent. Returns how many trailing messages it removed (0 = no-op).
+// Used by the web chat's "resend a failed message" flow.
+//
+// A crash-heal may have parked a turn-abort marker directly behind the
+// unanswered user turn (both are user-role); peeling the marker too keeps
+// the rollback on the user turn itself — otherwise the resend flow would
+// delete the marker and leave two back-to-back user turns, the very thing
+// this rollback exists to prevent.
+func (s *Session) RollbackLastUser() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.Messages) == 0 {
-		return false
+		return 0
 	}
-	if s.Messages[len(s.Messages)-1].Role != "user" {
-		return false
+	n := 0
+	last := s.Messages[len(s.Messages)-1]
+	if last.Role == "user" && last.Origin == provider.OriginTurnAbort {
+		n = 1
 	}
-	s.Messages = s.Messages[:len(s.Messages)-1]
+	if len(s.Messages) < n+1 || s.Messages[len(s.Messages)-n-1].Role != "user" {
+		return 0
+	}
+	n++
+	s.Messages = s.Messages[:len(s.Messages)-n]
 	if s.store != nil {
 		s.store.SaveSession(s.ctx(), s.agentID, s.sessionKey, s.channel, s.accountID, s.chatID, s.projectID, s.Messages)
 	} else {
 		s.rewriteFile()
 	}
-	return true
+	return n
 }
 
 // AppendArchivedHidden writes msgs to the session_messages archive with
@@ -921,6 +932,12 @@ const toolResultCrashNote = "(interrupted — the service restarted before this 
 // stays neutral.
 const turnAbortedCrashNote = "[system] 上一轮执行被中断(服务重启):被中止的工具可能已部分执行,后台进程可能仍在运行。请基于当前实际状态核实后再继续,不要假设中断前的操作已完成。"
 const turnAbortedStopNote = "[system] 上一轮执行未正常结束(被停止或出错退出):被中止的工具可能已部分执行,后台进程可能仍在运行。继续时请基于当前实际状态核实,不要假设此前的操作已完成。"
+// turnAbortedLostNote covers the other crash shape: the daemon died inside the
+// LLM call itself, before any assistant message was persisted — no tool was
+// in flight, so there is nothing to pad; the user turn simply never got an
+// answer. Distinct story from the crash note (no partial side effects to
+// verify), hence its own wording.
+const turnAbortedLostNote = "[system] 你上一轮的消息在服务重启前没有收到回复(回复生成过程中服务停止),该轮没有任何工具被执行,不会产生部分副作用。请重新发送该请求,或直接说明新的需求。"
 
 // PadOrphanToolResults pads the latest assistant message's unanswered
 // tool_calls with padText. History whose assistant tool_calls lack results
@@ -966,23 +983,46 @@ func (s *Session) PadOrphanToolResults(padText string) bool {
 }
 
 // healInterruptedTurn repairs a cold-loaded working set after a daemon
-// crash. When the persisted history ends with unanswered tool_calls, the
-// deferred PadOrphanToolResults never ran (process death skips defers),
-// and the next LLM request would carry an invalid assistant/tool sequence
-// — the "restart kills a long task forever" failure mode. Pads the
-// dangling calls, then appends a user-role turn-aborted marker so the
-// model knows the boundary it is resuming across. No-op on clean
-// histories, so it is safe to run on every fresh load.
+// crash. Two crash shapes leave a broken tail: (1) the turn died between
+// tool_calls and their results — the deferred PadOrphanToolResults never ran
+// (process death skips defers), and the next LLM request would carry an
+// invalid assistant/tool sequence (the "restart kills a long task forever"
+// failure mode); pad the dangling calls, then append a user-role turn-aborted
+// marker so the model knows the boundary it is resuming across. (2) The
+// daemon died inside the LLM call itself — nothing was appended at all, so
+// there are no orphans to pad, but the history still ends on a user turn
+// nobody answered; append the lost-reply marker instead. Both markers are
+// claim-gated (one per working set, compaction resets the claim). No-op on
+// clean histories, so it is safe to run on every fresh load.
 func (s *Session) healInterruptedTurn() {
-	if !s.PadOrphanToolResults(toolResultCrashNote) {
+	if s.PadOrphanToolResults(toolResultCrashNote) {
+		// One marker per working set (compaction resets the claim): stacking
+		// abort notes across repeated crashes adds context noise while the
+		// per-call crash pads already carry the interruption facts.
+		s.AppendClaimOnce(provider.Message{
+			Role:    "user",
+			Content: turnAbortedCrashNote,
+			Origin:  provider.OriginTurnAbort,
+		}, "turnAborted", true)
 		return
 	}
-	// One marker per working set (compaction resets the claim): stacking
-	// abort notes across repeated crashes adds context noise while the
-	// per-call crash pads already carry the interruption facts.
+	// Crash inside the LLM call: the last persisted message is a real user
+	// turn with no assistant reply behind it. Skip when the tail is already
+	// a marker (Origin-tagged) — an earlier heal claimed this window.
+	msgs := s.GetMessages()
+	if len(msgs) == 0 {
+		return
+	}
+	last := msgs[len(msgs)-1]
+	if last.Role != "user" || last.Origin == provider.OriginTurnAbort {
+		return
+	}
+	// Same claim key as the crash note: whichever shape fired first owns the
+	// single marker this window gets — a rarer double-crash before any
+	// compaction suppresses the second note rather than stacking two.
 	s.AppendClaimOnce(provider.Message{
 		Role:    "user",
-		Content: turnAbortedCrashNote,
+		Content: turnAbortedLostNote,
 		Origin:  provider.OriginTurnAbort,
 	}, "turnAborted", true)
 }

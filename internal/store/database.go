@@ -4115,59 +4115,66 @@ func (d *DBStore) AppendSessionMessage(ctx context.Context, agentID, sessionKey 
 	return err
 }
 
-// DeleteLastUserMessage deletes the highest-seq session_messages row
-// for the session iff it has role=user — an unanswered pending user
-// turn left behind by a failed LLM call. Returns the deleted seq (>=0),
-// or -1 if the last row was not a user message (no-op). The SELECT +
-// DELETE run in one tx so a concurrent append can't slip a new last
-// row in between. Used by the web chat's failed-turn rollback.
-func (d *DBStore) DeleteLastUserMessage(ctx context.Context, agentID, sessionKey string) (int64, error) {
+// DeleteLastUserMessages deletes up to `limit` trailing session_messages
+// rows for the session, stopping at the first non-user row — an unanswered
+// pending user turn plus, when a crash-heal parked one directly behind it,
+// its turn-abort marker (also role=user). limit comes from the working-set
+// rollback (Session.RollbackLastUser), so the archive stays in lockstep
+// with what the working set dropped. Returns the number of rows deleted
+// (0 = no-op). The SELECT + DELETE run in one tx so a concurrent append
+// can't slip a new last row in between. Used by the web chat's
+// failed-turn rollback.
+func (d *DBStore) DeleteLastUserMessages(ctx context.Context, agentID, sessionKey string, limit int) (int64, error) {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
 	defer tx.Rollback()
 
-	var seq int64
-	var role string
-	if d.dialect == "postgres" {
-		err = tx.QueryRowContext(ctx,
-			`SELECT seq, role FROM session_messages
-			 WHERE agent_id = $1 AND session_key = $2
-			 ORDER BY seq DESC LIMIT 1`,
-			agentID, sessionKey).Scan(&seq, &role)
-	} else {
-		err = tx.QueryRowContext(ctx,
-			`SELECT seq, role FROM session_messages
-			 WHERE agent_id = ? AND session_key = ?
-			 ORDER BY seq DESC LIMIT 1`,
-			agentID, sessionKey).Scan(&seq, &role)
-	}
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return -1, nil
+	var deleted int64
+	for i := 0; i < limit; i++ {
+		var seq int64
+		var role string
+		if d.dialect == "postgres" {
+			err = tx.QueryRowContext(ctx,
+				`SELECT seq, role FROM session_messages
+				 WHERE agent_id = $1 AND session_key = $2
+				 ORDER BY seq DESC LIMIT 1`,
+				agentID, sessionKey).Scan(&seq, &role)
+		} else {
+			err = tx.QueryRowContext(ctx,
+				`SELECT seq, role FROM session_messages
+				 WHERE agent_id = ? AND session_key = ?
+				 ORDER BY seq DESC LIMIT 1`,
+				agentID, sessionKey).Scan(&seq, &role)
 		}
-		return -1, err
-	}
-	if role != "user" {
-		return -1, nil
-	}
-	if d.dialect == "postgres" {
-		_, err = tx.ExecContext(ctx,
-			`DELETE FROM session_messages WHERE agent_id = $1 AND session_key = $2 AND seq = $3`,
-			agentID, sessionKey, seq)
-	} else {
-		_, err = tx.ExecContext(ctx,
-			`DELETE FROM session_messages WHERE agent_id = ? AND session_key = ? AND seq = ?`,
-			agentID, sessionKey, seq)
-	}
-	if err != nil {
-		return -1, err
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				break
+			}
+			return deleted, err
+		}
+		if role != "user" {
+			break
+		}
+		if d.dialect == "postgres" {
+			_, err = tx.ExecContext(ctx,
+				`DELETE FROM session_messages WHERE agent_id = $1 AND session_key = $2 AND seq = $3`,
+				agentID, sessionKey, seq)
+		} else {
+			_, err = tx.ExecContext(ctx,
+				`DELETE FROM session_messages WHERE agent_id = ? AND session_key = ? AND seq = ?`,
+				agentID, sessionKey, seq)
+		}
+		if err != nil {
+			return deleted, err
+		}
+		deleted++
 	}
 	if err := tx.Commit(); err != nil {
-		return -1, err
+		return deleted, err
 	}
-	return seq, nil
+	return deleted, nil
 }
 
 // AppendSessionEvent persists one streaming-event delta and returns the
