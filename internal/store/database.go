@@ -252,6 +252,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateRecallDebugEvents(ctx); err != nil {
 		return fmt.Errorf("migrate recall debug events: %w", err)
 	}
+	if err := d.migrateRecallHardcases(ctx); err != nil {
+		return fmt.Errorf("migrate recall hardcases: %w", err)
+	}
 	// Flatten per-user / per-chatter rows BEFORE the DROP COLUMN
 	// migrations (added in Phase 1.2–1.5) so the drops can't trip a
 	// PK / UNIQUE collision when multiple rows collapse onto the same

@@ -901,6 +901,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runRecallEventRetention(ctx)
 	}()
+	// hardcase mining: hourly aggregation of zero-hit recall events into
+	// the review queue (recall_hardcases) — the golden-set feeder. Disabled
+	// when FLUCTIO_RECALL_HARDCASE_MINING_HOURS<=0.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runHardcaseMiningSweep(ctx)
+	}()
 	// memory consolidation: daily deterministic prune of conversation
 	// summaries (supersede purge, stale episodic eviction, per-agent
 	// quota). Disabled when FLUCTIO_MEMORY_CONSOLIDATION_HOURS<=0.

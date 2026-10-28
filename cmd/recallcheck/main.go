@@ -39,8 +39,11 @@ func main() {
 	dbFlag := flag.String("db", "", "sqlite file path or postgres DSN (default: $FLUCTIO_HOME or ~/.fluctio fluctio.db, read-only)")
 	seedN := flag.Int("seed", 0, "generate a golden set: N cases per lane from the agent's KB")
 	unanswerable := flag.Int("unanswerable", 5, "unanswerable trap cases to generate")
-	casesPath := flag.String("cases", "", "golden JSONL file (-seed writes it, -run reads it)")
+	casesPath := flag.String("cases", "", "golden JSONL file (-seed writes it, -run reads it, -draft appends)")
 	runMode := flag.Bool("run", false, "replay the golden set and print metrics")
+	ablMode := flag.Bool("abl", false, "offline fusion ablation over the mem_inject golden cases (one retrieval pass, grid replay; needs embedder flags)")
+	hardcases := flag.Bool("hardcases", false, "list pending hardcases (mined zero-hit queries) for review")
+	draftN := flag.Int("draft", 0, "append the top N pending hardcases to the golden file as draft cases (empty expect_ids — owner labels what SHOULD hit)")
 	outPath := flag.String("out", "", "write the JSON report here (default: stdout only)")
 	embedBase := flag.String("embed-base", "", "embedding API base (OpenAI-compatible /v1 endpoint root)")
 	embedKey := flag.String("embed-key", "", "embedding API key")
@@ -52,12 +55,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "-agent is required")
 		os.Exit(2)
 	}
-	if *casesPath == "" {
+	// -hardcases lists only; no golden file needed.
+	if *casesPath == "" && !*hardcases {
 		fmt.Fprintln(os.Stderr, "-cases is required")
 		os.Exit(2)
 	}
-	if *seedN == 0 && !*runMode {
-		fmt.Fprintln(os.Stderr, "nothing to do: pass -seed N to generate or -run to replay")
+	if *seedN == 0 && !*runMode && !*ablMode && !*hardcases && *draftN == 0 {
+		fmt.Fprintln(os.Stderr, "nothing to do: pass -seed N, -run, -abl, -hardcases, or -draft N")
 		os.Exit(2)
 	}
 
@@ -86,7 +90,43 @@ func main() {
 		fmt.Printf("seeded %d cases -> %s\n", len(cases), *casesPath)
 	}
 
-	if !*runMode {
+	if *hardcases || *draftN > 0 {
+		hs, err := db.ListHardcases(ctx, *agent, "pending", max(*draftN, 50))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "list hardcases:", err)
+			os.Exit(1)
+		}
+		if *hardcases {
+			fmt.Printf("pending hardcases for %s: %d\n", *agent, len(hs))
+			for _, h := range hs {
+				fmt.Printf("  %4dx [%s] %s\n", h.Count, h.Lanes, h.Query)
+			}
+		}
+		if *draftN > 0 {
+			if *draftN > len(hs) {
+				*draftN = len(hs)
+			}
+			var drafts []recallcheck.GoldenCase
+			for i := 0; i < *draftN; i++ {
+				drafts = append(drafts, recallcheck.GoldenCase{
+					ID:        "hardcase-" + store.HardcaseQueryHash(hs[i].Query),
+					Query:     hs[i].Query,
+					Lane:      firstLane(hs[i].Lanes),
+					Source:    "hardcase",
+					ExpectIDs: nil, // owner labels what SHOULD hit
+				})
+			}
+			existing, _ := recallcheck.LoadGolden(*casesPath)
+			merged := append(existing, drafts...)
+			if err := recallcheck.SaveGolden(*casesPath, merged); err != nil {
+				fmt.Fprintln(os.Stderr, "save drafts:", err)
+				os.Exit(1)
+			}
+			fmt.Printf("drafted %d hardcases into %s (fill expect_ids, then -run)\n", len(drafts), *casesPath)
+		}
+	}
+
+	if !*runMode && !*ablMode {
 		return
 	}
 
@@ -111,6 +151,31 @@ func main() {
 		}
 	}
 
+	if *ablMode {
+		if emb == nil {
+			fmt.Fprintln(os.Stderr, "-abl needs -embed-model (the ablation replays vector+lexical fusion)")
+			os.Exit(2)
+		}
+		results := recallcheck.Ablate(ctx, recallcheck.Deps{DB: db, KB: ks, AgentID: *agent, Embedder: emb}, cases, recallcheck.DefaultAblGrid())
+		fmt.Printf("fusion ablation over %d mem cases (sorted by MRR; * = production constants):\n", countMemCases(cases))
+		for _, r := range results {
+			mark := "  "
+			if r.Production {
+				mark = "* "
+			}
+			fmt.Printf("%srrf_k=%-4d top_k=%-3d floor=%.2f  hit@1=%-3d hit@3=%-3d hit@5=%-3d mrr=%.3f\n",
+				mark, r.RRFK, r.TopK, r.Alpha, r.Hit1, r.Hit3, r.Hit5, r.MRR)
+		}
+		if *outPath != "" {
+			b, _ := json.MarshalIndent(results, "", "  ")
+			if err := os.WriteFile(*outPath, b, 0o644); err != nil {
+				fmt.Fprintln(os.Stderr, "write report:", err)
+				os.Exit(1)
+			}
+		}
+		return
+	}
+
 	rep := recallcheck.Run(ctx, recallcheck.Deps{DB: db, KB: ks, AgentID: *agent, Embedder: emb}, cases)
 
 	printSummary(rep)
@@ -121,6 +186,18 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+// firstLane picks the first lane of a comma-separated set for draft cases;
+// the owner edits it if the real target lane differs.
+func firstLane(lanes string) string {
+	if i := strings.IndexByte(lanes, ','); i >= 0 {
+		return lanes[:i]
+	}
+	if lanes == "" {
+		return "wiki"
+	}
+	return lanes
 }
 
 // resolveDSN maps the -db flag to a store DSN. A bare file path becomes a
@@ -143,6 +220,17 @@ func resolveDSN(flag string) (dsn, dialect string) {
 		abs = flag
 	}
 	return "file:" + abs + "?mode=ro", "sqlite"
+}
+
+// countMemCases returns the ablation's input size for the header line.
+func countMemCases(cases []recallcheck.GoldenCase) int {
+	n := 0
+	for _, c := range cases {
+		if !c.Unanswerable && c.Lane == "mem_inject" {
+			n++
+		}
+	}
+	return n
 }
 
 func printSummary(rep *recallcheck.Report) {
