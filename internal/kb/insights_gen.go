@@ -121,12 +121,30 @@ func (s *KBStore) GenerateInsights(ctx context.Context, agentID, sourceID string
 	// whether its own quote is real), mirroring verify_claim / Hermes's
 	// grounded-citations philosophy.
 	normContent := normalizeForMatch(content)
+	verified := ins.Quotes[:0]
+	dropped := 0
 	for i := range ins.Quotes {
-		q := &ins.Quotes[i]
+		q := ins.Quotes[i]
 		if q.Text == "" {
+			dropped++
 			continue
 		}
 		q.Verified = strings.Contains(normContent, normalizeForMatch(q.Text))
+		if !q.Verified {
+			// Verification is load-bearing, not a flag: a quote the bytes
+			// can't confirm reads exactly as plausible as a real one, so
+			// leaving it in the stored set ships confabulation. Insights
+			// are regenerable at will and the raw article remains the
+			// audit trail — drop, and log the rate so a prompt regression
+			// surfaces in server logs instead of silently thinning quotes.
+			dropped++
+			continue
+		}
+		verified = append(verified, q)
+	}
+	ins.Quotes = verified
+	if dropped > 0 {
+		slog.Warn("insights: dropped unverified quotes", "agent", agentID, "source", sourceID, "dropped", dropped)
 	}
 
 	// 5. Persist.

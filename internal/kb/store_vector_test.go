@@ -48,6 +48,11 @@ func setupKBVectorTestDB(t *testing.T) *sql.DB {
 			entry_id INTEGER PRIMARY KEY, agent_id TEXT NOT NULL, embedding BLOB,
 			dim INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '',
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+		`CREATE TABLE kb_article_insights (
+			source_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+			summary TEXT NOT NULL DEFAULT '{}', quotes TEXT NOT NULL DEFAULT '[]',
+			actions TEXT NOT NULL DEFAULT '[]', sprouts TEXT NOT NULL DEFAULT '{}',
+			generated_at TEXT NOT NULL DEFAULT '')`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("exec %q: %v", stmt, err)
