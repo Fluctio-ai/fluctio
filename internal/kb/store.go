@@ -107,7 +107,10 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 	// for url sources) and invisible junk. Chunks embed what survives, so
 	// this is the last point where noise removal is nearly free. A page that
 	// is entirely boilerplate cleans to empty and hits the existing
-	// "no content" error — that is the intended quality gate.
+	// "no content" error — that is the intended quality gate. The raw text
+	// is retained alongside (orig_content) so future rule changes can
+	// re-derive chunks via RewashSources.
+	raw := content
 	cleaned, govHits := GovernContent(content, sourceType)
 	if len(govHits) > 0 {
 		slog.Debug("kb govern cleaned", "agent", agentID, "source_type", sourceType, "hits", govHits, "chars_before", len(content), "chars_after", len(cleaned))
@@ -118,43 +121,7 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 	if len(chunks) == 0 {
 		return "", fmt.Errorf("no content to ingest")
 	}
-
-	// Chunk→source char offsets: the span of source text the chunk covers,
-	// located line-by-line in emission order. The chunker re-joins
-	// paragraphs with single "\n" while the source has "\n\n", so whole
-	// chunk bodies don't appear verbatim — but every LINE does (paragraph
-	// text is preserved; large-paragraph sentence splits re-join with the
-	// same single spaces the source has). start = first line's position,
-	// end = just past the last line, so the span covers whole paragraphs
-	// including their separators. Sequential searchFrom keeps later chunks
-	// on their own copies when text repeats. Foundation for wiki evidence
-	// anchoring.
-	offsets := make([][2]int, len(chunks))
-	searchFrom := 0
-	for i, c := range chunks {
-		lines := strings.Split(c.Content, "\n")
-		pos := strings.Index(content[searchFrom:], lines[0])
-		if pos < 0 {
-			offsets[i] = [2]int{-1, -1}
-			continue
-		}
-		start := searchFrom + pos
-		end := start + len(lines[0])
-		for _, ln := range lines[1:] {
-			p := strings.Index(content[end:], ln)
-			if p < 0 {
-				end = -1
-				break
-			}
-			end = end + p + len(ln)
-		}
-		if end < 0 {
-			offsets[i] = [2]int{-1, -1}
-			continue
-		}
-		offsets[i] = [2]int{start, end}
-		searchFrom = start
-	}
+	offsets := chunkOffsets(content, chunks)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -164,10 +131,10 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 
 	origin := SourceOriginFromCtx(ctx)
 	_, err = tx.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO kb_sources (id, agent_id, title, source_type, source_ref, entry_count, total_chars, source_session_id, source_seq_ranges, created_at, updated_at)
-			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9), s.ph(10), s.ph(11)),
-		sourceID, agentID, title, sourceType, sourceRef, len(chunks), len(content), origin.SessionID, EncodeSeqRanges(origin.Seq), now, now)
+		fmt.Sprintf(`INSERT INTO kb_sources (id, agent_id, title, source_type, source_ref, entry_count, total_chars, source_session_id, source_seq_ranges, created_at, updated_at, orig_content, pipeline_hash)
+			VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9), s.ph(10), s.ph(11), s.ph(12), s.ph(13)),
+		sourceID, agentID, title, sourceType, sourceRef, len(chunks), len(content), origin.SessionID, EncodeSeqRanges(origin.Seq), now, now, raw, PipelineHash())
 	if err != nil {
 		return "", fmt.Errorf("insert source: %w", err)
 	}

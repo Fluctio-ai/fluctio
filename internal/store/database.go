@@ -231,6 +231,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateKBEntryOffsets(ctx); err != nil {
 		return fmt.Errorf("migrate kb_entries offsets: %w", err)
 	}
+	if err := d.migrateKBSourcesPipeline(ctx); err != nil {
+		return fmt.Errorf("migrate kb_sources pipeline: %w", err)
+	}
 	if err := d.migrateDailyDiary(ctx); err != nil {
 		return fmt.Errorf("migrate daily diary table: %w", err)
 	}
@@ -689,6 +692,25 @@ func (d *DBStore) migrateKBEntryOffsets(ctx context.Context) error {
 		return err
 	}
 	_, err = d.db.ExecContext(ctx, `ALTER TABLE kb_entries ADD COLUMN end_offset INTEGER NOT NULL DEFAULT -1`)
+	return err
+}
+
+// migrateKBSourcesPipeline adds kb_sources.orig_content + pipeline_hash.
+// orig_content retains the pre-governance text so a future governance or
+// chunker change can re-derive chunks (RewashSources) instead of being
+// stuck with whatever the ingest-time rules produced; legacy sources keep
+// the empty default and are skipped by rewash. pipeline_hash is
+// kb.PipelineHash() at ingest time; a mismatch marks the source stale.
+// Idempotent via tableHasColumn.
+func (d *DBStore) migrateKBSourcesPipeline(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "kb_sources", "orig_content")
+	if err != nil || has {
+		return err
+	}
+	if _, err := d.db.ExecContext(ctx, `ALTER TABLE kb_sources ADD COLUMN orig_content TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	_, err = d.db.ExecContext(ctx, `ALTER TABLE kb_sources ADD COLUMN pipeline_hash TEXT NOT NULL DEFAULT ''`)
 	return err
 }
 

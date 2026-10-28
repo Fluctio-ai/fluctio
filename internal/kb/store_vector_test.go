@@ -37,7 +37,9 @@ func setupKBVectorTestDB(t *testing.T) *sql.DB {
 			reminded_at TEXT NOT NULL DEFAULT '',
 			source_session_id TEXT NOT NULL DEFAULT '',
 			source_seq_ranges TEXT NOT NULL DEFAULT '',
-			wiki_dirty_at TIMESTAMP)`,
+			wiki_dirty_at TIMESTAMP,
+			orig_content TEXT NOT NULL DEFAULT '',
+			pipeline_hash TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE kb_entries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT, source_id TEXT NOT NULL,
 			chunk_index INTEGER NOT NULL DEFAULT 0, content TEXT NOT NULL, agent_id TEXT NOT NULL,
