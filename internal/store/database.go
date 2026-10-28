@@ -6207,6 +6207,18 @@ func (d *DBStore) migrateDailyDiary(ctx context.Context) error {
 	)`); err != nil {
 		return fmt.Errorf("migrate daily_diary (push runs): %w", err)
 	}
+	// diary_blindspot_push_runs: same dedup stamp for the blindspot nudge,
+	// keyed on the diary's date (one push per diary, whatever its content).
+	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS diary_blindspot_push_runs (
+		agent_id TEXT NOT NULL,
+		date TEXT NOT NULL,
+		pushed_count INTEGER NOT NULL DEFAULT 0,
+		channel TEXT NOT NULL DEFAULT '',
+		pushed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (agent_id, date)
+	)`); err != nil {
+		return fmt.Errorf("migrate daily_diary (blindspot push runs): %w", err)
+	}
 	return nil
 }
 

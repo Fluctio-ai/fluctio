@@ -1785,6 +1785,12 @@ export interface AgentDiaryCfg {
   shelvedPushTime?: string;
   /** Shelved nudge IM channel. Default "wechat". */
   shelvedPushChannel?: string;
+  /** Opt-in daily nudge when the diary's blindspot list is non-empty. Default off. */
+  blindspotPushEnabled?: boolean;
+  /** Blindspot nudge time "HH:MM" UTC+8. Default "09:00". */
+  blindspotPushTime?: string;
+  /** Blindspot nudge IM channel. Default "wechat". */
+  blindspotPushChannel?: string;
 }
 
 // AgentCardsCfg mirrors config.AgentCardsCfg — per-agent Q&A flashcard

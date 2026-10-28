@@ -860,6 +860,17 @@ type AgentDiaryCfg struct {
 	// ShelvedPushChannel is the IM channel the nudge pushes to. Empty
 	// defaults to "wechat".
 	ShelvedPushChannel string `json:"shelvedPushChannel,omitempty"`
+	// BlindspotPush* mirror the shelved push triple for the blindspot
+	// section: a daily "you might have missed" nudge keyed on the diary's
+	// date — empty blindspots (the common case by design: 宁可空不凑数)
+	// push nothing. PushEnabled off by default.
+	BlindspotPushEnabled bool `json:"blindspotPushEnabled,omitempty"`
+	// BlindspotPushTime is the daily push time in "HH:MM" (UTC+8). Empty
+	// defaults to "09:00".
+	BlindspotPushTime string `json:"blindspotPushTime,omitempty"`
+	// BlindspotPushChannel is the IM channel the nudge pushes to. Empty
+	// defaults to "wechat".
+	BlindspotPushChannel string `json:"blindspotPushChannel,omitempty"`
 }
 
 // AgentCardsCfg is the per-agent Q&A flashcard configuration: nightly

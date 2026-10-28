@@ -236,3 +236,33 @@ func (d *DBStore) LatestShelvedLedger(ctx context.Context, agentID, to string) (
 	_ = json.Unmarshal([]byte(shelvedJSON.String), &out)
 	return out, date, nil
 }
+
+// LatestBlindspots returns the blindspot section of the agent's most
+// recent diary dated on or before `to` — the blindspot push sweep's
+// source. Only diaries with a non-empty blindspot array match, so (nil,
+// "", nil) means "nothing to nudge about" (the generator's 宁可空不凑数
+// discipline makes that the common case).
+func (d *DBStore) LatestBlindspots(ctx context.Context, agentID, to string) ([]DiaryBlindspot, string, error) {
+	var q string
+	if d.dialect == "postgres" {
+		q = `SELECT date, blindspots FROM daily_diary WHERE agent_id = $1 AND date <= $2
+			AND blindspots IS NOT NULL AND blindspots <> '' AND blindspots <> '[]'
+			ORDER BY date DESC LIMIT 1`
+	} else {
+		q = `SELECT date, blindspots FROM daily_diary WHERE agent_id = ? AND date <= ?
+			AND blindspots IS NOT NULL AND blindspots <> '' AND blindspots <> '[]'
+			ORDER BY date DESC LIMIT 1`
+	}
+	var date string
+	var blindJSON sql.NullString
+	err := d.db.QueryRowContext(ctx, q, agentID, to).Scan(&date, &blindJSON)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	var out []DiaryBlindspot
+	_ = json.Unmarshal([]byte(blindJSON.String), &out)
+	return out, date, nil
+}

@@ -9,9 +9,10 @@ import (
 // daily-run helpers below may touch — the table name reaches SQL, so an
 // open-ended parameter would be an injection foot-gun.
 var dailyRunTables = map[string]bool{
-	"kb_card_gen_runs":         true,
-	"kb_card_push_runs":        true,
-	"diary_shelved_push_runs": true,
+	"kb_card_gen_runs":            true,
+	"kb_card_push_runs":           true,
+	"diary_shelved_push_runs":     true,
+	"diary_blindspot_push_runs":   true,
 }
 
 // HasDailyRun reports whether the (agent, date) marker row exists in one
@@ -60,6 +61,12 @@ func (d *DBStore) StampCardPushRun(ctx context.Context, agentID, date string, co
 // same semantics as StampCardPushRun for the diary shelved-topics nudge.
 func (d *DBStore) StampShelvedPushRun(ctx context.Context, agentID, date string, count int, channel string) error {
 	return d.stampDailyRun(ctx, "diary_shelved_push_runs", agentID, date, count, channel)
+}
+
+// StampBlindspotPushRun upserts the once-per-diary blindspot push marker —
+// keyed on the diary's date, so regenerating that diary never re-pushes.
+func (d *DBStore) StampBlindspotPushRun(ctx context.Context, agentID, date string, count int, channel string) error {
+	return d.stampDailyRun(ctx, "diary_blindspot_push_runs", agentID, date, count, channel)
 }
 
 // stampDailyRun is the shared upsert behind the per-table stamp methods —

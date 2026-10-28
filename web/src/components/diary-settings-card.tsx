@@ -39,6 +39,9 @@ export function DiarySettingsCard() {
   const [shelvedPushEnabled, setShelvedPushEnabled] = useState(false);
   const [shelvedPushTime, setShelvedPushTime] = useState("09:00");
   const [shelvedPushChannel, setShelvedPushChannel] = useState("wechat");
+  const [blindspotPushEnabled, setBlindspotPushEnabled] = useState(false);
+  const [blindspotPushTime, setBlindspotPushTime] = useState("09:00");
+  const [blindspotPushChannel, setBlindspotPushChannel] = useState("wechat");
   const [configLoaded, setConfigLoaded] = useState(false);
 
   const loadConfig = useCallback(
@@ -56,6 +59,9 @@ export function DiarySettingsCard() {
                 setShelvedPushEnabled(d.shelvedPushEnabled ?? false);
                 setShelvedPushTime(d.shelvedPushTime || "09:00");
                 setShelvedPushChannel(d.shelvedPushChannel || "wechat");
+                setBlindspotPushEnabled(d.blindspotPushEnabled ?? false);
+                setBlindspotPushTime(d.blindspotPushTime || "09:00");
+                setBlindspotPushChannel(d.blindspotPushChannel || "wechat");
               }
               setConfigLoaded(true);
             })
@@ -79,10 +85,13 @@ export function DiarySettingsCard() {
         shelvedPushEnabled,
         shelvedPushTime,
         shelvedPushChannel,
+        blindspotPushEnabled,
+        blindspotPushTime,
+        blindspotPushChannel,
       },
     } as any);
     if (res?.error) throw new Error(res.error);
-  }, [agentId, enabled, cronTime, thinkingMode, shelvedEnabled, shelvedPushEnabled, shelvedPushTime, shelvedPushChannel]);
+  }, [agentId, enabled, cronTime, thinkingMode, shelvedEnabled, shelvedPushEnabled, shelvedPushTime, shelvedPushChannel, blindspotPushEnabled, blindspotPushTime, blindspotPushChannel]);
 
   const { failed, saved, wrap } = useAutoSave({
     loaded: configLoaded,
@@ -178,6 +187,44 @@ export function DiarySettingsCard() {
                     </Field>
                   </div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* Blindspot nudge — amplifies the diary's "you might have
+              missed" section; an empty list (the common case by design)
+              pushes nothing. */}
+          <div className="space-y-4 border-t border-border pt-4">
+            <GroupHead
+              title={t("diary.blindspotPush")}
+              desc={t("diary.blindspotPushDesc")}
+              control={
+                <Switch checked={blindspotPushEnabled} onCheckedChange={wrap(setBlindspotPushEnabled)} />
+              }
+            />
+            {blindspotPushEnabled && (
+              <div className="grid grid-cols-2 gap-4">
+                <Field label={t("diary.blindspotPushTime")} hint={t("diary.blindspotPushTimeDesc")}>
+                  <Input
+                    type="time"
+                    value={blindspotPushTime}
+                    onChange={(e) => wrap(setBlindspotPushTime)(e.target.value)}
+                  />
+                </Field>
+                <Field label={t("diary.blindspotPushChannel")}>
+                  <Select value={blindspotPushChannel} onValueChange={(v) => v && wrap(setBlindspotPushChannel)(v)}>
+                    <SelectTrigger>
+                      <SelectValue>{(v: unknown) => channelLabel(v as string)}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PUSH_CHANNELS.map((c) => (
+                        <SelectItem key={c.value} value={c.value}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
               </div>
             )}
           </div>

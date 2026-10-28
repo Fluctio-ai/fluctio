@@ -841,6 +841,15 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runShelvedPushSweep(ctx)
 	}()
+	// Blindspot nudge: half-hourly, every agent with diary
+	// blindspotPushEnabled gets one nudge after its pushTime when the
+	// latest diary's blindspot section is non-empty — one push per diary,
+	// gated by diary_blindspot_push_runs.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runBlindspotPushSweep(ctx)
+	}()
 	// Implicit feedback sweep: periodically turns "did the user stay on the
 	// recalled topic?" into thumbs-up/down so the MMR-lambda bandit can tune
 	// without anyone clicking a button. Decoupled from chat traffic.
