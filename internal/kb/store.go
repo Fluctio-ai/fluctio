@@ -103,6 +103,17 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 	now := time.Now().UTC().Format(time.RFC3339)
 	sourceID := uuid.New().String()
 
+	// Governance before chunking: strip scraped-page boilerplate (web pack
+	// for url sources) and invisible junk. Chunks embed what survives, so
+	// this is the last point where noise removal is nearly free. A page that
+	// is entirely boilerplate cleans to empty and hits the existing
+	// "no content" error — that is the intended quality gate.
+	cleaned, govHits := GovernContent(content, sourceType)
+	if len(govHits) > 0 {
+		slog.Debug("kb govern cleaned", "agent", agentID, "source_type", sourceType, "hits", govHits, "chars_before", len(content), "chars_after", len(cleaned))
+	}
+	content = cleaned
+
 	chunks := ChunkText(content, 0, 0)
 	if len(chunks) == 0 {
 		return "", fmt.Errorf("no content to ingest")
