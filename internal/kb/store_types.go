@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -395,7 +394,7 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 	}
 	qvecs, err := s.embedder.Embed(ctx, []string{query})
 	if err != nil || len(qvecs) != 1 {
-		tr.drop("embed_failed", 1)
+		tr.drop(gateEmbedFailed, 1)
 		return nil
 	}
 	q := qvecs[0]
@@ -406,18 +405,18 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 		 JOIN kb_sources s ON s.id = ke.source_id
 		 WHERE e.agent_id = `+s.ph(1)+` AND s.type IN ('flash','todo')`, agentID)
 	if err != nil {
-		tr.drop("query_failed", 1)
+		tr.drop(gateQueryFailed, 1)
 		return nil
 	}
 	defer rows.Close()
+	// cosRank/cosScore/rrRank ride on the struct (not id-keyed maps):
+	// several entry chunks can share one source_id, so only struct fields
+	// survive the reranker's reorder without collision.
 	type cand struct {
 		content, sourceID, title, kbType, status, endAt string
 		score                                           float64
-		// cosRank/cosScore ride on the struct (not an id-keyed map like the
-		// wiki lane) because several entry chunks can share one source_id —
-		// only the struct survives the reranker's reorder without collision.
-		cosRank  int
-		cosScore float64
+		cosRank, rrRank                                 int
+		cosScore                                        float64
 	}
 	var cands []cand
 	scanned := 0
@@ -425,13 +424,13 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 		var blob []byte
 		var c cand
 		if err := rows.Scan(&blob, &c.content, &c.sourceID, &c.title, &c.kbType, &c.status, &c.endAt); err != nil {
-			tr.drop("query_failed", 1)
+			tr.drop(gateQueryFailed, 1)
 			return nil
 		}
 		scanned++
 		vec := kbFloat32FromBlob(blob)
 		if len(vec) != len(q) {
-			tr.drop("dim_mismatch", 1)
+			tr.drop(gateDimMismatch, 1)
 			continue
 		}
 		c.score = kbCosine(q, vec)
@@ -448,14 +447,13 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 	// (same rationale as searchWikiByVector: replay the pre-gate order).
 	for i := range cands {
 		cands[i].cosRank = i + 1
-		cands[i].cosScore = math.Round(cands[i].score*10000) / 10000
+		cands[i].cosScore = round4(cands[i].score)
 	}
 	pool := cands
 	if len(pool) > limit*3 {
-		tr.drop("pool_cap", len(pool)-limit*3)
+		tr.drop(gatePoolCap, len(pool)-limit*3)
 		pool = pool[:limit*3]
 	}
-	rrPos := 0
 	if s.reranker != nil && s.reranker.Available() && len(pool) > 1 {
 		docs := make([]string, len(pool))
 		for i, c := range pool {
@@ -469,21 +467,21 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 				}
 				c := pool[sd.Index]
 				c.score = sd.Score
+				c.rrRank = len(reranked) + 1
 				reranked = append(reranked, c)
 			}
-			tr.drop("rerank_dropped", len(pool)-len(reranked))
+			tr.drop(gateRerankDrop, len(pool)-len(reranked))
 			pool = reranked
-			rrPos = len(pool)
 		}
 	}
 	results := make([]KBResult, 0, limit)
-	for i, c := range pool {
+	for _, c := range pool {
 		if c.score < threshold {
-			tr.drop("below_threshold", 1)
+			tr.drop(gateBelowThresh, 1)
 			continue
 		}
 		if len(results) >= limit {
-			tr.drop("over_limit", 1)
+			tr.drop(gateOverLimit, 1)
 			continue
 		}
 		snippet := c.content
@@ -503,21 +501,7 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 			Snippet:     snippet,
 			Rank:        c.score,
 		})
-		if tr != nil {
-			h := traceHit{
-				ID:     c.sourceID,
-				Score:  math.Round(c.score*10000) / 10000,
-				Ranks:  map[string]int{"vector": c.cosRank},
-				Scores: map[string]float64{"vector": c.cosScore},
-			}
-			if rrPos > 0 {
-				h.HitType = "rerank"
-				h.Ranks["rerank"] = i + 1
-			} else {
-				h.HitType = "vector"
-			}
-			tr.hits = append(tr.hits, h)
-		}
+		tr.addHit(c.sourceID, c.score, c.cosScore, c.cosRank, c.rrRank)
 	}
 	return results
 }

@@ -3,6 +3,7 @@ package recallcheck
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
@@ -11,10 +12,12 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
-// Lane thresholds mirror the auto-recall defaults (kb hook + [MEM] lane).
-// Kept as constants here — the point of the harness is comparing runs
-// against each other, so the runner pins its knobs rather than drifting
-// with config.
+// Default thresholds mirror the auto-recall defaults (kb hook + [MEM]
+// lane). Deps may carry the agent's live config values (read from the
+// configs table by the CLI) — the runner then measures what production
+// actually runs, and a production threshold change moves the metrics on
+// the next run instead of passing silently. Zero values fall back to
+// these defaults so runs stay comparable.
 const (
 	wikiLimit      = 5
 	wikiThreshold  = 0.45
@@ -27,11 +30,42 @@ const (
 
 // Deps wires the runner to one agent's recall chain. Embedder may be nil —
 // vector lanes then report "degraded" and only lexical behavior is covered.
+// WikiThresh/FtThresh/MemFloor, when non-zero, override the built-in
+// defaults with the agent's live config (harness fidelity: a production
+// threshold change must show up here, not pass silently against a pinned
+// old value).
 type Deps struct {
-	DB       *store.DBStore
-	KB       *kb.KBStore
-	AgentID  string
-	Embedder embedding.Embedder
+	DB         *store.DBStore
+	KB         *kb.KBStore
+	AgentID    string
+	Embedder   embedding.Embedder
+	WikiThresh float64
+	FtThresh   float64
+	MemFloor   float64
+}
+
+func (d Deps) wikiThresh() float64 {
+	if d.WikiThresh > 0 && d.WikiThresh <= 1 {
+		return d.WikiThresh
+	}
+	return wikiThreshold
+}
+
+func (d Deps) ftThresh() float64 {
+	if d.FtThresh > 0 && d.FtThresh <= 1 {
+		return d.FtThresh
+	}
+	return ftThreshold
+}
+
+// memFloorPtr returns the configured absolute floor, or nil for the
+// built-in tighten-only default (mirrors production's kbCfg.MemoryThreshold
+// pointer semantics).
+func (d Deps) memFloorPtr() *float64 {
+	if d.MemFloor > 0 {
+		return &d.MemFloor
+	}
+	return nil
 }
 
 // CaseResult is one replayed case: the ids the lane actually surfaced, in
@@ -115,7 +149,7 @@ func Run(ctx context.Context, deps Deps, cases []GoldenCase) *Report {
 			} else {
 				res.Hits = hits
 				for i, id := range hits {
-					if contains(c.ExpectIDs, id) {
+					if slices.Contains(c.ExpectIDs, id) {
 						res.Rank = i + 1
 						break
 					}
@@ -128,24 +162,15 @@ func Run(ctx context.Context, deps Deps, cases []GoldenCase) *Report {
 	return rep
 }
 
-func contains(xs []string, v string) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
 // runLane dispatches to the lane's production entry point, returning the
 // surfaced ids in rank order.
 func runLane(ctx context.Context, deps Deps, lane, query string) ([]string, error) {
 	switch lane {
 	case "wiki":
-		results, err := deps.KB.SearchSplit(ctx, deps.AgentID, query, wikiLimit, wikiThreshold, 0, ftThreshold)
+		results, err := deps.KB.SearchSplit(ctx, deps.AgentID, query, wikiLimit, deps.wikiThresh(), 0, 0)
 		return kbResultIDs(results, "wiki", err)
 	case "flash_todo":
-		results, err := deps.KB.SearchSplit(ctx, deps.AgentID, query, 0, wikiThreshold, ftLimit, ftThreshold)
+		results, err := deps.KB.SearchSplit(ctx, deps.AgentID, query, 0, 0, ftLimit, deps.ftThresh())
 		return kbResultIDs(results, "kb", err)
 	case "bookmark":
 		results, err := deps.KB.Search(ctx, deps.AgentID, query, bookmarkLimit, 30, 0.5, bookmarkThresh)
@@ -160,7 +185,7 @@ func runLane(ctx context.Context, deps Deps, lane, query string) ([]string, erro
 		}
 		return ids, nil
 	case "mem_inject":
-		hits, err := tools.SemanticMemRecall(ctx, deps.DB, deps.Embedder, nil, deps.AgentID, "", query, memLimit, nil, false)
+		hits, err := tools.SemanticMemRecall(ctx, deps.DB, deps.Embedder, nil, deps.AgentID, "", query, memLimit, deps.memFloorPtr(), false)
 		if err != nil {
 			return nil, err
 		}

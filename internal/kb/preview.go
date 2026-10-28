@@ -1,6 +1,8 @@
 package kb
 
 import (
+	"math"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -96,10 +98,10 @@ func PreviewIngest(content, sourceType string) IngestPreview {
 		union += s[1] - s[0]
 	}
 	if len(governed) > 0 {
-		st.CoverageRatio = round3(float64(union) / float64(len(governed)))
+		st.CoverageRatio = math.Round(float64(union)/float64(len(governed))*1000) / 1000
 	}
 	if totalSpan > 0 {
-		st.OverlapWaste = round3(float64(totalSpan-union) / float64(totalSpan))
+		st.OverlapWaste = math.Round(float64(totalSpan-union)/float64(totalSpan)*1000) / 1000
 	}
 
 	for i, c := range chunks {
@@ -129,17 +131,12 @@ func PreviewIngest(content, sourceType string) IngestPreview {
 	return p
 }
 
-// mergeSpans unions sorted-ish spans (chunk emission order is near-sorted;
-// a general sort keeps this correct under any order).
+// mergeSpans unions spans (sorted by start).
 func mergeSpans(spans [][2]int) [][2]int {
 	if len(spans) == 0 {
 		return nil
 	}
-	for i := 1; i < len(spans); i++ {
-		for j := i; j > 0 && spans[j][0] < spans[j-1][0]; j-- {
-			spans[j], spans[j-1] = spans[j-1], spans[j]
-		}
-	}
+	sort.Slice(spans, func(a, b int) bool { return spans[a][0] < spans[b][0] })
 	out := [][2]int{spans[0]}
 	for _, s := range spans[1:] {
 		last := &out[len(out)-1]
@@ -154,6 +151,3 @@ func mergeSpans(spans [][2]int) [][2]int {
 	return out
 }
 
-func round3(v float64) float64 {
-	return float64(int(v*1000+0.5)) / 1000
-}

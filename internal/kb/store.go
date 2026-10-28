@@ -68,6 +68,10 @@ type KBStore struct {
 	// dedupCfgFn, when set, supplies per-agent dedup thresholds from the live
 	// config so callers can tune without redeploy. nil → built-in defaults.
 	dedupCfgFn func() KBCfg
+	// recallTracer receives completed recall funnels from the vector search
+	// lanes. Wired by the agent layer to the store insert; nil keeps
+	// observability off (transient stores, unit tests).
+	recallTracer RecallTracer
 }
 
 func NewKBStore(db *sql.DB, dialect string) *KBStore {
@@ -90,6 +94,13 @@ func (s *KBStore) SetOnDeleteSource(fn func(agentID, sourceID string)) {
 func (s *KBStore) SetRetriever(emb embedding.Embedder, rr embedding.Reranker) {
 	s.embedder = emb
 	s.reranker = rr
+}
+
+// SetRecallTracer wires the funnel receiver (the agent layer bridges it to
+// the store insert; kb must not import store). Nil-safe: tracing stays off
+// until wired.
+func (s *KBStore) SetRecallTracer(fn RecallTracer) {
+	s.recallTracer = fn
 }
 
 func (s *KBStore) ph(n int) string {
@@ -196,19 +207,19 @@ func (s *KBStore) Search(ctx context.Context, agentID, query string, limit int, 
 	if s.embedder != nil && s.embedder.Available() {
 		wikiTr := newLaneTrace(threshold, limit)
 		wikiRR := s.searchWikiByVector(ctx, agentID, query, limit, preFilterLimit, threshold, wikiTr)
-		s.insertRecallTrace(ctx, agentID, "wiki", "tool", query, wikiTr)
+		s.emitTrace(ctx, agentID, "wiki", "tool", query, wikiTr)
 		// Flash/todo sources skip wiki generation, so searchWikiByVector can't
 		// reach them — recall them straight from their chunk vectors and merge
 		// (capped) so a relevant inspiration/todo can surface with the articles.
 		ftTr := newLaneTrace(threshold, limit)
 		ftRR := s.searchFlashTodoByVector(ctx, agentID, query, limit, threshold, ftTr)
-		s.insertRecallTrace(ctx, agentID, "flash_todo", "tool", query, ftTr)
+		s.emitTrace(ctx, agentID, "flash_todo", "tool", query, ftTr)
 		// Bookmarks live in their own table; recall by title+summary vector so
 		// a saved link can surface with the rest. Vector-only (no keyword
 		// fallback) — matches flash/todo's split-search treatment.
 		bmTr := newLaneTrace(threshold, limit)
 		bmRR := s.searchBookmarksByVector(ctx, agentID, query, limit, threshold, bmTr)
-		s.insertRecallTrace(ctx, agentID, "bookmark", "tool", query, bmTr)
+		s.emitTrace(ctx, agentID, "bookmark", "tool", query, bmTr)
 		merged := mergeKBResults(wikiRR, ftRR, limit)
 		if len(bmRR) > 0 {
 			merged = mergeKBResults(merged, bmRR, limit)
@@ -268,7 +279,7 @@ func (s *KBStore) SearchSplit(ctx context.Context, agentID, query string, wikiLi
 			// vector lane empty).
 			tr := newLaneTrace(wikiThreshold, wikiLimit)
 			results = append(results, s.searchWikiByVector(ctx, agentID, query, wikiLimit, 0, wikiThreshold, tr)...)
-			s.insertRecallTrace(ctx, agentID, "wiki", "auto", query, tr)
+			s.emitTrace(ctx, agentID, "wiki", "auto", query, tr)
 		} else {
 			// Keyword fallback lanes stay untraced: they run only with no
 			// embedder configured (the designed degraded path), where drop
@@ -280,7 +291,7 @@ func (s *KBStore) SearchSplit(ctx context.Context, agentID, query string, wikiLi
 	if ftLimit > 0 && s.embedder != nil && s.embedder.Available() {
 		tr := newLaneTrace(ftThreshold, ftLimit)
 		results = append(results, s.searchFlashTodoByVector(ctx, agentID, query, ftLimit, ftThreshold, tr)...)
-		s.insertRecallTrace(ctx, agentID, "flash_todo", "auto", query, tr)
+		s.emitTrace(ctx, agentID, "flash_todo", "auto", query, tr)
 	}
 	return results, nil
 }
@@ -402,7 +413,7 @@ func (s *KBStore) searchWikiByType(ctx context.Context, agentID, query string, s
 func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string, limit, preFilterLimit int, threshold float64, tr *laneTrace) []KBResult {
 	qvecs, err := s.embedder.Embed(ctx, []string{query})
 	if err != nil || len(qvecs) != 1 {
-		tr.drop("embed_failed", 1)
+		tr.drop(gateEmbedFailed, 1)
 		return nil
 	}
 	q := qvecs[0]
@@ -416,9 +427,14 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 		return nil
 	}
 	defer rows.Close()
+	// cosRank/cosScore/rrRank ride on the struct (no id-keyed maps): the
+	// values survive the reranker's reorder, and duplicate ids (impossible
+	// for wiki pages, possible elsewhere) can't collide.
 	type cand struct {
 		id, title, summary, body, pageType string
 		score                              float64
+		cosRank, rrRank                    int
+		cosScore                           float64
 	}
 	var cands []cand
 	scanned := 0
@@ -427,16 +443,16 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 		var blob []byte
 		var title, summary, body, pageType, slug string
 		if err := rows.Scan(&pid, &blob, &title, &summary, &body, &pageType, &slug); err != nil {
-			tr.drop("query_failed", 1)
+			tr.drop(gateQueryFailed, 1)
 			return nil
 		}
 		scanned++
 		vec := kbFloat32FromBlob(blob)
 		if len(vec) != len(q) {
-			tr.drop("dim_mismatch", 1)
+			tr.drop(gateDimMismatch, 1)
 			continue // dim mismatch (stale vector from a different model)
 		}
-		cands = append(cands, cand{pid, title, summary, body, pageType, kbCosine(q, vec)})
+		cands = append(cands, cand{id: pid, title: title, summary: summary, body: body, pageType: pageType, score: kbCosine(q, vec)})
 	}
 	if tr != nil {
 		tr.candidates = scanned
@@ -445,14 +461,11 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 		return nil
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
-	// Cosine rank/score per candidate, captured before the reranker
-	// overwrites c.score — the pre-rerank order is what threshold tuning
-	// and offline fusion analysis replay.
-	cosRank := make(map[string]int, len(cands))
-	cosScore := make(map[string]float64, len(cands))
-	for i, c := range cands {
-		cosRank[c.id] = i + 1
-		cosScore[c.id] = math.Round(c.score*10000) / 10000
+	// Capture the pre-rerank cosine rank/score — that order is what
+	// threshold tuning and offline fusion analysis replay.
+	for i := range cands {
+		cands[i].cosRank = i + 1
+		cands[i].cosScore = cands[i].score
 	}
 
 	// Re-rank the top candidates with the cross-encoder when available; its
@@ -460,10 +473,9 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 	// downstream ranking consume the same scale.
 	pool := cands
 	if preFilterLimit > 0 && len(pool) > preFilterLimit*2 {
-		tr.drop("pool_cap", len(pool)-preFilterLimit*2)
+		tr.drop(gatePoolCap, len(pool)-preFilterLimit*2)
 		pool = pool[:preFilterLimit*2]
 	}
-	rrRank := map[string]int{}
 	if s.reranker != nil && s.reranker.Available() && len(pool) > 1 {
 		docs := make([]string, len(pool))
 		for i, c := range pool {
@@ -480,10 +492,10 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 				}
 				c := pool[sd.Index]
 				c.score = sd.Score
-				rrRank[c.id] = len(reranked) + 1
+				c.rrRank = len(reranked) + 1
 				reranked = append(reranked, c)
 			}
-			tr.drop("rerank_dropped", len(pool)-len(reranked))
+			tr.drop(gateRerankDrop, len(pool)-len(reranked))
 			pool = reranked
 		}
 	}
@@ -491,11 +503,11 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 	results := make([]KBResult, 0, limit)
 	for _, c := range pool {
 		if c.score < threshold {
-			tr.drop("below_threshold", 1)
+			tr.drop(gateBelowThresh, 1)
 			continue
 		}
 		if len(results) >= limit {
-			tr.drop("over_limit", 1)
+			tr.drop(gateOverLimit, 1)
 			continue
 		}
 		content := c.summary
@@ -515,23 +527,7 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 			Snippet:     snippet,
 			Rank:        c.score,
 		})
-	}
-	if tr != nil {
-		for _, r := range results {
-			h := traceHit{
-				ID:     r.SourceID,
-				Score:  math.Round(r.Rank*10000) / 10000,
-				Ranks:  map[string]int{"vector": cosRank[r.SourceID]},
-				Scores: map[string]float64{"vector": cosScore[r.SourceID]},
-			}
-			if rr, ok := rrRank[r.SourceID]; ok {
-				h.HitType = "rerank"
-				h.Ranks["rerank"] = rr
-			} else {
-				h.HitType = "vector"
-			}
-			tr.hits = append(tr.hits, h)
-		}
+		tr.addHit(c.id, c.score, c.cosScore, c.cosRank, c.rrRank)
 	}
 	return results
 }

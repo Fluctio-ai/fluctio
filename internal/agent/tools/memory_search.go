@@ -372,7 +372,7 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 							scores := make(map[int64]float64, len(mmrHits))
 							for _, h := range mmrHits {
 								if v, ok := embMap[h.ID]; ok {
-									scores[h.ID] = math.Round(cosineSim(queryEmb, v)*10000) / 10000
+									scores[h.ID] = round4(cosineSim(queryEmb, v))
 								}
 							}
 							dbgCos = scores
@@ -495,6 +495,15 @@ func mergeSummaryResults(fts, vec []store.ConversationSummary, limit int) []stor
 // rrfK is the standard Reciprocal Rank Fusion damping constant. Large
 // enough that rank 1 vs rank 2 differs mildly, not winner-take-all.
 const rrfK = 60.0
+
+// Exported aliases so the recallcheck harness (ablation grid, production
+// marker) references these knobs instead of restating their values — a
+// production tuning change must not silently mis-mark the reference row.
+const (
+	RRFK                 = rrfK
+	MemorySearchMaxLimit = memorySearchMaxLimit
+	RecallRelFloorAlpha  = recallRelFloorAlpha
+)
 
 // FuseSummariesRRF merges two ranked lists with Reciprocal Rank Fusion:
 // score(d) = Σ 1/(rrfK + rank(d)) across the lists. Rank-based fusion
@@ -749,7 +758,7 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 		// Audit scores stay on the cosine scale (the floor's scale) even
 		// when a reranker reorders — mixing scales in one column would
 		// make threshold calibration meaningless.
-		scores[sh.hit.ID] = math.Round(sh.cos*10000) / 10000
+		scores[sh.hit.ID] = round4(sh.cos)
 		if len(kept) >= overFetch {
 			break
 		}
@@ -1053,6 +1062,13 @@ func fileRecencyWeight(filePath string, now time.Time) float64 {
 // cosineSim returns the cosine similarity between two equal-length
 // float32 vectors, as a float64 in [-1, 1]. Returns 0 for empty or
 // mismatched-length input.
+// round4 rounds to 4 decimals for stored scores (one place, one precision).
+func round4(v float64) float64 { return math.Round(v * 10000) / 10000 }
+
+// Cosine is the exported cosine similarity (delegates to cosineSim) for
+// harnesses like recallcheck that replay the fusion math outside the tool.
+func Cosine(a, b []float32) float64 { return cosineSim(a, b) }
+
 func cosineSim(a, b []float32) float64 {
 	n := len(a)
 	if n == 0 || n != len(b) {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net/url"
 	"sort"
 	"strings"
@@ -275,7 +274,7 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 	}
 	qvecs, err := s.embedder.Embed(ctx, []string{query})
 	if err != nil || len(qvecs) != 1 {
-		tr.drop("embed_failed", 1)
+		tr.drop(gateEmbedFailed, 1)
 		return nil
 	}
 	q := qvecs[0]
@@ -285,14 +284,14 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 		 JOIN kb_bookmarks b ON b.id = e.bookmark_id
 		 WHERE e.agent_id = `+s.ph(1), agentID)
 	if err != nil {
-		tr.drop("query_failed", 1)
+		tr.drop(gateQueryFailed, 1)
 		return nil
 	}
 	defer rows.Close()
 	type cand struct {
 		id, link, title, summary string
 		score                    float64
-		cosRank                  int
+		cosRank, rrRank          int
 		cosScore                 float64
 	}
 	var cands []cand
@@ -301,13 +300,13 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 		var blob []byte
 		var c cand
 		if err := rows.Scan(&blob, &c.id, &c.link, &c.title, &c.summary); err != nil {
-			tr.drop("query_failed", 1)
+			tr.drop(gateQueryFailed, 1)
 			return nil
 		}
 		scanned++
 		vec := kbFloat32FromBlob(blob)
 		if len(vec) != len(q) {
-			tr.drop("dim_mismatch", 1)
+			tr.drop(gateDimMismatch, 1)
 			continue
 		}
 		c.score = kbCosine(q, vec)
@@ -324,14 +323,13 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 	// pre-gate order (same rationale as searchWikiByVector).
 	for i := range cands {
 		cands[i].cosRank = i + 1
-		cands[i].cosScore = math.Round(cands[i].score*10000) / 10000
+		cands[i].cosScore = round4(cands[i].score)
 	}
 	pool := cands
 	if len(pool) > limit*3 {
-		tr.drop("pool_cap", len(pool)-limit*3)
+		tr.drop(gatePoolCap, len(pool)-limit*3)
 		pool = pool[:limit*3]
 	}
-	reranked := false
 	if s.reranker != nil && s.reranker.Available() && len(pool) > 1 {
 		docs := make([]string, len(pool))
 		for i, c := range pool {
@@ -345,21 +343,21 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 				}
 				c := pool[sd.Index]
 				c.score = sd.Score
+				c.rrRank = len(rr) + 1
 				rr = append(rr, c)
 			}
-			tr.drop("rerank_dropped", len(pool)-len(rr))
+			tr.drop(gateRerankDrop, len(pool)-len(rr))
 			pool = rr
-			reranked = true
 		}
 	}
 	results := make([]KBResult, 0, limit)
-	for i, c := range pool {
+	for _, c := range pool {
 		if c.score < threshold {
-			tr.drop("below_threshold", 1)
+			tr.drop(gateBelowThresh, 1)
 			continue
 		}
 		if len(results) >= limit {
-			tr.drop("over_limit", 1)
+			tr.drop(gateOverLimit, 1)
 			continue
 		}
 		display := c.title
@@ -375,21 +373,7 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 			Snippet:     c.link,
 			Rank:        c.score,
 		})
-		if tr != nil {
-			h := traceHit{
-				ID:     c.id,
-				Score:  math.Round(c.score*10000) / 10000,
-				Ranks:  map[string]int{"vector": c.cosRank},
-				Scores: map[string]float64{"vector": c.cosScore},
-			}
-			if reranked {
-				h.HitType = "rerank"
-				h.Ranks["rerank"] = i + 1
-			} else {
-				h.HitType = "vector"
-			}
-			tr.hits = append(tr.hits, h)
-		}
+		tr.addHit(c.id, c.score, c.cosScore, c.cosRank, c.rrRank)
 	}
 	return results
 }

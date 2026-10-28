@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/recallcheck"
@@ -176,7 +177,31 @@ func main() {
 		return
 	}
 
-	rep := recallcheck.Run(ctx, recallcheck.Deps{DB: db, KB: ks, AgentID: *agent, Embedder: emb}, cases)
+	// Track the agent's LIVE thresholds (configs table), not just the
+	// built-in defaults — a production threshold change must move these
+	// metrics on the next run, not pass silently against a pinned old value.
+	var deps recallcheck.Deps
+	deps.DB, deps.KB, deps.AgentID, deps.Embedder = db, ks, *agent, emb
+	if rec, err := db.GetAgent(ctx, *agent); err == nil && rec != nil && rec.Config != nil {
+		if raw, ok := rec.Config["kb"]; ok && raw != nil {
+			if b, err := json.Marshal(raw); err == nil {
+				var cfg config.AgentKBCfg
+				if json.Unmarshal(b, &cfg) == nil {
+					if cfg.Threshold != nil {
+						deps.WikiThresh = *cfg.Threshold
+					}
+					if cfg.FlashTodoThreshold != nil {
+						deps.FtThresh = *cfg.FlashTodoThreshold
+					}
+					if cfg.MemoryThreshold != nil {
+						deps.MemFloor = *cfg.MemoryThreshold
+					}
+				}
+			}
+		}
+	}
+
+	rep := recallcheck.Run(ctx, deps, cases)
 
 	printSummary(rep)
 	if *outPath != "" {
@@ -206,9 +231,10 @@ func firstLane(lanes string) string {
 // with "postgres" is treated as a postgres DSN and passed through as-is.
 func resolveDSN(flag string) (dsn, dialect string) {
 	if flag == "" {
-		home := os.Getenv("FLUCTIO_HOME")
-		if home == "" {
-			home = filepath.Join(os.Getenv("USERPROFILE"), ".fluctio")
+		home, err := config.HomeDir()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "resolve home:", err)
+			os.Exit(1)
 		}
 		flag = filepath.Join(home, "fluctio.db")
 	}

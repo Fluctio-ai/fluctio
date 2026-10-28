@@ -2,9 +2,11 @@ package recallcheck
 
 import (
 	"context"
-	"math"
+	"slices"
 	"sort"
 	"strconv"
+
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
 )
 
 // Offline fusion ablation: one retrieval pass per case records the full
@@ -101,25 +103,12 @@ func recordLaneLists(ctx context.Context, deps Deps, query string, cap int) (*la
 			embMap, err := deps.DB.GetConversationSummaryEmbeddings(ctx, ll.vecRanks)
 			if err == nil {
 				for id, v := range embMap {
-					ll.cosine[id] = cosF64(vecs[0], v)
+					ll.cosine[id] = tools.Cosine(vecs[0], v)
 				}
 			}
 		}
 	}
 	return ll, nil
-}
-
-func cosF64(a, b []float32) float64 {
-	var dot, na, nb float64
-	for i := 0; i < len(a) && i < len(b); i++ {
-		dot += float64(a[i]) * float64(b[i])
-		na += float64(a[i]) * float64(a[i])
-		nb += float64(b[i]) * float64(b[i])
-	}
-	if na == 0 || nb == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
 // fuseRRF re-ranks with the given damping constant, mirroring
@@ -168,15 +157,25 @@ func Ablate(ctx context.Context, deps Deps, cases []GoldenCase, grid AblGrid) []
 	if len(items) == 0 {
 		return nil // no applicable cases: an empty grid report is noise
 	}
+	// The fused order depends only on (case, rrf_k) — compute it once per
+	// pair and replay top_k/alpha cuts over the shared order.
+	fused := make([]map[int][]int64, len(items))
+	for i := range items {
+		fused[i] = make(map[int][]int64, len(grid.RRFK))
+		for _, k := range grid.RRFK {
+			fused[i][k] = fuseRRF(items[i].ll, k)
+		}
+	}
 	var out []AblResult
 	for _, k := range grid.RRFK {
 		for _, topK := range grid.TopK {
 			for _, alpha := range grid.Alphas {
-				r := AblResult{RRFK: k, TopK: topK, Alpha: alpha, Cases: len(items), Production: k == 60 && topK == 10 && alpha == 0.75}
+				r := AblResult{RRFK: k, TopK: topK, Alpha: alpha, Cases: len(items),
+					Production: float64(k) == tools.RRFK && topK == tools.MemorySearchMaxLimit && alpha == tools.RecallRelFloorAlpha}
 				var recip float64
-				for _, it := range items {
+				for idx, it := range items {
 					rank := 0
-					ids := fuseRRF(it.ll, k)
+					ids := fused[idx][k]
 					if alpha > 0 {
 						ids = applyFloor(ids, it.ll.cosine, alpha)
 					}
@@ -184,7 +183,7 @@ func Ablate(ctx context.Context, deps Deps, cases []GoldenCase, grid AblGrid) []
 						ids = ids[:topK]
 					}
 					for i, id := range ids {
-						if contains(it.expect, strconv.FormatInt(id, 10)) {
+						if slices.Contains(it.expect, strconv.FormatInt(id, 10)) {
 							rank = i + 1
 							break
 						}

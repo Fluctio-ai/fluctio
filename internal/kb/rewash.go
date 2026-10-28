@@ -14,28 +14,32 @@ import (
 // that doesn't retain originals: every IngestText source keeps its raw
 // pre-governance text (kb_sources.orig_content) plus the pipeline hash
 // that produced its chunks. When the governance rules or the chunker
-// change (bump govRulesVersion / chunkerVersion), RewashSources re-derives
-// chunks from the retained original in one transaction and marks the
-// source wiki-dirty — rollback is "restore the old rows from backup",
-// forward-only is the designed path. Legacy sources without orig_content
-// report MissingOrigin and are skipped: nothing honest can be re-derived
-// from post-hoc chunks.
+// change, RewashSources re-derives chunks from the retained original in
+// one transaction and marks the source wiki-dirty — rollback is "restore
+// the old rows from backup", forward-only is the designed path. Legacy
+// sources without orig_content report MissingOrigin and are skipped:
+// nothing honest can be re-derived from post-hoc chunks.
 
-const (
-	// govRulesVersion bumps whenever govern.go's rule sets change in a way
-	// that would produce different output on the same text.
-	govRulesVersion = 1
-	// chunkerVersion bumps whenever ChunkText's splitting behavior changes.
-	chunkerVersion = "v1"
-)
+// chunkerVersion is the chunker's BEHAVIOR version — bumped manually when
+// ChunkText's splitting changes. Kept manual because behavior can't be
+// hashed; the governance rules below are hashed directly instead of
+// carrying a manual version, so a rule edit can never be forgotten.
+const chunkerVersion = "v1"
 
-// PipelineHash identifies the current ingest pipeline: governance rules,
-// chunker behavior, and chunker parameters. Any change makes previously
-// ingested sources stale on the next rewash scan.
+// PipelineHash identifies the current ingest pipeline by hashing what it
+// IS, not what a human remembered to bump: the compiled governance rules
+// (name + pattern source + replacement, in order) plus the chunker
+// version and parameters. Editing any rule changes the hash, so stale
+// sources are detected by construction.
 func PipelineHash() string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("gov:%d;chunker:%s;%d/%d",
-		govRulesVersion, chunkerVersion, defaultChunkSize, defaultOverlap)))
-	return fmt.Sprintf("%x", sum[:8])
+	h := sha256.New()
+	fmt.Fprintf(h, "chunker:%s:%d/%d", chunkerVersion, defaultChunkSize, defaultOverlap)
+	for _, rules := range [][]govRule{govBaseRules, govWebRules} {
+		for _, r := range rules {
+			fmt.Fprintf(h, "|%s\x00%s\x00%s", r.name, r.re.String(), r.repl)
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)[:8])
 }
 
 // chunkOffsets locates each chunk's span in text (see IngestText for the
@@ -77,6 +81,7 @@ type RewashReport struct {
 	WouldChange   int `json:"would_change"`
 	Rewashed      int `json:"rewashed"`
 	SkippedFresh  int `json:"skipped_fresh"`  // hash already current
+	SkippedEmpty  int `json:"skipped_empty"`  // current rules would produce zero chunks
 	MissingOrigin int `json:"missing_origin"` // legacy rows: no orig retained
 }
 
@@ -133,7 +138,7 @@ func (s *KBStore) RewashSources(ctx context.Context, agentID string, apply bool)
 			// The current rules would reject this source entirely (e.g.
 			// all-boilerplate). Rewashing to zero chunks is destructive —
 			// skip and let the owner decide (delete or exempt).
-			rep.MissingOrigin++
+			rep.SkippedEmpty++
 			continue
 		}
 		rep.WouldChange++

@@ -55,12 +55,10 @@ var govWebRules = []govRule{
 	govLine("cookie_banner", `.{0,4}?(?:This site uses cookies|We use cookies|本网站?使用 Cookie).{0,60}?`),
 }
 
-// applyGovRule runs one rule and reports how many times it fired.
+// applyGovRule runs one rule and reports how many times it fired. A
+// single pass: the counting closure handles both substitution and
+// deletion (repl "") alike.
 func applyGovRule(text string, r govRule) (string, int) {
-	if r.repl == "" {
-		n := len(r.re.FindAllStringIndex(text, -1))
-		return r.re.ReplaceAllString(text, ""), n
-	}
 	n := 0
 	out := r.re.ReplaceAllStringFunc(text, func(string) string { n++; return r.repl })
 	return out, n

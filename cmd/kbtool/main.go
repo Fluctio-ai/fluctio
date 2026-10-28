@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
@@ -111,13 +112,14 @@ func rewashCmd(args []string) {
 	}
 }
 
-// resolveSQLitePath mirrors recallcheck's default-home behavior (writable
-// here — rewash writes, unlike the read-only harness).
+// resolveSQLitePath builds a writable sqlite DSN for the -db flag,
+// defaulting to the canonical fluctio.db under config.HomeDir().
 func resolveSQLitePath(flag string) string {
 	if flag == "" {
-		home := os.Getenv("FLUCTIO_HOME")
-		if home == "" {
-			home = filepath.Join(os.Getenv("USERPROFILE"), ".fluctio")
+		home, err := config.HomeDir()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "resolve home:", err)
+			os.Exit(1)
 		}
 		flag = filepath.Join(home, "fluctio.db")
 	}

@@ -7,6 +7,24 @@ import (
 	"testing"
 )
 
+// wireTestTracer bridges TraceEvents straight into the test schema's
+// recall_debug_events via raw SQL — production's agent layer does the same
+// bridge to the store insert.
+func wireTestTracer(ks *KBStore, db *sql.DB) {
+	ks.SetRecallTracer(func(tctx context.Context, ev TraceEvent) {
+		marshal := func(v any) string {
+			if v == nil {
+				return ""
+			}
+			b, _ := json.Marshal(v)
+			return string(b)
+		}
+		_, _ = db.ExecContext(tctx,
+			`INSERT INTO recall_debug_events (agent_id, lane, trigger_kind, query, candidates, gates, params, hits) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			ev.AgentID, ev.Lane, ev.Trigger, ev.Query, ev.Candidates, marshal(ev.Gates), marshal(ev.Params), marshal(ev.Hits))
+	})
+}
+
 // recall_debug_events is migrated by the store package in production; the kb
 // test schema mirrors it (the insert path itself is best-effort, so the other
 // kb tests keep passing without the table).
@@ -22,7 +40,7 @@ type recallDebugRow struct {
 	trigger    string
 	candidates int
 	gates      map[string]int
-	hits       []traceHit
+	hits       []TraceHit
 }
 
 func readRecallDebugRows(t *testing.T, db *sql.DB, agentID string) []recallDebugRow {
@@ -79,6 +97,7 @@ func TestSearchSplitWritesRecallTrace(t *testing.T) {
 
 	ks := NewKBStore(db, "sqlite")
 	ks.SetRetriever(mockEmbedder{}, nil)
+	wireTestTracer(ks, db)
 
 	results, err := ks.SearchSplit(ctx, "a1", "foo query", 5, 0.45, 0, 0.6)
 	if err != nil {
@@ -135,6 +154,7 @@ func TestSearchSplitFlashLaneTrace(t *testing.T) {
 
 	ks := NewKBStore(db, "sqlite")
 	ks.SetRetriever(mockEmbedder{}, nil)
+	wireTestTracer(ks, db)
 
 	results, err := ks.SearchSplit(ctx, "a1", "query", 0, 0.45, 5, 0.6)
 	if err != nil {

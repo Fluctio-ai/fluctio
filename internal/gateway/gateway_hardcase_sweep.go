@@ -9,36 +9,24 @@ import (
 )
 
 // runHardcaseMiningSweep aggregates zero-hit recall events into the
-// hardcase review queue. Runs hourly; the mining query is a single grouped
-// scan over the retention window, and the watermark in recall_sweep_meta
-// makes re-runs idempotent. Disabled when
-// FLUCTIO_RECALL_HARDCASE_MINING_HOURS<=0.
+// hardcase review queue. Interval comes from
+// FLUCTIO_RECALL_HARDCASE_MINING_HOURS (default 24 = daily; the value is
+// both the tick interval and the first-run lookback; <=0 disables).
 func (g *Gateway) runHardcaseMiningSweep(ctx context.Context) {
-	const interval = time.Hour
-	g.mineHardcases(ctx)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			g.mineHardcases(ctx)
-		}
+	hours := readRetentionHours("FLUCTIO_RECALL_HARDCASE_MINING_HOURS", 24)
+	if hours <= 0 {
+		return
 	}
+	g.runEvery(ctx, time.Duration(hours)*time.Hour, g.mineHardcases)
 }
 
 func (g *Gateway) mineHardcases(ctx context.Context) {
-	// Env kill switch, consistent with the other sweeps:
-	// FLUCTIO_RECALL_HARDCASE_MINING_HOURS<=0 disables (default on).
-	if readRetentionHours("FLUCTIO_RECALL_HARDCASE_MINING_HOURS", 24) <= 0 {
-		return
-	}
 	db, ok := g.store.(*store.DBStore)
 	if !ok || db == nil {
 		return
 	}
-	n, err := db.MineHardcases(ctx, 24*time.Hour)
+	hours := readRetentionHours("FLUCTIO_RECALL_HARDCASE_MINING_HOURS", 24)
+	n, err := db.MineHardcases(ctx, time.Duration(hours)*time.Hour)
 	if err != nil {
 		slog.Debug("hardcase mining", "error", err)
 		return

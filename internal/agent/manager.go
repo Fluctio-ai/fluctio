@@ -357,6 +357,33 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		if rc.KB != nil && rc.KB.Enabled {
 			if dbs, ok := m.opts.dataStore.(*store.DBStore); ok {
 				kbStore = kb.NewKBStore(dbs.DB(), dbs.Dialect())
+				// Recall funnel tracing: bridge kb's trace events to the
+				// store insert (kb must not import store, so the agent
+				// layer wires the two — same boundary as MemoryAutoSearcher
+				// below). Best-effort by contract: a tracing failure must
+				// never break a recall.
+				kbStore.SetRecallTracer(func(tctx context.Context, ev kb.TraceEvent) {
+					// Type conversion lives at this single seam: kb and
+					// store keep their own hit structs (kb must not import
+					// store), the agent layer bridges them.
+					hits := make([]store.RecallDebugHit, len(ev.Hits))
+					for i, h := range ev.Hits {
+						hits[i] = store.RecallDebugHit{
+							ID: h.ID, Score: h.Score, HitType: h.HitType,
+							Ranks: h.Ranks, Scores: h.Scores,
+						}
+					}
+					_ = dbs.InsertRecallDebugEvent(tctx, store.RecallDebugEvent{
+						AgentID:    ev.AgentID,
+						Lane:       ev.Lane,
+						Trigger:    ev.Trigger,
+						Query:      ev.Query,
+						Candidates: ev.Candidates,
+						Gates:      ev.Gates,
+						Params:     ev.Params,
+						Hits:       hits,
+					})
+				})
 				// Cascade wiki cleanup on delete so the agent-tool delete path
 				// matches HTTP/MCP; lazy-build the wiki store per delete since
 				// the agent package otherwise has no wiki handle.

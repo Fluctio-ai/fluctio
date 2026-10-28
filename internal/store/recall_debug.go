@@ -76,23 +76,25 @@ const recallDebugColumns = `(agent_id, lane, trigger_kind, query, candidates, ga
 // InsertRecallDebugEvent records one recall funnel. Best-effort by contract:
 // callers ignore the error so observability can never break a recall.
 func (d *DBStore) InsertRecallDebugEvent(ctx context.Context, ev RecallDebugEvent) error {
-	gatesJSON := ""
+	// Typed-nil guards must happen on the struct fields: once a nil slice
+	// passes through `any`, the interface is non-nil and would marshal to
+	// "null" — which the hardcase mining query (hits = '' OR '[]') can't see.
+	marshal := func(v any) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+	gatesJSON, paramsJSON, hitsJSON := "", "", ""
 	if ev.Gates != nil {
-		if b, err := json.Marshal(ev.Gates); err == nil {
-			gatesJSON = string(b)
-		}
+		gatesJSON = marshal(ev.Gates)
 	}
-	paramsJSON := ""
 	if ev.Params != nil {
-		if b, err := json.Marshal(ev.Params); err == nil {
-			paramsJSON = string(b)
-		}
+		paramsJSON = marshal(ev.Params)
 	}
-	hitsJSON := ""
 	if ev.Hits != nil {
-		if b, err := json.Marshal(ev.Hits); err == nil {
-			hitsJSON = string(b)
-		}
+		hitsJSON = marshal(ev.Hits)
 	}
 	q := `INSERT INTO recall_debug_events ` + recallDebugColumns + ` VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	if d.dialect == "postgres" {
