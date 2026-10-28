@@ -12,11 +12,18 @@ import (
 // events exist so the recall-test page can show what was injected and carry
 // 👍/👎. Volume grew once the [MEM] lane started recording an event per
 // message, so an unbounded table was no longer acceptable.
+// recall_debug_events (per-lane recall funnels) shares the same window and
+// sweep — same audit-data posture, same volume argument.
 // FLUCTIO_RECALL_EVENTS_RETENTION_HOURS (default 2160 = 90 days; <=0 disables).
 func (g *Gateway) runRecallEventRetention(ctx context.Context) {
 	g.runHourlyRetention(ctx, "recall_events",
 		readRetentionHours("FLUCTIO_RECALL_EVENTS_RETENTION_HOURS", 2160),
 		func(ctx context.Context, db *store.DBStore, before time.Time) (int64, error) {
-			return db.PruneRecallEvents(ctx, before, 1000)
+			n, err := db.PruneRecallEvents(ctx, before, 1000)
+			dbg, derr := db.PruneRecallDebugEvents(ctx, before, 1000)
+			if err == nil {
+				err = derr
+			}
+			return n + dbg, err
 		})
 }

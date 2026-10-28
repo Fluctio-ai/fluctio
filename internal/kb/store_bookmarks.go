@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/url"
 	"sort"
 	"strings"
@@ -265,7 +266,7 @@ func (s *KBStore) UpdateBookmark(ctx context.Context, agentID, id, title, summar
 // Returns nil on any failure so Search can treat bookmarks as an optional
 // supplement. KBResult.ContentType is stamped "bookmark" so callers can tell
 // these hits apart from article/flash/todo recall.
-func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query string, limit int, threshold float64) []KBResult {
+func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query string, limit int, threshold float64, tr *laneTrace) []KBResult {
 	if limit <= 0 {
 		limit = 5
 	}
@@ -274,6 +275,7 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 	}
 	qvecs, err := s.embedder.Embed(ctx, []string{query})
 	if err != nil || len(qvecs) != 1 {
+		tr.drop("embed_failed", 1)
 		return nil
 	}
 	q := qvecs[0]
@@ -283,56 +285,81 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 		 JOIN kb_bookmarks b ON b.id = e.bookmark_id
 		 WHERE e.agent_id = `+s.ph(1), agentID)
 	if err != nil {
+		tr.drop("query_failed", 1)
 		return nil
 	}
 	defer rows.Close()
 	type cand struct {
 		id, link, title, summary string
 		score                    float64
+		cosRank                  int
+		cosScore                 float64
 	}
 	var cands []cand
+	scanned := 0
 	for rows.Next() {
 		var blob []byte
 		var c cand
 		if err := rows.Scan(&blob, &c.id, &c.link, &c.title, &c.summary); err != nil {
+			tr.drop("query_failed", 1)
 			return nil
 		}
+		scanned++
 		vec := kbFloat32FromBlob(blob)
 		if len(vec) != len(q) {
+			tr.drop("dim_mismatch", 1)
 			continue
 		}
 		c.score = kbCosine(q, vec)
 		cands = append(cands, c)
 	}
+	if tr != nil {
+		tr.candidates = scanned
+	}
 	if len(cands) == 0 {
 		return nil
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].score > cands[j].score })
+	// Cosine rank/score before the reranker overwrites c.score — replayable
+	// pre-gate order (same rationale as searchWikiByVector).
+	for i := range cands {
+		cands[i].cosRank = i + 1
+		cands[i].cosScore = math.Round(cands[i].score*10000) / 10000
+	}
 	pool := cands
 	if len(pool) > limit*3 {
+		tr.drop("pool_cap", len(pool)-limit*3)
 		pool = pool[:limit*3]
 	}
+	reranked := false
 	if s.reranker != nil && s.reranker.Available() && len(pool) > 1 {
 		docs := make([]string, len(pool))
 		for i, c := range pool {
 			docs[i] = c.title + "\n" + c.summary
 		}
 		if scored, err := s.reranker.Rerank(ctx, query, docs, limit); err == nil && len(scored) > 0 {
-			reranked := make([]cand, 0, len(scored))
+			rr := make([]cand, 0, len(scored))
 			for _, sd := range scored {
 				if sd.Index < 0 || sd.Index >= len(pool) {
 					continue
 				}
 				c := pool[sd.Index]
 				c.score = sd.Score
-				reranked = append(reranked, c)
+				rr = append(rr, c)
 			}
-			pool = reranked
+			tr.drop("rerank_dropped", len(pool)-len(rr))
+			pool = rr
+			reranked = true
 		}
 	}
 	results := make([]KBResult, 0, limit)
-	for _, c := range pool {
+	for i, c := range pool {
 		if c.score < threshold {
+			tr.drop("below_threshold", 1)
+			continue
+		}
+		if len(results) >= limit {
+			tr.drop("over_limit", 1)
 			continue
 		}
 		display := c.title
@@ -348,8 +375,20 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 			Snippet:     c.link,
 			Rank:        c.score,
 		})
-		if len(results) >= limit {
-			break
+		if tr != nil {
+			h := traceHit{
+				ID:     c.id,
+				Score:  math.Round(c.score*10000) / 10000,
+				Ranks:  map[string]int{"vector": c.cosRank},
+				Scores: map[string]float64{"vector": c.cosScore},
+			}
+			if reranked {
+				h.HitType = "rerank"
+				h.Ranks["rerank"] = i + 1
+			} else {
+				h.HitType = "vector"
+			}
+			tr.hits = append(tr.hits, h)
 		}
 	}
 	return results

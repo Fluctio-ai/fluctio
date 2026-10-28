@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -125,6 +126,9 @@ type SummarySearcher interface {
 	// InsertRecallEvent records one recall so stage-2b feedback can be
 	// attributed to the lambda that produced it.
 	InsertRecallEvent(ctx context.Context, ev store.RecallEvent) error
+	// InsertRecallDebugEvent records the recall funnel (per-lane ranks,
+	// per-gate drop counts) for observability. Best-effort.
+	InsertRecallDebugEvent(ctx context.Context, ev store.RecallDebugEvent) error
 	// MarkRecallEventsConsumed flags recall ids as consumed (adoption
 	// signal) when a later fetch follows the surfaced pointer.
 	MarkRecallEventsConsumed(ctx context.Context, recallIDs []string) error
@@ -201,9 +205,41 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 				// queryEmb is filled by the vector-recall stage below and
 				// reused by MMR; stays nil when the embedder is off.
 				var queryEmb []float32
+				// Recall funnel trace — observability only, never changes
+				// behavior: per-lane ranks/scores per candidate and per-gate
+				// drop counts, written on every Path A exit (including the
+				// empty-result and fts-error ones, which are exactly the
+				// silences the counters exist to explain).
+				dbgGates := map[string]int{}
+				dbgParams := map[string]any{"limit": limit, "pool_size": poolSize}
+				ftsRank := map[int64]int{}
+				vecRank := map[int64]int{}
+				vecDist := map[int64]float64{}
+				var dbgCos map[int64]float64
+				dbgCandidates := 0
+				var dbgHits []store.RecallDebugHit
+				defer func() {
+					_ = r.summaryDB.InsertRecallDebugEvent(ctx, store.RecallDebugEvent{
+						AgentID:    r.agentID,
+						Lane:       "memory_search",
+						Trigger:    "tool",
+						Query:      args.Query,
+						Candidates: dbgCandidates,
+						Gates:      dbgGates,
+						Params:     dbgParams,
+						Hits:       dbgHits,
+					})
+				}()
 				hits, err := r.summaryDB.SearchConversationSummariesFTS(ctx, r.agentID, args.Query, poolSize)
 				if err != nil {
+					dbgGates["fts_failed"] = 1
 					goto fallback
+				}
+				for i, h := range hits {
+					ftsRank[h.ID] = i + 1
+				}
+				if len(hits) == 0 {
+					dbgGates["fts_empty"] = 1
 				}
 
 				// Vector recall: embed query → KNN → fetch by ID → merge.
@@ -228,12 +264,21 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 						if embErr == nil {
 							embErr = fmt.Errorf("unexpected embedding count %d", len(vecs))
 						}
+						dbgGates["embed_failed"] = 1
 						return vecFail(embErr)
 					}
 					queryEmb = vecs[0]
 					vecScored, vecErr := r.vecDB.SearchConversationSummariesVectorScored(ctx, vecs[0], poolSize)
 					if vecErr != nil {
+						dbgGates["vec_failed"] = 1
 						return vecFail(vecErr)
+					}
+					if len(vecScored) == 0 {
+						dbgGates["vec_empty"] = 1
+					}
+					for i, sh := range vecScored {
+						vecRank[sh.ID] = i + 1
+						vecDist[sh.ID] = math.Round(sh.Distance*10000) / 10000
 					}
 					if len(vecScored) > 0 {
 						scopedIDs := make([]int64, 0, len(vecScored))
@@ -247,11 +292,15 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 							// memories.
 							vecHits, fetchErr := r.vecDB.GetActiveSummariesByIDs(ctx, r.agentID, scopedIDs)
 							if fetchErr == nil {
+								if d := len(scopedIDs) - len(vecHits); d > 0 {
+									dbgGates["scope_filtered"] = d
+								}
 								hits = mergeSummaryResults(hits, vecHits, poolSize)
 							}
 						}
 					}
 				}
+				dbgCandidates = len(hits)
 
 				// Drop summaries already surfaced earlier this turn so repeat
 				// memory_search calls don't re-feed the LLM the same content.
@@ -261,6 +310,9 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 						if !(*cited)[h.ID] {
 							fresh = append(fresh, h)
 						}
+					}
+					if d := len(hits) - len(fresh); d > 0 {
+						dbgGates["cited_dedup"] = d
 					}
 					hits = fresh
 				}
@@ -277,7 +329,11 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 					}
 					scored, rerankErr := r.reranker.Rerank(ctx, args.Query, docs, limit)
 					if rerankErr == nil {
+						before := len(hits)
 						hits = reorderByRerank(hits, scored)
+						if d := before - len(hits); d > 0 {
+							dbgGates["rerank_dropped"] = d
+						}
 					}
 				}
 
@@ -319,11 +375,18 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 									scores[h.ID] = math.Round(cosineSim(queryEmb, v)*10000) / 10000
 								}
 							}
+							dbgCos = scores
+							dbgParams["lambda"] = lambda
+							dbgParams["explored"] = explored
 							// Relative floor (abstention): MMR's contract is
 							// "fill the limit", which pads weak pools with
 							// borderline hits. Surface only what is close
 							// enough to this query's own best hit instead.
+							beforeFloor := len(mmrHits)
 							mmrHits = applyRelativeFloor(mmrHits, scores, recallRelFloorAlpha)
+							if d := beforeFloor - len(mmrHits); d > 0 {
+								dbgGates["rel_floor"] = d
+							}
 							hits = mmrHits
 							if r.summaryDB != nil {
 								recallID := newRecallID()
@@ -345,6 +408,41 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 							}
 						}
 					}
+				}
+
+				// Survivors carry per-lane attribution: which lanes surfaced
+				// them ("both" is the strongest recall signal), at what rank,
+				// and the raw per-lane scores for offline threshold tuning.
+				for _, h := range hits {
+					dh := store.RecallDebugHit{ID: strconv.FormatInt(h.ID, 10)}
+					fr, inFTS := ftsRank[h.ID]
+					vr, inVec := vecRank[h.ID]
+					switch {
+					case inFTS && inVec:
+						dh.HitType = "both"
+					case inVec:
+						dh.HitType = "vector"
+					default:
+						dh.HitType = "fts"
+					}
+					dh.Ranks = map[string]int{}
+					if inFTS {
+						dh.Ranks["fts"] = fr
+					}
+					if inVec {
+						dh.Ranks["vector"] = vr
+					}
+					dh.Scores = map[string]float64{}
+					if d, ok := vecDist[h.ID]; ok {
+						dh.Scores["vector"] = d
+					}
+					if dbgCos != nil {
+						if c, ok := dbgCos[h.ID]; ok {
+							dh.Scores["cosine"] = c
+							dh.Score = c
+						}
+					}
+					dbgHits = append(dbgHits, dh)
 				}
 
 				// Reinforcement: bump access_count for the surfaced
@@ -523,19 +621,64 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 	if poolLimit < 10 {
 		poolLimit = 10
 	}
+	// Recall funnel trace — observability only. Always built, but written
+	// only when record=true (the recall test box passes false so previews
+	// don't pollute the audit stream). The defer writes on every exit,
+	// including the empty/silent ones those counters exist to explain.
+	dbgGates := map[string]int{}
+	dbgParams := map[string]any{"limit": limit, "pool_size": poolLimit}
+	dbgCandidates := 0
+	var dbgHits []store.RecallDebugHit
+	ftsRank := map[int64]int{}
+	vecRank := map[int64]int{}
+	if record && db != nil {
+		defer func() {
+			_ = db.InsertRecallDebugEvent(ctx, store.RecallDebugEvent{
+				AgentID:    agentID,
+				Lane:       "mem_inject",
+				Trigger:    "auto",
+				Query:      query,
+				Candidates: dbgCandidates,
+				Gates:      dbgGates,
+				Params:     dbgParams,
+				Hits:       dbgHits,
+			})
+		}()
+	}
 	hits, err := db.SearchConversationSummariesFTS(ctx, agentID, query, poolLimit)
 	if err != nil {
+		dbgGates["fts_failed"] = 1
 		return nil, err
+	}
+	dbgCandidates = len(hits)
+	for i, h := range hits {
+		ftsRank[h.ID] = i + 1
 	}
 	if len(hits) == 0 {
 		// FTS is the only candidate source — no pool means nothing to
 		// rank, so skip the embed call entirely (common for fresh agents
 		// or queries with no lexical overlap).
+		dbgGates["no_pool"] = 1
 		return nil, nil
 	}
 	if emb == nil || !emb.Available() {
 		if len(hits) > limit {
+			dbgGates["over_limit"] = len(hits) - limit
 			hits = hits[:limit]
+		}
+		// No embedder: lexical FTS order is the designed path — mark it so
+		// the funnel row doesn't read as an unexplained vector-lane silence.
+		dbgGates["no_embedder"] = 1
+		for _, h := range hits {
+			dh := store.RecallDebugHit{
+				ID:      strconv.FormatInt(h.ID, 10),
+				HitType: "fts",
+				Ranks:   map[string]int{},
+			}
+			if r, ok := ftsRank[h.ID]; ok {
+				dh.Ranks["fts"] = r
+			}
+			dbgHits = append(dbgHits, dh)
 		}
 		return hits, nil
 	}
@@ -546,6 +689,7 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 		if embErr == nil {
 			embErr = fmt.Errorf("unexpected embedding count %d", len(vecs))
 		}
+		dbgGates["embed_failed"] = 1
 		return nil, fmt.Errorf("%w: %w", ErrEmbeddingFailed, embErr)
 	}
 	embMap, _ := db.GetConversationSummaryEmbeddings(ctx, summaryIDs(hits))
@@ -559,20 +703,42 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 		// inject unverified.
 		if v, ok := embMap[h.ID]; ok && len(v) == len(vecs[0]) {
 			scored = append(scored, scoredHit{h, cosineSim(vecs[0], v)})
+		} else {
+			dbgGates["missing_embedding"]++
 		}
 	}
 	if len(scored) == 0 {
 		return nil, nil
 	}
 	sort.Slice(scored, func(i, j int) bool { return scored[i].cos > scored[j].cos })
+	for i, sh := range scored {
+		vecRank[sh.hit.ID] = i + 1
+	}
 	floor := MemRecallFloor(absFloor)
 	if rel := recallRelFloorAlpha * scored[0].cos; rel > floor {
 		floor = rel
 	}
+	dbgParams["abs_floor"] = floor
+	dbgParams["rel_floor_alpha"] = recallRelFloorAlpha
 	// Survivors pass the floors; over-fetch 2× the limit so the reranker
 	// (when configured) chooses the final cut from real alternatives
 	// rather than ratifying cosine's first picks.
 	overFetch := limit * 2
+	// scored is sorted desc, so the first below-floor index bounds the
+	// passing set — count gate drops without disturbing the loop below.
+	nPass := 0
+	for _, sh := range scored {
+		if sh.cos < floor {
+			break
+		}
+		nPass++
+	}
+	if d := len(scored) - nPass; d > 0 {
+		dbgGates["below_floor"] = d
+	}
+	if d := nPass - overFetch; d > 0 {
+		dbgGates["pool_cap"] = d
+	}
 	kept := make([]store.ConversationSummary, 0, overFetch)
 	scores := make(map[int64]float64, overFetch)
 	for _, sh := range scored {
@@ -595,21 +761,49 @@ func SemanticMemRecall(ctx context.Context, db *store.DBStore, emb embedding.Emb
 	// Relevance was already gated by the cosine floors, so a rerank
 	// failure degrades only the ORDER (fall back to cosine order), never
 	// the silence guarantee.
+	reranked := false
 	if rr != nil && rr.Available() && len(kept) > 1 {
 		docs := make([]string, len(kept))
 		for i, h := range kept {
 			docs[i] = h.Summary
 		}
-		if reranked, rerr := rr.Rerank(ctx, query, docs, limit); rerr == nil && len(reranked) > 0 {
-			ordered := reorderByRerank(kept, reranked)
+		if rerankedList, rerr := rr.Rerank(ctx, query, docs, limit); rerr == nil && len(rerankedList) > 0 {
+			ordered := reorderByRerank(kept, rerankedList)
 			if len(ordered) > limit {
 				ordered = ordered[:limit]
 			}
+			if d := len(kept) - len(ordered); d > 0 {
+				dbgGates["rerank_dropped"] = d
+			}
 			kept = ordered
+			reranked = true
 		}
 	}
 	if len(kept) > limit {
+		dbgGates["over_limit"] = len(kept) - limit
 		kept = kept[:limit]
+	}
+	for _, h := range kept {
+		dh := store.RecallDebugHit{
+			ID:   strconv.FormatInt(h.ID, 10),
+			Ranks: map[string]int{},
+		}
+		if r, ok := ftsRank[h.ID]; ok {
+			dh.Ranks["fts"] = r
+		}
+		if r, ok := vecRank[h.ID]; ok {
+			dh.Ranks["vector"] = r
+		}
+		if c, ok := scores[h.ID]; ok {
+			dh.Score = c
+			dh.Scores = map[string]float64{"cosine": c}
+		}
+		if reranked {
+			dh.HitType = "rerank"
+		} else {
+			dh.HitType = "vector"
+		}
+		dbgHits = append(dbgHits, dh)
 	}
 	// Audit only what was actually injected — built forward from kept
 	// rather than pruned out of the survivor map. Lambda stays zero: this
