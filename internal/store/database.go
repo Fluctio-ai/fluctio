@@ -321,6 +321,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateWorkflowTables(ctx); err != nil {
 		return fmt.Errorf("migrate workflow tables: %w", err)
 	}
+	if err := d.migrateNotifications(ctx); err != nil {
+		return fmt.Errorf("migrate notifications: %w", err)
+	}
 	return nil
 }
 

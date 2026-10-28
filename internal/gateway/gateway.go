@@ -901,6 +901,15 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runRecallEventRetention(ctx)
 	}()
+	// notification-queue retention: cursor+delete delivery already clears
+	// acked rows; this is the backstop for an undrained queue (app
+	// unopened past the window). Disabled when
+	// FLUCTIO_NOTIFICATIONS_RETENTION_HOURS<=0.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runNotificationsRetention(ctx)
+	}()
 	// hardcase mining: hourly aggregation of zero-hit recall events into
 	// the review queue (recall_hardcases) — the golden-set feeder. Disabled
 	// when FLUCTIO_RECALL_HARDCASE_MINING_HOURS<=0.

@@ -316,6 +316,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/me/password", auth(s.handleChangeMyPassword))
 	mux.HandleFunc("POST /api/push/devices", auth(s.handleSavePushDevice))
 	mux.HandleFunc("DELETE /api/push/devices/{token}", auth(s.handleDeletePushDevice))
+	// Notification queue (mobile direct delivery, no FCM): polling,
+	// cursor ack, and the foreground SSE stream.
+	mux.HandleFunc("GET /api/notifications", auth(s.handleNotificationsList))
+	mux.HandleFunc("POST /api/notifications/ack", auth(s.handleNotificationsAck))
+	mux.HandleFunc("GET /api/notifications/stream", auth(s.handleNotificationsStream))
 	mux.HandleFunc("POST /api/test-provider", opt(s.handleTestProvider))
 	mux.HandleFunc("POST /api/onboard", s.handleOnboard)
 	mux.HandleFunc("GET /api/admin/chats", admin(s.handleAdminChats))

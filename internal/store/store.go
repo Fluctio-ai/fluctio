@@ -57,6 +57,11 @@ type Store interface {
 	DeletePushDevice(ctx context.Context, userID, token string) error
 	ListPushDevices(ctx context.Context, userID string) ([]PushDeviceRecord, error)
 
+	// --- Notification queue (mobile direct delivery, no FCM) ---
+	SaveNotification(ctx context.Context, rec *NotificationRecord) (int64, error)
+	ListNotifications(ctx context.Context, userID string, sinceID int64, limit int) ([]NotificationRecord, error)
+	AckNotificationsTo(ctx context.Context, userID string, lastID int64) error
+
 	// --- IM claim codes (owner binds IM platform ID via /claim <code>) ---
 	CreateIMClaim(ctx context.Context, agentID, channel, intent string) (string, error)
 	RedeemIMClaim(ctx context.Context, agentID, channel, code string) (bool, error)

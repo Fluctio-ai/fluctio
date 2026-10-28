@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/diary"
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -85,25 +86,39 @@ func (g *Gateway) shelvedPushCycle(ctx context.Context) {
 		if channel == "" {
 			channel = "wechat"
 		}
-		accountID, chatID, sessionKey, ok := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
-		if !ok {
-			slog.Warn("shelved push: no deliverable target; skipping (bind+message the agent once)", "agent", ag.ID, "channel", channel)
-			continue
-		}
-		ch := g.chanMgr.Get(channel, accountID)
-		if ch == nil {
-			slog.Warn("shelved push: channel not registered", "agent", ag.ID, "channel", channel, "account", accountID)
-			continue
+		// The IM target is optional: the notification queue is a delivery
+		// channel of its own (mobile direct delivery) — same deal as the
+		// due-todo sweep. One ledger change is pushed once per channel,
+		// whichever fires first stamps the run.
+		accountID, chatID, sessionKey, hasTarget := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
+		var ch channels.Channel
+		if hasTarget {
+			ch = g.chanMgr.Get(channel, accountID)
+			if ch == nil {
+				slog.Warn("shelved push: channel not registered", "agent", ag.ID, "channel", channel, "account", accountID)
+			}
 		}
 		nudge, n := formatShelvedNudge(ag.ID, ledger, ledgerDate)
-		if err := ch.Send(chatID, nudge); err != nil {
-			slog.Warn("shelved push failed", "agent", ag.ID, "error", err)
+		delivered := false
+		if ch != nil {
+			if err := ch.Send(chatID, nudge); err != nil {
+				slog.Warn("shelved push failed", "agent", ag.ID, "error", err)
+			} else {
+				delivered = true
+			}
+		}
+		if g.enqueueNotification(ctx, dbs, ag, sessionKey, "shelved_nudge", "📌 搁浅话题", nudge, "/agents/"+ag.ID+"/knowledge/diary") {
+			delivered = true
+		}
+		if !delivered {
 			continue // no stamp — retry next tick
 		}
-		if err := archivePushNotice(ctx, dbs, ag.ID, sessionKey, nudge, "shelved_nudge"); err != nil {
-			// IM delivery already succeeded — keep the push stamped and just
-			// log: losing the web-side bubble beats double-sending.
-			slog.Warn("shelved push: archive nudge", "agent", ag.ID, "error", err)
+		if sessionKey != "" {
+			if err := archivePushNotice(ctx, dbs, ag.ID, sessionKey, nudge, "shelved_nudge"); err != nil {
+				// A channel already delivered — keep the push stamped and just
+				// log: losing the web-side bubble beats double-sending.
+				slog.Warn("shelved push: archive nudge", "agent", ag.ID, "error", err)
+			}
 		}
 		if err := dbs.StampShelvedPushRun(ctx, ag.ID, ledgerDate, n, channel); err != nil {
 			slog.Warn("shelved push: stamp", "agent", ag.ID, "error", err)
