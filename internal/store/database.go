@@ -228,6 +228,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateKBNotesSortOrder(ctx); err != nil {
 		return fmt.Errorf("migrate kb_notes.sort_order: %w", err)
 	}
+	if err := d.migrateKBEntryOffsets(ctx); err != nil {
+		return fmt.Errorf("migrate kb_entries offsets: %w", err)
+	}
 	if err := d.migrateDailyDiary(ctx); err != nil {
 		return fmt.Errorf("migrate daily diary table: %w", err)
 	}
@@ -666,6 +669,23 @@ func (d *DBStore) migrateKBNotesSortOrder(ctx context.Context) error {
 		return err
 	}
 	_, err = d.db.ExecContext(ctx, `ALTER TABLE kb_notes ADD COLUMN sort_order REAL NOT NULL DEFAULT 0`)
+	return err
+}
+
+// migrateKBEntryOffsets adds kb_entries.start_offset/end_offset — the
+// chunk's char span in the (governed) source text, written by IngestText
+// and -1 on legacy rows / non-article ingest paths. Foundation for
+// evidence anchoring (wiki facts quoting their source span) without a
+// world re-ingest. Idempotent via tableHasColumn.
+func (d *DBStore) migrateKBEntryOffsets(ctx context.Context) error {
+	has, err := d.tableHasColumn(ctx, "kb_entries", "start_offset")
+	if err != nil || has {
+		return err
+	}
+	if _, err := d.db.ExecContext(ctx, `ALTER TABLE kb_entries ADD COLUMN start_offset INTEGER NOT NULL DEFAULT -1`); err != nil {
+		return err
+	}
+	_, err = d.db.ExecContext(ctx, `ALTER TABLE kb_entries ADD COLUMN end_offset INTEGER NOT NULL DEFAULT -1`)
 	return err
 }
 

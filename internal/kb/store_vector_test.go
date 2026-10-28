@@ -40,7 +40,8 @@ func setupKBVectorTestDB(t *testing.T) *sql.DB {
 			wiki_dirty_at TIMESTAMP)`,
 		`CREATE TABLE kb_entries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, uuid TEXT, source_id TEXT NOT NULL,
-			chunk_index INTEGER NOT NULL DEFAULT 0, content TEXT NOT NULL, agent_id TEXT NOT NULL)`,
+			chunk_index INTEGER NOT NULL DEFAULT 0, content TEXT NOT NULL, agent_id TEXT NOT NULL,
+			start_offset INTEGER NOT NULL DEFAULT -1, end_offset INTEGER NOT NULL DEFAULT -1)`,
 		`CREATE TABLE kb_entry_embeddings (
 			entry_id INTEGER PRIMARY KEY, agent_id TEXT NOT NULL, embedding BLOB,
 			dim INTEGER NOT NULL DEFAULT 0, model TEXT NOT NULL DEFAULT '',

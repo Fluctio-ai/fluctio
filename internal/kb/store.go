@@ -119,6 +119,43 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 		return "", fmt.Errorf("no content to ingest")
 	}
 
+	// Chunk→source char offsets: the span of source text the chunk covers,
+	// located line-by-line in emission order. The chunker re-joins
+	// paragraphs with single "\n" while the source has "\n\n", so whole
+	// chunk bodies don't appear verbatim — but every LINE does (paragraph
+	// text is preserved; large-paragraph sentence splits re-join with the
+	// same single spaces the source has). start = first line's position,
+	// end = just past the last line, so the span covers whole paragraphs
+	// including their separators. Sequential searchFrom keeps later chunks
+	// on their own copies when text repeats. Foundation for wiki evidence
+	// anchoring.
+	offsets := make([][2]int, len(chunks))
+	searchFrom := 0
+	for i, c := range chunks {
+		lines := strings.Split(c.Content, "\n")
+		pos := strings.Index(content[searchFrom:], lines[0])
+		if pos < 0 {
+			offsets[i] = [2]int{-1, -1}
+			continue
+		}
+		start := searchFrom + pos
+		end := start + len(lines[0])
+		for _, ln := range lines[1:] {
+			p := strings.Index(content[end:], ln)
+			if p < 0 {
+				end = -1
+				break
+			}
+			end = end + p + len(ln)
+		}
+		if end < 0 {
+			offsets[i] = [2]int{-1, -1}
+			continue
+		}
+		offsets[i] = [2]int{start, end}
+		searchFrom = start
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("begin tx: %w", err)
@@ -136,17 +173,17 @@ func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourc
 	}
 
 	stmt, err := tx.PrepareContext(ctx,
-		fmt.Sprintf(`INSERT INTO kb_entries (uuid, agent_id, source_id, chunk_index, content)
-			VALUES (%s, %s, %s, %s, %s)`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5)))
+		fmt.Sprintf(`INSERT INTO kb_entries (uuid, agent_id, source_id, chunk_index, content, start_offset, end_offset)
+			VALUES (%s, %s, %s, %s, %s, %s, %s)`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7)))
 	if err != nil {
 		return "", fmt.Errorf("prepare entry: %w", err)
 	}
 	defer stmt.Close()
 
-	for _, c := range chunks {
+	for i, c := range chunks {
 		entryUUID := uuid.New().String()
-		if _, err := stmt.ExecContext(ctx, entryUUID, agentID, sourceID, c.Index, c.Content); err != nil {
+		if _, err := stmt.ExecContext(ctx, entryUUID, agentID, sourceID, c.Index, c.Content, offsets[i][0], offsets[i][1]); err != nil {
 			return "", fmt.Errorf("insert entry: %w", err)
 		}
 	}
