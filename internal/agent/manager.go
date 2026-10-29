@@ -474,8 +474,9 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
 				kbCfg := rc.KB
 				if kbCfg == nil {
-					// No KB config: memory lane only, at its defaults.
-					return kb.AutoQueryCfg{}
+					// No KB config: memory lane only, at its defaults —
+					// including the ON-by-default query rewrite.
+					return kb.AutoQueryCfg{QueryRewrite: true}
 				}
 				threshold := 0.45
 				if kbCfg.Threshold != nil {
@@ -484,6 +485,11 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				ftThreshold := 0.6
 				if kbCfg.FlashTodoThreshold != nil {
 					ftThreshold = *kbCfg.FlashTodoThreshold
+				}
+				// Query-rewrite default: nil = ON. Explicit false opts out.
+				queryRewrite := true
+				if kbCfg.QueryRewrite != nil {
+					queryRewrite = *kbCfg.QueryRewrite
 				}
 				return kb.AutoQueryCfg{
 					Enabled:             kbCfg.Enabled,
@@ -499,10 +505,11 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					MemoryAutoMode:      kbCfg.MemoryAutoMode,
 					MemoryKeywords:      kbCfg.MemoryKeywords,
 					MemoryMaxResults:    kbCfg.MemoryMaxResults,
+					QueryRewrite:        queryRewrite,
 					SearchMode:          kbCfg.SearchMode,
 					EmptyAction:         kbCfg.EmptyAction,
 				}
-			}, memSearch)
+			}, memSearch, ag.makeQueryRewriter())
 			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {
 				kbHC := &kb.HookContext{
 					Messages: hc.Messages,

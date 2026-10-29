@@ -54,6 +54,10 @@ type AutoQueryCfg struct {
 	MemoryAutoMode   string
 	MemoryKeywords   []string
 	MemoryMaxResults int
+	// QueryRewrite runs the shared query-rewrite step before any lane
+	// searches (see QueryRewriter). Mirrors AgentKBCfg.QueryRewrite with
+	// the nil-default resolved to true by the wiring layer.
+	QueryRewrite bool
 	// Shared.
 	SearchMode  string // "augment" (default), "strict"
 	EmptyAction string // "llm" (default), "stop"
@@ -73,9 +77,20 @@ type MemoryRecallHit struct {
 // match; superseded rows filtered inside the store).
 type MemoryAutoSearcher func(ctx context.Context, agentID, query string, limit int) ([]MemoryRecallHit, error)
 
+// QueryRewriter rewrites the raw last-user-message into a standalone
+// retrieval query before any auto-recall lane searches: pronouns resolved
+// against recent context, filler dropped. Wired by the agent manager over
+// a background LLM call (summary model, no thinking, JSON mode). The
+// contract is total: on ANY failure (error, timeout, unusable output) the
+// implementation returns the input query unchanged — the rewrite only
+// improves quality, never blocks recall.
+type QueryRewriter func(ctx context.Context, messages []provider.Message, query string) string
+
 // AutoQueryHook returns a function suitable for use as a BeforeModelCall
 // hook. The cfgFn callback reads the agent's current KB config on each
-// call so changes take effect without restart.
+// call so changes take effect without restart. rewriter may be nil (no
+// rewrite; the raw message searches directly) — the wiring layer passes
+// nil when the agent has no provider.
 //
 // The returned closure holds a per-agent cache of the last query it ran
 // for. Within a ReAct loop the same user message drives every iteration,
@@ -92,7 +107,7 @@ type MemoryAutoSearcher func(ctx context.Context, agentID, query string, limit i
 // sends a different message. The LLM still sees the ingest result in
 // its tool-result stream and can call knowledgebase_search explicitly
 // to refresh — auto-query is a convenience layer, not the only path.
-func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, memSearch MemoryAutoSearcher) func(context.Context, *HookContext) {
+func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, memSearch MemoryAutoSearcher, rewriter QueryRewriter) func(context.Context, *HookContext) {
 	var lastQuery string
 	var lastMemQuery string
 	return func(ctx context.Context, hc *HookContext) {
@@ -146,6 +161,18 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			return
 		}
 
+		// Query rewrite: one shared rewrite call serves every lane that is
+		// about to search. Runs AFTER the cache short-circuit so a ReAct
+		// loop's repeat iterations never re-pay the LLM call, and only when
+		// at least one lane will actually search (the lane gates above run
+		// on the RAW message — trigger semantics belong to the user's own
+		// words, not to a rewritten paraphrase). Best-effort by contract:
+		// the rewriter returns the input unchanged on any failure.
+		searchQuery := query
+		if rewriter != nil && cfg.QueryRewrite {
+			searchQuery = rewriter(ctx, hc.Messages, query)
+		}
+
 		// Memory lane runs first and unconditionally of the KB branches
 		// below — its injection must not be skipped by a KB early return
 		// (e.g. strict-mode SkipLLM).
@@ -161,7 +188,7 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			if memLimit > 10 {
 				memLimit = 10
 			}
-			memHits, memErr := memSearch(ctx, agentID, query, memLimit)
+			memHits, memErr := memSearch(ctx, agentID, searchQuery, memLimit)
 			// Memoize BEFORE branching on results so an empty result also
 			// short-circuits later iterations (same rationale as lastQuery).
 			lastMemQuery = query
@@ -171,10 +198,10 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 				injectMEMContext(hc, memHits)
 				hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
 					Name:   "memory_search",
-					Args:   fmt.Sprintf(`{"query":%q,"limit":%d}`, query, memLimit),
+					Args:   fmt.Sprintf(`{"query":%q,"limit":%d}`, searchQuery, memLimit),
 					Result: buildMemoryResultSummary(memHits),
 				})
-				slog.Info("kb auto-query memory lane", "agent", agentID, "query", query, "hits", len(memHits))
+				slog.Info("kb auto-query memory lane", "agent", agentID, "query", searchQuery, "hits", len(memHits))
 			}
 		}
 
@@ -221,8 +248,8 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			ftThreshold = 0.6
 		}
 
-		results, err := store.SearchSplit(ctx, agentID, query, wikiLimit, wikiThreshold, ftLimit, ftThreshold)
-		slog.Info("kb auto-query search", "agent", agentID, "query", query, "results", len(results), "err", err)
+		results, err := store.SearchSplit(ctx, agentID, searchQuery, wikiLimit, wikiThreshold, ftLimit, ftThreshold)
+		slog.Info("kb auto-query search", "agent", agentID, "query", searchQuery, "results", len(results), "err", err)
 
 		if err != nil {
 			slog.Debug("kb auto-query failed", "agent", agentID, "error", err)
@@ -243,12 +270,12 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			hc.KnowledgeSources = sources
 			hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
 				Name:   "knowledgebase_search",
-				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, query, wikiLimit+ftLimit),
+				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, searchQuery, wikiLimit+ftLimit),
 				Result: buildToolResultSummary(results, citations),
 			})
 			switch cfg.SearchMode {
 			case "strict":
-				content := buildKBAnswer(results, query)
+				content := buildKBAnswer(results, searchQuery)
 				hc.PrebuiltContent = content
 				hc.SkipLLM = true
 				return

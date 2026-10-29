@@ -156,8 +156,8 @@ func RegisterMemorySearch(r *Registry, workspace string, fts ...FTSSearcher) {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{
-					"type":        "string",
-					"description": "Keywords or phrases to search for in past summaries",
+					"type": "string",
+					"description": "A standalone search query for past summaries: resolve pronouns to concrete entities from the conversation (那个方案 → the plan's actual subject), keep distinctive keywords (names, projects, tools), drop filler. Do NOT copy the user's message verbatim.",
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",

@@ -54,8 +54,8 @@ var mcpKBTools = []mcpToolDef{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{
-					"type":        "string",
-					"description": "The search query",
+					"type": "string",
+					"description": "A standalone search query: resolve pronouns to concrete entities, keep distinctive keywords, drop filler",
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",
