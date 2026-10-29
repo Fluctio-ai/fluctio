@@ -29,9 +29,13 @@ type NotificationRecord struct {
 // the client acks a watermark and everything up to it is deleted — so
 // there is no acked_at column to keep dialect-compatible.
 func (d *DBStore) migrateNotifications(ctx context.Context) error {
+	idCol := "id INTEGER PRIMARY KEY AUTOINCREMENT"
+	if d.dialect == "postgres" {
+		idCol = "id BIGSERIAL PRIMARY KEY"
+	}
 	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS notifications (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS notifications (
+			%s,
 			user_id TEXT NOT NULL,
 			agent_id TEXT NOT NULL DEFAULT '',
 			kind TEXT NOT NULL,
@@ -39,23 +43,8 @@ func (d *DBStore) migrateNotifications(ctx context.Context) error {
 			body TEXT NOT NULL DEFAULT '',
 			deep_link TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
+		)`, idCol),
 		`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, id)`,
-	}
-	if d.dialect == "postgres" {
-		stmts = []string{
-			`CREATE TABLE IF NOT EXISTS notifications (
-				id BIGSERIAL PRIMARY KEY,
-				user_id TEXT NOT NULL,
-				agent_id TEXT NOT NULL DEFAULT '',
-				kind TEXT NOT NULL,
-				title TEXT NOT NULL DEFAULT '',
-				body TEXT NOT NULL DEFAULT '',
-				deep_link TEXT NOT NULL DEFAULT '',
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications (user_id, id)`,
-		}
 	}
 	for _, s := range stmts {
 		if _, err := d.db.ExecContext(ctx, s); err != nil {
@@ -85,9 +74,8 @@ func (d *DBStore) SaveNotification(ctx context.Context, rec *NotificationRecord)
 		return rec.ID, nil
 	}
 	res, err := d.db.ExecContext(ctx,
-		fmt.Sprintf(`INSERT INTO notifications (user_id, agent_id, kind, title, body, deep_link, created_at)
-			VALUES (%s, %s, %s, %s, %s, %s, %s)`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7)),
+		`INSERT INTO notifications (user_id, agent_id, kind, title, body, deep_link, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		rec.UserID, rec.AgentID, rec.Kind, rec.Title, rec.Body, rec.DeepLink, now)
 	if err != nil {
 		return 0, err

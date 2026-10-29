@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -61,40 +60,16 @@ func (g *Gateway) sweepAllAgentsDueTodos(ctx context.Context, windowHours int) {
 		if len(due) == 0 {
 			continue
 		}
-		// The IM target is optional: the notification queue is a delivery
-		// channel of its own (mobile direct delivery), so a missing/unbound
-		// IM channel no longer silences the reminder — it just skips the IM
-		// leg (and the session bubble, which needs the IM session key).
-		accountID, chatID, sessionKey, hasTarget := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
-		var ch channels.Channel
-		if hasTarget {
-			ch = g.chanMgr.Get(channel, accountID)
-			if ch == nil {
-				slog.Warn("due-todo sweep: channel not registered", "agent", ag.ID, "channel", channel, "account", accountID)
-			}
-		}
+		// Shared delivery policy (notifications_enqueue.go): IM optional,
+		// queue always, either delivering stamps. The owner + target are
+		// agent-scoped, so resolve once outside the per-todo loop.
+		uid := sweepOwnerUID(ctx, dbs, ag)
+		ch, chatID, sessionKey, _ := g.resolveSweepTarget(ctx, dbs, ag.ID, channel, "due-todo sweep")
 		for _, t := range due {
 			text := formatTodoReminder(t)
-			delivered := false
-			if ch != nil {
-				if err := ch.Send(chatID, text); err != nil {
-					slog.Warn("due-todo push failed", "agent", ag.ID, "todo", t.ID, "error", err)
-				} else {
-					delivered = true
-				}
-			}
-			if g.enqueueNotification(ctx, dbs, ag, sessionKey, "todo_reminder", t.Title, text, "/agents/"+ag.ID+"/knowledge/todos") {
-				delivered = true
-			}
-			if !delivered {
+			if !g.deliverSweepNudge(ctx, dbs, ag, uid, ch, chatID, sessionKey,
+				"todo_reminder", t.Title, text, "/agents/"+ag.ID+"/knowledge/todos", "todo_reminder", "due-todo sweep") {
 				continue // neither channel made it — don't stamp, retry next tick
-			}
-			if sessionKey != "" {
-				if err := archivePushNotice(ctx, dbs, ag.ID, sessionKey, text, "todo_reminder"); err != nil {
-					// A channel already delivered — log only, still stamp so
-					// the reminder doesn't re-fire for a lost web bubble.
-					slog.Warn("due-todo sweep: archive notice", "agent", ag.ID, "todo", t.ID, "error", err)
-				}
 			}
 			slog.Info("due-todo reminder pushed", "agent", ag.ID, "todo", t.ID, "title", t.Title, "channel", channel, "chat", chatID)
 			if err := ks.MarkTodoReminded(ctx, ag.ID, t.ID); err != nil {

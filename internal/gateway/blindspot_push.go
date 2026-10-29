@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
@@ -52,12 +51,7 @@ func (g *Gateway) blindspotPushCycle(ctx context.Context) {
 		}
 		// Gate: only push after today's push time (default 09:00) so the
 		// nudge lands in the morning, after the 02:30 diary generation.
-		pt := strings.TrimSpace(dc.BlindspotPushTime)
-		if pt == "" {
-			pt = "09:00"
-		}
-		pushAt := parseCronTimeToday(pt, nowCST)
-		if !pushAt.IsZero() && nowCST.Before(pushAt) {
+		if !pushTimePassed(dc.BlindspotPushTime, nowCST) {
 			continue
 		}
 		blinds, diaryDate, err := dbs.LatestBlindspots(ctx, ag.ID, today)
@@ -74,42 +68,14 @@ func (g *Gateway) blindspotPushCycle(ctx context.Context) {
 		if dbs.HasDailyRun(ctx, "diary_blindspot_push_runs", ag.ID, diaryDate) {
 			continue
 		}
-		channel := strings.TrimSpace(dc.BlindspotPushChannel)
-		if channel == "" {
-			channel = "wechat"
-		}
-		// The IM target is optional: the notification queue is a delivery
-		// channel of its own (mobile direct delivery) — same deal as the
-		// other three push sweeps.
-		accountID, chatID, sessionKey, hasTarget := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
-		var ch channels.Channel
-		if hasTarget {
-			ch = g.chanMgr.Get(channel, accountID)
-			if ch == nil {
-				slog.Warn("blindspot push: channel not registered", "agent", ag.ID, "channel", channel, "account", accountID)
-			}
-		}
+		// Shared delivery policy (notifications_enqueue.go): IM optional,
+		// queue always, either delivering stamps the diary.
+		uid := sweepOwnerUID(ctx, dbs, ag)
+		ch, chatID, sessionKey, channel := g.resolveSweepTarget(ctx, dbs, ag.ID, dc.BlindspotPushChannel, "blindspot push")
 		nudge := formatBlindspotNudge(ag.ID, blinds)
-		delivered := false
-		if ch != nil {
-			if err := ch.Send(chatID, nudge); err != nil {
-				slog.Warn("blindspot push failed", "agent", ag.ID, "error", err)
-			} else {
-				delivered = true
-			}
-		}
-		if g.enqueueNotification(ctx, dbs, ag, sessionKey, "blindspot", "🔍 可能漏了的事", nudge, "/agents/"+ag.ID+"/knowledge/diary") {
-			delivered = true
-		}
-		if !delivered {
+		if !g.deliverSweepNudge(ctx, dbs, ag, uid, ch, chatID, sessionKey,
+			"blindspot", "🔍 可能漏了的事", nudge, "/agents/"+ag.ID+"/knowledge/diary", "blindspot_nudge", "blindspot push") {
 			continue // no stamp — retry next tick
-		}
-		if sessionKey != "" {
-			if err := archivePushNotice(ctx, dbs, ag.ID, sessionKey, nudge, "blindspot_nudge"); err != nil {
-				// A channel already delivered — keep the push stamped and just
-				// log: losing the web-side bubble beats double-sending.
-				slog.Warn("blindspot push: archive nudge", "agent", ag.ID, "error", err)
-			}
 		}
 		if err := dbs.StampBlindspotPushRun(ctx, ag.ID, diaryDate, len(blinds), channel); err != nil {
 			slog.Warn("blindspot push: stamp", "agent", ag.ID, "error", err)

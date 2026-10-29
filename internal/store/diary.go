@@ -212,24 +212,36 @@ func (d *DBStore) ListDailyDiaries(ctx context.Context, agentID, from, to string
 // Pass-3 inheritance both key on this "latest non-empty = chain head"
 // rule; empty ledgers (Pass 3 off/failed/cleared that day, stored as '[]')
 // are not chain heads. Returns (nil, "", nil) when no diary carries one.
-func (d *DBStore) LatestShelvedLedger(ctx context.Context, agentID, to string) ([]DiaryShelved, string, error) {
+// latestNonEmptyDiarySection returns (json, date) of the most recent diary
+// dated on or before `to` whose `column` section is non-empty (the
+// "what counts as an empty section" predicate lives here once). Callers
+// unmarshal into their own typed slice.
+func (d *DBStore) latestNonEmptyDiarySection(ctx context.Context, agentID, to, column string) (string, sql.NullString, error) {
 	var q string
 	if d.dialect == "postgres" {
-		q = `SELECT date, shelved FROM daily_diary WHERE agent_id = $1 AND date <= $2
-			AND shelved IS NOT NULL AND shelved <> '' AND shelved <> '[]'
-			ORDER BY date DESC LIMIT 1`
+		q = fmt.Sprintf(`SELECT date, %s FROM daily_diary WHERE agent_id = $1 AND date <= $2
+			AND %s IS NOT NULL AND %s <> '' AND %s <> '[]'
+			ORDER BY date DESC LIMIT 1`, column, column, column, column)
 	} else {
-		q = `SELECT date, shelved FROM daily_diary WHERE agent_id = ? AND date <= ?
-			AND shelved IS NOT NULL AND shelved <> '' AND shelved <> '[]'
-			ORDER BY date DESC LIMIT 1`
+		q = fmt.Sprintf(`SELECT date, %s FROM daily_diary WHERE agent_id = ? AND date <= ?
+			AND %s IS NOT NULL AND %s <> '' AND %s <> '[]'
+			ORDER BY date DESC LIMIT 1`, column, column, column, column)
 	}
 	var date string
-	var shelvedJSON sql.NullString
-	err := d.db.QueryRowContext(ctx, q, agentID, to).Scan(&date, &shelvedJSON)
+	var sectionJSON sql.NullString
+	err := d.db.QueryRowContext(ctx, q, agentID, to).Scan(&date, &sectionJSON)
 	if err == sql.ErrNoRows {
-		return nil, "", nil
+		return "", sql.NullString{}, nil
 	}
 	if err != nil {
+		return "", sql.NullString{}, err
+	}
+	return date, sectionJSON, nil
+}
+
+func (d *DBStore) LatestShelvedLedger(ctx context.Context, agentID, to string) ([]DiaryShelved, string, error) {
+	date, shelvedJSON, err := d.latestNonEmptyDiarySection(ctx, agentID, to, "shelved")
+	if err != nil || date == "" {
 		return nil, "", err
 	}
 	var out []DiaryShelved
@@ -243,23 +255,8 @@ func (d *DBStore) LatestShelvedLedger(ctx context.Context, agentID, to string) (
 // "", nil) means "nothing to nudge about" (the generator's 宁可空不凑数
 // discipline makes that the common case).
 func (d *DBStore) LatestBlindspots(ctx context.Context, agentID, to string) ([]DiaryBlindspot, string, error) {
-	var q string
-	if d.dialect == "postgres" {
-		q = `SELECT date, blindspots FROM daily_diary WHERE agent_id = $1 AND date <= $2
-			AND blindspots IS NOT NULL AND blindspots <> '' AND blindspots <> '[]'
-			ORDER BY date DESC LIMIT 1`
-	} else {
-		q = `SELECT date, blindspots FROM daily_diary WHERE agent_id = ? AND date <= ?
-			AND blindspots IS NOT NULL AND blindspots <> '' AND blindspots <> '[]'
-			ORDER BY date DESC LIMIT 1`
-	}
-	var date string
-	var blindJSON sql.NullString
-	err := d.db.QueryRowContext(ctx, q, agentID, to).Scan(&date, &blindJSON)
-	if err == sql.ErrNoRows {
-		return nil, "", nil
-	}
-	if err != nil {
+	date, blindJSON, err := d.latestNonEmptyDiarySection(ctx, agentID, to, "blindspots")
+	if err != nil || date == "" {
 		return nil, "", err
 	}
 	var out []DiaryBlindspot

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -55,12 +54,7 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 		}
 		// Gate: only push after today's PushTime (default 09:00) so the
 		// digest lands at the configured hour, not at boot.
-		pt := strings.TrimSpace(cfg.PushTime)
-		if pt == "" {
-			pt = "09:00"
-		}
-		pushAt := parseCronTimeToday(pt, nowCST)
-		if !pushAt.IsZero() && nowCST.Before(pushAt) {
+		if !pushTimePassed(cfg.PushTime, nowCST) {
 			continue
 		}
 		ks := kb.NewKBStore(dbs.DB(), dbs.Dialect())
@@ -83,41 +77,16 @@ func (g *Gateway) cardsPushCycle(ctx context.Context) {
 		if channel == "" {
 			channel = "wechat"
 		}
-		// The IM target is optional: the notification queue is a delivery
-		// channel of its own (mobile direct delivery) — same deal as the
-		// due-todo sweep. A day is stamped once ANY channel delivered, so a
-		// missing IM binding no longer silences the digest.
-		accountID, chatID, sessionKey, hasTarget := deliverableTargetForAgent(ctx, dbs, ag.ID, channel)
-		var ch channels.Channel
-		if hasTarget {
-			ch = g.chanMgr.Get(channel, accountID)
-			if ch == nil {
-				slog.Warn("cards push: channel not registered", "agent", ag.ID, "channel", channel, "account", accountID)
-			}
-		}
+		// Shared delivery policy (notifications_enqueue.go): IM optional,
+		// queue always, either delivering stamps the day.
+		uid := sweepOwnerUID(ctx, dbs, ag)
+		ch, chatID, sessionKey, channel := g.resolveSweepTarget(ctx, dbs, ag.ID, channel, "cards push")
 		st, _ := ks.CardStats(ctx, ag.ID)
 		digest := formatCardsDigest(ag.ID, due, st)
-		delivered := false
-		if ch != nil {
-			if err := ch.Send(chatID, digest); err != nil {
-				slog.Warn("cards push failed", "agent", ag.ID, "error", err)
-			} else {
-				delivered = true
-			}
-		}
 		title := "🧠 今日卡片组（" + strconv.Itoa(len(due)) + " 张）"
-		if g.enqueueNotification(ctx, dbs, ag, sessionKey, "cards_digest", title, digest, "/agents/"+ag.ID+"/knowledge/cards?review=1") {
-			delivered = true
-		}
-		if !delivered {
+		if !g.deliverSweepNudge(ctx, dbs, ag, uid, ch, chatID, sessionKey,
+			"cards_digest", title, digest, "/agents/"+ag.ID+"/knowledge/cards?review=1", "cards_digest", "cards push") {
 			continue // no stamp — retry next tick
-		}
-		if sessionKey != "" {
-			if err := archivePushNotice(ctx, dbs, ag.ID, sessionKey, digest, "cards_digest"); err != nil {
-				// A channel already delivered — keep the push stamped and
-				// just log: losing the web-side bubble beats double-sending.
-				slog.Warn("cards push: archive digest", "agent", ag.ID, "error", err)
-			}
 		}
 		if err := dbs.StampCardPushRun(ctx, ag.ID, today, len(due), channel); err != nil {
 			slog.Warn("cards push: stamp", "agent", ag.ID, "error", err)

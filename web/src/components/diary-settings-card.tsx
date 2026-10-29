@@ -13,11 +13,54 @@ import {
   selectLabel,
 } from "@/components/ui/select";
 import { getAgentConfig, updateAgent } from "@/lib/api";
-import { channelLabel, PUSH_CHANNELS } from "@/components/channel-icon";
+import { channelLabel as channelLabelFn, PUSH_CHANNELS } from "@/components/channel-icon";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { useAutoSave } from "@/hooks/use-auto-save";
 import { SettingsCard, CardHead, Field, GroupHead, SaveStatus } from "@/components/settings-ui";
+
+// PushScheduleFields — the time+channel grid every push group shares
+// (shelved nudge, blindspot nudge). Labels differ per group; the shape
+// never does.
+function PushScheduleFields({
+  time,
+  onTime,
+  channel,
+  onChannel,
+  timeLabel,
+  timeHint,
+  channelLabel,
+}: {
+  time: string;
+  onTime: (v: string) => void;
+  channel: string;
+  onChannel: (v: string) => void;
+  timeLabel: string;
+  timeHint: string;
+  channelLabel: string;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <Field label={timeLabel} hint={timeHint}>
+        <Input type="time" value={time} onChange={(e) => onTime(e.target.value)} />
+      </Field>
+      <Field label={channelLabel}>
+        <Select value={channel} onValueChange={(v) => v && onChannel(v)}>
+          <SelectTrigger>
+            <SelectValue>{(v: unknown) => channelLabelFn(v as string)}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {PUSH_CHANNELS.map((c) => (
+              <SelectItem key={c.value} value={c.value}>
+                {c.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+    </div>
+  );
+}
 
 // DiarySettingsCard — daily-diary generation config. Lives in the
 // Settings dialog's Knowledge tab next to KBSettingsCard. When enabled,
@@ -89,7 +132,7 @@ export function DiarySettingsCard() {
         blindspotPushTime,
         blindspotPushChannel,
       },
-    } as any);
+    });
     if (res?.error) throw new Error(res.error);
   }, [agentId, enabled, cronTime, thinkingMode, shelvedEnabled, shelvedPushEnabled, shelvedPushTime, shelvedPushChannel, blindspotPushEnabled, blindspotPushTime, blindspotPushChannel]);
 
@@ -163,29 +206,15 @@ export function DiarySettingsCard() {
                   }
                 />
                 {shelvedPushEnabled && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <Field label={t("diary.shelvedPushTime")} hint={t("diary.shelvedPushTimeDesc")}>
-                      <Input
-                        type="time"
-                        value={shelvedPushTime}
-                        onChange={(e) => wrap(setShelvedPushTime)(e.target.value)}
-                      />
-                    </Field>
-                    <Field label={t("diary.shelvedPushChannel")}>
-                      <Select value={shelvedPushChannel} onValueChange={(v) => v && wrap(setShelvedPushChannel)(v)}>
-                        <SelectTrigger>
-                          <SelectValue>{(v: unknown) => channelLabel(v as string)}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {PUSH_CHANNELS.map((c) => (
-                            <SelectItem key={c.value} value={c.value}>
-                              {c.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
-                  </div>
+                  <PushScheduleFields
+                    time={shelvedPushTime}
+                    onTime={wrap(setShelvedPushTime)}
+                    channel={shelvedPushChannel}
+                    onChannel={wrap(setShelvedPushChannel)}
+                    timeLabel={t("diary.shelvedPushTime")}
+                    timeHint={t("diary.shelvedPushTimeDesc")}
+                    channelLabel={t("diary.shelvedPushChannel")}
+                  />
                 )}
               </div>
             )}
@@ -203,29 +232,15 @@ export function DiarySettingsCard() {
               }
             />
             {blindspotPushEnabled && (
-              <div className="grid grid-cols-2 gap-4">
-                <Field label={t("diary.blindspotPushTime")} hint={t("diary.blindspotPushTimeDesc")}>
-                  <Input
-                    type="time"
-                    value={blindspotPushTime}
-                    onChange={(e) => wrap(setBlindspotPushTime)(e.target.value)}
-                  />
-                </Field>
-                <Field label={t("diary.blindspotPushChannel")}>
-                  <Select value={blindspotPushChannel} onValueChange={(v) => v && wrap(setBlindspotPushChannel)(v)}>
-                    <SelectTrigger>
-                      <SelectValue>{(v: unknown) => channelLabel(v as string)}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {PUSH_CHANNELS.map((c) => (
-                        <SelectItem key={c.value} value={c.value}>
-                          {c.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </div>
+              <PushScheduleFields
+                time={blindspotPushTime}
+                onTime={wrap(setBlindspotPushTime)}
+                channel={blindspotPushChannel}
+                onChannel={wrap(setBlindspotPushChannel)}
+                timeLabel={t("diary.blindspotPushTime")}
+                timeHint={t("diary.blindspotPushTimeDesc")}
+                channelLabel={t("diary.blindspotPushChannel")}
+              />
             )}
           </div>
         </div>

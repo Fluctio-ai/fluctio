@@ -1641,6 +1641,8 @@ export interface AgentUpdatePayload {
   kb?: AgentKBCfg;
   // Per-agent Q&A card config blob (whole-replace, same pattern as kb).
   cards?: AgentCardsCfg;
+  // Per-agent daily-diary config blob (whole-replace, same pattern as kb).
+  diary?: AgentDiaryCfg;
   // Per-agent overrides for LLM generation + the ReAct iteration budget.
   // Omit to leave unchanged; pass <=0 to clear (fall back to the
   // agents.defaults entry → system default 8192 / 0.7 / 20).
