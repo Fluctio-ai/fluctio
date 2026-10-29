@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/auth"
@@ -85,8 +86,18 @@ func (s *Server) handleDeletePushDevice(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// chatReplyThrottle coalesces a multi-bubble turn's SendMessage fanout:
+// one queue row per (agent, session) per window, or a 3-bubble reply
+// rings three times.
+var chatReplyThrottle = struct {
+	sync.Mutex
+	last map[string]time.Time
+}{last: map[string]time.Time{}}
+
+const chatReplyThrottleWindow = time.Minute
+
 func (s *Server) handleWebPushOutbound(msg bus.OutboundMessage) {
-	if s.pushClient == nil || !s.pushClient.Enabled() || s.dataStore == nil {
+	if s.dataStore == nil {
 		return
 	}
 	if msg.Channel != "web" || strings.TrimSpace(msg.AgentID) == "" || strings.TrimSpace(msg.ChatID) == "" {
@@ -101,6 +112,21 @@ func (s *Server) handleWebPushOutbound(msg bus.OutboundMessage) {
 		slog.Debug("push: session owner not found", "agent", msg.AgentID, "session", msg.ChatID, "error", err)
 		return
 	}
+
+	title := "Fluctio"
+	if rec, err := s.dataStore.GetAgent(ctx, msg.AgentID); err == nil && rec != nil && strings.TrimSpace(rec.Name) != "" {
+		title = strings.TrimSpace(rec.Name)
+	}
+
+	// Notification queue (Android direct delivery, no FCM): enqueue even
+	// without APNs — self-hosted single-user deployments have no APNs keys,
+	// and the app's poll/SSE drains this. Throttled per session so a turn's
+	// bubble burst lands as one ring.
+	s.enqueueChatReply(ctx, msg, userID, title)
+
+	if s.pushClient == nil || !s.pushClient.Enabled() {
+		return
+	}
 	devices, err := s.dataStore.ListPushDevices(ctx, userID)
 	if err != nil {
 		slog.Warn("push: list devices failed", "user", userID, "error", err)
@@ -110,10 +136,6 @@ func (s *Server) handleWebPushOutbound(msg bus.OutboundMessage) {
 		return
 	}
 
-	title := "Fluctio"
-	if rec, err := s.dataStore.GetAgent(ctx, msg.AgentID); err == nil && rec != nil && strings.TrimSpace(rec.Name) != "" {
-		title = strings.TrimSpace(rec.Name)
-	}
 	for _, d := range devices {
 		if d.Platform != "" && d.Platform != "ios" {
 			continue
@@ -127,5 +149,41 @@ func (s *Server) handleWebPushOutbound(msg bus.OutboundMessage) {
 		}); err != nil {
 			slog.Warn("push: APNs send failed", "user", userID, "error", err)
 		}
+	}
+}
+
+// enqueueChatReply best-effort writes one chat_reply row into the
+// notification queue. The body carries the reply's first line — the queue
+// has none of APNs' fixed-copy limits, so use them.
+func (s *Server) enqueueChatReply(ctx context.Context, msg bus.OutboundMessage, userID, title string) {
+	text := strings.TrimSpace(msg.Text)
+	if text == "" {
+		return
+	}
+	key := msg.AgentID + "\x00" + msg.ChatID
+	chatReplyThrottle.Lock()
+	if time.Since(chatReplyThrottle.last[key]) < chatReplyThrottleWindow {
+		chatReplyThrottle.Unlock()
+		return
+	}
+	chatReplyThrottle.last[key] = time.Now()
+	chatReplyThrottle.Unlock()
+
+	line := text
+	if idx := strings.IndexByte(line, '\n'); idx >= 0 {
+		line = line[:idx]
+	}
+	if len(line) > 120 {
+		line = line[:120] + "…"
+	}
+	if _, err := s.dataStore.SaveNotification(ctx, &store.NotificationRecord{
+		UserID:   userID,
+		AgentID:  msg.AgentID,
+		Kind:     "chat_reply",
+		Title:    title,
+		Body:     line,
+		DeepLink: "/agents/" + msg.AgentID + "/chat/" + msg.ChatID,
+	}); err != nil {
+		slog.Warn("push: enqueue chat reply failed", "agent", msg.AgentID, "error", err)
 	}
 }
