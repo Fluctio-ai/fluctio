@@ -849,35 +849,51 @@ export function ChatScreen() {
   // token beginning with `/` at the caret; selecting a skill swaps that
   // token for `/<skill-name> `, leaving the cursor after the space so the
   // user can keep typing their prompt.
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [globalSkills, setGlobalSkills] = useState<SkillInfo[]>([]);
+  const [agentSkills, setAgentSkills] = useState<SkillInfo[]>([]);
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
 
-  // Slash-menu skills: global catalog first, then the agent's own
-  // installed skills layered on top by name (the loader's shadow
-  // precedence — agent-scope wins over a same-named global skill).
-  // Refetched per agent switch so a skill installed from
-  // /agents/<id>/skills/ shows up here without a reload. The
-  // agent-scoped endpoint is owner-only; a failure (or a non-owner
-  // viewer) just degrades to the global list.
+  // Slash-menu skills. The global catalog is agent-independent, so it's
+  // fetched once on mount; only the agent-scoped list refetches per
+  // agent switch (a skill installed from /agents/<id>/skills/ shows up
+  // here without a reload). That endpoint is owner-only; a failure (or
+  // a non-owner viewer) just degrades to the global list.
   useEffect(() => {
     let aborted = false;
-    (async () => {
-      const globalList = await getSkills().catch(() => [] as SkillInfo[]);
-      const agentList = selectedAgent
-        ? await getAgentSkills(selectedAgent).catch(() => [] as SkillInfo[])
-        : [];
-      if (aborted) return;
-      const merged = new Map<string, SkillInfo>();
-      for (const s of globalList) merged.set(s.name, s);
-      for (const s of agentList) merged.set(s.name, s);
-      setSkills([...merged.values()]);
-    })();
+    getSkills()
+      .then((list) => {
+        if (!aborted) setGlobalSkills(list);
+      })
+      .catch(() => {});
+    return () => {
+      aborted = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let aborted = false;
+    const fetch = selectedAgent
+      ? getAgentSkills(selectedAgent).catch(() => [] as SkillInfo[])
+      : Promise.resolve([] as SkillInfo[]);
+    fetch.then((list) => {
+      if (!aborted) setAgentSkills(list);
+    });
     return () => {
       aborted = true;
     };
   }, [selectedAgent]);
+
+  // Agent-scope entries shadow same-named global skills — approximates
+  // the loader precedence; the list endpoints don't apply the config
+  // enabled/disabled gating, so a disabled skill may still be listed.
+  const skills = useMemo<SkillInfo[]>(() => {
+    const merged = new Map<string, SkillInfo>();
+    for (const s of globalSkills) merged.set(s.name, s);
+    for (const s of agentSkills) merged.set(s.name, s);
+    return [...merged.values()];
+  }, [globalSkills, agentSkills]);
 
   // Reset chat-pane state when the active agent changes. Without
   // this, switching agents from the sidebar would briefly render the
