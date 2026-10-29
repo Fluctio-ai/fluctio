@@ -107,9 +107,9 @@ func TestQueryRewriteLive(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rewritten := rewriteQuery(ctx, prov, model, tc.msgs, tc.raw)
+			rewritten, need := rewriteQuery(ctx, prov, model, tc.msgs, tc.raw)
 			t.Logf("raw       = %s", tc.raw)
-			t.Logf("rewritten = %s", rewritten)
+			t.Logf("rewritten = %s (need=%v)", rewritten, need)
 			if ftsDB != nil {
 				ctxF, cancelF := context.WithTimeout(ctx, 10*time.Second)
 				rawHits, rawErr := tools.SemanticMemRecall(ctxF, ftsDB, nil, nil, seedAgent, "", tc.raw, 3, nil, false)

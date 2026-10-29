@@ -248,7 +248,7 @@ type InsightEchoItem struct {
 
 type KBCfg struct {
 	Enabled     bool     `json:"enabled"`
-	AutoMode    string   `json:"autoMode,omitempty"`    // "always", "keyword", "disabled"
+	AutoMode    string   `json:"autoMode,omitempty"`    // "always", "smart", "keyword", "disabled"
 	Keywords    []string `json:"keywords,omitempty"`    // trigger words for keyword mode
 	MaxResults  int      `json:"maxResults,omitempty"`  // default 5
 	SearchMode  string   `json:"searchMode,omitempty"`  // "augment" (default), "strict"

@@ -77,14 +77,22 @@ type MemoryRecallHit struct {
 // match; superseded rows filtered inside the store).
 type MemoryAutoSearcher func(ctx context.Context, agentID, query string, limit int) ([]MemoryRecallHit, error)
 
-// QueryRewriter rewrites the raw last-user-message into a standalone
-// retrieval query before any auto-recall lane searches: pronouns resolved
-// against recent context, filler dropped. Wired by the agent manager over
-// a background LLM call (summary model, no thinking, JSON mode). The
-// contract is total: on ANY failure (error, timeout, unusable output) the
-// implementation returns the input query unchanged — the rewrite only
-// improves quality, never blocks recall.
-type QueryRewriter func(ctx context.Context, messages []provider.Message, query string) string
+// QueryRewriter judges and rewrites the raw last-user-message before any
+// auto-recall lane searches: one cheap LLM call returns whether the
+// message is retrieval-worthy at all (need=false — the "smart" lanes'
+// skip signal) and, when it is, the standalone query with pronouns
+// resolved against recent context and filler dropped. Wired by the agent
+// manager over a background LLM call (summary model, no thinking, JSON
+// mode). The contract is total: on ANY failure (error, timeout, unusable
+// output) the implementation returns the input query with need=true —
+// the rewrite only improves quality, and the verdict only ever narrows
+// lanes that opted into it, never blocks recall outright. On need=false
+// the searchQuery return is UNSPECIFIED (a compliant producer returns
+// the raw message, but consumers must not rely on it) — the consumer
+// normalizes to the raw message itself, so lanes that still search
+// (always/keyword hits, which ignore the verdict) never query with a
+// meaningless rewrite.
+type QueryRewriter func(ctx context.Context, messages []provider.Message, query string) (searchQuery string, need bool)
 
 // AutoQueryHook returns a function suitable for use as a BeforeModelCall
 // hook. The cfgFn callback reads the agent's current KB config on each
@@ -111,8 +119,11 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 	var lastQuery string
 	var lastMemQuery string
 	// Rewrite memo: keyed by the raw query, independent of whether any lane
-	// produced an injection (see the call site).
+	// produced an injection (see the call site). The need verdict memoizes
+	// with it, so ReAct iterations of a need=false turn never re-pay the
+	// judge call.
 	var lastRewriteQuery, lastRewriteResult string
+	var lastRewriteNeed bool
 	return func(ctx context.Context, hc *HookContext) {
 		cfg := cfgFn()
 		slog.Debug("kb auto-query hook", "agent", agentID, "enabled", cfg.Enabled, "mode", cfg.AutoMode, "store_nil", store == nil, "source", hc.Source)
@@ -125,22 +136,41 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			return
 		}
 
-		// Chat-only turns degrade proactive recall: "always" lanes become
-		// keyword-triggered so a quiet brainstorming turn injects nothing,
-		// while an explicit keyword still recalls. "disabled" stays off,
-		// and the wiki/flash "" (off) modes are untouched — degrading ""
-		// would silently turn lanes on.
-		if hc.ChatOnly {
-			cfg.AutoMode = degradeAlwaysToKeyword(cfg.AutoMode)
-			cfg.FlashTodoAutoMode = degradeAlwaysToKeyword(cfg.FlashTodoAutoMode)
+		// Layer 0, before any lane gate: whole-message acknowledgements
+		// ("好的" / "嗯嗯" / "ok") short-circuit every mode, always
+		// included — nothing in them is retrieval-worthy, so no mode (not
+		// even "always") should pay the judge call, let alone a search.
+		// Whole-match only, so "好的，那 X 再整理一下" falls through.
+		if isPureAckMessage(query) {
+			return
 		}
 
-		// Each group triggers independently. A group fires when it is
-		// enabled, its AutoMode isn't "disabled", and (always mode, or
-		// keyword mode matches one of its keywords). KB lanes need the
-		// KBStore; the memory lane only needs its own searcher.
-		wikiOn := store != nil && cfg.Enabled && cfg.AutoMode != "disabled" && groupTriggered(cfg.AutoMode, query, cfg.Keywords)
-		ftOn := store != nil && cfg.FlashTodoEnabled && cfg.FlashTodoAutoMode != "disabled" && groupTriggered(cfg.FlashTodoAutoMode, query, cfg.FlashTodoKeywords)
+		// Chat-only turns degrade proactive recall: "always" AND "smart"
+		// lanes become keyword-triggered so a quiet brainstorming turn
+		// injects nothing (and pays no judge call), while an explicit
+		// keyword still recalls. "disabled" stays off, and the wiki/flash
+		// "" (off) modes are untouched — degrading "" would silently turn
+		// lanes on.
+		if hc.ChatOnly {
+			cfg.AutoMode = degradeAutoModeForChatOnly(cfg.AutoMode)
+			cfg.FlashTodoAutoMode = degradeAutoModeForChatOnly(cfg.FlashTodoAutoMode)
+		}
+
+		// Each group triggers independently, in three states. gateFire:
+		// search now (always mode, or keyword/smart with a keyword hit —
+		// hits bypass the judge). gateNeedsLLM: "smart" with no keyword
+		// hit — the shared judge call below decides. gateSkip: off or not
+		// triggered (laneGateFor's default branch covers "disabled" and
+		// every unknown mode). KB lanes need the KBStore; the memory lane
+		// only needs its own searcher.
+		wikiGate := gateSkip
+		if store != nil && cfg.Enabled {
+			wikiGate = laneGateFor(cfg.AutoMode, query, cfg.Keywords)
+		}
+		ftGate := gateSkip
+		if store != nil && cfg.FlashTodoEnabled {
+			ftGate = laneGateFor(cfg.FlashTodoAutoMode, query, cfg.FlashTodoKeywords)
+		}
 		// Memory lane defaults ON: empty mode = "always". The trigger-gap
 		// fix only works if recall fires without the LLM choosing to ask.
 		memMode := cfg.MemoryAutoMode
@@ -148,40 +178,62 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			memMode = "always"
 		}
 		if hc.ChatOnly {
-			memMode = degradeAlwaysToKeyword(memMode)
+			memMode = degradeAutoModeForChatOnly(memMode)
 		}
-		memOn := memSearch != nil && groupTriggered(memMode, query, cfg.MemoryKeywords)
-		if !wikiOn && !ftOn && !memOn {
+		memGate := gateSkip
+		if memSearch != nil {
+			memGate = laneGateFor(memMode, query, cfg.MemoryKeywords)
+		}
+		if wikiGate == gateSkip && ftGate == gateSkip && memGate == gateSkip {
 			return
 		}
 
 		// Cache hit: same query already processed AND the injection it
 		// produced is still in hc.Messages. Per-lane caches: a KB lane
 		// checks its [KB] injection, the memory lane its [MEM] one.
-		kbDone := !wikiOn && !ftOn || lastQuery == query && messagesContainPrefixed(hc.Messages, "[KB]")
-		memDone := !memOn || lastMemQuery == query && messagesContainPrefixed(hc.Messages, "[MEM]")
+		kbDone := wikiGate == gateSkip && ftGate == gateSkip || lastQuery == query && messagesContainPrefixed(hc.Messages, "[KB]")
+		memDone := memGate == gateSkip || lastMemQuery == query && messagesContainPrefixed(hc.Messages, "[MEM]")
 		if kbDone && memDone {
 			return
 		}
 
-		// Query rewrite: one shared rewrite call serves every lane that is
-		// about to search, and only when at least one lane will actually
-		// search (the lane gates above run on the RAW message — trigger
-		// semantics belong to the user's own words, not to a rewritten
-		// paraphrase). Memoized by raw query on its own key rather than
-		// riding the injection caches above: those require a "[KB]"/"[MEM]"
+		// Query rewrite: one shared judge+rewrite call serves every lane
+		// that is about to search, and only when at least one lane will
+		// actually search (the lane gates above run on the RAW message —
+		// trigger semantics belong to the user's own words, not to a
+		// rewritten paraphrase). It answers need (does this message
+		// warrant a search at all?) and the rewritten query in the same
+		// call. Memoized by raw query on its own key rather than riding
+		// the injection caches above: those require a "[KB]"/"[MEM]"
 		// marker, which a zero-hit lane never produces — so without this
-		// memo the common "always mode, nothing relevant" turn would re-pay
-		// the LLM call on every ReAct iteration. Best-effort by contract:
-		// the rewriter returns the input unchanged on any failure.
-		searchQuery := query
+		// memo the common "always mode, nothing relevant" turn would
+		// re-pay the LLM call on every ReAct iteration. Best-effort by
+		// contract: any failure returns (raw, need=true).
+		searchQuery, need := query, true
 		if rewriter != nil && cfg.QueryRewrite {
 			if lastRewriteQuery == query {
-				searchQuery = lastRewriteResult
+				searchQuery, need = lastRewriteResult, lastRewriteNeed
 			} else {
-				searchQuery = rewriter(ctx, hc.Messages, query)
-				lastRewriteQuery, lastRewriteResult = query, searchQuery
+				searchQuery, need = rewriter(ctx, hc.Messages, query)
+				lastRewriteQuery, lastRewriteResult, lastRewriteNeed = query, searchQuery, need
 			}
+		}
+		// The judge's verdict only narrows lanes that deferred to it
+		// ("smart", gateNeedsLLM). always/keyword lanes fired
+		// deterministically and search regardless — with the raw query,
+		// normalized here: a need=false reply carries no usable rewrite
+		// (the contract leaves its query field empty), so the hook never
+		// trusts it for the lanes that still search.
+		if !need {
+			searchQuery = query
+		}
+		// gateSkip → off; gateFire → search; gateNeedsLLM → search only
+		// when the judge approved.
+		wikiOn := wikiGate == gateFire || (wikiGate == gateNeedsLLM && need)
+		ftOn := ftGate == gateFire || (ftGate == gateNeedsLLM && need)
+		memOn := memGate == gateFire || (memGate == gateNeedsLLM && need)
+		if !wikiOn && !ftOn && !memOn {
+			return
 		}
 
 		// Memory lane runs first and unconditionally of the KB branches
@@ -453,28 +505,73 @@ func buildMemoryResultSummary(hits []MemoryRecallHit) string {
 	return sb.String()
 }
 
-// groupTriggered reports whether an auto-recall group should fire for this
-// query, given its AutoMode ("always" / "keyword" / "disabled") and keywords.
-func groupTriggered(autoMode, query string, keywords []string) bool {
+// laneGate is the three-state trigger verdict for one auto-recall group.
+type laneGate uint8
+
+const (
+	gateSkip     laneGate = iota // off, or trigger conditions not met
+	gateFire                     // search now — no judge call needed
+	gateNeedsLLM                 // "smart" without a keyword hit — the shared judge call decides
+)
+
+// laneGateFor classifies one auto-recall group's trigger, given its
+// AutoMode ("always" / "smart" / "keyword" / "disabled") and keywords.
+// "smart": a keyword hit fires immediately (the deterministic fast
+// path); a miss defers to the shared judge call's need verdict.
+func laneGateFor(autoMode, query string, keywords []string) laneGate {
 	switch autoMode {
 	case "always":
-		return true
+		return gateFire
+	case "smart":
+		if containsAnyKeyword(query, keywords) {
+			return gateFire
+		}
+		return gateNeedsLLM
 	case "keyword":
-		return containsAnyKeyword(query, keywords)
+		if containsAnyKeyword(query, keywords) {
+			return gateFire
+		}
+		return gateSkip
 	default:
-		return false
+		return gateSkip
 	}
 }
 
-// degradeAlwaysToKeyword maps "always" to "keyword" and leaves every
-// other mode untouched. Used by chat-only turns to silence proactive
-// recall without turning off lanes the user configured, and without
-// enabling lanes that were off ("" stays "").
-func degradeAlwaysToKeyword(mode string) string {
-	if mode == "always" {
+// degradeAutoModeForChatOnly maps "always" and "smart" to "keyword" and
+// leaves every other mode untouched. Used by chat-only turns to silence
+// proactive recall (and skip its judge calls) without turning off lanes
+// the user configured, and without enabling lanes that were off (""
+// stays "").
+func degradeAutoModeForChatOnly(mode string) string {
+	if mode == "always" || mode == "smart" {
 		return "keyword"
 	}
 	return mode
+}
+
+// ackWords is the whole-message acknowledgement set for the layer-0
+// short-circuit: pure reactions that never warrant a recall search, an
+// injection, or the judge call itself. Whole-match only — checked by
+// exact equality after trim/punctuation strip, never substring, so
+// "好的，那 X 再整理一下" falls through to the normal gates.
+var ackWords = map[string]bool{
+	"好的": true, "好": true, "好嘞": true, "好吧": true,
+	"嗯": true, "嗯嗯": true, "嗯呢": true, "哦": true, "噢": true,
+	"ok": true, "okay": true, "行": true, "对": true, "是的": true,
+	"收到": true, "明白": true, "知道了": true, "清楚了": true,
+	"继续": true, "接着说": true, "那先这样": true, "先这样": true,
+	"谢谢": true, "感谢": true, "辛苦了": true,
+}
+
+// isPureAckMessage reports whether s is nothing but an acknowledgement,
+// optionally followed by trailing punctuation. Layer 0 of the trigger
+// stack: cheaper than every other gate and applies to all modes.
+func isPureAckMessage(s string) bool {
+	s = strings.TrimSpace(strings.ToLower(s))
+	s = strings.TrimRight(s, "。！!？?，,、~～…;. ")
+	// No re-trim needed: the cutset already contains the space, so nothing
+	// can trail the stripped punctuation.
+	return ackWords[s]
 }
 
 func containsAnyKeyword(text string, keywords []string) bool {

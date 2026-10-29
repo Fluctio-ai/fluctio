@@ -799,7 +799,10 @@ type AgentKBCfg struct {
 	// gap where recall only happened when the LLM decided to call the
 	// tool. Lexical-FTS only (precise, no embedding per turn); empty
 	// AutoMode = "always" (default ON), "disabled" opts out, "keyword"
-	// gates on MemoryKeywords. Superseded rows are filtered by the store.
+	// gates on MemoryKeywords, "smart" defers to the shared judge call's
+	// need verdict (keyword hits still fire deterministically; needs
+	// QueryRewrite on, else degrades to always-fire). Superseded rows are
+	// filtered by the store.
 	MemoryAutoMode   string   `json:"memoryAutoMode,omitempty"`
 	MemoryKeywords   []string `json:"memoryKeywords,omitempty"`
 	MemoryMaxResults int      `json:"memoryMaxResults,omitempty"`

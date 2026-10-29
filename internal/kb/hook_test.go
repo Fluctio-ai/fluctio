@@ -115,23 +115,32 @@ func rewriteHookCtx() *HookContext {
 }
 
 // countingRewriter is a QueryRewriter stub: it counts calls and returns
-// its fixed result (or the input unchanged when result is empty — the
-// "rewrite unavailable" contract).
+// its fixed result with need=!noRecall (or the input unchanged with
+// need=true when result is empty — the "rewrite unavailable" contract).
 type countingRewriter struct {
-	result string
-	calls  int
+	result   string
+	noRecall bool
+	calls    int
 }
 
-func (c *countingRewriter) rewrite(ctx context.Context, msgs []provider.Message, q string) string {
+func (c *countingRewriter) rewrite(ctx context.Context, msgs []provider.Message, q string) (string, bool) {
 	c.calls++
 	if c.result == "" {
-		return q
+		return q, true
 	}
-	return c.result
+	return c.result, !c.noRecall
 }
 
 func rewriteCfg(enabled bool) func() AutoQueryCfg {
 	return func() AutoQueryCfg { return AutoQueryCfg{QueryRewrite: enabled} }
+}
+
+// smartCfg is rewriteCfg's sibling for the smart-mode tests: memory lane
+// in "smart", rewrite on, optional fast-path keywords.
+func smartCfg(keywords ...string) func() AutoQueryCfg {
+	return func() AutoQueryCfg {
+		return AutoQueryCfg{QueryRewrite: true, MemoryAutoMode: "smart", MemoryKeywords: keywords}
+	}
 }
 
 func TestAutoQueryHookRewritesMemoryQuery(t *testing.T) {
@@ -235,5 +244,92 @@ func TestAutoQueryHookRewriteMemoizedOnZeroHits(t *testing.T) {
 	}
 	if hc.Messages[0].Content != "上次聊的那个方案怎么样了" {
 		t.Fatalf("zero-hit turn must not inject anything, got %q", hc.Messages[0].Content)
+	}
+}
+
+func TestAutoQueryHookAckShortCircuitsAllLanes(t *testing.T) {
+	// Layer 0: a whole-message acknowledgement skips everything — no
+	// judge call, no search — even in always mode.
+	rw := &countingRewriter{result: "rewritten"}
+	mem := &memLaneRecorder{}
+	hook := AutoQueryHook(nil, "a1", func() AutoQueryCfg {
+		return AutoQueryCfg{QueryRewrite: true, MemoryAutoMode: "always"}
+	}, mem.searcher(), rw.rewrite)
+	hc := &HookContext{Messages: []provider.Message{{Role: "user", Content: "好的。"}}}
+	hook(context.Background(), hc)
+
+	if rw.calls != 0 || len(mem.queries) != 0 {
+		t.Fatalf("rewriter calls = %d, lane queries = %v; want 0/none for an ack", rw.calls, mem.queries)
+	}
+	// The punctuation-stripped whole-match must not swallow real content.
+	hc2 := &HookContext{Messages: []provider.Message{{Role: "user", Content: "好的，那个迁移方案再展开讲讲"}}}
+	hook(context.Background(), hc2)
+	if rw.calls != 1 {
+		t.Fatalf("rewriter calls = %d after a non-ack message, want 1", rw.calls)
+	}
+}
+
+func TestAutoQueryHookSmartNeedFalseSkipsLane(t *testing.T) {
+	// "smart" + judge says need=false → the lane never searches.
+	rw := &countingRewriter{result: "改写结果", noRecall: true}
+	mem := &memLaneRecorder{}
+	hook := AutoQueryHook(nil, "a1", smartCfg(), mem.searcher(), rw.rewrite)
+	hook(context.Background(), rewriteHookCtx())
+
+	if rw.calls != 1 {
+		t.Fatalf("rewriter calls = %d, want 1", rw.calls)
+	}
+	if len(mem.queries) != 0 {
+		t.Fatalf("lane queries = %v, want none on a need=false verdict", mem.queries)
+	}
+}
+
+func TestAutoQueryHookSmartKeywordHitFiresDespiteNeedFalse(t *testing.T) {
+	// A keyword hit fires deterministically — the judge verdict only
+	// narrows lanes that deferred to it, never a fired lane.
+	rw := &countingRewriter{result: "改写结果", noRecall: true}
+	mem := &memLaneRecorder{}
+	hook := AutoQueryHook(nil, "a1", smartCfg("方案"), mem.searcher(), rw.rewrite)
+	hook(context.Background(), rewriteHookCtx())
+
+	if len(mem.queries) != 1 {
+		t.Fatalf("lane queries = %v, want the fired search despite need=false", mem.queries)
+	}
+	// need=false replies carry no rewrite, so the fired lane searched raw.
+	if mem.queries[0] != "上次聊的那个方案怎么样了" {
+		t.Fatalf("fired lane query = %q, want the raw message", mem.queries[0])
+	}
+}
+
+func TestAutoQueryHookSmartVerdictMemoized(t *testing.T) {
+	// ReAct iteration 2 of a need=false turn must not re-pay the judge
+	// call (no [MEM] marker exists to short-circuit the injection cache).
+	rw := &countingRewriter{result: "改写结果", noRecall: true}
+	mem := &memLaneRecorder{}
+	hook := AutoQueryHook(nil, "a1", smartCfg(), mem.searcher(), rw.rewrite)
+	hc := rewriteHookCtx()
+	hook(context.Background(), hc)
+	hook(context.Background(), hc)
+
+	if rw.calls != 1 {
+		t.Fatalf("rewriter calls = %d, want 1 across two iterations", rw.calls)
+	}
+	if len(mem.queries) != 0 {
+		t.Fatalf("lane queries = %v, want none", mem.queries)
+	}
+}
+
+func TestAutoQueryHookSmartChatOnlyDegradesToKeyword(t *testing.T) {
+	// Chat-only turns degrade smart to keyword: no keywords configured →
+	// no trigger, and crucially no judge call at all.
+	rw := &countingRewriter{result: "rewritten"}
+	mem := &memLaneRecorder{}
+	hook := AutoQueryHook(nil, "a1", smartCfg(), mem.searcher(), rw.rewrite)
+	hc := rewriteHookCtx()
+	hc.ChatOnly = true
+	hook(context.Background(), hc)
+
+	if rw.calls != 0 || len(mem.queries) != 0 {
+		t.Fatalf("rewriter calls = %d, lane queries = %v; want 0/none in a chat-only smart turn", rw.calls, mem.queries)
 	}
 }

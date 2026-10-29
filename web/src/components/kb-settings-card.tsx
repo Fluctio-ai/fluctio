@@ -104,9 +104,15 @@ export function KBSettingsCard() {
   // segmented control so every mode is visible at once.
   const modeOptions = [
     { value: "always", label: t("knowledge.modeAlways") },
+    { value: "smart", label: t("knowledge.modeSmart") },
     { value: "keyword", label: t("knowledge.modeKeyword") },
     { value: "disabled", label: t("knowledge.modeDisabled") },
   ];
+  // Keyword input visibility: keyword mode (keywords are its trigger —
+  // required) and smart mode (keywords are an optional judge-free fast
+  // path). The required-keyword validation below deliberately stays
+  // keyword-only — that asymmetry is the point of this named helper.
+  const showsKeywords = (m: string) => m === "keyword" || m === "smart";
   const [kbEnabled, setKbEnabled] = useState(false);
   const [autoMode, setAutoMode] = useState("always");
   const [keywords, setKeywords] = useState("");
@@ -335,7 +341,7 @@ export function KBSettingsCard() {
             )}
           </>
         )}
-        {memAutoMode === "keyword" && (
+        {showsKeywords(memAutoMode) && (
           <KeywordField value={memKeywords} onChange={wrap(setMemKeywords)} invalid={memKeywordsInvalid} />
         )}
       </div>
@@ -366,7 +372,7 @@ export function KBSettingsCard() {
           {/* Keywords input lives right under the trigger mode that
               enables it — it used to render at the card tail, far from
               the Wiki 触发模式 picker that shows it. */}
-          {autoMode === "keyword" && (
+          {showsKeywords(autoMode) && (
             <KeywordField
               value={keywords}
               onChange={wrap(setKeywords)}
@@ -424,7 +430,7 @@ export function KBSettingsCard() {
                     onChange={wrap(setFtMaxResults)}
                   />
                 </Field>
-                {ftAutoMode === "keyword" && (
+                {showsKeywords(ftAutoMode) && (
                   <KeywordField
                     value={ftKeywords}
                     onChange={wrap(setFtKeywords)}

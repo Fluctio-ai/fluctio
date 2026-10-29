@@ -39,9 +39,12 @@ func rewriteTestMessages() []provider.Message {
 }
 
 func TestRewriteQueryResolvesAndReturns(t *testing.T) {
-	p := &rewriteMockProvider{content: `{"query": "Docker 迁移 Kubernetes 状态"}`}
+	p := &rewriteMockProvider{content: `{"need": true, "query": "Docker 迁移 Kubernetes 状态"}`}
 	msgs := rewriteTestMessages()
-	got := rewriteQuery(context.Background(), p, "m1", msgs, "那个迁移现在什么状态了")
+	got, need := rewriteQuery(context.Background(), p, "m1", msgs, "那个迁移现在什么状态了")
+	if !need {
+		t.Fatalf("need = false, want true for a retrieval-worthy message")
+	}
 	if got != "Docker 迁移 Kubernetes 状态" {
 		t.Fatalf("rewriteQuery = %q, want the rewritten query", got)
 	}
@@ -60,8 +63,9 @@ func TestRewriteQueryResolvesAndReturns(t *testing.T) {
 }
 
 func TestRewriteQueryFallsBack(t *testing.T) {
-	// Every failure mode must yield the raw query unchanged: the rewrite
-	// is a quality layer, never an availability gate.
+	// Every failure mode must yield the raw query with need=true: the
+	// rewrite is a quality layer, never an availability gate — a failed
+	// judge must not read as "nothing to recall".
 	long := strings.Repeat("长", 200)
 	cases := []struct {
 		name    string
@@ -72,25 +76,51 @@ func TestRewriteQueryFallsBack(t *testing.T) {
 		{"empty body", "", nil},
 		{"blank body", "   ", nil},
 		{"prose instead of json", "I think the query is about migration", nil},
-		// Pure-filler messages legitimately rewrite to "" — downstream
-		// lanes still gate on their own floors, so fall back to raw.
+		// Pure-filler messages legitimately rewrite to "" without a need
+		// verdict — downstream lanes still gate on their own floors, so
+		// fall back to raw.
 		{"empty query", `{"query": ""}`, nil},
 		{"oversized query", `{"query": "` + long + `"}`, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &rewriteMockProvider{content: tc.content, err: tc.err}
-			if got := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "原话"); got != "原话" {
-				t.Fatalf("rewriteQuery = %q, want fallback to the raw query", got)
+			got, need := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "原话")
+			if got != "原话" || !need {
+				t.Fatalf("rewriteQuery = (%q, %v), want fallback to (raw, true)", got, need)
 			}
 		})
 	}
 }
 
-func TestRewriteQueryNilProvider(t *testing.T) {
-	got := rewriteQuery(context.Background(), nil, "m1", rewriteTestMessages(), "原话")
+func TestRewriteQueryMissingNeedField(t *testing.T) {
+	// A reply that omits the need field (older models, JSON drift) must
+	// read as need=true and still deliver the rewrite — never as a skip
+	// verdict, and never as a failed rewrite.
+	p := &rewriteMockProvider{content: `{"query": "改写结果"}`}
+	got, need := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "原话")
+	if got != "改写结果" || !need {
+		t.Fatalf("rewriteQuery = (%q, %v), want (rewritten, true) when need is omitted", got, need)
+	}
+}
+
+func TestRewriteQueryNeedFalse(t *testing.T) {
+	// The explicit "nothing retrieval-worthy" verdict: raw query back
+	// with need=false — the smart lanes' skip signal.
+	p := &rewriteMockProvider{content: `{"need": false, "query": ""}`}
+	got, need := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "原话")
+	if need {
+		t.Fatalf("need = true, want false on an explicit no-recall verdict")
+	}
 	if got != "原话" {
-		t.Fatalf("rewriteQuery with nil provider = %q, want the raw query", got)
+		t.Fatalf("rewriteQuery = %q, want the raw query back", got)
+	}
+}
+
+func TestRewriteQueryNilProvider(t *testing.T) {
+	got, need := rewriteQuery(context.Background(), nil, "m1", rewriteTestMessages(), "原话")
+	if got != "原话" || !need {
+		t.Fatalf("rewriteQuery with nil provider = (%q, %v), want (raw, true)", got, need)
 	}
 }
 
