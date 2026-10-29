@@ -812,14 +812,19 @@ type AgentKBCfg struct {
 	MemoryRerank bool `json:"memoryRerank,omitempty"`
 	// QueryRewrite gates the LLM query-rewrite step shared by ALL
 	// auto-recall lanes ([MEM] memory, [KB] wiki, flash/todo): before any
-	// lane searches, one cheap background call (summary model, no
-	// thinking, JSON mode, short timeout) rewrites the raw last-user
-	// message into a standalone retrieval query — pronouns resolved
-	// against recent context ("那个方案" → the plan's subject), filler
-	// dropped. Any rewrite failure falls back to the raw message, so the
-	// flag only toggles quality, never availability. nil = ON (default);
-	// false opts out.
+	// lane searches, one cheap background call (no thinking, JSON mode,
+	// short timeout) rewrites the raw last-user message into a standalone
+	// retrieval query — pronouns resolved against recent context ("那个
+	// 方案" → the plan's subject), filler dropped. Any rewrite failure
+	// falls back to the raw message, so the flag only toggles quality,
+	// never availability. nil = ON (default); false opts out.
 	QueryRewrite *bool `json:"queryRewrite,omitempty"`
+	// QueryRewriteModel overrides the model used for that rewrite call.
+	// Empty = the summary model chain (memory.summaryModel, else the
+	// agent's main model). Accepts the same "provider/model" form as
+	// agent model fields — point it at a cheap fast model to keep the
+	// per-message rewrite cost down.
+	QueryRewriteModel string `json:"queryRewriteModel,omitempty"`
 	// Dedup thresholds for inbound KB writes (nil = built-in default).
 	// At/above these, an existing same/similar source blocks the write:
 	// flash skip silently; article near-duplicate skips (≥High) or pends (Mid).

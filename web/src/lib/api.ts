@@ -1760,6 +1760,10 @@ export interface AgentKBCfg {
   memoryThreshold?: number;
   /** Opt the [MEM] lane into the cross-encoder final cut (2× over-fetch → rerank → top-N). */
   memoryRerank?: boolean;
+  /** LLM query rewrite before any auto-recall lane searches (pronoun resolution, filler drop). Shared by all lanes; nil = on. */
+  queryRewrite?: boolean;
+  /** Model override for the rewrite call ("provider/model" form). Empty = summary model chain. */
+  queryRewriteModel?: string;
   /** IM channel for due-todo reminders (wechat/qq/telegram/...). Default wechat. */
   reminderChannel?: string;
   // Dedup thresholds for inbound KB writes (nil/undefined = built-in default

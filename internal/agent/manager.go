@@ -471,6 +471,13 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		// summaries. Registering a no-op hook when neither is wired would
 		// only cost a config lookup per model call.
 		if kbStore != nil || memSearch != nil {
+			// rewriteModel: the KB config's override for the shared
+			// query-rewrite call (empty = summary-model chain). Snapshot
+			// at build time, same semantics as the reranker wiring above.
+			rewriteModel := ""
+			if rc.KB != nil {
+				rewriteModel = rc.KB.QueryRewriteModel
+			}
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
 				kbCfg := rc.KB
 				if kbCfg == nil {
@@ -509,7 +516,7 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 					SearchMode:          kbCfg.SearchMode,
 					EmptyAction:         kbCfg.EmptyAction,
 				}
-			}, memSearch, ag.makeQueryRewriter())
+			}, memSearch, ag.makeQueryRewriter(rewriteModel))
 			ag.hooks.Register(BeforeModelCall, func(ctx context.Context, hc *HookContext) {
 				kbHC := &kb.HookContext{
 					Messages: hc.Messages,

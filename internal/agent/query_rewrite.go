@@ -134,12 +134,18 @@ func utf8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
 // makeQueryRewriter adapts rewriteQuery into the kb.QueryRewriter
 // contract for the auto-recall hook. Nil provider → nil rewriter (the
 // hook then searches with the raw message, its documented no-rewrite
-// path).
-func (a *Agent) makeQueryRewriter() kb.QueryRewriter {
+// path). overrideModel (AgentKBCfg.QueryRewriteModel) beats the summary
+// model; the chain resolves per call so summary-config changes apply
+// without an agent rebuild.
+func (a *Agent) makeQueryRewriter(overrideModel string) kb.QueryRewriter {
 	if a.provider == nil {
 		return nil
 	}
 	return func(ctx context.Context, messages []provider.Message, query string) string {
-		return rewriteQuery(ctx, a.bgProvider(), a.summaryModelFor(), messages, query)
+		model := overrideModel
+		if model == "" {
+			model = a.summaryModelFor()
+		}
+		return rewriteQuery(ctx, a.bgProvider(), model, messages, query)
 	}
 }

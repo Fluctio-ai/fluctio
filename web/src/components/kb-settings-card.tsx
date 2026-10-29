@@ -132,6 +132,10 @@ export function KBSettingsCard() {
   const [memMaxResults, setMemMaxResults] = useState(3);
   const [memThreshold, setMemThreshold] = useState(MEM_FLOOR_MIN);
   const [memRerank, setMemRerank] = useState(false);
+  // Query rewrite (shared by all recall lanes). Default ON; the model
+  // override is optional (empty = summary model).
+  const [qrEnabled, setQrEnabled] = useState(true);
+  const [qrModel, setQrModel] = useState("");
   const [configLoaded, setConfigLoaded] = useState(false);
 
   const loadConfig = useCallback(
@@ -164,6 +168,8 @@ export function KBSettingsCard() {
                 setMemMaxResults(kb.memoryMaxResults || 3);
                 setMemThreshold(Math.max(MEM_FLOOR_MIN, kb.memoryThreshold ?? MEM_FLOOR_MIN));
                 setMemRerank(kb.memoryRerank ?? false);
+                setQrEnabled(kb.queryRewrite ?? true);
+                setQrModel(kb.queryRewriteModel || "");
               }
               setConfigLoaded(true);
             })
@@ -211,6 +217,8 @@ export function KBSettingsCard() {
         memoryMaxResults: memMaxResults,
         memoryThreshold: memThreshold,
         memoryRerank: memRerank,
+        queryRewrite: qrEnabled,
+        queryRewriteModel: qrModel.trim() || undefined,
       },
     } as any);
     if (res?.error) throw new Error(res.error);
@@ -238,6 +246,8 @@ export function KBSettingsCard() {
     memMaxResults,
     memThreshold,
     memRerank,
+    qrEnabled,
+    qrModel,
   ]);
 
   // Keyword mode is a contract: no keywords = recall silently never
@@ -308,6 +318,21 @@ export function KBSettingsCard() {
               checked={memRerank}
               onCheckedChange={wrap(setMemRerank)}
             />
+            <ToggleRow
+              title={t("knowledge.queryRewrite")}
+              hint={t("knowledge.queryRewriteDesc")}
+              checked={qrEnabled}
+              onCheckedChange={wrap(setQrEnabled)}
+            />
+            {qrEnabled && (
+              <Field label={t("knowledge.queryRewriteModel")} hint={t("knowledge.queryRewriteModelHint")}>
+                <Input
+                  value={qrModel}
+                  onChange={(e) => wrap(setQrModel)(e.target.value)}
+                  placeholder={t("knowledge.queryRewriteModelPlaceholder")}
+                />
+              </Field>
+            )}
           </>
         )}
         {memAutoMode === "keyword" && (
