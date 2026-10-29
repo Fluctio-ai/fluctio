@@ -39,6 +39,7 @@ import AgentChannelsPage from "@/app/agents/[id]/channels/page";
 import AgentSchedulerPage from "@/app/agents/[id]/scheduler/page";
 import AgentRegexHooksPage from "@/app/agents/[id]/regex-hooks/page";
 import { KBSettingsCard } from "@/components/kb-settings-card";
+import { NotifySettingsCard } from "@/components/notify-settings-card";
 import { DiarySettingsCard } from "@/components/diary-settings-card";
 import { CardsSettingsCard } from "@/components/cards-settings-card";
 import { WikiAutoGenSettingsCard } from "@/components/wiki-autogen-settings-card";
@@ -292,6 +293,7 @@ export function AgentSettingsDialog({
               <DiarySettingsCard />
               <CardsSettingsCard />
               <WikiAutoGenSettingsCard />
+              <NotifySettingsCard />
             </div>
           )}
           {tab === "vectorization" && <AgentMemoryPage />}

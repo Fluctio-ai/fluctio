@@ -218,6 +218,10 @@ func runGateway(port int) error {
 	webSrv.SetUsageMeter(gw.Usage())
 	webSrv.SetAuth(authResolver)
 	webSrv.SetWebChannel(gw.WebChannel())
+	// IM replies → mobile notification queue. The channel manager is the
+	// single consumer of bus.Outbound, so the mirror hangs off it rather
+	// than adding a second reader (which would split the stream).
+	gw.ChannelManager().SetOutboundObserver(webSrv.OutboundObserver)
 	// Online DB maintenance: the idle-window probe is a process-global
 	// atomic turn counter; the coordinator snapshots a backup before the
 	// VACUUM runs (SQLite-only; PostgreSQL fails Start honestly).

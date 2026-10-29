@@ -3898,6 +3898,28 @@ func (d *DBStore) LookupSessionOwner(ctx context.Context, agentID, sessionKey st
 	return uid, nil
 }
 
+// SessionKeyForChat resolves the session key for an IM conversation from
+// its (agent, channel, account, chat) quadruple. Outbound bus messages
+// carry only ChatID — the IM platform's chat id — while the dashboard and
+// the mobile app address sessions by session_key, so the notification
+// mirror needs this translation to build a working deep link and to ask
+// "is anyone viewing that session". Returns "" (no error) when no row
+// matches, which is the normal case for a chat that never got a session.
+func (d *DBStore) SessionKeyForChat(ctx context.Context, agentID, channel, accountID, chatID string) (string, error) {
+	var key string
+	err := d.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT session_key FROM sessions WHERE agent_id = %s AND channel = %s AND account_id = %s AND chat_id = %s ORDER BY updated_at DESC LIMIT 1`,
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
+		agentID, channel, accountID, chatID).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
 // GetSessionByKey loads a session by (agentID, sessionKey) without
 // user_id scoping. Safe because session_key is globally unique.
 func (d *DBStore) GetSessionByKey(ctx context.Context, agentID, sessionKey string) (*SessionRecord, error) {

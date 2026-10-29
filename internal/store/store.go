@@ -113,6 +113,11 @@ type Store interface {
 	// renamed). The auto-title PostTurn hook reads this to decide
 	// whether to fire — empty = OK to summarise, non-empty = leave it.
 	LookupSessionTitle(ctx context.Context, agentID, sessionKey string) (string, error)
+	// SessionKeyForChat resolves an IM conversation's session key from its
+	// (agent, channel, account, chat) quadruple — outbound bus messages
+	// carry the platform's chat id, while the dashboard and mobile app
+	// address sessions by key. "" (no error) when no row matches.
+	SessionKeyForChat(ctx context.Context, agentID, channel, accountID, chatID string) (string, error)
 	// LookupSessionOwner returns the agent owner's user_id for the session.
 	// Post-flatten the session row no longer carries its own user_id, so the
 	// owner is resolved through the agents table (kept until phase 4 drops

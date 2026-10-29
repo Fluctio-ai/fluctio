@@ -1643,6 +1643,8 @@ export interface AgentUpdatePayload {
   cards?: AgentCardsCfg;
   // Per-agent daily-diary config blob (whole-replace, same pattern as kb).
   diary?: AgentDiaryCfg;
+  // Mobile-notification toggles (whole-replace, same pattern as kb).
+  notifications?: AgentNotifyCfg;
   // Per-agent overrides for LLM generation + the ReAct iteration budget.
   // Omit to leave unchanged; pass <=0 to clear (fall back to the
   // agents.defaults entry → system default 8192 / 0.7 / 20).
@@ -1722,6 +1724,10 @@ export interface AgentFileConfig {
   // + push config. Read/written via getAgentConfig/updateAgent under the
   // Knowledge settings tab.
   cards?: AgentCardsCfg;
+  // notifications mirrors config.AgentFileConfig.Notifications — which
+  // events reach the mobile notification queue. Read/written via
+  // getAgentConfig/updateAgent under the Knowledge settings tab.
+  notifications?: AgentNotifyCfg;
   // admins mirrors config.AgentFileConfig.Admins — per-channel admin
   // platform IDs (IM identity claim flow binds via /claim <code>).
   admins?: Record<string, string[]>;
@@ -1797,6 +1803,20 @@ export interface AgentDiaryCfg {
   blindspotPushTime?: string;
   /** Blindspot nudge IM channel. Default "wechat". */
   blindspotPushChannel?: string;
+}
+
+// AgentNotifyCfg mirrors config.AgentNotifyCfg — which events reach the
+// mobile notification queue (Android direct delivery, no FCM). Every
+// field is optional and nil/undefined = ON.
+export interface AgentNotifyCfg {
+  /** Replies to web/API conversations. */
+  chatReply?: boolean;
+  /** Replies to IM conversations (Telegram/WeChat/QQ/Discord/Slack/Feishu/LINE). */
+  imReply?: boolean;
+  todoReminder?: boolean;
+  cardsDigest?: boolean;
+  shelvedNudge?: boolean;
+  blindspot?: boolean;
 }
 
 // AgentCardsCfg mirrors config.AgentCardsCfg — per-agent Q&A flashcard

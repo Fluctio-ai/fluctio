@@ -724,6 +724,11 @@ type AgentFileConfig struct {
 	// KB auto-query config. Stored as a sub-object in the agent's
 	// file-config blob and mapped to kb.AutoQueryCfg at hook wiring time.
 	KB *AgentKBCfg `json:"kb,omitempty"`
+	// Notifications gates which events reach the mobile notification
+	// queue (the Android app's direct-delivery channel). Same blob
+	// pattern as kb: the setup handlers round-trip it, and the sweeps +
+	// the chat-reply mirror read it at enqueue time.
+	Notifications *AgentNotifyCfg `json:"notifications,omitempty"`
 	// Admins gates write-mode slash commands (/new /reset /undo /retry /compact
 	// /model /personality) in IM channels. Keyed by channel name ("discord",
 	// "telegram", "slack", ...), each value is the platform-side user IDs
@@ -855,6 +860,55 @@ func (c *AgentKBCfg) QueryRewriteOverride() string {
 		return ""
 	}
 	return c.QueryRewriteModel
+}
+
+// AgentNotifyCfg is the per-agent mobile-notification configuration
+// (the direct-delivery queue the Android app drains — no FCM). Stored as
+// the agent's "notifications" config sub-object. Every field is a
+// nil-default ON pointer: the channel's designed behaviour is to deliver,
+// and an operator opts specific kinds out when they get noisy.
+//
+// The gates sit at the enqueue sites (gateway sweeps + setup's chat-reply
+// mirror), not at the drain, so a disabled kind never costs a queue row.
+type AgentNotifyCfg struct {
+	// ChatReply gates replies to conversations started on the web
+	// dashboard / OpenAI-compatible API (the original chat_reply lane).
+	ChatReply *bool `json:"chatReply,omitempty"`
+	// IMReply gates replies to IM conversations (Telegram, WeChat, QQ,
+	// Discord, Slack, Feishu, LINE) mirrored into the queue so the phone
+	// is told even when the conversation lives in a chat app.
+	IMReply *bool `json:"imReply,omitempty"`
+	// The four proactive sweeps, one toggle each.
+	TodoReminder *bool `json:"todoReminder,omitempty"`
+	CardsDigest  *bool `json:"cardsDigest,omitempty"`
+	ShelvedNudge *bool `json:"shelvedNudge,omitempty"`
+	Blindspot    *bool `json:"blindspot,omitempty"`
+}
+
+// KindEnabled resolves the toggle for one notification kind. Unknown
+// kinds and a nil receiver both return true — the queue's default is to
+// deliver, and an unrecognized kind must not be silently swallowed by a
+// config lookup.
+func (c *AgentNotifyCfg) KindEnabled(kind string) bool {
+	if c == nil {
+		return true
+	}
+	pick := func(p *bool) bool { return p == nil || *p }
+	switch kind {
+	case "chat_reply":
+		return pick(c.ChatReply)
+	case "im_reply":
+		return pick(c.IMReply)
+	case "todo_reminder":
+		return pick(c.TodoReminder)
+	case "cards_digest":
+		return pick(c.CardsDigest)
+	case "shelved_nudge":
+		return pick(c.ShelvedNudge)
+	case "blindspot":
+		return pick(c.Blindspot)
+	}
+	return true
 }
 
 // AgentDiaryCfg is the per-agent daily-diary generation configuration.

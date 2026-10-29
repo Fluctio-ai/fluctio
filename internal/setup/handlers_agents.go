@@ -480,6 +480,11 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// Q&A-card generation/push config (nil = leave unchanged; non-nil =
 		// write the per-agent cards override). Same blob pattern as Diary.
 		Cards *config.AgentCardsCfg `json:"cards,omitempty"`
+		// Mobile-notification toggles (nil = leave unchanged; non-nil =
+		// write the per-agent notifications override). Same blob pattern
+		// as Diary; the sweeps and the chat-reply mirror read it at
+		// enqueue time.
+		Notifications *config.AgentNotifyCfg `json:"notifications,omitempty"`
 		// Language is the default UI language for slash-command replies
 		// when the inbound source carries none (IM channels). ptr so
 		// nil = leave unchanged, empty string = clear (fall back to the
@@ -560,6 +565,13 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			rec.Config = map[string]interface{}{}
 		}
 		rec.Config["cards"] = req.Cards
+	}
+	// Mobile-notification toggles, same blob pattern as diary.
+	if req.Notifications != nil {
+		if rec.Config == nil {
+			rec.Config = map[string]interface{}{}
+		}
+		rec.Config["notifications"] = req.Notifications
 	}
 	// Language override lives in the agent config blob; MergedAgentConfig
 	// forwards it into ResolvedAgent.Language so HandleMessage can fall

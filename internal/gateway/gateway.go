@@ -243,6 +243,12 @@ func (g *Gateway) SetChatEvents(h *agent.EventHub) { g.chatEvents = h }
 // fired (and other async) outbound messages reach live dashboard tabs.
 func (g *Gateway) WebChannel() *channels.WebChannel { return g.webChan }
 
+// ChannelManager exposes the outbound dispatcher so the composition root
+// can install cross-cutting observers (the notification mirror). It must
+// not be used to register adapters — that stays behind ReloadSandbox /
+// RegisterChannelFromConfig.
+func (g *Gateway) ChannelManager() *channels.Manager { return g.chanMgr }
+
 // Workspace returns the durable artifact store.
 func (g *Gateway) Workspace() workspace.Store { return g.workspace }
 

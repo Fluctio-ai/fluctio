@@ -36,6 +36,22 @@ type Manager struct {
 	// Captured by Start so RegisterAndStart can hot-launch goroutines for
 	// channels added after the initial bootstrap. nil until Start runs.
 	rootCtx context.Context
+	// outboundObserver, when set, sees every resolved outbound message
+	// once per dispatch (see SetOutboundObserver). The dashboard uses it
+	// to mirror IM replies into the mobile notification queue — the
+	// observer lives here because routeOutbound is the single consumer of
+	// bus.Outbound, so a second reader would split the stream at random.
+	// Guarded by mu.
+	outboundObserver func(bus.OutboundMessage)
+}
+
+// SetOutboundObserver installs a per-message callback invoked after
+// routeOutbound resolves a destination channel, before the adapter sends.
+// Fires for every channel including "web" — callers filter. Nil clears.
+func (m *Manager) SetOutboundObserver(fn func(bus.OutboundMessage)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.outboundObserver = fn
 }
 
 // NewManager creates a new channel manager with no cross-process
@@ -234,6 +250,12 @@ func (m *Manager) routeOutbound(ctx context.Context) {
 			if !ok {
 				slog.Warn("unknown outbound channel", "key", key)
 				continue
+			}
+			m.mu.Lock()
+			observer := m.outboundObserver
+			m.mu.Unlock()
+			if observer != nil {
+				observer(msg)
 			}
 			m.dispatchOutbound(ch, msg, key)
 		}

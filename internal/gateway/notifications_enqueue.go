@@ -2,11 +2,13 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/channels"
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
@@ -86,6 +88,11 @@ func (g *Gateway) enqueueFor(ctx context.Context, dbs *store.DBStore, ag store.A
 	if uid == "" {
 		return false // sweepOwnerUID already warned
 	}
+	// Per-agent kind gate: a disabled kind must not even cost a queue row
+	// (the app would otherwise still ring — the drain has no other filter).
+	if !notifyCfgFor(ag).KindEnabled(kind) {
+		return false
+	}
 	if _, err := dbs.SaveNotification(ctx, &store.NotificationRecord{
 		UserID:   uid,
 		AgentID:  ag.ID,
@@ -98,6 +105,22 @@ func (g *Gateway) enqueueFor(ctx context.Context, dbs *store.DBStore, ag store.A
 		return false
 	}
 	return true
+}
+
+// notifyCfgFor reads the agent's notification toggles from its config
+// blob (AgentRecord.Config["notifications"]), mirroring reminderChannelFor:
+// the field round-trips through interface{}, so marshal+unmarshal
+// normalizes it into config.AgentNotifyCfg.
+func notifyCfgFor(ag store.AgentRecord) *config.AgentNotifyCfg {
+	cfgAny, ok := ag.Config["notifications"]
+	if !ok || cfgAny == nil {
+		return nil // nil receiver = every kind ON
+	}
+	var cfg config.AgentNotifyCfg
+	if b, err := json.Marshal(cfgAny); err == nil {
+		_ = json.Unmarshal(b, &cfg)
+	}
+	return &cfg
 }
 
 // pushTimePassed reports whether today's HH:MM push gate (empty → 09:00,

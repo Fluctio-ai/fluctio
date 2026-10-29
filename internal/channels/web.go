@@ -70,6 +70,17 @@ func (w *WebChannel) Subscribe(agentID, chatID string) (<-chan bus.OutboundMessa
 // Name returns "web".
 func (w *WebChannel) Name() string { return "web" }
 
+// SubscriberCount reports how many live SSE subscribers this (agent,
+// session) pair has. "Someone is watching this conversation right now" is
+// the suppression signal every notification path shares: a caller that
+// would otherwise ring the phone checks this first, so a reply the user is
+// literally reading never also pushes.
+func (w *WebChannel) SubscriberCount(agentID, chatID string) int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return len(w.subscribers[webKey(agentID, chatID)])
+}
+
 // AccountID returns "" — web is a global channel, not per-bot.
 func (w *WebChannel) AccountID() string { return "" }
 

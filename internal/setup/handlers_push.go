@@ -11,6 +11,7 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/auth"
 	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/push"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
@@ -96,33 +97,106 @@ var chatReplyThrottle = struct {
 
 const chatReplyThrottleWindow = time.Minute
 
+// handleWebPushOutbound is the web-channel entry: WebChannel invokes it
+// only when a (agent, session) reply has no live SSE subscriber, so the
+// "someone is watching" check is already done upstream. Session key ==
+// ChatID on this channel.
 func (s *Server) handleWebPushOutbound(msg bus.OutboundMessage) {
-	if s.dataStore == nil {
+	if s.dataStore == nil || msg.Channel != "web" {
 		return
 	}
-	if msg.Channel != "web" || strings.TrimSpace(msg.AgentID) == "" || strings.TrimSpace(msg.ChatID) == "" {
+	if strings.TrimSpace(msg.AgentID) == "" || strings.TrimSpace(msg.ChatID) == "" {
 		return
 	}
+	s.pushReply(msg, msg.ChatID, "chat_reply")
+}
 
+// imChannels is the allowlist of chat surfaces whose replies are mirrored
+// into the mobile queue. Deliberately explicit: plugin channels, "api"
+// (programmatic completions) and "heartbeat" are not conversations the
+// phone should ring for.
+var imChannels = map[string]bool{
+	"telegram": true, "wechat": true, "qq": true,
+	"discord": true, "slack": true, "feishu": true, "line": true,
+}
+
+// OutboundObserver is the callback the composition root installs as the
+// channel manager's outbound observer (channels.Manager.SetOutboundObserver).
+// One entry point so the dispatch goroutine never blocks on a store write.
+func (s *Server) OutboundObserver(msg bus.OutboundMessage) {
+	go s.handleIMPushOutbound(msg)
+}
+
+// handleIMPushOutbound mirrors an IM conversation's reply into the
+// notification queue so the phone is told even though the conversation
+// lives in a chat app. Suppressed when the user has that same session
+// open in the dashboard/app (an SSE subscriber exists) — reading it there
+// already counts as "seen".
+//
+// Outbound bus messages carry the IM chat id, not the session key, so the
+// key is resolved from the sessions table: it is both the deep-link target
+// and the suppression check's key. An unresolvable chat (no session row
+// yet) falls back to skipping — there is nothing to link to.
+func (s *Server) handleIMPushOutbound(msg bus.OutboundMessage) {
+	if s.dataStore == nil || !imChannels[msg.Channel] {
+		return
+	}
+	if strings.TrimSpace(msg.AgentID) == "" || strings.TrimSpace(msg.ChatID) == "" {
+		return
+	}
+	if strings.TrimSpace(msg.Text) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	sessionKey, err := s.dataStore.SessionKeyForChat(ctx, msg.AgentID, msg.Channel, msg.AccountID, msg.ChatID)
+	if err != nil || sessionKey == "" {
+		slog.Debug("push: IM session not resolvable", "agent", msg.AgentID,
+			"channel", msg.Channel, "chat", msg.ChatID, "error", err)
+		return
+	}
+	if s.webChan != nil && s.webChan.SubscriberCount(msg.AgentID, sessionKey) > 0 {
+		return // the user is looking at this conversation right now
+	}
+	s.pushReply(msg, sessionKey, "im_reply")
+}
+
+// pushReply runs the shared delivery core for one conversation reply:
+// owner + agent-name lookup, per-kind config gate, throttled queue
+// enqueue, then APNs when configured. sessionKey is the dashboard/app
+// session key (== ChatID on the web channel).
+func (s *Server) pushReply(msg bus.OutboundMessage, sessionKey, kind string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	userID, err := s.dataStore.LookupSessionOwner(ctx, msg.AgentID, msg.ChatID)
+	userID, err := s.dataStore.LookupSessionOwner(ctx, msg.AgentID, sessionKey)
 	if err != nil || userID == "" {
-		slog.Debug("push: session owner not found", "agent", msg.AgentID, "session", msg.ChatID, "error", err)
+		slog.Debug("push: session owner not found", "agent", msg.AgentID, "session", sessionKey, "error", err)
 		return
 	}
 
 	title := "Fluctio"
-	if rec, err := s.dataStore.GetAgent(ctx, msg.AgentID); err == nil && rec != nil && strings.TrimSpace(rec.Name) != "" {
-		title = strings.TrimSpace(rec.Name)
+	var notifyCfg *config.AgentNotifyCfg
+	if rec, err := s.dataStore.GetAgent(ctx, msg.AgentID); err == nil && rec != nil {
+		if strings.TrimSpace(rec.Name) != "" {
+			title = strings.TrimSpace(rec.Name)
+		}
+		if cfgAny, ok := rec.Config["notifications"]; ok && cfgAny != nil {
+			var nc config.AgentNotifyCfg
+			if b, merr := json.Marshal(cfgAny); merr == nil && json.Unmarshal(b, &nc) == nil {
+				notifyCfg = &nc
+			}
+		}
+	}
+	if !notifyCfg.KindEnabled(kind) {
+		return
 	}
 
 	// Notification queue (Android direct delivery, no FCM): enqueue even
 	// without APNs — self-hosted single-user deployments have no APNs keys,
 	// and the app's poll/SSE drains this. Throttled per session so a turn's
 	// bubble burst lands as one ring.
-	s.enqueueChatReply(ctx, msg, userID, title)
+	s.enqueueChatReply(ctx, msg, sessionKey, userID, title, kind)
 
 	if s.pushClient == nil || !s.pushClient.Enabled() {
 		return
@@ -145,22 +219,22 @@ func (s *Server) handleWebPushOutbound(msg bus.OutboundMessage) {
 			Title:       title,
 			Body:        "你有一条新的 Agent 消息",
 			AgentID:     msg.AgentID,
-			SessionID:   msg.ChatID,
+			SessionID:   sessionKey,
 		}); err != nil {
 			slog.Warn("push: APNs send failed", "user", userID, "error", err)
 		}
 	}
 }
 
-// enqueueChatReply best-effort writes one chat_reply row into the
-// notification queue. The body carries the reply's first line — the queue
-// has none of APNs' fixed-copy limits, so use them.
-func (s *Server) enqueueChatReply(ctx context.Context, msg bus.OutboundMessage, userID, title string) {
+// enqueueChatReply best-effort writes one reply row into the notification
+// queue. The body carries the reply's first line — the queue has none of
+// APNs' fixed-copy limits, so use them.
+func (s *Server) enqueueChatReply(ctx context.Context, msg bus.OutboundMessage, sessionKey, userID, title, kind string) {
 	text := strings.TrimSpace(msg.Text)
 	if text == "" {
 		return
 	}
-	key := msg.AgentID + "\x00" + msg.ChatID
+	key := msg.AgentID + "\x00" + sessionKey
 	chatReplyThrottle.Lock()
 	if time.Since(chatReplyThrottle.last[key]) < chatReplyThrottleWindow {
 		chatReplyThrottle.Unlock()
@@ -179,10 +253,10 @@ func (s *Server) enqueueChatReply(ctx context.Context, msg bus.OutboundMessage, 
 	if _, err := s.dataStore.SaveNotification(ctx, &store.NotificationRecord{
 		UserID:   userID,
 		AgentID:  msg.AgentID,
-		Kind:     "chat_reply",
+		Kind:     kind,
 		Title:    title,
 		Body:     line,
-		DeepLink: "/agents/" + msg.AgentID + "/chat/" + msg.ChatID,
+		DeepLink: "/agents/" + msg.AgentID + "/chat/" + sessionKey,
 	}); err != nil {
 		slog.Warn("push: enqueue chat reply failed", "agent", msg.AgentID, "error", err)
 	}
