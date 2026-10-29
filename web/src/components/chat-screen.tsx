@@ -6,7 +6,7 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { fileUrl, getAgent, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, deleteAgentFile, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, setChatSessionChatOnly, forkChatSession, revealAgentWorkspace, sendChatStream, steerChat, stopChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
+import { fileUrl, getAgent, getAgentSkills, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, deleteAgentFile, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, setChatSessionChatOnly, forkChatSession, revealAgentWorkspace, sendChatStream, steerChat, stopChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
 import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus, Trash2, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
@@ -854,9 +854,30 @@ export function ChatScreen() {
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
 
+  // Slash-menu skills: global catalog first, then the agent's own
+  // installed skills layered on top by name (the loader's shadow
+  // precedence — agent-scope wins over a same-named global skill).
+  // Refetched per agent switch so a skill installed from
+  // /agents/<id>/skills/ shows up here without a reload. The
+  // agent-scoped endpoint is owner-only; a failure (or a non-owner
+  // viewer) just degrades to the global list.
   useEffect(() => {
-    getSkills().then(setSkills).catch(() => setSkills([]));
-  }, []);
+    let aborted = false;
+    (async () => {
+      const globalList = await getSkills().catch(() => [] as SkillInfo[]);
+      const agentList = selectedAgent
+        ? await getAgentSkills(selectedAgent).catch(() => [] as SkillInfo[])
+        : [];
+      if (aborted) return;
+      const merged = new Map<string, SkillInfo>();
+      for (const s of globalList) merged.set(s.name, s);
+      for (const s of agentList) merged.set(s.name, s);
+      setSkills([...merged.values()]);
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [selectedAgent]);
 
   // Reset chat-pane state when the active agent changes. Without
   // this, switching agents from the sidebar would briefly render the
