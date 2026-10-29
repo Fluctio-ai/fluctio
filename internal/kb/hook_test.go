@@ -114,24 +114,40 @@ func rewriteHookCtx() *HookContext {
 	}
 }
 
-func TestAutoQueryHookRewritesMemoryQuery(t *testing.T) {
-	var rewrites int
-	rewriter := func(ctx context.Context, msgs []provider.Message, q string) string {
-		rewrites++
-		return "Docker 迁移 Kubernetes 方案 进度"
+// countingRewriter is a QueryRewriter stub: it counts calls and returns
+// its fixed result (or the input unchanged when result is empty — the
+// "rewrite unavailable" contract).
+type countingRewriter struct {
+	result string
+	calls  int
+}
+
+func (c *countingRewriter) rewrite(ctx context.Context, msgs []provider.Message, q string) string {
+	c.calls++
+	if c.result == "" {
+		return q
 	}
+	return c.result
+}
+
+func rewriteCfg(enabled bool) func() AutoQueryCfg {
+	return func() AutoQueryCfg { return AutoQueryCfg{QueryRewrite: enabled} }
+}
+
+func TestAutoQueryHookRewritesMemoryQuery(t *testing.T) {
+	rw := &countingRewriter{result: "Docker 迁移 Kubernetes 方案 进度"}
 	mem := &memLaneRecorder{}
-	hook := AutoQueryHook(nil, "a1", func() AutoQueryCfg { return AutoQueryCfg{QueryRewrite: true} }, mem.searcher(), rewriter)
+	hook := AutoQueryHook(nil, "a1", rewriteCfg(true), mem.searcher(), rw.rewrite)
 	hc := rewriteHookCtx()
 	hook(context.Background(), hc)
 
-	if rewrites != 1 {
-		t.Fatalf("rewriter calls = %d, want 1", rewrites)
+	if rw.calls != 1 {
+		t.Fatalf("rewriter calls = %d, want 1", rw.calls)
 	}
-	if len(mem.queries) != 1 || mem.queries[0] != "Docker 迁移 Kubernetes 方案 进度" {
+	if len(mem.queries) != 1 || mem.queries[0] != rw.result {
 		t.Fatalf("memory lane queries = %v, want the rewritten query", mem.queries)
 	}
-	if len(hc.SyntheticToolCalls) != 1 || !strings.Contains(hc.SyntheticToolCalls[0].Args, "Docker 迁移 Kubernetes 方案 进度") {
+	if len(hc.SyntheticToolCalls) != 1 || !strings.Contains(hc.SyntheticToolCalls[0].Args, rw.result) {
 		t.Fatalf("synthetic tool call args = %q, want rewritten query", hc.SyntheticToolCalls[0].Args)
 	}
 }
@@ -139,9 +155,9 @@ func TestAutoQueryHookRewritesMemoryQuery(t *testing.T) {
 func TestAutoQueryHookRewriteFallsBackToRaw(t *testing.T) {
 	// The rewriter's failure contract is "return the input unchanged" —
 	// the hook must search with the raw message, never skip the lane.
+	rw := &countingRewriter{}
 	mem := &memLaneRecorder{}
-	hook := AutoQueryHook(nil, "a1", func() AutoQueryCfg { return AutoQueryCfg{QueryRewrite: true} }, mem.searcher(),
-		func(ctx context.Context, msgs []provider.Message, q string) string { return q })
+	hook := AutoQueryHook(nil, "a1", rewriteCfg(true), mem.searcher(), rw.rewrite)
 	hook(context.Background(), rewriteHookCtx())
 
 	if len(mem.queries) != 1 || mem.queries[0] != "上次聊的那个方案怎么样了" {
@@ -150,17 +166,13 @@ func TestAutoQueryHookRewriteFallsBackToRaw(t *testing.T) {
 }
 
 func TestAutoQueryHookNoRewriteWhenDisabled(t *testing.T) {
-	var rewrites int
+	rw := &countingRewriter{result: "rewritten"}
 	mem := &memLaneRecorder{}
-	hook := AutoQueryHook(nil, "a1", func() AutoQueryCfg { return AutoQueryCfg{QueryRewrite: false} }, mem.searcher(),
-		func(ctx context.Context, msgs []provider.Message, q string) string {
-			rewrites++
-			return "rewritten"
-		})
+	hook := AutoQueryHook(nil, "a1", rewriteCfg(false), mem.searcher(), rw.rewrite)
 	hook(context.Background(), rewriteHookCtx())
 
-	if rewrites != 0 {
-		t.Fatalf("rewriter calls = %d, want 0 when QueryRewrite is off", rewrites)
+	if rw.calls != 0 {
+		t.Fatalf("rewriter calls = %d, want 0 when QueryRewrite is off", rw.calls)
 	}
 	if len(mem.queries) != 1 || mem.queries[0] != "上次聊的那个方案怎么样了" {
 		t.Fatalf("memory lane queries = %v, want the raw query", mem.queries)
@@ -170,36 +182,58 @@ func TestAutoQueryHookNoRewriteWhenDisabled(t *testing.T) {
 func TestAutoQueryHookNoRewriteWhenAllLanesOff(t *testing.T) {
 	// Memory disabled and no KB store → no lane searches → the rewrite
 	// call must not be paid at all.
-	var rewrites int
-	hook := AutoQueryHook(nil, "a1", func() AutoQueryCfg { return AutoQueryCfg{QueryRewrite: true, MemoryAutoMode: "disabled"} }, nil,
-		func(ctx context.Context, msgs []provider.Message, q string) string {
-			rewrites++
-			return "rewritten"
-		})
+	rw := &countingRewriter{result: "rewritten"}
+	hook := AutoQueryHook(nil, "a1", func() AutoQueryCfg {
+		return AutoQueryCfg{QueryRewrite: true, MemoryAutoMode: "disabled"}
+	}, nil, rw.rewrite)
 	hook(context.Background(), rewriteHookCtx())
-	if rewrites != 0 {
-		t.Fatalf("rewriter calls = %d, want 0 when no lane runs", rewrites)
+	if rw.calls != 0 {
+		t.Fatalf("rewriter calls = %d, want 0 when no lane runs", rw.calls)
 	}
 }
 
 func TestAutoQueryHookRewriteCacheShortCircuit(t *testing.T) {
 	// Second hook firing on the same message (ReAct loop iteration 2)
 	// with the [MEM] injection still present must not re-pay the rewrite.
-	var rewrites int
+	rw := &countingRewriter{result: "改写后查询"}
 	mem := &memLaneRecorder{}
-	hook := AutoQueryHook(nil, "a1", func() AutoQueryCfg { return AutoQueryCfg{QueryRewrite: true} }, mem.searcher(),
-		func(ctx context.Context, msgs []provider.Message, q string) string {
-			rewrites++
-			return "改写后查询"
-		})
+	hook := AutoQueryHook(nil, "a1", rewriteCfg(true), mem.searcher(), rw.rewrite)
 	hc := rewriteHookCtx()
 	hook(context.Background(), hc)
 	hook(context.Background(), hc)
 
-	if rewrites != 1 {
-		t.Fatalf("rewriter calls = %d, want 1 across two iterations", rewrites)
+	if rw.calls != 1 {
+		t.Fatalf("rewriter calls = %d, want 1 across two iterations", rw.calls)
 	}
 	if len(mem.queries) != 1 {
 		t.Fatalf("memory lane queries = %v, want a single search", mem.queries)
+	}
+}
+
+func TestAutoQueryHookRewriteMemoizedOnZeroHits(t *testing.T) {
+	// The cost-critical case: no injection means no "[MEM]" marker, so the
+	// injection cache above can't short-circuit — the rewrite memo must,
+	// or an "always mode, nothing relevant" turn re-pays the LLM call on
+	// every ReAct iteration.
+	rw := &countingRewriter{result: "改写后查询"}
+	var searches int
+	empty := func(ctx context.Context, agentID, query string, limit int) ([]MemoryRecallHit, error) {
+		searches++
+		return nil, nil
+	}
+	hook := AutoQueryHook(nil, "a1", rewriteCfg(true), empty, rw.rewrite)
+	hc := rewriteHookCtx()
+	hook(context.Background(), hc)
+	hook(context.Background(), hc)
+	hook(context.Background(), hc)
+
+	if rw.calls != 1 {
+		t.Fatalf("rewriter calls = %d, want 1 across three zero-hit iterations", rw.calls)
+	}
+	if searches != 3 {
+		t.Fatalf("lane searches = %d, want 3 (the lane still retries each iteration)", searches)
+	}
+	if hc.Messages[0].Content != "上次聊的那个方案怎么样了" {
+		t.Fatalf("zero-hit turn must not inject anything, got %q", hc.Messages[0].Content)
 	}
 }

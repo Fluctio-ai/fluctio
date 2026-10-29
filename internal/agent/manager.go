@@ -471,19 +471,19 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 		// summaries. Registering a no-op hook when neither is wired would
 		// only cost a config lookup per model call.
 		if kbStore != nil || memSearch != nil {
-			// rewriteModel: the KB config's override for the shared
-			// query-rewrite call (empty = summary-model chain). Snapshot
-			// at build time, same semantics as the reranker wiring above.
-			rewriteModel := ""
-			if rc.KB != nil {
-				rewriteModel = rc.KB.QueryRewriteModel
-			}
+			// rewriteModel: the KB config's model override for the shared
+			// query-rewrite call ("" = summary-model chain). Snapshot at
+			// build time like every other rc.KB field.
+			rewriteModel := rc.KB.QueryRewriteOverride()
 			hookFn := kb.AutoQueryHook(kbStore, rc.ID, func() kb.AutoQueryCfg {
 				kbCfg := rc.KB
+				// QueryRewrite is ON by default and resolved through one
+				// nil-safe accessor, so the no-KB-config agent (memory lane
+				// only) and the configured one share a single default.
+				queryRewrite := kbCfg.QueryRewriteEnabled()
 				if kbCfg == nil {
-					// No KB config: memory lane only, at its defaults —
-					// including the ON-by-default query rewrite.
-					return kb.AutoQueryCfg{QueryRewrite: true}
+					// No KB config: memory lane only, at its defaults.
+					return kb.AutoQueryCfg{QueryRewrite: queryRewrite}
 				}
 				threshold := 0.45
 				if kbCfg.Threshold != nil {
@@ -492,11 +492,6 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 				ftThreshold := 0.6
 				if kbCfg.FlashTodoThreshold != nil {
 					ftThreshold = *kbCfg.FlashTodoThreshold
-				}
-				// Query-rewrite default: nil = ON. Explicit false opts out.
-				queryRewrite := true
-				if kbCfg.QueryRewrite != nil {
-					queryRewrite = *kbCfg.QueryRewrite
 				}
 				return kb.AutoQueryCfg{
 					Enabled:             kbCfg.Enabled,

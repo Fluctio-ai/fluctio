@@ -15,12 +15,10 @@ type rewriteMockProvider struct {
 	content   string
 	err       error
 	gotPrompt string
-	gotModel  string
 }
 
 func (m *rewriteMockProvider) Chat(ctx context.Context, messages []provider.Message, tools []provider.Tool, model string, maxTokens int, temperature float64) (*provider.Response, error) {
 	m.gotPrompt = messages[0].Content
-	m.gotModel = model
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -61,40 +59,31 @@ func TestRewriteQueryResolvesAndReturns(t *testing.T) {
 	}
 }
 
-func TestRewriteQueryFallsBackOnError(t *testing.T) {
-	p := &rewriteMockProvider{err: errors.New("boom")}
-	got := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "原话")
-	if got != "原话" {
-		t.Fatalf("rewriteQuery on provider error = %q, want the raw query", got)
-	}
-}
-
-func TestRewriteQueryFallsBackOnGarbledOutput(t *testing.T) {
-	for _, content := range []string{"", "   ", "I think the query is about migration"} {
-		p := &rewriteMockProvider{content: content}
-		got := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "原话")
-		if got != "原话" {
-			t.Fatalf("rewriteQuery(%q) = %q, want fallback to raw query", content, got)
-		}
-	}
-}
-
-func TestRewriteQueryFallsBackOnEmptyOrNullishQuery(t *testing.T) {
-	// Pure-filler messages legitimately rewrite to "" — that must fall
-	// back to the raw message (downstream lanes gate on their own floors).
-	p := &rewriteMockProvider{content: `{"query": ""}`}
-	got := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "嗯嗯好那先这样")
-	if got != "嗯嗯好那先这样" {
-		t.Fatalf("rewriteQuery on empty output = %q, want the raw query", got)
-	}
-}
-
-func TestRewriteQueryFallsBackOnOversizedOutput(t *testing.T) {
+func TestRewriteQueryFallsBack(t *testing.T) {
+	// Every failure mode must yield the raw query unchanged: the rewrite
+	// is a quality layer, never an availability gate.
 	long := strings.Repeat("长", 200)
-	p := &rewriteMockProvider{content: `{"query": "` + long + `"}`}
-	got := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "原话")
-	if got != "原话" {
-		t.Fatalf("rewriteQuery on oversized output = %q, want the raw query", got)
+	cases := []struct {
+		name    string
+		content string
+		err     error
+	}{
+		{"provider error", "", errors.New("boom")},
+		{"empty body", "", nil},
+		{"blank body", "   ", nil},
+		{"prose instead of json", "I think the query is about migration", nil},
+		// Pure-filler messages legitimately rewrite to "" — downstream
+		// lanes still gate on their own floors, so fall back to raw.
+		{"empty query", `{"query": ""}`, nil},
+		{"oversized query", `{"query": "` + long + `"}`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &rewriteMockProvider{content: tc.content, err: tc.err}
+			if got := rewriteQuery(context.Background(), p, "m1", rewriteTestMessages(), "原话"); got != "原话" {
+				t.Fatalf("rewriteQuery = %q, want fallback to the raw query", got)
+			}
+		})
 	}
 }
 

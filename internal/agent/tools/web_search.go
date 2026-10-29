@@ -37,8 +37,8 @@ func RegisterWebSearchChain(r *Registry, chain *toolproviders.Chain) {
 		"type": "object",
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{
-				"type": "string",
-				"description": "A concise, self-contained web search query: resolve pronouns to concrete entities, use distinctive keywords rather than the user's full sentence.",
+				"type":        "string",
+				"description": StandaloneQueryHint,
 			},
 			"count": map[string]interface{}{
 				"type":        "integer",

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/fluctio-ai/fluctio/internal/agent/tools"
 )
 
 type jsonRPCRequest struct {
@@ -54,8 +56,8 @@ var mcpKBTools = []mcpToolDef{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"query": map[string]interface{}{
-					"type": "string",
-					"description": "A standalone search query: resolve pronouns to concrete entities, keep distinctive keywords, drop filler",
+					"type":        "string",
+					"description": tools.StandaloneQueryHint,
 				},
 				"limit": map[string]interface{}{
 					"type":        "integer",

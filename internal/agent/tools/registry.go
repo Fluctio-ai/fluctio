@@ -166,6 +166,14 @@ const (
 	SideExternal               // 外部副作用（exec/MCP 截图等）
 )
 
+// StandaloneQueryHint is the single-source query-shaping guidance shared by
+// every retrieval tool (memory_search / web_search here, knowledgebase_search
+// in package kb). Retrieval quality depends on the model composing a
+// standalone query rather than echoing the user's sentence — pronouns and
+// filler poison both keyword and vector lanes. Keep tuning in one place so
+// the tools can't drift from each other or from the rewriter prompt.
+const StandaloneQueryHint = "A standalone search query: resolve pronouns to concrete entities from the conversation, keep distinctive keywords, drop filler. Do NOT copy the user's message verbatim."
+
 // Registry holds all registered tools.
 type Registry struct {
 	tools       map[string]registeredTool

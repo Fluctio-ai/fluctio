@@ -825,8 +825,7 @@ type AgentKBCfg struct {
 	// agent model fields — point it at a cheap fast model to keep the
 	// per-message rewrite cost down.
 	QueryRewriteModel string `json:"queryRewriteModel,omitempty"`
-	// Dedup thresholds for inbound KB writes (nil = built-in default).
-	// At/above these, an existing same/similar source blocks the write:
+	// Dedup thresholds for inbound KB writes (nil = built-in default).	// At/above these, an existing same/similar source blocks the write:
 	// flash skip silently; article near-duplicate skips (≥High) or pends (Mid).
 	ArticleDupHigh    *float64 `json:"articleDupHigh,omitempty"`
 	ArticleDupMid     *float64 `json:"articleDupMid,omitempty"`
@@ -838,6 +837,24 @@ type AgentKBCfg struct {
 	// (tokens). 0 = kb.DefaultInsightMaxTokens. The old hardcoded 8192
 	// truncated long-article JSON mid-string ("parse JSON failed" → 500).
 	InsightMaxTokens int `json:"insightMaxTokens,omitempty"`
+}
+
+// QueryRewriteEnabled resolves the tri-state QueryRewrite pointer
+// (nil = ON). Nil-receiver safe so the "no KB config at all" agent
+// reads the same default through the same call. Single home for the
+// default: flipping it must not require touching the wiring layer.
+func (c *AgentKBCfg) QueryRewriteEnabled() bool {
+	return c == nil || c.QueryRewrite == nil || *c.QueryRewrite
+}
+
+// QueryRewriteOverride returns the model override for the rewrite call,
+// or "" to follow the summary-model chain. Nil-receiver safe, for the
+// same reason as QueryRewriteEnabled.
+func (c *AgentKBCfg) QueryRewriteOverride() string {
+	if c == nil {
+		return ""
+	}
+	return c.QueryRewriteModel
 }
 
 // AgentDiaryCfg is the per-agent daily-diary generation configuration.

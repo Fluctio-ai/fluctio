@@ -48,8 +48,8 @@ func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceR
 		"type": "object",
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{
-				"type": "string",
-				"description": "A standalone search query: resolve pronouns to concrete entities from the conversation, keep distinctive keywords, drop filler. Do NOT copy the user's message verbatim.",
+				"type":        "string",
+				"description": tools.StandaloneQueryHint,
 			},
 			"limit": map[string]interface{}{
 				"type":        "integer",

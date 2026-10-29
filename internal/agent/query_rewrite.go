@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/llmjson"
@@ -17,9 +18,11 @@ import (
 // summary model, thinking off, JSON mode, small output budget. The
 // timeout is short on purpose — the rewrite sits on the hot path before
 // every auto-recall search, so a slow rewrite must not stall the turn;
-// timing out falls back to the raw message.
+// timing out falls back to the raw message. Observed latency on glm-5.3
+// is 2–3s, so 4s leaves headroom without letting a degraded provider add
+// a 6s stall to time-to-first-token.
 const (
-	queryRewriteTimeout  = 6 * time.Second
+	queryRewriteTimeout  = 4 * time.Second
 	queryRewriteMaxTok   = 256
 	queryRewriteCtxMsgs  = 6   // recent messages fed as resolution context
 	queryRewriteClip     = 200 // per-message byte clip inside the prompt
@@ -100,18 +103,23 @@ func rewriteQuery(ctx context.Context, prov provider.Provider, model string, mes
 // LAST user message, so it appears here too — harmless duplication that
 // keeps the helper independent of slice surgery at the caller.
 func clipRewriteContext(messages []provider.Message) string {
-	var recent []provider.Message
-	for i := len(messages) - 1; i >= 0 && len(recent) < queryRewriteCtxMsgs; i-- {
+	// Walk back to the start of the last N non-system messages, then
+	// write them forward in conversational order.
+	start, seen := len(messages), 0
+	for i := len(messages) - 1; i >= 0 && seen < queryRewriteCtxMsgs; i-- {
 		if messages[i].Role != "system" {
-			recent = append(recent, messages[i])
+			start = i
+			seen++
 		}
 	}
-	if len(recent) == 0 {
+	if seen == 0 {
 		return "(none)"
 	}
 	var sb strings.Builder
-	for i := len(recent) - 1; i >= 0; i-- { // oldest first for readability
-		m := recent[i]
+	for _, m := range messages[start:] {
+		if m.Role == "system" {
+			continue
+		}
 		fmt.Fprintf(&sb, "%s: %s\n", m.Role, clipBytes(m.Content, queryRewriteClip))
 	}
 	return sb.String()
@@ -123,13 +131,11 @@ func clipBytes(s string, max int) string {
 		return s
 	}
 	cut := max
-	for cut > 0 && !utf8RuneStart(s[cut]) {
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	return s[:cut] + "…"
 }
-
-func utf8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
 
 // makeQueryRewriter adapts rewriteQuery into the kb.QueryRewriter
 // contract for the auto-recall hook. Nil provider → nil rewriter (the

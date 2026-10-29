@@ -110,6 +110,9 @@ type QueryRewriter func(ctx context.Context, messages []provider.Message, query 
 func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, memSearch MemoryAutoSearcher, rewriter QueryRewriter) func(context.Context, *HookContext) {
 	var lastQuery string
 	var lastMemQuery string
+	// Rewrite memo: keyed by the raw query, independent of whether any lane
+	// produced an injection (see the call site).
+	var lastRewriteQuery, lastRewriteResult string
 	return func(ctx context.Context, hc *HookContext) {
 		cfg := cfgFn()
 		slog.Debug("kb auto-query hook", "agent", agentID, "enabled", cfg.Enabled, "mode", cfg.AutoMode, "store_nil", store == nil, "source", hc.Source)
@@ -162,15 +165,23 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 		}
 
 		// Query rewrite: one shared rewrite call serves every lane that is
-		// about to search. Runs AFTER the cache short-circuit so a ReAct
-		// loop's repeat iterations never re-pay the LLM call, and only when
-		// at least one lane will actually search (the lane gates above run
-		// on the RAW message — trigger semantics belong to the user's own
-		// words, not to a rewritten paraphrase). Best-effort by contract:
+		// about to search, and only when at least one lane will actually
+		// search (the lane gates above run on the RAW message — trigger
+		// semantics belong to the user's own words, not to a rewritten
+		// paraphrase). Memoized by raw query on its own key rather than
+		// riding the injection caches above: those require a "[KB]"/"[MEM]"
+		// marker, which a zero-hit lane never produces — so without this
+		// memo the common "always mode, nothing relevant" turn would re-pay
+		// the LLM call on every ReAct iteration. Best-effort by contract:
 		// the rewriter returns the input unchanged on any failure.
 		searchQuery := query
 		if rewriter != nil && cfg.QueryRewrite {
-			searchQuery = rewriter(ctx, hc.Messages, query)
+			if lastRewriteQuery == query {
+				searchQuery = lastRewriteResult
+			} else {
+				searchQuery = rewriter(ctx, hc.Messages, query)
+				lastRewriteQuery, lastRewriteResult = query, searchQuery
+			}
 		}
 
 		// Memory lane runs first and unconditionally of the KB branches
