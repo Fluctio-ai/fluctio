@@ -77,7 +77,7 @@ func failureRetryRuntime(ctx context.Context, st store.Store) (base time.Duratio
 	base, max = 0, 0
 	if st != nil {
 		var c config.FailureRetryCfg
-		if err := scope.SettingInto(ctx, st, "failure", "", "", &c); err == nil {
+		if err := scope.SettingInto(ctx, st, config.FailureNamespace, "", "", &c); err == nil {
 			if c.BackoffBaseMin >= 1 {
 				base = time.Duration(c.BackoffBaseMin) * time.Minute
 			}
@@ -128,7 +128,7 @@ func analyzeFailureChain(msgs []provider.Message) (failureChain, bool) {
 	if cat, ok := tail.Metadata["turnError"].(string); ok {
 		chain.category = cat
 	}
-	chain.replayable = toolsExecutedOf(tail) == 0
+	chain.replayable = true // any link with tool results poisons it below
 
 	// Walk [notice, user] pairs backwards.
 	i := n - 1
@@ -146,12 +146,11 @@ func analyzeFailureChain(msgs []provider.Message) (failureChain, bool) {
 			return failureChain{}, false
 		}
 		text := user.TextContent()
+		// The tag's attempt number is cosmetic — the chain length is the
+		// truth, and a missing link breaks the walk anyway (so a parsed
+		// number could never disagree).
 		if strings.HasPrefix(text, failureRetryTag) {
 			chain.retries++
-			trimmed := strings.TrimPrefix(text, failureRetryTag)
-			if attempt := attemptLabelOf(trimmed); attempt > 0 {
-				chain.retries = attempt
-			}
 		} else {
 			originalText = text
 			break // reached the original request — chain complete
@@ -179,35 +178,10 @@ func toolsExecutedOf(m provider.Message) int {
 	return 0
 }
 
-// attemptLabelOf extracts the attempt number the replay tag carried
-// ("第2次·…") so chain length survives compaction drops; 0 = unparseable.
-func attemptLabelOf(taggedText string) int {
-	i := strings.Index(taggedText, "·")
-	j := strings.Index(taggedText, "次")
-	if i < 0 || j <= i+1 {
-		return 0
-	}
-	if n, err := strconv.Atoi(strings.Trim(taggedText[i+1 : j], " ")); err == nil && n >= 1 {
-		return n
-	}
-	return 0
-}
-
 // runFailureSweep boots the sweep (clearing the backlog the cursor marks
 // un-scanned) and re-runs it every 10 minutes.
 func (g *Gateway) runFailureSweep(ctx context.Context) {
-	const interval = 10 * time.Minute
-	g.sweepFailures(ctx)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			g.sweepFailures(ctx)
-		}
-	}
+	g.runEvery(ctx, 10*time.Minute, g.sweepFailures)
 }
 
 // sweepFailures runs one incremental pass: scan failures past the cursor,
@@ -226,18 +200,17 @@ func (g *Gateway) sweepFailures(ctx context.Context) {
 	// Advance the cursor over everything just scanned. Newest-first rows:
 	// the first row's CreatedAt is the high-water mark. Overlap-safe: the
 	// chain analysis is idempotent, so re-seeing a boundary row after a
-	// restart costs one wasted session read, not a double replay.
-	high := since
+	// restart costs one wasted session read, not a double replay. An empty
+	// page writes nothing — it carries no information worth a DB write.
 	if len(rows) > 0 {
-		high = rows[0].CreatedAt
-	} else {
-		high = time.Now().Add(-time.Minute)
+		saveFailureCursor(ctx, dbs, rows[0].CreatedAt)
 	}
-	saveFailureCursor(ctx, dbs, high)
+	g.pruneFailureNotified()
 
 	// Distinct (agent, session) pairs — one chain analysis per session.
-	// Tuning knobs resolve once per pass (hot from the settings row).
+	// The agent records and tuning knobs resolve once per pass.
 	base, maxAttempts := failureRetryRuntime(ctx, g.store)
+	agents := map[string]*store.AgentRecord{}
 	type sessRef struct{ agentID, key string }
 	seen := map[sessRef]bool{}
 	for _, r := range rows {
@@ -249,15 +222,31 @@ func (g *Gateway) sweepFailures(ctx context.Context) {
 			continue
 		}
 		seen[ref] = true
-		g.handleFailureSession(ctx, dbs, r.AgentID, r.SessionKey, base, maxAttempts)
+		g.handleFailureSession(ctx, dbs, r.AgentID, r.SessionKey, base, maxAttempts, agents)
+	}
+}
+
+// pruneFailureNotified drops notification-dedupe entries past their 6h
+// window so the map doesn't grow with the deployment's session count.
+func (g *Gateway) pruneFailureNotified() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for k, at := range g.failureNotified {
+		if time.Since(at) >= 6*time.Hour {
+			delete(g.failureNotified, k)
+		}
 	}
 }
 
 // handleFailureSession loads one session's working set tail and acts on
 // its unresolved failure chain: replay (backoff-gated, cap-gated) or
 // notify. base/maxAttempts come from failureRetryRuntime (per-pass).
-func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, agentID, sessionKey string, base time.Duration, maxAttempts int) {
-	rec := g.agentRecord(ctx, dbs, agentID)
+func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, agentID, sessionKey string, base time.Duration, maxAttempts int, agents map[string]*store.AgentRecord) {
+	rec, cached := agents[agentID]
+	if !cached {
+		rec = g.agentRecord(ctx, dbs, agentID)
+		agents[agentID] = rec
+	}
 	if rec == nil {
 		return
 	}
@@ -326,10 +315,11 @@ func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec 
 		OwnerUserID: rec.UserID,
 	})
 
-	// Reply is the granular failure notice again → the replay failed; the
-	// chain grew and the next pass re-applies backoff. Anything else means
-	// the turn produced a real answer — announce the recovery.
-	if strings.HasPrefix(reply, "⚠️") {
+	// Success = the session tail is no longer a failure notice. Judging by
+	// the persisted chain (not the reply string) keeps this independent of
+	// the notice wording and survives i18n edits; a failed replay appended
+	// a fresh notice, so the chain grew by one counted link.
+	if _, failed := analyzeFailureChain(sess.GetMessages()); failed {
 		return
 	}
 	g.notifyFailureOnce(ctx, dbs, rec, sess.Key(), "recovered",
@@ -356,7 +346,9 @@ func (g *Gateway) notifyFailureOnce(ctx context.Context, dbs *store.DBStore, rec
 	g.mu.Unlock()
 
 	uid := sweepOwnerUID(ctx, dbs, *rec)
-	ch, chatID, targetKey, _ := g.resolveSweepTarget(ctx, dbs, rec.ID, "wechat", "failure sweep")
+	// "" lets resolveSweepTarget fall back to the configured default
+	// channel instead of pinning wechat (the other sweeps pass "" too).
+	ch, chatID, targetKey, _ := g.resolveSweepTarget(ctx, dbs, rec.ID, "", "failure sweep")
 	g.deliverSweepNudge(ctx, dbs, *rec, uid, ch, chatID, targetKey,
 		"llm_failure", title, body, "/agents/"+rec.ID+"/chat", "llm_failure", "failure sweep")
 }
@@ -372,22 +364,24 @@ func (g *Gateway) agentRecord(ctx context.Context, dbs *store.DBStore, agentID s
 	return rec
 }
 
+// failureSweepLookback bounds the FIRST pass (no cursor yet): only recent
+// failures are considered, so a fresh deployment doesn't replay/alert on
+// every failure still inside the diag retention window.
+const failureSweepLookback = 15 * time.Minute
+
 // loadFailureCursor reads the persisted scan cursor ("already looked at
-// everything before this") from the configs table. Zero time on first
-// boot → the sweep starts with a 15-minute lookback window.
+// everything before this") from the configs table. No cursor yet → the
+// sweep starts with a short lookback rather than the full retention
+// window.
 func loadFailureCursor(ctx context.Context, dbs *store.DBStore) time.Time {
-	rec, err := dbs.GetConfigByName(ctx, "sweep", "", "failure_sweep_cursor")
-	if err != nil || rec == nil {
-		return time.Time{}
+	if rec, err := dbs.GetConfigByName(ctx, "sweep", "", "failure_sweep_cursor"); err == nil && rec != nil {
+		if s, _ := rec.Data["ts"].(string); s != "" {
+			if t, err := time.Parse(time.RFC3339, s); err == nil {
+				return t
+			}
+		}
 	}
-	s, _ := rec.Data["ts"].(string)
-	if s == "" {
-		return time.Time{}
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t
-	}
-	return time.Time{}
+	return time.Now().Add(-failureSweepLookback)
 }
 
 // saveFailureCursor persists the scan cursor.

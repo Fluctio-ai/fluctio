@@ -219,6 +219,13 @@ export interface ConfigResponse {
   prefs?: {
     timezone?: string;
   };
+  // Failure-recovery watchdog tuning (system "failure" setting row).
+  // Omitted fields fall back to the env knob / built-in default.
+  failure?: {
+    backoffBaseMin?: number;
+    maxAttempts?: number;
+    quotaProbeMin?: number;
+  };
   wechat?: {
     splitReplies?: boolean;
   };

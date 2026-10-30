@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -59,17 +60,18 @@ func TestQuotaBreakerTripGateProbeClear(t *testing.T) {
 	}
 }
 
-// TestQuotaBreakerTripDefaultsProbeInterval verifies probeEvery<=0 falls
-// back to resolveQuotaProbeInterval (the env-configured default).
-func TestQuotaBreakerTripDefaultsProbeInterval(t *testing.T) {
-	var q quotaBreaker
-	now := time.Now()
-	q.trip("x", now, 0)
-	q.mu.Lock()
-	got := q.nextProbe.Sub(now)
-	q.mu.Unlock()
-	if got != resolveQuotaProbeInterval() {
-		t.Errorf("nextProbe delta = %v, want resolveQuotaProbeInterval() = %v", got, resolveQuotaProbeInterval())
+// TestQuotaProbeIntervalEnv verifies the breaker's interval resolution
+// falls back to the env knob when no store is wired (the settings row is
+// the first source, covered by the trip/clear lifecycle test).
+func TestQuotaProbeIntervalEnv(t *testing.T) {
+	t.Setenv("FLUCTIO_QUOTA_PROBE_SECS", "600")
+	a := &Agent{} // no dataStore → env layer
+	if got := a.quotaProbeInterval(context.Background()); got != 10*time.Minute {
+		t.Errorf("quotaProbeInterval = %v, want 10m from env", got)
+	}
+	t.Setenv("FLUCTIO_QUOTA_PROBE_SECS", "1") // below the 60s floor → default
+	if got := a.quotaProbeInterval(context.Background()); got != 30*time.Minute {
+		t.Errorf("quotaProbeInterval = %v, want the 30m default", got)
 	}
 }
 

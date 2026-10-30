@@ -2941,10 +2941,44 @@ func firstErrorLine(err error) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
-	if r := []rune(s); len(r) > 120 {
-		s = string(r[:120]) + "…"
+	return truncateRunes(s, 120)
+}
+
+// failTurn ends a turn whose LLM call died after all retries, for BOTH
+// loops (HandleMessage returns the string, HandleMessageStream wraps it in
+// a one-chunk stream). Centralised because the persisted notice's
+// metadata is a contract: the failure-retry sweep's chain analysis keys on
+// turnError/toolsExecuted, so divergence between the two call sites would
+// silently disable auto-retry.
+//
+// Cancellation is a control-flow outcome (Stop, shutdown, or a disconnected
+// HTTP client), not a provider failure — publishing it would leave a
+// persisted "context canceled" bubble after the UI already rendered
+// "(Stopped)", and would make a disconnect look like a replayable failure.
+func (a *Agent) failTurn(ctx context.Context, sess *session.Session, lang string, err error, toolsExecuted int) string {
+	if errors.Is(err, context.Canceled) {
+		slog.Info("LLM chat canceled", "agent", a.name)
+		emitEvent(ctx, ChatEvent{Type: "done"})
+		return ""
 	}
-	return s
+	notice, cat := turnFailureNotice(lang, a.model, err)
+	// Persist the failure as a turn-error notice so it survives reloads
+	// (the error event only exists on the live SSE) and so the model sees
+	// the failure boundary it resumes across. toolsExecuted gates the
+	// sweep: a turn that died with ZERO tool results has no partial side
+	// effects, so replaying it later is safe; a mid-tool death is not.
+	sess.Append(provider.Message{
+		Role:    "user",
+		Content: notice,
+		Origin:  provider.OriginTurnError,
+		Metadata: map[string]any{
+			"turnError":     cat,
+			"toolsExecuted": toolsExecuted,
+		},
+	})
+	emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": notice, "category": cat}})
+	emitEvent(ctx, ChatEvent{Type: "done"})
+	return notice
 }
 
 // llmRetry wraps an LLM call with retry logic, in two tiers:
@@ -3712,36 +3746,10 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 
 		if err != nil {
 			// Cancellation is a control-flow outcome (Stop, shutdown, or a
-			// disconnected caller), not a provider failure. Publishing it as
-			// an error leaves a persisted "context canceled" bubble that can
-			// arrive after the UI has already rendered "(Stopped)".
-			if errors.Is(err, context.Canceled) {
-				slog.Info("LLM chat canceled", "agent", a.name)
-				emitEvent(ctx, ChatEvent{Type: "done"})
-				return ""
-			}
+			// disconnected caller), not a provider failure. failTurn
+			// handles it (and the persisted notice) for both loops.
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
-			notice, cat := turnFailureNotice(msg.Lang, a.model, err)
-			// Persist the failure as a turn-error notice so it survives
-			// reloads (the web history previously showed nothing for a
-			// failed turn — the error event only existed on the live SSE)
-			// and so the model sees the failure boundary it resumes
-			// across. toolsExecuted gates the failure-retry sweep: a turn
-			// that died with ZERO tool results has no partial side
-			// effects, so replaying it later is safe; a mid-tool death is
-			// not replayable and only gets notified.
-			sess.Append(provider.Message{
-				Role:    "user",
-				Content: notice,
-				Origin:  provider.OriginTurnError,
-				Metadata: map[string]any{
-					"turnError":     cat,
-					"toolsExecuted": totalToolCalls,
-				},
-			})
-			emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": notice, "category": cat}})
-			emitEvent(ctx, ChatEvent{Type: "done"})
-			return notice
+			return a.failTurn(ctx, sess, msg.Lang, err, totalToolCalls)
 		}
 		a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 		a.maybeRecoverToolCalls(resp)
@@ -4620,24 +4628,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 
 		if err != nil {
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
-			// Same granular notice + persisted turn-error marker as the
-			// non-streaming path (see the HandleMessage error branch) —
-			// the streaming variant returns a one-chunk stream instead of
-			// a string, but the failure record must be identical so the
-			// failure-retry sweep treats both loops alike.
-			notice, cat := turnFailureNotice(msg.Lang, a.model, err)
-			sess.Append(provider.Message{
-				Role:    "user",
-				Content: notice,
-				Origin:  provider.OriginTurnError,
-				Metadata: map[string]any{
-					"turnError":     cat,
-					"toolsExecuted": totalToolCalls,
-				},
-			})
-			emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": notice, "category": cat}})
-			emitEvent(ctx, ChatEvent{Type: "done"})
-			return a.stringStream(notice)
+			return a.stringStream(a.failTurn(ctx, sess, msg.Lang, err, totalToolCalls))
 		}
 		a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 		a.maybeRecoverToolCalls(resp)

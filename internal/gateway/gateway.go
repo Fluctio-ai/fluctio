@@ -631,10 +631,10 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 		// Reply routing: default follows the inbound's own triple, but a
 		// ReplyRoute override (set by the cron scheduler for background
 		// jobs with deliver=true) sends the reply to the job's bound
-		// conversation instead. A heartbeat inbound with NO override is a
-		// pure background job (deliver=false) — skip the outbound enqueue
-		// entirely so routeOutbound doesn't log an "unknown outbound
-		// channel" warning on every fire.
+		// conversation instead. A heartbeat inbound that still has no
+		// destination is a pure background job (deliver=false) — skip the
+		// outbound enqueue entirely so routeOutbound doesn't log an
+		// "unknown outbound channel" warning on every fire.
 		outChannel := task.Message.Channel
 		outAccount := task.Message.AccountID
 		outChat := task.Message.ChatID
@@ -643,8 +643,8 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 			outAccount = task.Message.ReplyRoute.AccountID
 			outChat = task.Message.ReplyRoute.ChatID
 		}
-		if outChannel == "heartbeat" && task.Message.ReplyRoute == nil {
-			slog.Info("background cron reply discarded (deliver=false)", "agent", task.AgentID, "chat", task.Message.ChatID)
+		if outChannel == "heartbeat" {
+			slog.Info("background reply discarded (deliver=false)", "agent", task.AgentID, "chat", task.Message.ChatID)
 			return reply, nil
 		}
 		out := bus.OutboundMessage{

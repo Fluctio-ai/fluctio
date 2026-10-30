@@ -362,20 +362,13 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
   while (i < history.length) {
     const h = history[i];
     if (h.role === "user") {
-      // Turn-abort boundary marker (kind=turn_aborted_notice from
-      // WebChatHistory) renders as a centered notice pill, not a user
-      // bubble — it's a system fact about an interrupted turn.
-      if (h.kind === "turn_aborted_notice") {
-        msgs.push({ id: `h-${i}`, role: "notice", kind: "turn_aborted_notice", content: h.content || "", timestamp: h.timestamp || 0 });
-        i++;
-        continue;
-      }
-      // Persisted turn-failure notice (kind=turn_error_notice): the durable
-      // copy of an LLM-call failure with its cause. The live SSE error
-      // event disappears on refresh — this marker is what a reloaded chat
-      // shows instead, so failed turns leave a visible trace.
-      if (h.kind === "turn_error_notice") {
-        msgs.push({ id: `h-${i}`, role: "notice", kind: "turn_error_notice", content: h.content || "", timestamp: h.timestamp || 0 });
+      // System notices rendered as centered pills instead of user bubbles:
+      // turn_aborted_notice (turn-abort boundary from crash-heal/stop) and
+      // turn_error_notice (persisted LLM-failure with its cause — the
+      // durable copy a reloaded chat reads, since the live SSE error event
+      // vanishes on refresh).
+      if (h.kind === "turn_aborted_notice" || h.kind === "turn_error_notice") {
+        msgs.push({ id: `h-${i}`, role: "notice", kind: h.kind, content: h.content || "", timestamp: h.timestamp || 0 });
         i++;
         continue;
       }

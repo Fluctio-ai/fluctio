@@ -308,24 +308,23 @@ function JobRow({
                 {t("scheduler.via")} {job.channel}
               </span>
             )}
-            <label className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer">
-              <Switch
-                checked={!!job.background}
-                disabled={flagBusy}
-                onCheckedChange={(v) => onSetBackground(v)}
-                aria-label={t("scheduler.background")}
-              />
-              {t("scheduler.background")}
-            </label>
-            <label className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer">
-              <Switch
-                checked={job.deliver !== false}
-                disabled={flagBusy}
-                onCheckedChange={(v) => onSetDeliver(v)}
-                aria-label={t("scheduler.deliver")}
-              />
-              {t("scheduler.deliver")}
-            </label>
+            {[
+              { key: "background", on: !!job.background, set: onSetBackground },
+              { key: "deliver", on: job.deliver !== false, set: onSetDeliver },
+            ].map(({ key, on, set }) => (
+              <label
+                key={key}
+                className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer"
+              >
+                <Switch
+                  checked={on}
+                  disabled={flagBusy}
+                  onCheckedChange={set}
+                  aria-label={t(`scheduler.${key}`)}
+                />
+                {t(`scheduler.${key}`)}
+              </label>
+            ))}
           </div>
           <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <MessageSquare className="size-3.5 mt-0.5 shrink-0" />

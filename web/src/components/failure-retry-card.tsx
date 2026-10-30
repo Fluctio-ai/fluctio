@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { getConfig, updateConfig } from "@/lib/api";
+import { getConfig, updateConfig, type ConfigResponse } from "@/lib/api";
 import { useAutoSave } from "@/hooks/use-auto-save";
 import {
   SettingsCard,
@@ -19,22 +19,24 @@ import {
 // and the breaker on every trip, so changes land without a restart.
 // Fields are the settings dialect's string-state numeric form: empty =
 // fall back to the env knob / built-in default (placeholder shows it).
+type FailureWire = NonNullable<ConfigResponse["failure"]>;
 type FailureDraft = { quotaProbeMin: string; backoffBaseMin: string; maxAttempts: string };
+
 const EMPTY: FailureDraft = { quotaProbeMin: "", backoffBaseMin: "", maxAttempts: "" };
 const DEFAULTS = { quotaProbeMin: "30", backoffBaseMin: "15", maxAttempts: "3" };
 
 // toDraft/toPayload convert between the wire shape (ints, omitted when
 // unset) and the edit shape (strings, "" = inherit).
-function toDraft(f: { backoffBaseMin?: number; maxAttempts?: number; quotaProbeMin?: number }): FailureDraft {
+function toDraft(f: FailureWire): FailureDraft {
   const s = (v?: number) => (v && v > 0 ? String(v) : "");
   return { quotaProbeMin: s(f.quotaProbeMin), backoffBaseMin: s(f.backoffBaseMin), maxAttempts: s(f.maxAttempts) };
 }
-function toPayload(d: FailureDraft) {
+function toPayload(d: FailureDraft): FailureWire {
   const n = (s: string) => {
     const v = Number(s);
     return s.trim() !== "" && Number.isFinite(v) && v > 0 ? Math.round(v) : undefined;
   };
-  const out: { backoffBaseMin?: number; maxAttempts?: number; quotaProbeMin?: number } = {};
+  const out: FailureWire = {};
   const q = n(d.quotaProbeMin), b = n(d.backoffBaseMin), m = n(d.maxAttempts);
   if (q) out.quotaProbeMin = q;
   if (b) out.backoffBaseMin = b;
@@ -45,47 +47,38 @@ function toPayload(d: FailureDraft) {
 export function FailureRetryCard() {
   const t = useT();
   const [draft, setDraft] = useState<FailureDraft>(EMPTY);
+  // Last accepted draft — the rollback target after a failed save.
+  const [good, setGood] = useState<FailureDraft>(EMPTY);
   const [loaded, setLoaded] = useState(false);
-  // Last-good snapshot for the rollback path — saved rows may omit every
-  // key, so keep the wire shape (not the draft strings).
-  const lastGood = useRef<Record<string, number>>({});
-
-  const reload = () => {
-    setDraft(toDraft(lastGood.current));
-  };
 
   const { failed, saved, wrap } = useAutoSave({
     loaded,
     save: async () => {
-      const payload = toPayload(draft);
-      const res = await updateConfig({ failure: payload });
+      const res = await updateConfig({ failure: toPayload(draft) });
       if (!res.ok) throw new Error(res.error || "save failed");
-      lastGood.current = payload;
     },
-    reload,
+    reload: () => setDraft(good),
+    onSaved: () => setGood(draft),
   });
 
   useEffect(() => {
     getConfig()
       .then((c) => {
-        const f = (c as { failure?: Record<string, number> }).failure || {};
-        lastGood.current = f;
-        setDraft(toDraft(f));
+        const d = toDraft(c.failure || {});
+        setDraft(d);
+        setGood(d);
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
   }, []);
 
-  const field = (key: keyof FailureDraft, def: string, max: number) => (
+  const field = (key: keyof FailureDraft, def: string, label: string) => (
     <DecimalInput
       value={draft[key]}
       onChange={wrap((s: string) => setDraft((p) => ({ ...p, [key]: s.replace(/[^\d]/g, "") })))}
       placeholder={def}
       maxLength={4}
-      aria-label={key}
-      // `max` is advisory in the hint text — the backend clamps nothing,
-      // so guard the save path instead of blocking typing.
-      data-max={max}
+      aria-label={label}
     />
   );
 
@@ -106,13 +99,13 @@ export function FailureRetryCard() {
       />
       <div className="grid gap-4 sm:grid-cols-3">
         <Field label={t("failure.quotaProbe")} hint={t("failure.quotaProbeHint")}>
-          {field("quotaProbeMin", DEFAULTS.quotaProbeMin, 1440)}
+          {field("quotaProbeMin", DEFAULTS.quotaProbeMin, t("failure.quotaProbe"))}
         </Field>
         <Field label={t("failure.backoffBase")} hint={t("failure.backoffBaseHint")}>
-          {field("backoffBaseMin", DEFAULTS.backoffBaseMin, 1440)}
+          {field("backoffBaseMin", DEFAULTS.backoffBaseMin, t("failure.backoffBase"))}
         </Field>
         <Field label={t("failure.maxAttempts")} hint={t("failure.maxAttemptsHint")}>
-          {field("maxAttempts", DEFAULTS.maxAttempts, 10)}
+          {field("maxAttempts", DEFAULTS.maxAttempts, t("failure.maxAttempts"))}
         </Field>
       </div>
     </SettingsCard>

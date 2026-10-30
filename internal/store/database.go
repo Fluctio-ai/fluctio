@@ -2259,9 +2259,6 @@ func (d *DBStore) migrateCronJobsFailureCount(ctx context.Context) error {
 	return nil
 }
 
-// migrateCronJobsAddSilent retrofits the silent column onto pre-feature
-// installs. Default 0 (foreground) keeps every existing job behaving as
-// before — replies still delivered to the configured channel.
 // migrateCronJobsBackgroundDeliver replaces the legacy `silent` bool with
 // the two orthogonal delivery axes (see CronJobRecord.Background/Deliver).
 // Legacy mapping: silent=true → (background=1, deliver=0);
@@ -2291,13 +2288,9 @@ func (d *DBStore) migrateCronJobsBackgroundDeliver(ctx context.Context) error {
 		return err
 	}
 	if hasSilent {
-		// Backfill from the legacy flag before dropping it. The added
-		// columns' defaults only apply to rows created AFTER the ALTER,
-		// so pre-existing rows need the explicit UPDATE (deliver's
-		// DEFAULT 1 would otherwise flip old foreground rows' semantics
-		// on silent-era rows that were never silent — harmless there,
-		// but silent-era silent=1 rows MUST become deliver=0 or a
-		// previously-discarding job would suddenly deliver).
+		// ADD COLUMN defaults apply to existing rows too, but the legacy
+		// flag still wins: silent=1 MUST become deliver=0, or a job that
+		// used to discard its reply would suddenly deliver.
 		if _, err := d.db.ExecContext(ctx,
 			`UPDATE cron_jobs SET background = silent, deliver = CASE WHEN silent THEN 0 ELSE 1 END`); err != nil {
 			return fmt.Errorf("backfill background/deliver: %w", err)
@@ -5872,7 +5865,7 @@ func scanCronJobs(rows *sql.Rows) ([]CronJobRecord, error) {
 	for rows.Next() {
 		var j CronJobRecord
 		var lastRun, nextRun sql.NullTime
-	if err := rows.Scan(&j.ID, &j.AgentID, &j.Name, &j.Type, &j.Schedule, &j.Message, &j.Channel, &j.ChatID, &j.AccountID, &j.Timezone, &j.Enabled, &lastRun, &nextRun, &j.FailureCount, &j.Background, &j.Deliver, &j.CreatedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.AgentID, &j.Name, &j.Type, &j.Schedule, &j.Message, &j.Channel, &j.ChatID, &j.AccountID, &j.Timezone, &j.Enabled, &lastRun, &nextRun, &j.FailureCount, &j.Background, &j.Deliver, &j.CreatedAt); err != nil {
 			return nil, err
 		}
 		if lastRun.Valid {

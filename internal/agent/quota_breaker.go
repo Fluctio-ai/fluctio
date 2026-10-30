@@ -26,12 +26,11 @@ import (
 // tripped state and lets the next real call re-discover it — at one wasted
 // call, that's cheaper than a durable marker plus its invalidation logic.
 type quotaBreaker struct {
-	mu         sync.Mutex
-	tripped    bool
-	reason     string // provider error summary captured at trip time
-	trippedAt  time.Time
-	nextProbe  time.Time
-	probeEvery time.Duration
+	mu        sync.Mutex
+	tripped   bool
+	reason    string // provider error summary captured at trip time
+	trippedAt time.Time
+	nextProbe time.Time
 	// probeStreak counts consecutive failed probes. Each re-trip doubles
 	// the wait before the next probe (base, 2x, 4x… capped at 64x) — a
 	// quota that stays dead for hours doesn't need 30-minute polling, and
@@ -41,14 +40,9 @@ type quotaBreaker struct {
 }
 
 // trip arms the breaker. probeEvery is the FIRST probe interval; further
-// consecutive trips double it (see probeStreak). probeEvery <= 0 falls
-// back to resolveQuotaProbeInterval() (FLUCTIO_QUOTA_PROBE_SECS, default
-// 30min) — callers that support runtime settings pass their own resolved
-// value (see Agent.quotaProbeInterval).
+// consecutive trips double it (see probeStreak). The caller resolves it
+// per trip (Agent.quotaProbeInterval: settings row → env → default).
 func (q *quotaBreaker) trip(reason string, now time.Time, probeEvery time.Duration) {
-	if probeEvery <= 0 {
-		probeEvery = resolveQuotaProbeInterval()
-	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	// Re-trips while already tripped (a failed probe) slide nextProbe
@@ -59,7 +53,6 @@ func (q *quotaBreaker) trip(reason string, now time.Time, probeEvery time.Durati
 	}
 	q.tripped = true
 	q.reason = reason
-	q.probeEvery = probeEvery
 	shift := q.probeStreak
 	if shift > 6 {
 		shift = 6 // 64x cap
@@ -108,7 +101,7 @@ func (q *quotaBreaker) clear() {
 func (a *Agent) quotaProbeInterval(ctx context.Context) time.Duration {
 	if a.dataStore != nil {
 		var c config.FailureRetryCfg
-		if err := scope.SettingInto(ctx, a.dataStore, "failure", "", "", &c); err == nil && c.QuotaProbeMin >= 1 {
+		if err := scope.SettingInto(ctx, a.dataStore, config.FailureNamespace, "", "", &c); err == nil && c.QuotaProbeMin >= 1 {
 			return time.Duration(c.QuotaProbeMin) * time.Minute
 		}
 	}

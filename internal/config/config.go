@@ -438,6 +438,11 @@ type Config struct {
 	Failure       FailureRetryCfg            `json:"failure,omitempty"`
 }
 
+// FailureNamespace is the settings-row namespace holding FailureRetryCfg —
+// shared by the gateway failure sweep and the agent quota breaker so the
+// literal isn't written at each runtime reader.
+const FailureNamespace = "failure"
+
 // FailureRetryCfg tunes the failure-recovery watchdogs at runtime without
 // a daemon restart (system-scope "failure" setting row; the sweeps and
 // the quota breaker re-read it per tick / per trip). Every field is
