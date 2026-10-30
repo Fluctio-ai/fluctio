@@ -590,6 +590,20 @@ func (m *Manager) getByKey(key, channel, accountID, chatID, projectID string) *S
 		s.load()
 	}
 
+	// Late-bind the routing triple from the persisted row when the caller
+	// only had the session key (GetByKey). Without this a cold-loaded
+	// session reports an empty triple, and anything that re-enters the
+	// agent by key (the failure sweep's replay) would mint a NEW session
+	// instead of continuing this one.
+	if s.channel == "" && m.store != nil {
+		if ch, acc, chat, err := m.store.LookupSessionTriple(m.ctx(), m.agentID, key); err == nil && ch != "" {
+			s.channel, s.accountID, s.chatID = ch, acc, chat
+		}
+	}
+	if s.projectID == "" {
+		s.projectID = m.LookupSessionProject(key)
+	}
+
 	// Repair a working set left dangling by a mid-turn daemon death —
 	// see healInterruptedTurn. Fresh loads only: a restart leaves no turn
 	// in flight, so appending here can never race a live one (the cached
@@ -705,11 +719,7 @@ func (s *Session) RollbackLastUser() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := 0
-	for len(s.Messages) > m {
-		origin := s.Messages[len(s.Messages)-1-m].Origin
-		if origin != provider.OriginTurnAbort && origin != provider.OriginTurnError {
-			break
-		}
+	for len(s.Messages) > m && provider.IsTurnMarker(s.Messages[len(s.Messages)-1-m].Origin) {
 		m++
 	}
 	if len(s.Messages) <= m || s.Messages[len(s.Messages)-1-m].Role != "user" {
@@ -824,6 +834,16 @@ var activeTurns atomic.Int64
 // means a maintenance run overlaps one more turn, which queues safely
 // behind the single SQLite connection.
 func AnyTurnActive() bool { return activeTurns.Load() > 0 }
+
+// TurnInFlight reports whether a HandleMessage turn is currently running
+// on this session. Advisory probe for out-of-band triggers (the failure
+// sweep's replay) that must not interleave a second turn into the same
+// conversation.
+func (s *Session) TurnInFlight() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.turnDepth > 0
+}
 
 // BeginTurn marks a HandleMessage turn as in-flight for this session.
 // Paired with EndTurn. Steering messages are only accepted while at
@@ -1031,7 +1051,7 @@ func (s *Session) healInterruptedTurn() {
 			// top of the unanswered user turn) — appending the lost-reply
 			// marker would stack a second, vaguer explanation on a specific
 			// one, so treat that shape as already-healed.
-			if last.Role == "user" && last.Origin != provider.OriginTurnAbort && last.Origin != provider.OriginTurnError {
+			if last.Role == "user" && !provider.IsTurnMarker(last.Origin) {
 				note = turnAbortedLostNote
 			}
 		}

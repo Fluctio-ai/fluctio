@@ -310,7 +310,12 @@ function JobRow({
             )}
             {[
               { key: "background", on: !!job.background, set: onSetBackground },
-              { key: "deliver", on: job.deliver !== false, set: onSetDeliver },
+              // Deliver only applies to a background job — a foreground one
+              // answers in the bound conversation, so the switch would
+              // promise something it can't do.
+              ...(job.background
+                ? [{ key: "deliver", on: job.deliver !== false, set: onSetDeliver }]
+                : []),
             ].map(({ key, on, set }) => (
               <label
                 key={key}

@@ -216,8 +216,14 @@ type Gateway struct {
 	dedup      sync.Map
 	// failureNotified dedupes the failure sweep's per-(agent|session|event)
 	// notifications (6h window) so a stuck chain doesn't re-notify on every
-	// 10-minute tick. Guarded by mu. See gateway_failure_sweep.go.
+	// 10-minute tick; a settings row mirrors it across restarts. Guarded by
+	// mu. See gateway_failure_sweep.go.
 	failureNotified map[string]time.Time
+	// failureScan caches, per (agent, session), which diag row was last
+	// analyzed and when the next retry is due, so settled sessions cost no
+	// session load per tick. Pure cache — the session history is the truth.
+	// Guarded by mu.
+	failureScan map[string]failureScanState
 }
 
 // SetProjectRuntime wires the coding-agent runtime manager. Call once at

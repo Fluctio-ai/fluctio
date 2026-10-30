@@ -1837,6 +1837,14 @@ func (a *Agent) Sessions() *session.Manager {
 // sessionId may be either a canonical session_key (what
 // ListWebSessions returns) or a legacy web chat_id from older URLs;
 // ResolveSessionKey untangles them.
+// turnMarkerKinds maps a runtime turn-boundary origin to the history
+// entry kind the web UI renders (a centered notice pill). One table so a
+// new marker type is a one-line addition here — no second switch to find.
+var turnMarkerKinds = map[string]string{
+	provider.OriginTurnAbort: "turn_aborted_notice",
+	provider.OriginTurnError: "turn_error_notice",
+}
+
 // WebChatHistory returns one paginated slice of the session's archived
 // messages for the web chat panel. beforeSeq > 0 returns messages with
 // seq strictly less than it (older); beforeSeq <= 0 returns the most
@@ -1898,26 +1906,15 @@ func (a *Agent) WebChatHistory(sessionId string, beforeSeq, limit int) ([]map[st
 	}
 	var history []map[string]any
 	for _, m := range renderedPage {
-		// turn_aborted 边界标记（崩溃自愈 / 停止标记）：runtime 注入但
-		// 用户可见 —— 在 Origin 过滤之前拦截，渲染成 notice entry（前端
-		// 识别 kind="turn_aborted_notice"），不作为用户气泡。
-		if m.Origin == provider.OriginTurnAbort {
-			history = append(history, map[string]any{
-				"role":      "user",
-				"kind":      "turn_aborted_notice",
-				"content":   m.TextContent(),
-				"timestamp": m.Timestamp,
-			})
-			continue
-		}
-		// turn_error 失败标记（LLM 调用死后的持久化告知）：与 turn_aborted
-		// 同一渲染家族，但携带失败类别，前端渲染成带原因的错误 notice。
-		// 这条记录是 web 端重进对话后仍能看到失败原因的唯一来源——live
-		// SSE 的 error 事件刷新即失，这里才是 durable 副本。
-		if m.Origin == provider.OriginTurnError {
+		// Turn boundary markers (crash-heal / stop / LLM failure) are
+		// runtime-injected but user-visible: render as a notice entry, not
+		// a user bubble, and intercept them BEFORE the Origin filter below.
+		// The failure notice is the only durable copy of a failed turn's
+		// cause — the live SSE error event is gone on refresh.
+		if kind, ok := turnMarkerKinds[m.Origin]; ok {
 			entry := map[string]any{
 				"role":      "user",
-				"kind":      "turn_error_notice",
+				"kind":      kind,
 				"content":   m.TextContent(),
 				"timestamp": m.Timestamp,
 			}

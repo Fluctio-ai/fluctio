@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestAnalyzeFailureChain(t *testing.T) {
 	retryTurn := func(attempt int, base string, ts int64) provider.Message {
 		return provider.Message{
 			Role:      "user",
-			Content:   failureRetryTag + "第" + string(rune('0'+attempt)) + "次·" + base,
+			Content:   fmt.Sprintf("%s第%d次·%s", failureRetryTag, attempt, base),
 			Timestamp: ts,
 		}
 	}
@@ -163,5 +164,36 @@ func TestFailureRetryBackoffSchedule(t *testing.T) {
 		if got := base << c.retries; got != c.want {
 			t.Errorf("base<<%d = %v, want %v", c.retries, got, c.want)
 		}
+	}
+}
+
+// TestShouldScan pins the per-session cache semantics — the whole point of
+// the cache is that a settled session costs no session load per tick, and
+// a pending retry isn't woken before its backoff elapses.
+func TestShouldScan(t *testing.T) {
+	now := time.Now()
+	st := func(upTo int64, nextAt time.Time) failureScanState {
+		return failureScanState{handledUpTo: upTo, nextAt: nextAt}
+	}
+	cases := []struct {
+		name     string
+		state    failureScanState
+		newestID int64
+		want     bool
+		reason   string
+	}{
+		{"never analyzed", st(0, time.Time{}), 7, true, "first sighting"},
+		{"settled, same newest row", st(7, time.Time{}), 7, false, "already handled, nothing new"},
+		{"settled, older row", st(9, time.Time{}), 7, false, "already handled a newer one"},
+		{"settled, newer failure arrived", st(7, time.Time{}), 8, true, "new failure row"},
+		{"pending, before nextAt", st(7, now.Add(time.Minute)), 7, false, "backoff not elapsed"},
+		{"pending, after nextAt", st(7, now.Add(-time.Minute)), 7, true, "retry due"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shouldScan(c.state, c.newestID, now); got != c.want {
+				t.Errorf("shouldScan = %v, want %v (%s)", got, c.want, c.reason)
+			}
+		})
 	}
 }

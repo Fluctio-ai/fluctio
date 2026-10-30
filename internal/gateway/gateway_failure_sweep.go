@@ -21,10 +21,9 @@ import (
 // Failure-retry sweep: the watchdog that closes the loop the loop-level
 // self-heal can't. When a turn dies after all retries, the agent loop
 // persists a turn-error notice (OriginTurnError) into the session. This
-// sweep periodically scans llm_call_diag (time cursor = "already scanned"
-// mark, so each failure is looked at exactly once) for sessions with
-// recent LLM failures, analyzes the tail of each session's working set for
-// an UNRESOLVED failure chain, and then:
+// sweep periodically scans llm_call_diag for sessions with recent LLM
+// failures, analyzes the tail of each session's working set for an
+// UNRESOLVED failure chain, and then:
 //
 //   - replayable chains (every link failed with ZERO tool results — no
 //     partial side effects, so a replay is safe) are auto-retried through
@@ -37,9 +36,13 @@ import (
 //     the attempt cap are surfaced to the user once via the notification
 //     queue + IM leg, with the cause and the number of attempts spent.
 //
-// All retry state lives in the session history itself (the chain of 🔁
-// turns + notices) — nothing extra to persist, restarts and multi-replica
-// deployments can't lose or double-count it.
+// The session history is the source of truth: the chain of retry-tagged
+// turns + notices carries the attempt count and the last failure time, so
+// the retry schedule is derivable at any moment — a restart loses nothing.
+// failureScan below is a CACHE, not a second source of truth: it only
+// remembers which diag rows were already looked at (and when the next
+// attempt is due) so a settled session isn't re-loaded every tick. Dropping
+// it costs one extra pass, never a missed or doubled retry.
 
 // failureRetryTag prefixes the replayed user turn so the LLM, the history
 // renderer, and analyzeFailureChain can all recognize a system replay.
@@ -99,7 +102,7 @@ func failureRetryRuntime(ctx context.Context, st store.Store) (base time.Duratio
 // unanswered failure. Produced by analyzeFailureChain.
 type failureChain struct {
 	userText   string    // the ORIGINAL user request (first link), verbatim
-	retries    int       // auto-retries already spent (🔁 turns in the chain)
+	retries    int       // auto-retries already spent (tagged turns in the chain)
 	replayable bool      // every link died with zero tool results
 	lastAt     time.Time // newest notice timestamp — the backoff anchor
 	category   string    // newest notice failure category
@@ -120,7 +123,7 @@ func analyzeFailureChain(msgs []provider.Message) (failureChain, bool) {
 	}
 	// Tail must be a turn-error notice.
 	tail := msgs[n-1]
-	if tail.Origin != provider.OriginTurnError {
+	if !provider.IsFailureNotice(tail.Origin) {
 		return failureChain{}, false
 	}
 	var chain failureChain
@@ -135,14 +138,14 @@ func analyzeFailureChain(msgs []provider.Message) (failureChain, bool) {
 	var originalText string
 	for i >= 1 {
 		notice := msgs[i]
-		if notice.Origin != provider.OriginTurnError {
+		if !provider.IsFailureNotice(notice.Origin) {
 			return failureChain{}, false // malformed — treat as no chain
 		}
 		if toolsExecutedOf(notice) > 0 {
 			chain.replayable = false
 		}
 		user := msgs[i-1]
-		if user.Role != "user" || user.Origin == provider.OriginTurnError {
+		if user.Role != "user" || provider.IsFailureNotice(user.Origin) {
 			return failureChain{}, false
 		}
 		text := user.TextContent()
@@ -178,70 +181,109 @@ func toolsExecutedOf(m provider.Message) int {
 	return 0
 }
 
-// runFailureSweep boots the sweep (clearing the backlog the cursor marks
-// un-scanned) and re-runs it every 10 minutes.
+// failureScanWindow is how far back each pass looks for failures. It must
+// exceed the longest backoff (base<<attempts — 105min at the defaults)
+// plus a tick of slack so an unresolved chain keeps being seen; 6h also
+// lines up with the notification dedupe window.
+const failureScanWindow = 6 * time.Hour
+
+// failureScanState is the per-session cache entry (see the file header):
+// the newest diag row already analyzed, and — while a retry is pending —
+// when to look again.
+type failureScanState struct {
+	handledUpTo int64     // newest llm_call_diag id already analyzed
+	nextAt      time.Time // zero = settled (nothing pending)
+	lastSeen    time.Time // for pruning
+}
+
+// runFailureSweep boots the sweep and re-runs it every 10 minutes.
 func (g *Gateway) runFailureSweep(ctx context.Context) {
+	if dbs, ok := g.store.(*store.DBStore); ok && dbs != nil {
+		g.loadFailureNotified(ctx, dbs)
+	}
 	g.runEvery(ctx, 10*time.Minute, g.sweepFailures)
 }
 
-// sweepFailures runs one incremental pass: scan failures past the cursor,
-// group by session, act on each unresolved chain, advance the cursor.
+// sweepFailures runs one pass: read the window's failure rows, collapse
+// them per session, and act on each session whose chain isn't settled yet.
 func (g *Gateway) sweepFailures(ctx context.Context) {
 	dbs, ok := g.store.(*store.DBStore)
 	if !ok || dbs == nil {
 		return
 	}
-	since := loadFailureCursor(ctx, dbs)
-	rows, err := dbs.ListFailedLLMCalls(ctx, since, "", 500)
+	rows, err := dbs.ListRecoverableCallFailures(ctx, time.Now().Add(-failureScanWindow), 1000)
 	if err != nil {
 		slog.Warn("failure sweep: list failed calls", "error", err)
 		return
 	}
-	// Advance the cursor over everything just scanned. Newest-first rows:
-	// the first row's CreatedAt is the high-water mark. Overlap-safe: the
-	// chain analysis is idempotent, so re-seeing a boundary row after a
-	// restart costs one wasted session read, not a double replay. An empty
-	// page writes nothing — it carries no information worth a DB write.
-	if len(rows) > 0 {
-		saveFailureCursor(ctx, dbs, rows[0].CreatedAt)
-	}
-	g.pruneFailureNotified()
 
-	// Distinct (agent, session) pairs — one chain analysis per session.
-	// The agent records and tuning knobs resolve once per pass.
+	// Newest row per session (rows come oldest-first, so overwrite).
+	type sessRef struct{ agentID, key string }
+	newest := map[sessRef]store.LLMCallDiagRow{}
+	for _, r := range rows {
+		newest[sessRef{r.AgentID, r.SessionKey}] = r
+	}
+
 	base, maxAttempts := failureRetryRuntime(ctx, g.store)
 	agents := map[string]*store.AgentRecord{}
-	type sessRef struct{ agentID, key string }
-	seen := map[sessRef]bool{}
-	for _, r := range rows {
-		if r.AgentID == "" || r.SessionKey == "" {
+	now := time.Now()
+	for ref, row := range newest {
+		if !shouldScan(g.failureState(ref.agentID, ref.key), row.ID, now) {
 			continue
 		}
-		ref := sessRef{r.AgentID, r.SessionKey}
-		if seen[ref] {
-			continue
-		}
-		seen[ref] = true
-		g.handleFailureSession(ctx, dbs, r.AgentID, r.SessionKey, base, maxAttempts, agents)
+		g.handleFailureSession(ctx, dbs, ref.agentID, ref.key, row.ID, base, maxAttempts, agents)
 	}
+	g.pruneFailureStates()
 }
 
-// pruneFailureNotified drops notification-dedupe entries past their 6h
-// window so the map doesn't grow with the deployment's session count.
-func (g *Gateway) pruneFailureNotified() {
+// shouldScan decides, from the cache alone, whether a session needs a look
+// this pass. False means: settled with no newer failure, or a retry that
+// isn't due yet — either way the session isn't loaded.
+func shouldScan(st failureScanState, newestRowID int64, now time.Time) bool {
+	if !st.nextAt.IsZero() && now.Before(st.nextAt) {
+		return false
+	}
+	return st.handledUpTo < newestRowID || !st.nextAt.IsZero()
+}
+
+// failureState returns the cached scan state for one session (zero value
+// when absent, which reads as "never analyzed").
+func (g *Gateway) failureState(agentID, sessionKey string) failureScanState {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.failureScan[agentID+"|"+sessionKey]
+}
+
+// setFailureState records the outcome of one session analysis.
+func (g *Gateway) setFailureState(agentID, sessionKey string, st failureScanState) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for k, at := range g.failureNotified {
-		if time.Since(at) >= 6*time.Hour {
-			delete(g.failureNotified, k)
+	if g.failureScan == nil {
+		g.failureScan = map[string]failureScanState{}
+	}
+	st.lastSeen = time.Now()
+	g.failureScan[agentID+"|"+sessionKey] = st
+}
+
+// pruneFailureStates drops settled entries older than the scan window —
+// they'd be skipped by the window anyway, and a fresh failure for that
+// session simply re-creates the entry.
+func (g *Gateway) pruneFailureStates() {
+	cutoff := time.Now().Add(-failureScanWindow)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for k, st := range g.failureScan {
+		if !st.nextAt.IsZero() || st.lastSeen.After(cutoff) {
+			continue
 		}
+		delete(g.failureScan, k)
 	}
 }
 
-// handleFailureSession loads one session's working set tail and acts on
-// its unresolved failure chain: replay (backoff-gated, cap-gated) or
-// notify. base/maxAttempts come from failureRetryRuntime (per-pass).
-func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, agentID, sessionKey string, base time.Duration, maxAttempts int, agents map[string]*store.AgentRecord) {
+// handleFailureSession loads one session's tail and acts on its unresolved
+// failure chain: replay (backoff-gated, cap-gated) or notify. base and
+// maxAttempts come from failureRetryRuntime (per pass).
+func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, agentID, sessionKey string, upTo int64, base time.Duration, maxAttempts int, agents map[string]*store.AgentRecord) {
 	rec, cached := agents[agentID]
 	if !cached {
 		rec = g.agentRecord(ctx, dbs, agentID)
@@ -262,14 +304,17 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 	if sess == nil {
 		return
 	}
+	settled := failureScanState{handledUpTo: upTo}
 	chain, ok := analyzeFailureChain(sess.GetMessages())
 	if !ok {
-		return // no unresolved failure at the tail
+		g.setFailureState(agentID, sessionKey, settled)
+		return // chain resolved (or never existed) — nothing to do
 	}
 
 	if !chain.replayable {
 		// Died mid-tool: a replay could double-execute side effects.
 		// Surface it once instead — the user must judge what to redo.
+		g.setFailureState(agentID, sessionKey, settled)
 		g.notifyFailureOnce(ctx, dbs, rec, sessionKey, "not_replayable",
 			"任务中途失败，无法自动重试",
 			fmt.Sprintf("一条任务在执行过程中失败（类别 %s，已有部分工具执行，自动重试可能重复副作用）。请打开会话确认进度后手动重发。", chain.category))
@@ -277,6 +322,7 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 	}
 	if chain.retries >= maxAttempts {
 		// Cap reached: stop retrying, tell the user what was spent.
+		g.setFailureState(agentID, sessionKey, settled)
 		g.notifyFailureOnce(ctx, dbs, rec, sessionKey, "gave_up",
 			"自动重试已放弃",
 			fmt.Sprintf("你的消息「%s」已自动重试 %d 次仍失败（类别 %s）。不再继续尝试——请检查模型配置或额度后手动重发。", truncateRunes(chain.userText, 40), chain.retries, chain.category))
@@ -284,19 +330,31 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 	}
 	// Backoff before the next attempt: base << retries since the newest
 	// notice (base for the first retry, doubling per further attempt).
-	if !time.Now().After(chain.lastAt.Add(base << chain.retries)) {
-		return // not due yet — next tick re-evaluates
+	if due := chain.lastAt.Add(base << chain.retries); time.Now().Before(due) {
+		settled.nextAt = due
+		g.setFailureState(agentID, sessionKey, settled)
+		return
+	}
+	// A turn is already running on this session — replaying now would
+	// interleave two turns in one conversation. Look again next pass (the
+	// chain analysis is idempotent, so nothing is lost).
+	if sess.TurnInFlight() {
+		settled.nextAt = time.Now().Add(time.Minute)
+		g.setFailureState(agentID, sessionKey, settled)
+		return
 	}
 	g.replayFailedTurn(ctx, dbs, rec, ag, sess, chain)
+	// Re-analyze next pass: a failed replay appends a fresh notice (new
+	// retry count, new backoff anchor), a successful one ends on an
+	// assistant reply and is announced then.
+	g.setFailureState(agentID, sessionKey, failureScanState{handledUpTo: upTo})
 }
 
-// replayFailedTurn re-enters the original request through HandleMessage
-// on the SAME session. The replayed turn is prefixed with the retry tag
-// (attempt number included) so the chain analysis counts attempts and the
-// LLM knows the context. A successful replay appends a normal assistant
-// reply after the chain — the tail is no longer a notice, so the chain is
-// resolved for free; a failed replay appends a fresh notice and the chain
-// grows by one counted link.
+// replayFailedTurn re-enters the original request through HandleMessage on
+// the SAME session. The replayed turn is prefixed with the retry tag so the
+// LLM knows the context and the chain analysis counts the attempt; a
+// successful replay appends an assistant reply after the chain, which the
+// next pass reads as "resolved".
 func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, ag *agent.Agent, sess *session.Session, chain failureChain) {
 	channel, accountID, chatID, projectID := sess.RouteInfo()
 	attempt := chain.retries + 1
@@ -305,20 +363,19 @@ func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec 
 		"agent", ag.Name(), "session", sess.Key(), "attempt", attempt, "category", chain.category)
 
 	reply := ag.HandleMessage(ctx, bus.InboundMessage{
-		Channel:    channel,
-		AccountID:  accountID,
-		ChatID:     chatID,
-		ProjectID:  projectID,
-		AgentID:    ag.ID(),
-		Text:       text,
-		Source:     bus.SourceFailureRetry,
+		Channel:     channel,
+		AccountID:   accountID,
+		ChatID:      chatID,
+		ProjectID:   projectID,
+		AgentID:     ag.ID(),
+		Text:        text,
+		Source:      bus.SourceFailureRetry,
 		OwnerUserID: rec.UserID,
 	})
 
-	// Success = the session tail is no longer a failure notice. Judging by
-	// the persisted chain (not the reply string) keeps this independent of
-	// the notice wording and survives i18n edits; a failed replay appended
-	// a fresh notice, so the chain grew by one counted link.
+	// Success = the persisted chain no longer reads as unresolved. Judging
+	// by the history (not the reply string) keeps this independent of the
+	// notice wording.
 	if _, failed := analyzeFailureChain(sess.GetMessages()); failed {
 		return
 	}
@@ -329,28 +386,77 @@ func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec 
 }
 
 // notifyFailureOnce delivers a sweep notification through the shared
-// three-leg policy (IM best-effort + notification queue + session archive)
-// with a 6h per-(session,event) dedupe so a stuck chain doesn't spam every
-// 10-minute tick.
+// three-leg policy (IM best-effort + notification queue + session archive).
+// Dedupe keys are persisted (sweep/failure_notified) so a daemon restart
+// doesn't re-announce a chain that was already reported.
 func (g *Gateway) notifyFailureOnce(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, sessionKey, event, title, body string) {
-	dedupeKey := rec.ID + "|" + sessionKey + "|" + event
-	g.mu.Lock()
-	if g.failureNotified == nil {
-		g.failureNotified = map[string]time.Time{}
-	}
-	if last, ok := g.failureNotified[dedupeKey]; ok && time.Since(last) < 6*time.Hour {
-		g.mu.Unlock()
+	if !g.claimFailureNotice(ctx, dbs, rec.ID+"|"+sessionKey+"|"+event) {
 		return
 	}
-	g.failureNotified[dedupeKey] = time.Now()
-	g.mu.Unlock()
-
 	uid := sweepOwnerUID(ctx, dbs, *rec)
 	// "" lets resolveSweepTarget fall back to the configured default
 	// channel instead of pinning wechat (the other sweeps pass "" too).
 	ch, chatID, targetKey, _ := g.resolveSweepTarget(ctx, dbs, rec.ID, "", "failure sweep")
 	g.deliverSweepNudge(ctx, dbs, *rec, uid, ch, chatID, targetKey,
 		"llm_failure", title, body, "/agents/"+rec.ID+"/chat", "llm_failure", "failure sweep")
+}
+
+// claimFailureNotice marks dedupeKey as announced, returning false when it
+// was announced within failureScanWindow. The in-memory map is the fast
+// path; the sweep/failure_notified settings row is the durable copy that
+// survives a restart.
+func (g *Gateway) claimFailureNotice(ctx context.Context, dbs *store.DBStore, dedupeKey string) bool {
+	now := time.Now()
+	cutoff := now.Add(-failureScanWindow)
+	g.mu.Lock()
+	if g.failureNotified == nil {
+		g.failureNotified = map[string]time.Time{}
+	}
+	if last, ok := g.failureNotified[dedupeKey]; ok && last.After(cutoff) {
+		g.mu.Unlock()
+		return false
+	}
+	g.failureNotified[dedupeKey] = now
+	snapshot := make(map[string]any, len(g.failureNotified))
+	for k, at := range g.failureNotified {
+		if at.After(cutoff) {
+			snapshot[k] = at.UTC().Format(time.RFC3339)
+		}
+	}
+	g.mu.Unlock()
+
+	// Write-through, best-effort: a lost write only costs one duplicate
+	// notification after the next restart.
+	_ = dbs.SaveConfig(ctx, &store.ConfigRecord{
+		Kind:    "sweep",
+		Name:    "failure_notified",
+		Enabled: true,
+		Data:    snapshot,
+	})
+	return true
+}
+
+// loadFailureNotified hydrates the in-memory dedupe map from the settings
+// row at boot, so a restart doesn't re-announce already-reported chains.
+func (g *Gateway) loadFailureNotified(ctx context.Context, dbs *store.DBStore) {
+	rec, err := dbs.GetConfigByName(ctx, "sweep", "", "failure_notified")
+	if err != nil || rec == nil {
+		return
+	}
+	now := time.Now()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.failureNotified == nil {
+		g.failureNotified = map[string]time.Time{}
+	}
+	for k, v := range rec.Data {
+		s, _ := v.(string)
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil || !t.After(now.Add(-failureScanWindow)) {
+			continue
+		}
+		g.failureNotified[k] = t
+	}
 }
 
 // agentRecord resolves the store row for an agent ID (owner + config),
@@ -362,36 +468,6 @@ func (g *Gateway) agentRecord(ctx context.Context, dbs *store.DBStore, agentID s
 		return nil
 	}
 	return rec
-}
-
-// failureSweepLookback bounds the FIRST pass (no cursor yet): only recent
-// failures are considered, so a fresh deployment doesn't replay/alert on
-// every failure still inside the diag retention window.
-const failureSweepLookback = 15 * time.Minute
-
-// loadFailureCursor reads the persisted scan cursor ("already looked at
-// everything before this") from the configs table. No cursor yet → the
-// sweep starts with a short lookback rather than the full retention
-// window.
-func loadFailureCursor(ctx context.Context, dbs *store.DBStore) time.Time {
-	if rec, err := dbs.GetConfigByName(ctx, "sweep", "", "failure_sweep_cursor"); err == nil && rec != nil {
-		if s, _ := rec.Data["ts"].(string); s != "" {
-			if t, err := time.Parse(time.RFC3339, s); err == nil {
-				return t
-			}
-		}
-	}
-	return time.Now().Add(-failureSweepLookback)
-}
-
-// saveFailureCursor persists the scan cursor.
-func saveFailureCursor(ctx context.Context, dbs *store.DBStore, t time.Time) {
-	_ = dbs.SaveConfig(ctx, &store.ConfigRecord{
-		Kind:    "sweep",
-		Name:    "failure_sweep_cursor",
-		Enabled: true,
-		Data:    map[string]any{"ts": t.UTC().Format(time.RFC3339)},
-	})
 }
 
 // truncateRunes caps a string for notification bodies.

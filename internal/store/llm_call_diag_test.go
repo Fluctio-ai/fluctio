@@ -144,3 +144,55 @@ func TestListLLMCallDiagBySession(t *testing.T) {
 		t.Errorf("CreatedAt not populated")
 	}
 }
+
+// TestListRecoverableCallFailures covers the sweep's query contract: the
+// scan window, oldest-first ordering (so a watermark can't starve the
+// oldest rows), and the two exclusions — a user-cancelled call ('canceled')
+// never produces a turn-error chain, and a row with no session key can't be
+// replayed.
+func TestListRecoverableCallFailures(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	defer db.Close()
+	old := time.Now().Add(-48 * time.Hour).UTC()
+	fresh := time.Now().Add(-1 * time.Hour).UTC()
+	rows := []LLMCallDiag{
+		{AgentID: "a1", SessionKey: "s1", Status: "error"},
+		{AgentID: "a1", SessionKey: "s2", Status: "canceled"},
+		{AgentID: "a1", SessionKey: "", Status: "error"},
+		{AgentID: "a1", SessionKey: "s3", Status: "first_token_stall"},
+		{AgentID: "a1", SessionKey: "s4", Status: "error"},
+	}
+	for i := range rows {
+		if err := db.RecordLLMCallDiag(ctx, rows[i]); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+	}
+	// created_at defaults to CURRENT_TIMESTAMP; backdate s4 past the window.
+	if _, err := db.db.ExecContext(ctx,
+		`UPDATE llm_call_diag SET created_at = ? WHERE session_key = 's4'`,
+		old.Format("2006-01-02 15:04:05")); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+	_ = fresh
+	got, err := db.ListRecoverableCallFailures(ctx, time.Now().Add(-6*time.Hour), 100)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 recoverable rows (s1,s3), got %d: %+v", len(got), got)
+	}
+	keys := map[string]bool{}
+	for _, r := range got {
+		keys[r.SessionKey] = true
+		if r.Status == "canceled" {
+			t.Errorf("canceled row leaked: %+v", r)
+		}
+		if r.CreatedAt.Before(fresh.Add(-time.Minute)) {
+			t.Errorf("row older than the window leaked: %+v", r)
+		}
+	}
+	if !keys["s1"] || !keys["s3"] {
+		t.Errorf("missing expected sessions: %v", keys)
+	}
+}

@@ -256,7 +256,9 @@ func (s *Scheduler) processDueJobs(ctx context.Context) {
 		// check — foreground jobs by definition, background jobs with
 		// deliver=true (a dead adapter there is the same silent
 		// dead-letter this check exists to prevent).
-		replyDelivered := j.Deliver || !j.Background
+		// A foreground job answers in the bound conversation, so it always
+		// delivers; Deliver only gates the background quadrant.
+		replyDelivered := !j.Background || j.Deliver
 		if replyDelivered && s.channels != nil && j.Channel != "" && j.Channel != "web" && j.Channel != "api" {
 			if !s.channels.Has(j.Channel, j.AccountID) {
 				count, ferr := s.store.IncrementCronJobFailure(ctx, j.ID)

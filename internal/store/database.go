@@ -2038,32 +2038,11 @@ func (d *DBStore) migrateCronJobsDropUserID(ctx context.Context) error {
 		}
 	} else {
 		for _, s := range []string{
-			`CREATE TABLE cron_jobs_new (
-				id TEXT PRIMARY KEY,
-				agent_id TEXT NOT NULL,
-				name TEXT NOT NULL DEFAULT '',
-				type TEXT NOT NULL DEFAULT 'cron',
-				schedule TEXT NOT NULL,
-				message TEXT NOT NULL,
-				channel TEXT NOT NULL,
-				chat_id TEXT NOT NULL,
-				account_id TEXT NOT NULL DEFAULT '',
-				timezone TEXT NOT NULL DEFAULT 'UTC',
-				enabled BOOLEAN NOT NULL DEFAULT TRUE,
-				last_run TIMESTAMP,
-				next_run TIMESTAMP,
-				locked_by TEXT,
-				locked_at TIMESTAMP,
-				failure_count INTEGER NOT NULL DEFAULT 0,
-				background BOOLEAN NOT NULL DEFAULT 0,
-				deliver BOOLEAN NOT NULL DEFAULT 1,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			// Column lists must mirror the CREATE TABLE above — this
-			// rebuild is also what fresh-ish installs re-create the table
-			// from, so drifting it would silently drop the newest columns.
-			`INSERT INTO cron_jobs_new (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, locked_by, locked_at, failure_count, background, deliver, created_at)
-				SELECT id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, locked_by, locked_at, failure_count, background, deliver, created_at FROM cron_jobs`,
+			cronJobCreateSQL("CREATE TABLE ", "cron_jobs_new"),
+			// Column list derived from the same definitions as the CREATE
+			// above, so a future column can't be dropped by this rebuild.
+			`INSERT INTO cron_jobs_new (` + strings.Join(cronJobAllCols, ", ") + `)
+				SELECT ` + strings.Join(cronJobAllCols, ", ") + ` FROM cron_jobs`,
 			`DROP TABLE cron_jobs`,
 			`ALTER TABLE cron_jobs_new RENAME TO cron_jobs`,
 		} {
@@ -3050,45 +3029,16 @@ func (d *DBStore) migrationSQL() []string {
 		//
 		// idx_configs_scope likewise deferred to migrateConfigsMergeScopeID
 		// — on legacy databases scope_id does not exist yet at this point.
-		`CREATE TABLE IF NOT EXISTS cron_jobs (
-			id TEXT PRIMARY KEY,
-			user_id TEXT NOT NULL DEFAULT '',
-			agent_id TEXT NOT NULL,
-			name TEXT NOT NULL DEFAULT '',
-			type TEXT NOT NULL DEFAULT 'cron',
-			schedule TEXT NOT NULL,
-			message TEXT NOT NULL,
-			channel TEXT NOT NULL,
-			chat_id TEXT NOT NULL,
-			account_id TEXT NOT NULL DEFAULT '',
-			timezone TEXT NOT NULL DEFAULT 'UTC',
-			enabled BOOLEAN NOT NULL DEFAULT TRUE,
-			last_run TIMESTAMP,
-			next_run TIMESTAMP,
-			locked_by TEXT,
-			locked_at TIMESTAMP,
-			-- failure_count tracks consecutive fire-attempts whose
-			-- destination channel was missing/unreachable. The cron
-			-- scheduler increments it on each miss and self-deletes the
-			-- row once it crosses the threshold so a dead bot doesn't
-			-- log forever.
-			failure_count INTEGER NOT NULL DEFAULT 0,
-			-- background: fire into the job's own cron_<id> session on the
-			-- internal heartbeat channel instead of the bound conversation.
-			-- deliver: route the job's reply to (channel, account_id,
-			-- chat_id) even when it ran in the background. Orthogonal axes —
-			-- the old silent bool bound them together, which made
-			-- "background task that still reports back" (background=1,
-			-- deliver=1) impossible to express.
-			background BOOLEAN NOT NULL DEFAULT 0,
-			deliver BOOLEAN NOT NULL DEFAULT 1,
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
+		cronJobCreateSQL("CREATE TABLE IF NOT EXISTS ", "cron_jobs"),
 		// idx_cron_jobs_user creation is moved to migrateCronJobsAddUserID
 		// so legacy installs hit it after the column-add ALTER. Fresh
 		// installs reach the same code path via Migrate's full sweep.
 		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_schedule ON cron_jobs (enabled, next_run)`,
 		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_agent ON cron_jobs (agent_id)`,
+		// Historical name, kept for parity with installs that went through
+		// the user_id column drop (which re-created it after its table
+		// rebuild). Same column as idx_cron_jobs_agent.
+		`CREATE INDEX IF NOT EXISTS idx_cron_jobs_user ON cron_jobs (agent_id)`,
 		// projects groups sessions that share a workspace folder. PK
 		// matches sessions: a project is "user X's working folder on
 		// agent Y", same private-per-user ownership model. The on-disk
@@ -4544,6 +4494,42 @@ func (d *DBStore) ListLLMCallDiagBySession(ctx context.Context, sessionKey strin
 	return out, rows.Err()
 }
 
+// ListRecoverableCallFailures returns the failure rows worth looking at
+// for failure RECOVERY, oldest first: a user-cancelled call ('canceled' —
+// a Stop, not a provider problem) never produces a turn-error chain, and
+// ASC ordering lets a caller holding a watermark process a bounded window
+// without starving the oldest rows. Kept separate from ListFailedLLMCalls
+// so the error-report generator's newest-first overview stays unchanged.
+func (d *DBStore) ListRecoverableCallFailures(ctx context.Context, since time.Time, limit int) ([]LLMCallDiagRow, error) {
+	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+	q := fmt.Sprintf(`SELECT id, agent_id, session_key, provider, model, status,
+		http_status, error_msg, duration_ms, tool_call_count, response_chars,
+		request_msg_count, has_image, input_tokens, output_tokens, created_at
+		FROM llm_call_diag
+		WHERE status NOT IN ('ok', 'canceled') AND session_key != ''
+		  AND created_at >= %s
+		ORDER BY created_at ASC LIMIT %s`, d.ph(1), d.ph(2))
+	rows, err := d.db.QueryContext(ctx, q, sinceStr, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LLMCallDiagRow
+	for rows.Next() {
+		var r LLMCallDiagRow
+		var hasImg int
+		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Provider, &r.Model,
+			&r.Status, &r.HTTPStatus, &r.ErrorMsg, &r.DurationMs, &r.ToolCallCount,
+			&r.ResponseChars, &r.RequestMsgCount, &hasImg, &r.InputTokens, &r.OutputTokens,
+			&r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.HasImage = hasImg != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ListFailedLLMCalls returns llm_call_diag rows with status != 'ok' within
 // the time window, newest first. agentID="" means all agents. Feeds the
 // error-report generator's failure-overview + representative-case selection.
@@ -5400,7 +5386,9 @@ func (d *DBStore) migrateChannelsAddSharedIdentity(ctx context.Context) error {
 
 // --- Cron jobs ---
 
-const cronSelectCols = `id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, failure_count, background, deliver, created_at`
+// cronSelectCols is derived from cronJobColumnDefs (cron_schema.go); the
+// Scan calls in GetCronJob / scanCronJobs follow the same order.
+var cronSelectCols = strings.Join(cronJobReadCols, ", ")
 
 func (d *DBStore) ListCronJobsByAgent(ctx context.Context, agentID string) ([]CronJobRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
@@ -5437,24 +5425,7 @@ func (d *DBStore) SaveCronJob(ctx context.Context, job *CronJobRecord) error {
 	if job.CreatedAt.IsZero() {
 		job.CreatedAt = time.Now().UTC()
 	}
-	if d.dialect == "postgres" {
-		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO cron_jobs (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, background, deliver, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-				ON CONFLICT (id) DO UPDATE SET
-				  agent_id=$2, name=$3, type=$4, schedule=$5, message=$6, channel=$7,
-				  chat_id=$8, account_id=$9, timezone=$10, enabled=$11, last_run=$12, next_run=$13, background=$14, deliver=$15`,
-			job.ID, job.AgentID, job.Name, job.Type, job.Schedule, job.Message, job.Channel, job.ChatID, job.AccountID, job.Timezone, job.Enabled, job.LastRun, job.NextRun, job.Background, job.Deliver, job.CreatedAt)
-		return err
-	}
-	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO cron_jobs (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, background, deliver, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (id) DO UPDATE SET
-			  agent_id=excluded.agent_id, name=excluded.name, type=excluded.type,
-			  schedule=excluded.schedule, message=excluded.message, channel=excluded.channel,
-			  chat_id=excluded.chat_id, account_id=excluded.account_id, timezone=excluded.timezone,
-			  enabled=excluded.enabled, last_run=excluded.last_run, next_run=excluded.next_run, background=excluded.background, deliver=excluded.deliver`,
+	_, err := d.db.ExecContext(ctx, cronJobInsertSQL(d.dialect),
 		job.ID, job.AgentID, job.Name, job.Type, job.Schedule, job.Message, job.Channel, job.ChatID, job.AccountID, job.Timezone, job.Enabled, job.LastRun, job.NextRun, job.Background, job.Deliver, job.CreatedAt)
 	return err
 }

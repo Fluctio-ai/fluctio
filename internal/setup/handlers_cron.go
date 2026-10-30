@@ -85,6 +85,13 @@ func (s *Server) handleToggleAgentCronJob(w http.ResponseWriter, r *http.Request
 	if req.Deliver != nil {
 		job.Deliver = *req.Deliver
 	}
+	// Deliver only means something for a background job. A foreground job
+	// runs IN the bound conversation, so its reply is always delivered —
+	// leaving deliver=false there would advertise "no delivery" while the
+	// turn actually answers in the chat. Normalise on every write.
+	if !job.Background {
+		job.Deliver = true
+	}
 	if err := s.dataStore.SaveCronJob(r.Context(), job); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

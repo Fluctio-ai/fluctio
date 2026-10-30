@@ -68,6 +68,21 @@ const (
 	OriginInjected    = "injected"     // auto-query context block ([MEM]/[KB]) injected into the working set — not a real user turn
 )
 
+// IsTurnMarker reports whether origin tags a runtime-written turn boundary
+// (abort marker / failure notice) rather than conversation content. These
+// are the messages a resend rolls back and a crash heal must not stack a
+// second copy of — call sites should ask this instead of enumerating the
+// concrete origins, so a new marker type doesn't need a sweep of every
+// rollback / heal / history-render / chain-analysis site.
+func IsTurnMarker(origin string) bool {
+	return origin == OriginTurnAbort || origin == OriginTurnError
+}
+
+// IsFailureNotice reports whether origin tags a persisted turn-FAILURE
+// notice (as opposed to an abort boundary). Only failure notices carry the
+// turnError/toolsExecuted metadata the failure-retry sweep keys on.
+func IsFailureNotice(origin string) bool { return origin == OriginTurnError }
+
 // Message represents a chat message.
 // When storing in session, keep ALL fields exactly as returned by the LLM
 // to ensure prompt cache hits on subsequent turns.
