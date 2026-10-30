@@ -748,6 +748,8 @@ const en: Record<string, string> = {
   "notify.shelvedNudgeDesc": "Topics left half-finished, surfaced the next day.",
   "notify.blindspot": "Diary blindspots",
   "notify.blindspotDesc": "What your diary says you should have mentioned but did not.",
+  "notify.llmFailure": "Failure-recovery alerts",
+  "notify.llmFailureDesc": "Outcomes of auto-retry after a failed message: gave up (with cause and attempt count) or recovered (with a reply excerpt).",
   "knowledge.advThresholds": "Advanced: Recall Floors",
   "knowledge.advThresholdsDesc": "Hits below the floor are not injected — silence over junk. Absolute semantic scores vary by model; keep the defaults (wiki 0.45 / flash-todo 0.60 / memory 0.50) unless injections feel noisy (raise) or important hits go missing (lower).",
   "knowledge.wikiThresholdLabel": "Wiki recall floor",

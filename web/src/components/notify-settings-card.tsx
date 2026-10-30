@@ -19,9 +19,10 @@ const SWEEP_KINDS = [
   { key: "cardsDigest", label: "notify.cardsDigest", hint: "notify.cardsDigestDesc" },
   { key: "shelvedNudge", label: "notify.shelvedNudge", hint: "notify.shelvedNudgeDesc" },
   { key: "blindspot", label: "notify.blindspot", hint: "notify.blindspotDesc" },
+  { key: "llmFailure", label: "notify.llmFailure", hint: "notify.llmFailureDesc" },
 ] as const;
 
-type Kind = "chatReply" | "imReply" | "todoReminder" | "cardsDigest" | "shelvedNudge" | "blindspot";
+type Kind = "chatReply" | "imReply" | "todoReminder" | "cardsDigest" | "shelvedNudge" | "blindspot" | "llmFailure";
 
 const ALL_ON: Record<Kind, boolean> = {
   chatReply: true,
@@ -30,6 +31,7 @@ const ALL_ON: Record<Kind, boolean> = {
   cardsDigest: true,
   shelvedNudge: true,
   blindspot: true,
+  llmFailure: true,
 };
 
 // NotifySettingsCard — which events reach the mobile notification queue

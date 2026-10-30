@@ -370,6 +370,15 @@ function buildChatMessages(history: ChatHistoryMessage[]): ChatMessage[] {
         i++;
         continue;
       }
+      // Persisted turn-failure notice (kind=turn_error_notice): the durable
+      // copy of an LLM-call failure with its cause. The live SSE error
+      // event disappears on refresh — this marker is what a reloaded chat
+      // shows instead, so failed turns leave a visible trace.
+      if (h.kind === "turn_error_notice") {
+        msgs.push({ id: `h-${i}`, role: "notice", kind: "turn_error_notice", content: h.content || "", timestamp: h.timestamp || 0 });
+        i++;
+        continue;
+      }
       // Surface image attachments on history-loaded user bubbles. The
       // server emits `imageUrls` on user turns whose ContentParts had
       // image_url blocks; map them into UserAttachment entries so the
@@ -1202,9 +1211,11 @@ export function ChatScreen() {
             // Ignore those on replay so Stop produces one clear status
             // instead of "(Stopped)" followed by a stale error bubble.
             if (/\bcontext canceled\b/i.test(msg)) break;
+            // Same notice pill as the live path — the persisted
+            // turn_error notice renders identically on history reload.
             setMessages((prev) => [
               ...prev,
-              { id: `e-${Date.now()}`, role: "agent", content: `Error: ${msg}`, timestamp: Date.now() },
+              { id: `e-${Date.now()}`, role: "notice", kind: "turn_error_notice", content: msg, timestamp: Date.now() },
             ]);
             break;
           }
@@ -2315,15 +2326,17 @@ export function ChatScreen() {
             break;
           }
           case "error": {
-            // Surface backend errors as a chat bubble. Without this the
+            // Surface backend errors as a notice pill. Without this the
             // turn just hangs — the model failed (provider 4xx/5xx,
             // serialization mismatch, etc.) and the only signal was a
-            // gateway log line the user can't see.
+            // gateway log line the user can't see. The backend persists the
+            // same text as a turn_error notice, so a reload renders the
+            // identical pill — live and reloaded views stay consistent.
             const msg = evt.data?.message || "Unknown error";
             if (/\bcontext canceled\b/i.test(msg)) break;
             setMessages((prev) => [
               ...prev,
-              { id: `e-${Date.now()}`, role: "agent", content: `Error: ${msg}`, timestamp: Date.now() },
+              { id: `e-${Date.now()}`, role: "notice", kind: "turn_error_notice", content: msg, timestamp: Date.now() },
             ]);
             break;
           }
@@ -2894,9 +2907,18 @@ export function ChatScreen() {
                 // Compaction notice — render as a centered, muted pill
                 // bubble instead of a normal user/agent message.
                 if (msg.role === "notice") {
+                  // Turn failures carry an actionable cause and deserve the
+                  // destructive accent; everything else stays muted.
+                  const isError = msg.kind === "turn_error_notice";
                   elements.push(
                     <div key={msg.id} className="flex justify-center my-3">
-                      <span className="text-xs text-muted-foreground bg-muted/40 rounded-full px-3 py-1">
+                      <span
+                        className={
+                          isError
+                            ? "text-xs text-destructive bg-destructive/10 rounded-full px-3 py-1"
+                            : "text-xs text-muted-foreground bg-muted/40 rounded-full px-3 py-1"
+                        }
+                      >
                         {msg.content}
                       </span>
                     </div>,

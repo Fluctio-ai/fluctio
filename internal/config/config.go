@@ -886,6 +886,10 @@ type AgentNotifyCfg struct {
 	CardsDigest  *bool `json:"cardsDigest,omitempty"`
 	ShelvedNudge *bool `json:"shelvedNudge,omitempty"`
 	Blindspot    *bool `json:"blindspot,omitempty"`
+	// LLMFailure gates the failure-retry watchdog's notifications
+	// (auto-replay gave up / recovered / mid-tool failure). The replay
+	// itself is not gated — only the user-facing pushes.
+	LLMFailure *bool `json:"llmFailure,omitempty"`
 }
 
 // KindEnabled resolves the toggle for one notification kind. Unknown
@@ -910,6 +914,8 @@ func (c *AgentNotifyCfg) KindEnabled(kind string) bool {
 		return pick(c.ShelvedNudge)
 	case "blindspot":
 		return pick(c.Blindspot)
+	case "llm_failure":
+		return pick(c.LLMFailure)
 	}
 	return true
 }

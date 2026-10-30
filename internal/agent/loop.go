@@ -210,6 +210,13 @@ type Agent struct {
 	// threshold: "conservative" (30%), "balanced"/"" (15%, default),
 	// or "aggressive" (10%). See modeMarginPct.
 	compactionMode string
+
+	// quota is the provider-quota circuit breaker (see quota_breaker.go).
+	// Tripped by quota-shaped 429s at callLLMWithPTLRecovery so every
+	// message during a quota outage fails fast with an actionable reason
+	// instead of re-burning the retry ladder; half-open probes recovery
+	// every resolveQuotaProbeInterval().
+	quota quotaBreaker
 }
 
 // compactionThresholdNow computes the effective compaction threshold for
@@ -1903,6 +1910,23 @@ func (a *Agent) WebChatHistory(sessionId string, beforeSeq, limit int) ([]map[st
 			})
 			continue
 		}
+		// turn_error 失败标记（LLM 调用死后的持久化告知）：与 turn_aborted
+		// 同一渲染家族，但携带失败类别，前端渲染成带原因的错误 notice。
+		// 这条记录是 web 端重进对话后仍能看到失败原因的唯一来源——live
+		// SSE 的 error 事件刷新即失，这里才是 durable 副本。
+		if m.Origin == provider.OriginTurnError {
+			entry := map[string]any{
+				"role":      "user",
+				"kind":      "turn_error_notice",
+				"content":   m.TextContent(),
+				"timestamp": m.Timestamp,
+			}
+			if cat, ok := m.Metadata["turnError"].(string); ok && cat != "" {
+				entry["category"] = cat
+			}
+			history = append(history, entry)
+			continue
+		}
 		// Hide runtime-injected messages (currently only goal_context
 		// continuations). They live in the session for the LLM's
 		// benefit; surfacing them to the user would expose audit
@@ -2842,12 +2866,85 @@ func classifyLLMError(err error) string {
 		}
 		return "retryable"
 	case code == http.StatusTooManyRequests: // 429
+		// Split quota-shaped 429s from transient rate limits: when the body
+		// says the account's quota/balance is exhausted (Kimi's "You've
+		// reached your monthly quota", DeepSeek's "insufficient balance"),
+		// the 1s/4s/9s backoff ladder only burns calls that cannot succeed
+		// until the quota resets — hours to a month later. Route those to
+		// quota_exhausted (llmRetry returns immediately, the agent-level
+		// quota breaker trips so subsequent turns fail fast with a reason
+		// the user can act on). A plain "rate limited" 429 stays retryable.
+		if quotaExhaustedBody(he.Body) {
+			return "quota_exhausted"
+		}
 		return "retryable"
 	case code >= 500: // 5xx — overloaded / server error / gateway
 		return "retryable"
 	default:
 		return "retryable"
 	}
+}
+
+// quotaExhaustedBody reports whether an HTTP error body says the account's
+// quota/balance ran out (as opposed to a transient per-minute rate limit).
+// Matched against the lowercased body; providers phrase this many ways
+// ("You've reached your monthly quota", "quota exceeded", "insufficient
+// balance", 充值/额度 wording on Chinese relays).
+func quotaExhaustedBody(body string) bool {
+	b := strings.ToLower(body)
+	return strings.Contains(b, "monthly quota") ||
+		strings.Contains(b, "quota exceeded") ||
+		strings.Contains(b, "quota has been exceeded") ||
+		strings.Contains(b, "insufficient balance") ||
+		(strings.Contains(b, "account balance") && strings.Contains(b, "not enough")) ||
+		strings.Contains(b, "额度") || strings.Contains(b, "欠费") ||
+		strings.Contains(b, "余额不足")
+}
+
+// turnFailureNotice renders the user-facing reply for a dead LLM call,
+// replacing the old one-size error.processing_failed string. The wording is
+// category-specific so the chatter can tell dead-ends (quota/auth/billing —
+// act instead of retrying) from transient outages (auto-retry may recover
+// them), and carries the model + a one-line cause. The same string is
+// persisted as the turn-error notice (OriginTurnError), so it must read
+// standalone in the reloaded history view. Returns the notice and the
+// classification category (for the notice metadata / diagnostics).
+func turnFailureNotice(lang, model string, err error) (string, string) {
+	var qo *quotaOpenError
+	if errors.As(err, &qo) {
+		return slashTf(lang, "error.quota_open", model, qo.retryAt.Format("15:04")), "quota_open"
+	}
+	cat := classifyLLMError(err)
+	detail := firstErrorLine(err)
+	switch cat {
+	case "quota_exhausted":
+		return slashTf(lang, "error.quota_exhausted", model, detail), cat
+	case "terminal":
+		var he *provider.HTTPError
+		if errors.As(err, &he) {
+			switch he.StatusCode {
+			case http.StatusPaymentRequired:
+				return slashTf(lang, "error.billing"), cat
+			case http.StatusUnauthorized, http.StatusForbidden:
+				return slashTf(lang, "error.auth", he.StatusCode), cat
+			}
+		}
+	}
+	return slashTf(lang, "error.unavailable", model, llmRetryAttempts, detail), cat
+}
+
+// firstErrorLine flattens an error to its first line capped at 120 runes —
+// enough for "API error 429: You've reached your monthly quota" without
+// dumping a multi-line JSON body into a chat bubble.
+func firstErrorLine(err error) string {
+	s := err.Error()
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if r := []rune(s); len(r) > 120 {
+		s = string(r[:120]) + "…"
+	}
+	return s
 }
 
 // llmRetry wraps an LLM call with retry logic, in two tiers:
@@ -2943,6 +3040,16 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 				"agent", label, "error", err)
 			return nil, fmt.Errorf("%w: %s", ErrContextTooLong, err.Error())
 		}
+		// Quota exhaustion is terminal-in-disguise: the account's quota /
+		// balance is gone and stays gone for hours-to-months, so the backoff
+		// ladder can only burn calls. Return immediately — the caller (the
+		// agent loop) trips the quota breaker so the NEXT turn fails fast
+		// with a user-actionable reason instead of re-burning the ladder.
+		if category == "quota_exhausted" {
+			slog.Warn("LLM call failed with exhausted quota, not retrying",
+				"agent", label, "error", err)
+			return nil, err
+		}
 
 		connection := category == "connection"
 		if !connection && attempt >= llmRetryAttempts {
@@ -3010,6 +3117,15 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 // even the summary won't fit, and there's nothing more useful to do than
 // surface the error.
 func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.Message, tools []provider.Tool, callLLM func(context.Context, []provider.Message, []provider.Tool) (*provider.Response, error)) (*provider.Response, []provider.Message, error) {
+	// Quota breaker gate: while the provider's quota is known-exhausted,
+	// short-circuit BEFORE contacting the provider — every message during
+	// the outage would otherwise re-burn the retry ladder for the same
+	// guaranteed 429. The gate opens again at nextProbe for exactly one
+	// real call (half-open probe): success clears the breaker, a repeat
+	// quota error re-arms it below.
+	if blocked, reason, retryAt := a.quota.gate(time.Now()); blocked {
+		return nil, messages, &quotaOpenError{reason: reason, retryAt: retryAt}
+	}
 	// llmRetry keeps the transient-error backoff (network/5xx/429) and
 	// routes terminal + context-length errors immediately, so the PTL
 	// branch below fires on the first oversized response rather than
@@ -3018,7 +3134,11 @@ func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.
 		return callLLM(ctx, messages, tools)
 	})
 	if err == nil {
+		a.quota.clear() // any success (probe or normal) means quota is back
 		return resp, messages, nil
+	}
+	if classifyLLMError(err) == "quota_exhausted" {
+		a.quota.trip(err.Error(), time.Now(), 0)
 	}
 	if !errors.Is(err, ErrContextTooLong) {
 		return nil, messages, err
@@ -3601,9 +3721,27 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 				return ""
 			}
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
-			emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": err.Error()}})
+			notice, cat := turnFailureNotice(msg.Lang, a.model, err)
+			// Persist the failure as a turn-error notice so it survives
+			// reloads (the web history previously showed nothing for a
+			// failed turn — the error event only existed on the live SSE)
+			// and so the model sees the failure boundary it resumes
+			// across. toolsExecuted gates the failure-retry sweep: a turn
+			// that died with ZERO tool results has no partial side
+			// effects, so replaying it later is safe; a mid-tool death is
+			// not replayable and only gets notified.
+			sess.Append(provider.Message{
+				Role:    "user",
+				Content: notice,
+				Origin:  provider.OriginTurnError,
+				Metadata: map[string]any{
+					"turnError":     cat,
+					"toolsExecuted": totalToolCalls,
+				},
+			})
+			emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": notice, "category": cat}})
 			emitEvent(ctx, ChatEvent{Type: "done"})
-			return slashT(msg.Lang, "error.processing_failed")
+			return notice
 		}
 		a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 		a.maybeRecoverToolCalls(resp)
@@ -4482,7 +4620,24 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 
 		if err != nil {
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
-			return a.stringStream(slashT(msg.Lang, "error.processing_failed"))
+			// Same granular notice + persisted turn-error marker as the
+			// non-streaming path (see the HandleMessage error branch) —
+			// the streaming variant returns a one-chunk stream instead of
+			// a string, but the failure record must be identical so the
+			// failure-retry sweep treats both loops alike.
+			notice, cat := turnFailureNotice(msg.Lang, a.model, err)
+			sess.Append(provider.Message{
+				Role:    "user",
+				Content: notice,
+				Origin:  provider.OriginTurnError,
+				Metadata: map[string]any{
+					"turnError":     cat,
+					"toolsExecuted": totalToolCalls,
+				},
+			})
+			emitEvent(ctx, ChatEvent{Type: "error", Data: map[string]any{"message": notice, "category": cat}})
+			emitEvent(ctx, ChatEvent{Type: "done"})
+			return a.stringStream(notice)
 		}
 		a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 		a.maybeRecoverToolCalls(resp)

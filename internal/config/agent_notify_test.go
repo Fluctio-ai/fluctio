@@ -26,6 +26,7 @@ func TestAgentNotifyCfgKindEnabled(t *testing.T) {
 		{"cards off", &AgentNotifyCfg{CardsDigest: &f}, "cards_digest", false},
 		{"shelved off", &AgentNotifyCfg{ShelvedNudge: &f}, "shelved_nudge", false},
 		{"blindspot off", &AgentNotifyCfg{Blindspot: &f}, "blindspot", false},
+		{"llm_failure off", &AgentNotifyCfg{LLMFailure: &f}, "llm_failure", false},
 		{"explicit on", &AgentNotifyCfg{TodoReminder: &tr}, "todo_reminder", true},
 	}
 	for _, tc := range cases {

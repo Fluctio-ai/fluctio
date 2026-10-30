@@ -134,6 +134,14 @@ func TestClassifyLLMError(t *testing.T) {
 		{"400 PTL maximum context", httpErr(http.StatusBadRequest, "Your request exceeds the maximum context window"), "context_length"},
 		{"400 param error (not PTL)", httpErr(http.StatusBadRequest, "invalid value for temperature"), "retryable"},
 		{"429 rate limit", httpErr(http.StatusTooManyRequests, "rate limited"), "retryable"},
+		// Quota-shaped 429s: the body says the ACCOUNT's quota/balance is
+		// exhausted (monthly quota, insufficient balance) — not a transient
+		// rate limit. Retrying is pointless until the quota resets, so these
+		// route to quota_exhausted (llmRetry returns immediately; the quota
+		// breaker trips so subsequent turns fail fast with a clear reason).
+		{"429 monthly quota", httpErr(http.StatusTooManyRequests, "You've reached your monthly quota"), "quota_exhausted"},
+		{"429 quota exceeded", httpErr(http.StatusTooManyRequests, "quota exceeded for this API key"), "quota_exhausted"},
+		{"429 insufficient balance", httpErr(http.StatusTooManyRequests, "insufficient balance"), "quota_exhausted"},
 		{"500 server", httpErr(http.StatusInternalServerError, "oops"), "retryable"},
 		{"502 gateway", httpErr(http.StatusBadGateway, "bad gateway"), "retryable"},
 		{"503 overloaded", httpErr(http.StatusServiceUnavailable, "overloaded"), "retryable"},
@@ -183,6 +191,58 @@ func TestLLMRetryTerminalNoRetry(t *testing.T) {
 	}
 	if !errors.Is(err, billingErr) {
 		t.Errorf("expected original billing error, got %v", err)
+	}
+}
+
+// TestLLMRetryQuotaExhaustedNoRetry verifies quota-shaped 429s (monthly
+// quota / insufficient balance in the body) are not retried. Unlike a
+// transient rate limit, the quota stays exhausted for hours-to-months, so
+// the 1s/4s/9s backoff ladder only burns calls that cannot succeed — the
+// 2026-10-29 Kimi monthly-quota outage failed 6 calls across 4 turns this
+// way while the user saw only a generic "try again later".
+func TestLLMRetryQuotaExhaustedNoRetry(t *testing.T) {
+	calls := 0
+	quotaErr := &provider.HTTPError{StatusCode: http.StatusTooManyRequests, Body: "You've reached your monthly quota"}
+	_, err := llmRetry(context.Background(), "test", func(ctx context.Context) (*provider.Response, error) {
+		calls++
+		return nil, quotaErr
+	})
+	if calls != 1 {
+		t.Errorf("expected 1 call (no retry on quota 429), got %d", calls)
+	}
+	if !errors.Is(err, quotaErr) {
+		t.Errorf("expected original quota error, got %v", err)
+	}
+}
+
+// TestTurnFailureNotice verifies each failure class renders a DISTINCT
+// user-facing notice (the 2026-10-29 outage shipped one generic "try again
+// later" for a monthly quota dead-end, which told the user to keep doing
+// the one thing that could not work). Checks the category and one
+// distinguishing substring per class, in the default (Chinese) locale.
+func TestTurnFailureNotice(t *testing.T) {
+	cases := []struct {
+		name     string
+		err      error
+		wantCat  string
+		contains string
+	}{
+		{"quota open breaker", &quotaOpenError{reason: "monthly quota", retryAt: time.Now().Add(30 * time.Minute)}, "quota_open", "自动探测"},
+		{"quota exhausted", &provider.HTTPError{StatusCode: 429, Body: "You've reached your monthly quota"}, "quota_exhausted", "配额已耗尽"},
+		{"auth 401", &provider.HTTPError{StatusCode: 401, Body: "invalid api key"}, "terminal", "认证失败"},
+		{"billing 402", &provider.HTTPError{StatusCode: 402, Body: "no credits"}, "terminal", "欠费"},
+		{"5xx exhausted", &provider.HTTPError{StatusCode: 502, Body: "bad gateway"}, "retryable", "连续 3 次调用失败"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			notice, cat := turnFailureNotice("", "kimi-k2", c.err)
+			if cat != c.wantCat {
+				t.Errorf("category = %q, want %q", cat, c.wantCat)
+			}
+			if !strings.Contains(notice, c.contains) {
+				t.Errorf("notice %q missing distinguishing substring %q", notice, c.contains)
+			}
+		})
 	}
 }
 

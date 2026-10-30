@@ -882,7 +882,8 @@ export interface ChatHistoryMessage {
   role: "user" | "assistant" | "tool";
   content?: string;
   // Set to "compaction_notice" for auto-compaction notice entries (and
-  // "turn_aborted_notice" for turn-abort boundary markers) so the chat
+  // "turn_aborted_notice" for turn-abort boundary markers,
+  // "turn_error_notice" for persisted turn-failure notices) so the chat
   // UI can render them as centered system bubbles instead of normal
   // user/assistant messages.
   kind?: string;
@@ -1817,6 +1818,8 @@ export interface AgentNotifyCfg {
   cardsDigest?: boolean;
   shelvedNudge?: boolean;
   blindspot?: boolean;
+  /** Failure-retry watchdog: turn failed permanently / auto-recovered. */
+  llmFailure?: boolean;
 }
 
 // AgentCardsCfg mirrors config.AgentCardsCfg — per-agent Q&A flashcard

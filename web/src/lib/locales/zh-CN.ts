@@ -748,6 +748,8 @@ const zhCN: Record<string, string> = {
   "notify.shelvedNudgeDesc": "聊到一半搁下的话题，第二天提醒你收尾。",
   "notify.blindspot": "日记盲点",
   "notify.blindspotDesc": "日记里指出「你本该提到却没提」的内容。",
+  "notify.llmFailure": "失败恢复通知",
+  "notify.llmFailureDesc": "消息处理失败后的自动重试结果：放弃重试（附原因与尝试次数）或已自动恢复（附回复摘要）。",
   "knowledge.advThresholds": "高级：召回门槛",
   "knowledge.advThresholdsDesc": "低于门槛的结果不注入——宁缺毋滥。语义分数的绝对值因模型而异，一般保持默认（Wiki 0.45 / 灵感待办 0.60 / 记忆 0.50）；感觉注入太杂就调高，漏了重要内容再调低。",
   "knowledge.wikiThresholdLabel": "Wiki 召回门槛",

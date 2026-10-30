@@ -214,6 +214,10 @@ type Gateway struct {
 	chatEvents *agent.EventHub
 	mu         sync.RWMutex
 	dedup      sync.Map
+	// failureNotified dedupes the failure sweep's per-(agent|session|event)
+	// notifications (6h window) so a stuck chain doesn't re-notify on every
+	// 10-minute tick. Guarded by mu. See gateway_failure_sweep.go.
+	failureNotified map[string]time.Time
 }
 
 // SetProjectRuntime wires the coding-agent runtime manager. Call once at
@@ -871,6 +875,16 @@ func (g *Gateway) Run() error {
 	go func() {
 		defer wg.Done()
 		g.runDueTodoReminderSweep(ctx)
+	}()
+	// Failure-retry sweep: watchdog over turns whose LLM call died after all
+	// retries. Cursor-scanned (each failure examined once), auto-replays
+	// side-effect-free failures with exponential backoff and an attempt
+	// cap, and notifies the user of dead-ends / recoveries. See
+	// gateway_failure_sweep.go.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runFailureSweep(ctx)
 	}()
 	// Idle session summary sweep: summarize sessions the user ended by
 	// walking away (never /compact, never /new) so their content still

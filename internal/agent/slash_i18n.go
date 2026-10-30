@@ -108,6 +108,32 @@ var slashTexts = map[string]slashEntry{
 		"Sorry, I ran into a problem handling this request. Please try again in a moment.",
 		"抱歉，处理这条请求时遇到了问题，请稍后重试。",
 	},
+	// ── granular turn-failure notices (turnFailureNotice) ──
+	// Category-specific wording so the chatter can tell a dead-end (quota /
+	// auth / billing: retrying is pointless, act instead) from a transient
+	// outage (auto-retry may still recover it). %s args carry the model and
+	// a one-line cause; the strings double as the persisted turn-error
+	// notice content, so they must read standalone in the history view.
+	"error.quota_exhausted": {
+		"⚠️ Model %s quota exhausted: %s. Retrying won't help until the quota resets — auto-retry is paused and will probe recovery on its own; switching the model works right away.",
+		"⚠️ 模型 %s 配额已耗尽：%s。额度重置前重试无效——已自动熔断并定时探活，恢复后自动继续；也可以现在就给我换一个模型。",
+	},
+	"error.quota_open": {
+		"⚠️ Model %s is still quota-exhausted (auto-retry paused), next auto-probe at %s. This message was NOT processed — please resend after recovery.",
+		"⚠️ 模型 %s 配额仍耗尽（自动重试已熔断），下次自动探测：%s。这条消息没有被处理——恢复后请重新发送。",
+	},
+	"error.auth": {
+		"⚠️ Model auth failed (HTTP %d): the API key is invalid or expired. Check the provider settings — retrying won't fix this.",
+		"⚠️ 模型认证失败（HTTP %d）：API Key 无效或已过期。请到模型设置检查，重试无法解决。",
+	},
+	"error.billing": {
+		"⚠️ Provider billing exhausted (HTTP 402): top up the account or switch models — retrying won't fix this.",
+		"⚠️ 模型服务已欠费（HTTP 402）：请充值或更换模型，重试无法解决。",
+	},
+	"error.unavailable": {
+		"⚠️ Model %s unreachable after %d attempts: %s. Diagnostics recorded; auto-retry may still recover this message.",
+		"⚠️ 模型 %s 连续 %d 次调用失败：%s。已记录诊断，自动重试仍可能恢复这条消息。",
+	},
 	"error.plan_failed": {
 		"Sorry, I couldn't draft the plan — the model call failed.",
 		"抱歉，起草计划时失败了——模型调用出错。",

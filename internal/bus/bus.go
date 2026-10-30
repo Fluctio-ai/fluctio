@@ -30,6 +30,12 @@ const (
 	SourceHeartbeat   = "heartbeat"
 	SourceSubAgent    = "subagent"
 	SourceGoalContext = "goal_context"
+	// SourceFailureRetry marks the gateway failure sweep's automatic replay
+	// of a turn whose LLM call previously died (quota outage, provider
+	// down). The replayed text carries a visible retry tag; this source
+	// lets the runtime tell "system gave the user's message another shot"
+	// from fresh user input.
+	SourceFailureRetry = "failure_retry"
 )
 
 // InboundMessage represents a message received from a channel.

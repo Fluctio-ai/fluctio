@@ -1,0 +1,86 @@
+package agent
+
+import (
+	"errors"
+	"testing"
+	"time"
+)
+
+// TestQuotaBreakerTripGateProbeClear walks the full breaker lifecycle:
+// trip → gate blocks → probe window opens → gate lets the probe through →
+// clear on success → gate no longer blocks.
+func TestQuotaBreakerTripGateProbeClear(t *testing.T) {
+	var q quotaBreaker
+	now := time.Now()
+
+	// Healthy: gate open.
+	if blocked, _, _ := q.gate(now); blocked {
+		t.Fatalf("healthy breaker blocked the call")
+	}
+
+	// Trip with a 30min probe interval.
+	q.trip("API error 429: You've reached your monthly quota", now, 30*time.Minute)
+
+	blocked, reason, retryAt := q.gate(now.Add(time.Minute))
+	if !blocked {
+		t.Fatalf("tripped breaker should block before nextProbe")
+	}
+	if reason == "" || !retryAt.After(now) {
+		t.Errorf("gate returned reason=%q retryAt=%v, want non-empty reason and future retryAt", reason, retryAt)
+	}
+
+	// Half-open: at/after nextProbe the gate lets the probe through.
+	blocked, _, _ = q.gate(now.Add(31 * time.Minute))
+	if blocked {
+		t.Fatalf("gate should allow the probe at/after nextProbe")
+	}
+
+	// Probe failed with the same quota error → re-armed, trippedAt kept.
+	q.trip("API error 429: You've reached your monthly quota", now.Add(31*time.Minute), 30*time.Minute)
+	q.mu.Lock()
+	origTrippedAt := q.trippedAt
+	q.mu.Unlock()
+	if !origTrippedAt.Equal(now) {
+		t.Errorf("re-trip moved trippedAt: %v, want original %v", origTrippedAt, now)
+	}
+	if blocked, _, _ := q.gate(now.Add(32 * time.Minute)); !blocked {
+		t.Fatalf("re-armed breaker should block again")
+	}
+
+	// Success clears.
+	q.clear()
+	if blocked, _, _ := q.gate(now.Add(33 * time.Minute)); blocked {
+		t.Fatalf("cleared breaker should not block")
+	}
+}
+
+// TestQuotaBreakerTripDefaultsProbeInterval verifies probeEvery<=0 falls
+// back to resolveQuotaProbeInterval (the env-configured default).
+func TestQuotaBreakerTripDefaultsProbeInterval(t *testing.T) {
+	var q quotaBreaker
+	now := time.Now()
+	q.trip("x", now, 0)
+	q.mu.Lock()
+	got := q.nextProbe.Sub(now)
+	q.mu.Unlock()
+	if got != resolveQuotaProbeInterval() {
+		t.Errorf("nextProbe delta = %v, want resolveQuotaProbeInterval() = %v", got, resolveQuotaProbeInterval())
+	}
+}
+
+// TestQuotaOpenErrorMessage verifies the sentinel renders a readable error
+// (it feeds slog and the diag trail, not the user notice directly).
+func TestQuotaOpenErrorMessage(t *testing.T) {
+	e := &quotaOpenError{reason: "monthly quota", retryAt: time.Unix(1793300000, 0)}
+	var target *quotaOpenError
+	if !errors.As(errors.New("wrapped: "+e.Error()), &target) {
+		// errors.As on a plain wrap of the string won't match — just check
+		// the direct type works, which is how the loop tests it.
+		if _, ok := interface{}(e).(*quotaOpenError); !ok {
+			t.Fatalf("quotaOpenError type assertion failed")
+		}
+	}
+	if e.Error() == "" {
+		t.Fatalf("empty error string")
+	}
+}

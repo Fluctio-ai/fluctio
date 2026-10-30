@@ -123,3 +123,48 @@ func TestWebChatHistoryTurnAbortedNotice(t *testing.T) {
 		t.Errorf("marker timestamp = %v, want 3000", marker["timestamp"])
 	}
 }
+
+// WebChatHistory must surface persisted turn-error notices (Origin=
+// turn_error, written by the loop's LLM-failure branch) as
+// kind="turn_error_notice" entries carrying the failure category. This is
+// the durable copy a reloaded web chat reads — the live SSE error event is
+// gone on refresh, and before this marker existed a failed turn left NO
+// trace in the reloaded history.
+func TestWebChatHistoryTurnErrorNotice(t *testing.T) {
+	a := newSlashTestAgent(t)
+	sess := a.sessions.Get("web", "", "err-chat", "")
+	const sessionKey = "err-chat"
+
+	sess.Append(provider.Message{Role: "user", Content: "帮我找下这个视频的原始链接"})
+	sess.Append(provider.Message{
+		Role:    "user",
+		Content: "⚠️ 模型 kimi-k2 配额已耗尽：API error 429: You've reached your monthly quota.",
+		Origin:  provider.OriginTurnError,
+		Metadata: map[string]any{
+			"turnError":     "quota_exhausted",
+			"toolsExecuted": 0,
+		},
+		Timestamp: 4000,
+	})
+
+	hist, _, _ := a.WebChatHistory(sessionKey, 0, 50)
+	if len(hist) != 2 {
+		t.Fatalf("expected 2 history entries, got %d: %+v", len(hist), hist)
+	}
+	if hist[0]["role"] != "user" || hist[0]["content"] != "帮我找下这个视频的原始链接" {
+		t.Errorf("entry 0 wrong: %+v", hist[0])
+	}
+	notice := hist[1]
+	if notice["kind"] != "turn_error_notice" {
+		t.Errorf("notice kind = %v, want turn_error_notice", notice["kind"])
+	}
+	if notice["category"] != "quota_exhausted" {
+		t.Errorf("notice category = %v, want quota_exhausted", notice["category"])
+	}
+	if notice["timestamp"] != int64(4000) {
+		t.Errorf("notice timestamp = %v, want 4000", notice["timestamp"])
+	}
+	if notice["content"] == "" {
+		t.Errorf("notice content should carry the failure reason, got empty")
+	}
+}

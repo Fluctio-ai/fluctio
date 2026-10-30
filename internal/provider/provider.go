@@ -63,6 +63,7 @@ const (
 	OriginGoalContext = "goal_context"
 	OriginCron        = "cron"       // scheduled-task trigger — a cron-fired inbound, not a real user turn
 	OriginTurnAbort   = "turn_abort" // turn-abort boundary marker (crash heal / stopped turn) — LLM-visible, rendered as a UI notice
+	OriginTurnError   = "turn_error" // turn-failure notice (LLM call dead after retries) — LLM-visible boundary, rendered as a UI error notice, feeds the failure-retry sweep
 	OriginProjectCard = "project_card" // first-turn PROJECT.md snapshot — injected orientation context, not a real user turn
 	OriginInjected    = "injected"     // auto-query context block ([MEM]/[KB]) injected into the working set — not a real user turn
 )

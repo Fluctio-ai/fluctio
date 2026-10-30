@@ -87,6 +87,15 @@ type Session struct {
 // the (channel, account, chat) quadruple every time.
 func (s *Session) SessionKey() string { return s.sessionKey }
 
+// RouteInfo returns the (channel, accountID, chatID, projectID) quadruple
+// this session was created with — everything an inbound replay needs to
+// re-enter the normal HandleMessage routing for the SAME session.
+func (s *Session) RouteInfo() (channel, accountID, chatID, projectID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.channel, s.accountID, s.chatID, s.projectID
+}
+
 // ParentSessionKey returns the parent session_key for a forked session
 // (empty for a normal non-fork session). The agent loop + history loader
 // merge the parent's archive[0..ParentForkSeq] as a read-only prefix.
@@ -687,13 +696,20 @@ func (s *Session) AppendClaimOnce(msg provider.Message, key string, marker any) 
 // (a crash-heal or a stopped turn parked them; compaction resets the claim,
 // so more than one is possible) — they belong to the class being rolled
 // back, not to the conversation, so the whole marker run is peeled before
-// requiring a real user tail. Peeling a marker with no user turn behind it
-// is a no-op: there is nothing to roll back.
+// requiring a real user tail. Turn-error notices (OriginTurnError) are the
+// same residue for a failed turn: they describe the attempt being rolled
+// back and must peel with it, or a resend stacks a second error notice on
+// the first. Peeling a marker with no user turn behind it is a no-op:
+// there is nothing to roll back.
 func (s *Session) RollbackLastUser() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := 0
-	for len(s.Messages) > m && s.Messages[len(s.Messages)-1-m].Origin == provider.OriginTurnAbort {
+	for len(s.Messages) > m {
+		origin := s.Messages[len(s.Messages)-1-m].Origin
+		if origin != provider.OriginTurnAbort && origin != provider.OriginTurnError {
+			break
+		}
 		m++
 	}
 	if len(s.Messages) <= m || s.Messages[len(s.Messages)-1-m].Role != "user" {
@@ -1010,7 +1026,12 @@ func (s *Session) healInterruptedTurn() {
 		s.mu.Lock()
 		if n := len(s.Messages); n > 0 {
 			last := s.Messages[n-1]
-			if last.Role == "user" && last.Origin != provider.OriginTurnAbort {
+			// OriginTurnError in the tail means the turn's failure was already
+			// recorded at failure time (a persisted turn-error notice sits on
+			// top of the unanswered user turn) — appending the lost-reply
+			// marker would stack a second, vaguer explanation on a specific
+			// one, so treat that shape as already-healed.
+			if last.Role == "user" && last.Origin != provider.OriginTurnAbort && last.Origin != provider.OriginTurnError {
 				note = turnAbortedLostNote
 			}
 		}
