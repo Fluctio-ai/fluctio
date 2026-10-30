@@ -3138,7 +3138,7 @@ func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.
 		return resp, messages, nil
 	}
 	if classifyLLMError(err) == "quota_exhausted" {
-		a.quota.trip(err.Error(), time.Now(), 0)
+		a.quota.trip(err.Error(), time.Now(), a.quotaProbeInterval(ctx))
 	}
 	if !errors.Is(err, ErrContextTooLong) {
 		return nil, messages, err

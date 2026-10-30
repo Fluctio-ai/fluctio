@@ -123,8 +123,8 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateCronJobsFailureCount(ctx); err != nil {
 		return fmt.Errorf("migrate cron_jobs.failure_count: %w", err)
 	}
-	if err := d.migrateCronJobsAddSilent(ctx); err != nil {
-		return fmt.Errorf("migrate cron_jobs.silent: %w", err)
+	if err := d.migrateCronJobsBackgroundDeliver(ctx); err != nil {
+		return fmt.Errorf("migrate cron_jobs.background/deliver: %w", err)
 	}
 	if err := d.migrateDropAgentGrants(ctx); err != nil {
 		return fmt.Errorf("migrate drop agent_grants: %w", err)
@@ -2055,11 +2055,15 @@ func (d *DBStore) migrateCronJobsDropUserID(ctx context.Context) error {
 				locked_by TEXT,
 				locked_at TIMESTAMP,
 				failure_count INTEGER NOT NULL DEFAULT 0,
-				silent BOOLEAN NOT NULL DEFAULT 0,
+				background BOOLEAN NOT NULL DEFAULT 0,
+				deliver BOOLEAN NOT NULL DEFAULT 1,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
-			`INSERT INTO cron_jobs_new (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, locked_by, locked_at, failure_count, silent, created_at)
-				SELECT id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, locked_by, locked_at, failure_count, silent, created_at FROM cron_jobs`,
+			// Column lists must mirror the CREATE TABLE above — this
+			// rebuild is also what fresh-ish installs re-create the table
+			// from, so drifting it would silently drop the newest columns.
+			`INSERT INTO cron_jobs_new (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, locked_by, locked_at, failure_count, background, deliver, created_at)
+				SELECT id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, locked_by, locked_at, failure_count, background, deliver, created_at FROM cron_jobs`,
 			`DROP TABLE cron_jobs`,
 			`ALTER TABLE cron_jobs_new RENAME TO cron_jobs`,
 		} {
@@ -2258,17 +2262,49 @@ func (d *DBStore) migrateCronJobsFailureCount(ctx context.Context) error {
 // migrateCronJobsAddSilent retrofits the silent column onto pre-feature
 // installs. Default 0 (foreground) keeps every existing job behaving as
 // before — replies still delivered to the configured channel.
-func (d *DBStore) migrateCronJobsAddSilent(ctx context.Context) error {
-	has, err := d.tableHasColumn(ctx, "cron_jobs", "silent")
+// migrateCronJobsBackgroundDeliver replaces the legacy `silent` bool with
+// the two orthogonal delivery axes (see CronJobRecord.Background/Deliver).
+// Legacy mapping: silent=true → (background=1, deliver=0);
+// silent=false → (background=0, deliver=1). Fresh installs already get
+// both columns from CREATE TABLE (deliver defaults to 1 — most jobs are
+// built to report back). After backfilling, the silent column is dropped
+// for good: single-user product, no external schema consumers.
+func (d *DBStore) migrateCronJobsBackgroundDeliver(ctx context.Context) error {
+	for _, col := range []struct{ name, decl string }{
+		{"background", "BOOLEAN NOT NULL DEFAULT 0"},
+		{"deliver", "BOOLEAN NOT NULL DEFAULT 1"},
+	} {
+		has, err := d.tableHasColumn(ctx, "cron_jobs", col.name)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`ALTER TABLE cron_jobs ADD COLUMN %s %s`, col.name, col.decl)); err != nil {
+			return fmt.Errorf("add %s: %w", col.name, err)
+		}
+	}
+	hasSilent, err := d.tableHasColumn(ctx, "cron_jobs", "silent")
 	if err != nil {
 		return err
 	}
-	if has {
-		return nil
-	}
-	if _, err := d.db.ExecContext(ctx,
-		`ALTER TABLE cron_jobs ADD COLUMN silent BOOLEAN NOT NULL DEFAULT 0`); err != nil {
-		return fmt.Errorf("add silent: %w", err)
+	if hasSilent {
+		// Backfill from the legacy flag before dropping it. The added
+		// columns' defaults only apply to rows created AFTER the ALTER,
+		// so pre-existing rows need the explicit UPDATE (deliver's
+		// DEFAULT 1 would otherwise flip old foreground rows' semantics
+		// on silent-era rows that were never silent — harmless there,
+		// but silent-era silent=1 rows MUST become deliver=0 or a
+		// previously-discarding job would suddenly deliver).
+		if _, err := d.db.ExecContext(ctx,
+			`UPDATE cron_jobs SET background = silent, deliver = CASE WHEN silent THEN 0 ELSE 1 END`); err != nil {
+			return fmt.Errorf("backfill background/deliver: %w", err)
+		}
+		if _, err := d.db.ExecContext(ctx, `ALTER TABLE cron_jobs DROP COLUMN silent`); err != nil {
+			return fmt.Errorf("drop silent: %w", err)
+		}
 	}
 	return nil
 }
@@ -3044,10 +3080,15 @@ func (d *DBStore) migrationSQL() []string {
 			-- row once it crosses the threshold so a dead bot doesn't
 			-- log forever.
 			failure_count INTEGER NOT NULL DEFAULT 0,
-			-- silent: background task fired on an internal channel (no IM
-			-- adapter) so the agent runs the task but the reply isn't
-			-- delivered to any chat. Default 0 = foreground.
-			silent BOOLEAN NOT NULL DEFAULT 0,
+			-- background: fire into the job's own cron_<id> session on the
+			-- internal heartbeat channel instead of the bound conversation.
+			-- deliver: route the job's reply to (channel, account_id,
+			-- chat_id) even when it ran in the background. Orthogonal axes —
+			-- the old silent bool bound them together, which made
+			-- "background task that still reports back" (background=1,
+			-- deliver=1) impossible to express.
+			background BOOLEAN NOT NULL DEFAULT 0,
+			deliver BOOLEAN NOT NULL DEFAULT 1,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		// idx_cron_jobs_user creation is moved to migrateCronJobsAddUserID
@@ -5366,7 +5407,7 @@ func (d *DBStore) migrateChannelsAddSharedIdentity(ctx context.Context) error {
 
 // --- Cron jobs ---
 
-const cronSelectCols = `id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, failure_count, silent, created_at`
+const cronSelectCols = `id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, failure_count, background, deliver, created_at`
 
 func (d *DBStore) ListCronJobsByAgent(ctx context.Context, agentID string) ([]CronJobRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
@@ -5384,7 +5425,7 @@ func (d *DBStore) GetCronJob(ctx context.Context, jobID string) (*CronJobRecord,
 		fmt.Sprintf(`SELECT `+cronSelectCols+` FROM cron_jobs WHERE id = %s`, d.ph(1)), jobID)
 	var j CronJobRecord
 	var lastRun, nextRun sql.NullTime
-	if err := row.Scan(&j.ID, &j.AgentID, &j.Name, &j.Type, &j.Schedule, &j.Message, &j.Channel, &j.ChatID, &j.AccountID, &j.Timezone, &j.Enabled, &lastRun, &nextRun, &j.FailureCount, &j.Silent, &j.CreatedAt); err != nil {
+	if err := row.Scan(&j.ID, &j.AgentID, &j.Name, &j.Type, &j.Schedule, &j.Message, &j.Channel, &j.ChatID, &j.AccountID, &j.Timezone, &j.Enabled, &lastRun, &nextRun, &j.FailureCount, &j.Background, &j.Deliver, &j.CreatedAt); err != nil {
 		return nil, scanErr(err)
 	}
 	if lastRun.Valid {
@@ -5405,23 +5446,23 @@ func (d *DBStore) SaveCronJob(ctx context.Context, job *CronJobRecord) error {
 	}
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO cron_jobs (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, silent, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			`INSERT INTO cron_jobs (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, background, deliver, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 				ON CONFLICT (id) DO UPDATE SET
 				  agent_id=$2, name=$3, type=$4, schedule=$5, message=$6, channel=$7,
-				  chat_id=$8, account_id=$9, timezone=$10, enabled=$11, last_run=$12, next_run=$13, silent=$14`,
-			job.ID, job.AgentID, job.Name, job.Type, job.Schedule, job.Message, job.Channel, job.ChatID, job.AccountID, job.Timezone, job.Enabled, job.LastRun, job.NextRun, job.Silent, job.CreatedAt)
+				  chat_id=$8, account_id=$9, timezone=$10, enabled=$11, last_run=$12, next_run=$13, background=$14, deliver=$15`,
+			job.ID, job.AgentID, job.Name, job.Type, job.Schedule, job.Message, job.Channel, job.ChatID, job.AccountID, job.Timezone, job.Enabled, job.LastRun, job.NextRun, job.Background, job.Deliver, job.CreatedAt)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO cron_jobs (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, silent, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO cron_jobs (id, agent_id, name, type, schedule, message, channel, chat_id, account_id, timezone, enabled, last_run, next_run, background, deliver, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 			  agent_id=excluded.agent_id, name=excluded.name, type=excluded.type,
 			  schedule=excluded.schedule, message=excluded.message, channel=excluded.channel,
 			  chat_id=excluded.chat_id, account_id=excluded.account_id, timezone=excluded.timezone,
-			  enabled=excluded.enabled, last_run=excluded.last_run, next_run=excluded.next_run, silent=excluded.silent`,
-		job.ID, job.AgentID, job.Name, job.Type, job.Schedule, job.Message, job.Channel, job.ChatID, job.AccountID, job.Timezone, job.Enabled, job.LastRun, job.NextRun, job.Silent, job.CreatedAt)
+			  enabled=excluded.enabled, last_run=excluded.last_run, next_run=excluded.next_run, background=excluded.background, deliver=excluded.deliver`,
+		job.ID, job.AgentID, job.Name, job.Type, job.Schedule, job.Message, job.Channel, job.ChatID, job.AccountID, job.Timezone, job.Enabled, job.LastRun, job.NextRun, job.Background, job.Deliver, job.CreatedAt)
 	return err
 }
 
@@ -5831,7 +5872,7 @@ func scanCronJobs(rows *sql.Rows) ([]CronJobRecord, error) {
 	for rows.Next() {
 		var j CronJobRecord
 		var lastRun, nextRun sql.NullTime
-		if err := rows.Scan(&j.ID, &j.AgentID, &j.Name, &j.Type, &j.Schedule, &j.Message, &j.Channel, &j.ChatID, &j.AccountID, &j.Timezone, &j.Enabled, &lastRun, &nextRun, &j.FailureCount, &j.Silent, &j.CreatedAt); err != nil {
+	if err := rows.Scan(&j.ID, &j.AgentID, &j.Name, &j.Type, &j.Schedule, &j.Message, &j.Channel, &j.ChatID, &j.AccountID, &j.Timezone, &j.Enabled, &lastRun, &nextRun, &j.FailureCount, &j.Background, &j.Deliver, &j.CreatedAt); err != nil {
 			return nil, err
 		}
 		if lastRun.Valid {

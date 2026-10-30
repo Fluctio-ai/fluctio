@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/scope"
 )
 
 // quotaBreaker is the agent-level circuit breaker for exhausted provider
@@ -28,11 +32,19 @@ type quotaBreaker struct {
 	trippedAt  time.Time
 	nextProbe  time.Time
 	probeEvery time.Duration
+	// probeStreak counts consecutive failed probes. Each re-trip doubles
+	// the wait before the next probe (base, 2x, 4x… capped at 64x) — a
+	// quota that stays dead for hours doesn't need 30-minute polling, and
+	// a success (clear) resets it. The doubling factor cap keeps the
+	// shift bounded so a long outage converges instead of overflowing.
+	probeStreak int
 }
 
-// trip arms the breaker. probeEvery is how long calls stay short-circuited
-// before one probe is allowed through; 0 falls back to
-// resolveQuotaProbeInterval() (FLUCTIO_QUOTA_PROBE_SECS, default 30min).
+// trip arms the breaker. probeEvery is the FIRST probe interval; further
+// consecutive trips double it (see probeStreak). probeEvery <= 0 falls
+// back to resolveQuotaProbeInterval() (FLUCTIO_QUOTA_PROBE_SECS, default
+// 30min) — callers that support runtime settings pass their own resolved
+// value (see Agent.quotaProbeInterval).
 func (q *quotaBreaker) trip(reason string, now time.Time, probeEvery time.Duration) {
 	if probeEvery <= 0 {
 		probeEvery = resolveQuotaProbeInterval()
@@ -47,7 +59,13 @@ func (q *quotaBreaker) trip(reason string, now time.Time, probeEvery time.Durati
 	}
 	q.tripped = true
 	q.reason = reason
-	q.nextProbe = now.Add(probeEvery)
+	q.probeEvery = probeEvery
+	shift := q.probeStreak
+	if shift > 6 {
+		shift = 6 // 64x cap
+	}
+	q.nextProbe = now.Add(probeEvery << shift)
+	q.probeStreak++
 }
 
 // gate reports whether calls should be short-circuited. blocked=true means
@@ -74,11 +92,27 @@ func (q *quotaBreaker) clear() {
 	defer q.mu.Unlock()
 	if q.tripped {
 		slog.Info("quota breaker cleared — provider call succeeded again",
-			"tripped_at", q.trippedAt.UTC().Format(time.RFC3339))
+			"tripped_at", q.trippedAt.UTC().Format(time.RFC3339),
+			"failed_probes", q.probeStreak)
 	}
 	q.tripped = false
 	q.reason = ""
 	q.nextProbe = time.Time{}
+	q.probeStreak = 0
+}
+
+// quotaProbeInterval resolves the breaker's first probe interval for this
+// agent: system-scope "failure" setting row first (dashboard-adjustable,
+// hot — read per trip, no restart), then FLUCTIO_QUOTA_PROBE_SECS, then
+// the 30min default.
+func (a *Agent) quotaProbeInterval(ctx context.Context) time.Duration {
+	if a.dataStore != nil {
+		var c config.FailureRetryCfg
+		if err := scope.SettingInto(ctx, a.dataStore, "failure", "", "", &c); err == nil && c.QuotaProbeMin >= 1 {
+			return time.Duration(c.QuotaProbeMin) * time.Minute
+		}
+	}
+	return resolveQuotaProbeInterval()
 }
 
 // resolveQuotaProbeInterval reads FLUCTIO_QUOTA_PROBE_SECS (min 60s,

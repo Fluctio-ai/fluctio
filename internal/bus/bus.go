@@ -101,6 +101,21 @@ type InboundMessage struct {
 	// Empty for IM channels and legacy callers; consumers fall back to a
 	// default. See agent.popLang (extraction) and agent.slashT (lookup).
 	Lang string
+	// ReplyRoute overrides where the gateway worker delivers this
+	// inbound's reply. Set by the cron scheduler for background jobs with
+	// deliver=true: the turn runs on the internal heartbeat channel in
+	// the job's own cron_<id> session, but the reply is routed to the
+	// job's bound conversation instead of being discarded as an unknown
+	// outbound channel. Nil = reply follows the inbound's own triple.
+	ReplyRoute *ReplyRoute
+}
+
+// ReplyRoute is the delivery override an inbound can carry (see
+// InboundMessage.ReplyRoute).
+type ReplyRoute struct {
+	Channel   string
+	AccountID string
+	ChatID    string
 }
 
 // SessionTriple returns the (channel, accountID, chatID) used for session

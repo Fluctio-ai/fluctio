@@ -839,11 +839,20 @@ type CronJobRecord struct {
 	// resets it to 0; IncrementCronJobFailure bumps it. The scheduler
 	// deletes the row once it crosses an internal threshold.
 	FailureCount int `json:"failureCount,omitempty"`
-	// Silent marks a background task: the scheduler fires it on an internal
-	// channel with no IM adapter, so the agent processes `message` but the
-	// reply is not delivered to any chat. Default false (foreground).
-	Silent    bool      `json:"silent"`
-	CreatedAt time.Time `json:"createdAt"`
+	// Background + Deliver are the two orthogonal delivery axes that
+	// replaced the old single `silent` bool (which bound "runs in its own
+	// cron_<id> session" and "reply is discarded" together, making the
+	// common "background task that still reports back" shape impossible —
+	// the dead-letter trap). Legacy rows migrated: silent=true →
+	// (Background=true, Deliver=false); silent=false → (false, true).
+	//
+	// Background=true fires the job on the internal heartbeat channel into
+	// its own cron_<id> session instead of the bound conversation.
+	// Deliver=true routes the job's reply to (Channel, AccountID, ChatID)
+	// even when it ran in the background.
+	Background bool      `json:"background"`
+	Deliver    bool      `json:"deliver"`
+	CreatedAt  time.Time `json:"createdAt"`
 }
 
 // StorageType identifies the storage backend.

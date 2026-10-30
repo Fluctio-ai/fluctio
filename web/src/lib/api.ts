@@ -3196,8 +3196,13 @@ export interface AgentCronJob {
   lastRun?: string;
   nextRun?: string;
   createdAt: string;
-  // silent: background task — fires on an internal channel, no IM delivery.
-  silent?: boolean;
+  // background: runs in its own cron_<id> session instead of the bound
+  // conversation. deliver: the job's reply is pushed to (channel, chatId)
+  // even when background — orthogonal axes (the old `silent` bool bound
+  // them together and couldn't express "background task that reports
+  // back").
+  background?: boolean;
+  deliver?: boolean;
 }
 
 // --- Regex Hooks ---
@@ -3350,17 +3355,17 @@ export async function toggleAgentCronJob(
   return res.json();
 }
 
-export async function setAgentCronJobSilent(
+export async function setAgentCronJobFlags(
   agentId: string,
   jobId: string,
-  silent: boolean,
+  flags: { background?: boolean; deliver?: boolean },
 ): Promise<{ ok: boolean; job?: AgentCronJob; error?: string }> {
   const res = await apiFetch(
     `/api/agents/${agentId}/cron/${encodeURIComponent(jobId)}`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ silent }),
+      body: JSON.stringify(flags),
     },
   );
   return res.json();

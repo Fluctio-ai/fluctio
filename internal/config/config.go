@@ -435,6 +435,25 @@ type Config struct {
 	Privacy       PrivacyCfg                 `json:"privacy,omitempty"`
 	SkillsLearner SkillsLearnerCfg           `json:"skillsLearner,omitempty"`
 	Prefs         PrefsCfg                   `json:"prefs,omitempty"`
+	Failure       FailureRetryCfg            `json:"failure,omitempty"`
+}
+
+// FailureRetryCfg tunes the failure-recovery watchdogs at runtime without
+// a daemon restart (system-scope "failure" setting row; the sweeps and
+// the quota breaker re-read it per tick / per trip). Every field is
+// optional — 0 falls back to the env knob, then the built-in default.
+type FailureRetryCfg struct {
+	// BackoffBaseMin is the failure-retry sweep's base backoff in minutes
+	// before the first auto-replay of a failed turn; each further attempt
+	// doubles it (base, 2x, 4x…). Default 15.
+	BackoffBaseMin int `json:"backoffBaseMin,omitempty"`
+	// MaxAttempts caps auto-replays per failed turn before the sweep gives
+	// up and notifies the user. Default 3.
+	MaxAttempts int `json:"maxAttempts,omitempty"`
+	// QuotaProbeMin is the quota breaker's first probe interval in
+	// minutes; consecutive failed probes double it (capped at 64x) and a
+	// success resets. Default 30.
+	QuotaProbeMin int `json:"quotaProbeMin,omitempty"`
 }
 
 // ModelCost holds pricing info for a model.

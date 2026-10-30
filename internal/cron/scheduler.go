@@ -88,9 +88,13 @@ type StoreJob struct {
 	// captured from the chatter at creation time. Legacy rows carry
 	// "UTC" (the old hardcoded value); empty means server-local.
 	Timezone string
-	// Silent: fire on an internal channel with no IM adapter so the agent
-	// runs the task but no reply is delivered to any chat (background task).
-	Silent bool
+	// Background: fire into the job's own cron_<id> session on the
+	// internal heartbeat channel instead of the bound conversation.
+	// Deliver: route the reply to (Channel, AccountID, ChatID) even when
+	// background — the orthogonal axes that replaced the old silent bool
+	// (which could not express "background task that still reports back").
+	Background bool
+	Deliver    bool
 }
 
 // globalNotify wakes the DB-mode scheduler when a cron tool creates or
@@ -248,7 +252,12 @@ func (s *Scheduler) processDueJobs(ctx context.Context) {
 		// endpoint — both are always reachable (replies go through
 		// the plugin's channel.send, not an IM adapter). Empty
 		// channel is a legacy row that doesn't route through any bot.
-		if !j.Silent && s.channels != nil && j.Channel != "" && j.Channel != "web" && j.Channel != "api" {
+		// Any job whose reply is supposed to reach a chat gets the
+		// check — foreground jobs by definition, background jobs with
+		// deliver=true (a dead adapter there is the same silent
+		// dead-letter this check exists to prevent).
+		replyDelivered := j.Deliver || !j.Background
+		if replyDelivered && s.channels != nil && j.Channel != "" && j.Channel != "web" && j.Channel != "api" {
 			if !s.channels.Has(j.Channel, j.AccountID) {
 				count, ferr := s.store.IncrementCronJobFailure(ctx, j.ID)
 				if ferr != nil {
@@ -280,18 +289,31 @@ func (s *Scheduler) processDueJobs(ctx context.Context) {
 			text = fmt.Sprintf("[Cron Job: %s] This is a scheduled task trigger.", j.Name)
 		}
 
-		// Silent jobs fire on the internal heartbeat channel (no IM adapter
-		// registers for it) so the agent runs `message` but the reply is
-		// discarded — a background/self task. Foreground jobs route to their
-		// stored (channel, accountId, chatId). OwnerUserID is set either way
-		// so processInbound can resolve the agent without a channel lookup.
+		// Background jobs run in their own cron_<jobID> session on the
+		// internal heartbeat channel (no IM adapter registers for it) so
+		// they don't pollute the bound conversation. Foreground jobs run
+		// directly in the stored (channel, accountId, chatId) conversation.
+		// OwnerUserID is set either way so processInbound can resolve the
+		// agent without a channel lookup.
 		fireChannel := j.Channel
 		fireAccount := j.AccountID
 		fireChat := j.ChatID
-		if j.Silent {
+		var replyRoute *bus.ReplyRoute
+		if j.Background {
 			fireChannel = "heartbeat"
 			fireAccount = ""
 			fireChat = "cron_" + j.ID
+			// The quadrant the old silent bool couldn't express: a
+			// background job whose reply still reports back to the
+			// bound conversation. The gateway worker honors ReplyRoute
+			// over the inbound's own (heartbeat) triple when delivering.
+			if j.Deliver && j.Channel != "" && j.Channel != "heartbeat" {
+				replyRoute = &bus.ReplyRoute{
+					Channel:   j.Channel,
+					AccountID: j.AccountID,
+					ChatID:    j.ChatID,
+				}
+			}
 		}
 		s.bus.Inbound <- bus.InboundMessage{
 			Channel:     fireChannel,
@@ -303,6 +325,7 @@ func (s *Scheduler) processDueJobs(ctx context.Context) {
 			Text:        text,
 			PeerKind:    "dm",
 			Source:      bus.SourceCron,
+			ReplyRoute:  replyRoute,
 		}
 
 		// Calculate next run based on job type.

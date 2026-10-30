@@ -284,3 +284,83 @@ func TestNotifyJobCreated(t *testing.T) {
 	NotifyJobCreated()
 	NotifyJobCreated() // should not panic or block
 }
+
+// TestProcessDueJobs_BackgroundDeliverQuadrants covers the three delivery
+// quadrants a due job can fire in (the fourth — background=false +
+// deliver=false — is degenerate). The background+deliver job is the one
+// the old silent bool couldn't express: it runs on the heartbeat channel
+// in its own cron_<id> session while its reply is routed back to the
+// bound conversation via ReplyRoute.
+func TestProcessDueJobs_BackgroundDeliverQuadrants(t *testing.T) {
+	mb := bus.New()
+	got := make(chan bus.InboundMessage, 4)
+	go func() {
+		for msg := range mb.Inbound {
+			got <- msg
+		}
+	}()
+
+	store := newMockStore()
+	store.addJob(StoreJob{
+		ID: "fg", Name: "foreground", Type: "interval", Schedule: "1h",
+		Message: "m1", Channel: "wechat", AccountID: "bot-wx", ChatID: "wx-chat",
+		Background: false, Deliver: true,
+	})
+	store.addJob(StoreJob{
+		ID: "bg-mute", Name: "background mute", Type: "interval", Schedule: "1h",
+		Message: "m2", Channel: "", // no target — pure background
+		Background: true, Deliver: false,
+	})
+	store.addJob(StoreJob{
+		ID: "bg-report", Name: "background reports back", Type: "interval", Schedule: "1h",
+		Message: "m3", Channel: "wechat", AccountID: "bot-wx", ChatID: "wx-chat",
+		Background: true, Deliver: true,
+	})
+
+	s := &Scheduler{bus: mb, store: store, instanceID: "test"}
+	s.processDueJobs(context.Background())
+
+	// Key by ChatID: the foreground job fires straight into wx-chat while
+	// both background jobs fire into their own cron_<id> sessions — the
+	// three keys are distinct.
+	fired := map[string]bus.InboundMessage{}
+	for range 3 {
+		select {
+		case msg := <-got:
+			fired[msg.ChatID] = msg
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for inbound messages")
+		}
+	}
+
+	// Foreground: fires straight into the bound conversation.
+	if m, ok := fired["wx-chat"]; !ok {
+		t.Fatalf("no message fired to wx-chat")
+	} else if m.Channel != "wechat" || m.AccountID != "bot-wx" {
+		t.Errorf("foreground fire triple wrong: %+v", m)
+	} else if m.ReplyRoute != nil {
+		t.Errorf("foreground job should not carry a ReplyRoute: %+v", m.ReplyRoute)
+	}
+
+	if m, ok := fired["cron_bg-mute"]; !ok {
+		t.Fatalf("pure-background job did not fire into its cron_<id> session")
+	} else if m.Channel != "heartbeat" || m.AccountID != "" {
+		t.Errorf("background fire triple wrong: %+v", m)
+	} else if m.ReplyRoute != nil {
+		t.Errorf("deliver=false job must not carry a ReplyRoute: %+v", m.ReplyRoute)
+	}
+
+	if m, ok := fired["cron_bg-report"]; !ok {
+		t.Fatalf("background+deliver job did not fire into its cron_<id> session")
+	} else {
+		if m.Channel != "heartbeat" {
+			t.Errorf("background+deliver must RUN on heartbeat, got channel=%q", m.Channel)
+		}
+		if m.ReplyRoute == nil {
+			t.Fatal("background+deliver job must carry a ReplyRoute back to the bound chat")
+		}
+		if m.ReplyRoute.Channel != "wechat" || m.ReplyRoute.ChatID != "wx-chat" || m.ReplyRoute.AccountID != "bot-wx" {
+			t.Errorf("ReplyRoute wrong: %+v", m.ReplyRoute)
+		}
+	}
+}

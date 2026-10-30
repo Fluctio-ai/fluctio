@@ -3,7 +3,12 @@
 import { Sun, Moon, Monitor } from "lucide-react";
 import { useTheme, type Theme } from "@/components/theme-provider";
 import { useLocale, useT, LOCALES } from "@/lib/i18n";
-import { PageHeader, SettingsCard, CardHead } from "@/components/settings-ui";
+import {
+  PageHeader,
+  SettingsCard,
+  CardHead,
+} from "@/components/settings-ui";
+import { FailureRetryCard } from "@/components/failure-retry-card";
 
 const choices: Array<{ value: Theme; labelKey: string; icon: React.ComponentType<{ className?: string }> }> = [
   { value: "light", labelKey: "general.theme.light", icon: Sun },
@@ -69,6 +74,9 @@ export default function GeneralSettingsPage() {
           })}
         </div>
       </SettingsCard>
+
+      <FailureRetryCard />
     </div>
   );
 }
+

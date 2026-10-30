@@ -35,13 +35,18 @@ func TestQuotaBreakerTripGateProbeClear(t *testing.T) {
 		t.Fatalf("gate should allow the probe at/after nextProbe")
 	}
 
-	// Probe failed with the same quota error → re-armed, trippedAt kept.
+	// Probe failed with the same quota error → re-armed, trippedAt kept,
+	// and the next wait DOUBLED (probeStreak grows: base, 2x, 4x… capped).
 	q.trip("API error 429: You've reached your monthly quota", now.Add(31*time.Minute), 30*time.Minute)
 	q.mu.Lock()
 	origTrippedAt := q.trippedAt
+	nextAfterFail := q.nextProbe
 	q.mu.Unlock()
 	if !origTrippedAt.Equal(now) {
 		t.Errorf("re-trip moved trippedAt: %v, want original %v", origTrippedAt, now)
+	}
+	if want := now.Add(31 * time.Minute).Add(60 * time.Minute); !nextAfterFail.Equal(want) {
+		t.Errorf("re-trip nextProbe = %v, want %v (doubled 30m→60m)", nextAfterFail, want)
 	}
 	if blocked, _, _ := q.gate(now.Add(32 * time.Minute)); !blocked {
 		t.Fatalf("re-armed breaker should block again")

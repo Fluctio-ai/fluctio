@@ -27,7 +27,7 @@ import {
   listAgentCronJobs,
   deleteAgentCronJob,
   toggleAgentCronJob,
-  setAgentCronJobSilent,
+  setAgentCronJobFlags,
   type AgentCronJob,
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
@@ -90,12 +90,12 @@ export default function AgentSchedulerPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<AgentCronJob | null>(null);
-  // Pending "turn background on" confirmation target — see handleSetSilent.
-  const [silentTarget, setSilentTarget] = useState<AgentCronJob | null>(null);
+  // Pending "turn delivery off" confirmation target — see handleSetDeliver.
+  const [deliverOffTarget, setDeliverOffTarget] = useState<AgentCronJob | null>(null);
   // Track in-flight toggles by job id so the row reflects optimistic
   // state and the switch doesn't double-fire while the request is open.
   const [toggling, setToggling] = useState<Record<string, boolean>>({});
-  const [silencing, setSilencing] = useState<Record<string, boolean>>({});
+  const [flagging, setFlagging] = useState<Record<string, boolean>>({});
 
   const refresh = useCallback(() => {
     if (!agentId) return;
@@ -134,14 +134,15 @@ export default function AgentSchedulerPage() {
     }
   };
 
-  const applySetSilent = async (job: AgentCronJob, silent: boolean) => {
-    if (!agentId || silencing[job.id]) return;
-    setSilencing((m) => ({ ...m, [job.id]: true }));
-    setJobs((prev) =>
-      prev.map((j) => (j.id === job.id ? { ...j, silent } : j)),
-    );
-    const res = await setAgentCronJobSilent(agentId, job.id, silent);
-    setSilencing((m) => {
+  const applySetFlags = async (
+    job: AgentCronJob,
+    flags: { background?: boolean; deliver?: boolean },
+  ) => {
+    if (!agentId || flagging[job.id]) return;
+    setFlagging((m) => ({ ...m, [job.id]: true }));
+    setJobs((prev) => prev.map((j) => (j.id === job.id ? { ...j, ...flags } : j)));
+    const res = await setAgentCronJobFlags(agentId, job.id, flags);
+    setFlagging((m) => {
       const { [job.id]: _drop, ...rest } = m;
       void _drop;
       return rest;
@@ -152,16 +153,17 @@ export default function AgentSchedulerPage() {
     }
   };
 
-  // Turning "background" ON for a job that carries a push target silently
-  // disarms the delivery: the stored (channel, chat) stays but the fire
-  // is rerouted to a read-only heartbeat session the chatter never sees.
-  // Confirm before that, so a stray tap can't quietly kill a push.
-  const handleSetSilent = (job: AgentCronJob, silent: boolean) => {
-    if (silent && job.channel) {
-      setSilentTarget(job);
+  // Background is a safe switch — it only moves where the job RUNS (its
+  // own session instead of the chat) and the reply still delivers.
+  // Turning DELIVERY off is the dangerous one: the stored (channel, chat)
+  // stays but nobody ever sees the result again. Confirm before that, so
+  // a stray tap can't quietly kill a push.
+  const handleSetDeliver = (job: AgentCronJob, deliver: boolean) => {
+    if (!deliver && job.channel) {
+      setDeliverOffTarget(job);
       return;
     }
-    void applySetSilent(job, silent);
+    void applySetFlags(job, { deliver });
   };
 
   const handleDelete = async () => {
@@ -202,9 +204,10 @@ export default function AgentSchedulerPage() {
               key={job.id}
               job={job}
               busy={!!toggling[job.id]}
-              silentBusy={!!silencing[job.id]}
+              flagBusy={!!flagging[job.id]}
               onToggle={(enabled) => handleToggle(job, enabled)}
-              onSetSilent={(silent) => handleSetSilent(job, silent)}
+              onSetBackground={(background) => applySetFlags(job, { background })}
+              onSetDeliver={(deliver) => handleSetDeliver(job, deliver)}
               onDelete={() => setDeleteTarget(job)}
             />
           ))}
@@ -235,16 +238,15 @@ export default function AgentSchedulerPage() {
       </AlertDialog>
 
       <AlertDialog
-        open={!!silentTarget}
-        onOpenChange={(v) => !v && setSilentTarget(null)}
+        open={!!deliverOffTarget}
+        onOpenChange={(v) => !v && setDeliverOffTarget(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("scheduler.silentTitle")}</AlertDialogTitle>
+            <AlertDialogTitle>{t("scheduler.deliverOffTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("scheduler.silentBody", {
-                name: silentTarget?.name || silentTarget?.id || "",
-                channel: silentTarget?.channel || "",
+              {t("scheduler.deliverOffBody", {
+                name: deliverOffTarget?.name || deliverOffTarget?.id || "",
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -252,12 +254,13 @@ export default function AgentSchedulerPage() {
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                const target = silentTarget;
-                setSilentTarget(null);
-                if (target) void applySetSilent(target, true);
+                const target = deliverOffTarget;
+                setDeliverOffTarget(null);
+                if (target) void applySetFlags(target, { deliver: false });
               }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {t("scheduler.silentConfirm")}
+              {t("scheduler.deliverOffConfirm")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -269,16 +272,18 @@ export default function AgentSchedulerPage() {
 function JobRow({
   job,
   busy,
-  silentBusy,
+  flagBusy,
   onToggle,
-  onSetSilent,
+  onSetBackground,
+  onSetDeliver,
   onDelete,
 }: {
   job: AgentCronJob;
   busy: boolean;
-  silentBusy: boolean;
+  flagBusy: boolean;
   onToggle: (enabled: boolean) => void;
-  onSetSilent: (silent: boolean) => void;
+  onSetBackground: (background: boolean) => void;
+  onSetDeliver: (deliver: boolean) => void;
   onDelete: () => void;
 }) {
   const t = useT();
@@ -305,12 +310,21 @@ function JobRow({
             )}
             <label className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer">
               <Switch
-                checked={!!job.silent}
-                disabled={silentBusy}
-                onCheckedChange={(v) => onSetSilent(v)}
-                aria-label={t("scheduler.silent")}
+                checked={!!job.background}
+                disabled={flagBusy}
+                onCheckedChange={(v) => onSetBackground(v)}
+                aria-label={t("scheduler.background")}
               />
-              {t("scheduler.silent")}
+              {t("scheduler.background")}
+            </label>
+            <label className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer">
+              <Switch
+                checked={job.deliver !== false}
+                disabled={flagBusy}
+                onCheckedChange={(v) => onSetDeliver(v)}
+                aria-label={t("scheduler.deliver")}
+              />
+              {t("scheduler.deliver")}
             </label>
           </div>
           <div className="flex items-start gap-1.5 text-xs text-muted-foreground">

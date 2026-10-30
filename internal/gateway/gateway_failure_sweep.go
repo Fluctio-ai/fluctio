@@ -11,7 +11,9 @@ import (
 
 	"github.com/fluctio-ai/fluctio/internal/agent"
 	"github.com/fluctio-ai/fluctio/internal/bus"
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/session"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
@@ -43,8 +45,9 @@ import (
 // renderer, and analyzeFailureChain can all recognize a system replay.
 const failureRetryTag = "🔁 [系统自动重试] "
 
-// failureRetryMax returns the auto-replay attempt cap per failed turn.
-// FLUCTIO_FAILURE_RETRY_MAX (min 1), default 3.
+// failureRetryMax returns the auto-replay attempt cap per failed turn from
+// the FLUCTIO_FAILURE_RETRY_MAX env knob (min 1), default 3. The runtime
+// source is failureRetryRuntime — this is its env fallback layer.
 func failureRetryMax() int {
 	if v := os.Getenv("FLUCTIO_FAILURE_RETRY_MAX"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
@@ -54,9 +57,9 @@ func failureRetryMax() int {
 	return 3
 }
 
-// failureRetryBase returns the base backoff before the first auto-retry;
-// each further attempt doubles it (15m → 30m → 1h at defaults).
-// FLUCTIO_FAILURE_RETRY_BASE_SECS (min 60), default 900.
+// failureRetryBase returns the base backoff from
+// FLUCTIO_FAILURE_RETRY_BASE_SECS (min 60), default 900 (15min). The
+// runtime source is failureRetryRuntime — this is its env fallback layer.
 func failureRetryBase() time.Duration {
 	if v := os.Getenv("FLUCTIO_FAILURE_RETRY_BASE_SECS"); v != "" {
 		if secs, err := strconv.Atoi(v); err == nil && secs >= 60 {
@@ -64,6 +67,32 @@ func failureRetryBase() time.Duration {
 		}
 	}
 	return 15 * time.Minute
+}
+
+// failureRetryRuntime resolves the sweep's tuning knobs for one pass:
+// system-scope "failure" setting row first (dashboard-adjustable, hot —
+// read per tick, no restart), then the env knob, then the built-in
+// default. Kept per-pass so a settings change lands on the next tick.
+func failureRetryRuntime(ctx context.Context, st store.Store) (base time.Duration, max int) {
+	base, max = 0, 0
+	if st != nil {
+		var c config.FailureRetryCfg
+		if err := scope.SettingInto(ctx, st, "failure", "", "", &c); err == nil {
+			if c.BackoffBaseMin >= 1 {
+				base = time.Duration(c.BackoffBaseMin) * time.Minute
+			}
+			if c.MaxAttempts >= 1 {
+				max = c.MaxAttempts
+			}
+		}
+	}
+	if base == 0 {
+		base = failureRetryBase()
+	}
+	if max == 0 {
+		max = failureRetryMax()
+	}
+	return base, max
 }
 
 // failureChain is the distilled state of a session tail that ends in an
@@ -207,6 +236,8 @@ func (g *Gateway) sweepFailures(ctx context.Context) {
 	saveFailureCursor(ctx, dbs, high)
 
 	// Distinct (agent, session) pairs — one chain analysis per session.
+	// Tuning knobs resolve once per pass (hot from the settings row).
+	base, maxAttempts := failureRetryRuntime(ctx, g.store)
 	type sessRef struct{ agentID, key string }
 	seen := map[sessRef]bool{}
 	for _, r := range rows {
@@ -218,14 +249,14 @@ func (g *Gateway) sweepFailures(ctx context.Context) {
 			continue
 		}
 		seen[ref] = true
-		g.handleFailureSession(ctx, dbs, r.AgentID, r.SessionKey)
+		g.handleFailureSession(ctx, dbs, r.AgentID, r.SessionKey, base, maxAttempts)
 	}
 }
 
 // handleFailureSession loads one session's working set tail and acts on
 // its unresolved failure chain: replay (backoff-gated, cap-gated) or
-// notify.
-func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, agentID, sessionKey string) {
+// notify. base/maxAttempts come from failureRetryRuntime (per-pass).
+func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, agentID, sessionKey string, base time.Duration, maxAttempts int) {
 	rec := g.agentRecord(ctx, dbs, agentID)
 	if rec == nil {
 		return
@@ -247,7 +278,6 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 		return // no unresolved failure at the tail
 	}
 
-	maxAttempts := failureRetryMax()
 	if !chain.replayable {
 		// Died mid-tool: a replay could double-execute side effects.
 		// Surface it once instead — the user must judge what to redo.
@@ -264,8 +294,8 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 		return
 	}
 	// Backoff before the next attempt: base << retries since the newest
-	// notice (15m for the first retry, doubling per further attempt).
-	if !time.Now().After(chain.lastAt.Add(failureRetryBase() << chain.retries)) {
+	// notice (base for the first retry, doubling per further attempt).
+	if !time.Now().After(chain.lastAt.Add(base << chain.retries)) {
 		return // not due yet — next tick re-evaluates
 	}
 	g.replayFailedTurn(ctx, dbs, rec, ag, sess, chain)

@@ -309,7 +309,13 @@ func TestCreateCronJobCrossChannelTarget(t *testing.T) {
 	}
 }
 
-func TestCreateCronJobSilent(t *testing.T) {
+// TestCreateCronJobBackgroundDeliver covers the delivery-axes contract:
+// no target + default deliver → rejected (the old silent-flag dead-letter
+// trap: the model believes it reported, the reply goes nowhere); no
+// target + explicit deliver=false → pure background; target + background
+// + deliver → the report-back quadrant the old silent bool couldn't
+// express.
+func TestCreateCronJobBackgroundDeliver(t *testing.T) {
 	db := newTestStore(t)
 	ctx := context.Background()
 	r := NewRegistry(t.TempDir(), t.TempDir())
@@ -317,19 +323,67 @@ func TestCreateCronJobSilent(t *testing.T) {
 	r.SetMessageContext("telegram", "bot-tg", "tg-current")
 	RegisterCronTools(r, db, "user-1", "agent-1")
 
+	// 1) No target, deliver defaults true → must be rejected.
 	args, _ := json.Marshal(createCronJobArgs{
-		Name: "silent tidy", Type: "interval",
+		Name: "would-be-dead-letter", Type: "interval",
 		Schedule: "1h", Message: "compact MEMORY.md if large",
 	})
+	if _, err := r.Execute(ctx, "create_cron_job", string(args)); err == nil {
+		t.Fatal("expected reject: deliver=true with no delivery target")
+	}
+
+	// 2) Explicit deliver=false → pure background job.
+	f := false
+	args, _ = json.Marshal(createCronJobArgs{
+		Name: "background tidy", Type: "interval",
+		Schedule: "1h", Message: "compact MEMORY.md if large", Deliver: &f,
+	})
 	if _, err := r.Execute(ctx, "create_cron_job", string(args)); err != nil {
-		t.Fatalf("create silent: %v", err)
+		t.Fatalf("create background: %v", err)
 	}
 	jobs, err := db.ListCronJobsByAgent(ctx, "agent-1")
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(jobs) != 1 || !jobs[0].Silent {
-		t.Fatalf("expected 1 silent job, got %+v", jobs)
+	if len(jobs) != 1 || !jobs[0].Background || jobs[0].Deliver {
+		t.Fatalf("expected 1 pure-background job (background=1, deliver=0), got %+v", jobs)
+	}
+
+	// 3) Target + background + deliver → runs isolated, reports back.
+	// Seed a bound wechat chat for the target whitelist.
+	if err := db.SaveChannel(ctx, &store.ChannelRecord{
+		ID: "c", UserID: "u1", AgentID: "agent-1", Type: "wechat", AccountID: "bot-wx", Enabled: true, Data: map[string]interface{}{},
+	}); err != nil {
+		t.Fatalf("save channel: %v", err)
+	}
+	saveTestSession(t, db, "agent-1", "s-wx", "wechat", "bot-wx", "wx-chat-A", 1)
+	tr := true
+	args, _ = json.Marshal(createCronJobArgs{
+		Name: "podcast report", Type: "interval", Schedule: "1h",
+		Message: "run pipeline and report", Channel: "wechat", AccountID: "bot-wx",
+		ChatID: "wx-chat-A", Background: &tr, Deliver: &tr,
+	})
+	if _, err := r.Execute(ctx, "create_cron_job", string(args)); err != nil {
+		t.Fatalf("create background+deliver: %v", err)
+	}
+	jobs, err = db.ListCronJobsByAgent(ctx, "agent-1")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("expected 2 jobs, got %d", len(jobs))
+	}
+	var bg *store.CronJobRecord
+	for i := range jobs {
+		if jobs[i].Name == "podcast report" {
+			bg = &jobs[i]
+		}
+	}
+	if bg == nil || !bg.Background || !bg.Deliver {
+		t.Fatalf("expected background+deliver job, got %+v", jobs)
+	}
+	if bg.Channel != "wechat" || bg.ChatID != "wx-chat-A" {
+		t.Fatalf("delivery target lost: %+v", bg)
 	}
 }
 
@@ -358,9 +412,10 @@ func TestListCronJobsEnhanced(t *testing.T) {
 	if _, err := r.Execute(ctx, "create_cron_job", string(fg)); err != nil {
 		t.Fatalf("create fg: %v", err)
 	}
-	// Silent background job (no delivery target → no sessionKey).
+	// Background job with no delivery target (deliver=false → no sessionKey).
+	f := false
 	sl, _ := json.Marshal(createCronJobArgs{
-		Name: "sl", Type: "interval", Schedule: "1h", Message: "tidy",
+		Name: "sl", Type: "interval", Schedule: "1h", Message: "tidy", Deliver: &f,
 	})
 	if _, err := r.Execute(ctx, "create_cron_job", string(sl)); err != nil {
 		t.Fatalf("create sl: %v", err)
@@ -381,16 +436,16 @@ func TestListCronJobsEnhanced(t *testing.T) {
 	for _, v := range views {
 		byName[v["name"].(string)] = v
 	}
-	if byName["fg"]["silent"] != false {
-		t.Fatalf("fg should be foreground: %v", byName["fg"]["silent"])
+	if byName["fg"]["background"] != false || byName["fg"]["deliver"] != true {
+		t.Fatalf("fg should be foreground+delivering: bg=%v deliver=%v", byName["fg"]["background"], byName["fg"]["deliver"])
 	}
 	if byName["fg"]["sessionKey"] != "s1" {
 		t.Fatalf("fg sessionKey=%v, want s1", byName["fg"]["sessionKey"])
 	}
-	if byName["sl"]["silent"] != true {
-		t.Fatalf("sl should be silent: %v", byName["sl"]["silent"])
+	if byName["sl"]["background"] != true || byName["sl"]["deliver"] != false {
+		t.Fatalf("sl should be background+non-delivering: bg=%v deliver=%v", byName["sl"]["background"], byName["sl"]["deliver"])
 	}
 	if _, hasKey := byName["sl"]["sessionKey"]; hasKey {
-		t.Fatalf("silent job should have no sessionKey: %v", byName["sl"]["sessionKey"])
+		t.Fatalf("non-delivering background job should have no sessionKey: %v", byName["sl"]["sessionKey"])
 	}
 }

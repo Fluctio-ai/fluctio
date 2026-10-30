@@ -143,6 +143,9 @@ func (s *Server) saveUserConfig(r *http.Request, cfg *config.Config) error {
 // saveUserConfig. Adding a new sub-block of Config to the round-trip is
 // a single append here.
 var settingNamespaces = []settingNamespace{
+	{namespace: "failure",
+		dst:     func(c *config.Config) interface{} { return &c.Failure },
+		collect: func(c *config.Config) map[string]interface{} { return toMap(c.Failure) }},
 	{namespace: "agents.defaults",
 		dst:     func(c *config.Config) interface{} { return &c.Agents.Defaults },
 		collect: func(c *config.Config) map[string]interface{} { return toMap(c.Agents.Defaults) }},

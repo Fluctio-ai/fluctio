@@ -19,12 +19,20 @@ type createCronJobArgs struct {
 	Message  string `json:"message"`
 	Type     string `json:"type"`
 	// Delivery (push) target. A non-empty (channel, accountId, chatId)
-	// means push the result to that chat when the schedule fires; all
-	// empty means run in the background with NO delivery to any chat
-	// (IM or web). Values come from list_channels and are whitelist-checked.
+	// identifies the chat the result is delivered to when the schedule
+	// fires (see Deliver). Values come from list_channels and are
+	// whitelist-checked.
 	Channel   string `json:"channel,omitempty"`
 	AccountID string `json:"accountId,omitempty"`
 	ChatID    string `json:"chatId,omitempty"`
+	// Background: run in the job's own cron_<id> session instead of the
+	// delivery-target conversation (keeps task chatter out of the chat).
+	// Implicitly true when no delivery target is given.
+	Background *bool `json:"background,omitempty"`
+	// Deliver: send the job's reply to the delivery target. Defaults to
+	// true — jobs are built to report back. Must be false when no target
+	// is given (there is nowhere to deliver).
+	Deliver *bool `json:"deliver,omitempty"`
 }
 
 type deleteCronJobArgs struct {
@@ -63,7 +71,7 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 				},
 				"channel": map[string]interface{}{
 					"type":        "string",
-					"description": "Push target channel (e.g. 'wechat', 'telegram', 'discord', 'feishu', 'qq'). Copy the full (channel, accountId, chatId) triple from a list_channels row to push the result to that chat. Leave channel/accountId/chatId ALL EMPTY to run the job in the BACKGROUND with no delivery to any chat (IM or web). A push target means push; no target means background — there is no separate silent flag.",
+					"description": "Delivery target channel (e.g. 'wechat', 'telegram', 'discord', 'feishu', 'qq'). Copy the full (channel, accountId, chatId) triple from a list_channels row — the job's result is delivered there when it fires. Required unless deliver=false (a pure background task).",
 				},
 				"accountId": map[string]interface{}{
 					"type":        "string",
@@ -72,6 +80,14 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 				"chatId": map[string]interface{}{
 					"type":        "string",
 					"description": "Target chat identifier (group/DM id on the target channel). Copy from the SAME list_channels row as channel and accountId.",
+				},
+				"background": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Run in an isolated background session instead of the delivery-target conversation — task chatter stays out of the chat while the result is still delivered (default false; forced true when no delivery target is given).",
+				},
+				"deliver": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Send the job's result to the delivery target (default true). Set false ONLY for pure background tasks — combined with an empty channel it means the result goes nowhere and nobody sees it.",
 				},
 			},
 			"required": []string{"name", "schedule", "message"},
@@ -118,15 +134,23 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 			jobType = "cron"
 		}
 
-		// Delivery is decided by the push target: a non-empty
-		// (channel, accountId, chatId) triple pushes the result to that
-		// chat when the schedule fires; all empty runs the job in the
-		// background with NO delivery to any chat (IM or web). There is
-		// no separate silent flag — having a target IS the push decision.
+		// Delivery axes: where the job RUNS (background = its own
+		// cron_<id> session vs. the target conversation) and whether its
+		// reply is DELIVERED to the target are orthogonal. Defaults follow
+		// user intent: deliver=true unless the model explicitly opts out,
+		// because jobs are overwhelmingly built to report back; background
+		// defaults false and is forced true when there is no target to run
+		// in. A deliver=true with no target is rejected — that was the old
+		// silent-flag dead-letter trap (the model believes it reported, the
+		// reply went nowhere).
+		deliver := args.Deliver == nil || *args.Deliver
 		var channel, accountID, chatID string
 		if args.Channel != "" || args.AccountID != "" || args.ChatID != "" {
 			if args.Channel == "" || args.ChatID == "" {
-				return "", fmt.Errorf("a push target needs both 'channel' and 'chatId' (accountId is auto-resolved). Call list_channels for valid values. To run in the background instead, omit channel/accountId/chatId entirely.")
+				return "", fmt.Errorf("a delivery target needs both 'channel' and 'chatId' (accountId is auto-resolved). Call list_channels for valid values. To run purely in the background instead, omit channel/accountId/chatId and set deliver=false.")
+			}
+			if !deliver {
+				return "", fmt.Errorf("a delivery target was given but deliver=false — either set deliver=true (default) or omit the target for a pure background task")
 			}
 			resolved, err := resolveChannelTarget(ctx, st, agentID, args.Channel, args.AccountID, args.ChatID)
 			if err != nil {
@@ -135,6 +159,12 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 			channel = args.Channel
 			accountID = resolved
 			chatID = args.ChatID
+		} else if deliver {
+			return "", fmt.Errorf("deliver defaults to true but no delivery target was given: pass (channel, chatId) from list_channels, or set deliver=false explicitly for a pure background task whose result nobody receives")
+		}
+		background := args.Background != nil && *args.Background
+		if channel == "" {
+			background = true // nowhere else to run
 		}
 
 		// The chatter's effective timezone governs how the schedule is
@@ -189,7 +219,10 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 			Channel:   channel,
 			AccountID: accountID,
 			ChatID:    chatID,
-			Silent:    channel == "",
+			// See CronJobRecord.Background/Deliver — the orthogonal axes
+			// that replaced the old silent bool.
+			Background: background,
+			Deliver:    deliver,
 			// "" = server-local; the scheduler's LocationOf maps it
 			// the same way LoadLocationOrLocal did above, so creation
 			// and recurrence agree.
@@ -228,9 +261,10 @@ func makeListCronJobs(st store.Store, userID, agentID string) ToolFunc {
 			return "No cron jobs found for this agent.", nil
 		}
 
-		// Attach each foreground job's target session (key + title) so the
+		// Attach each delivering job's target session (key + title) so the
 		// full delivery address is visible alongside channel/accountId/chatId
-		// and the silent flag. Silent jobs have no delivery target.
+		// and the background/deliver flags. Non-delivering background jobs
+		// have no delivery target.
 		sessions, _ := st.ListSessions(ctx, agentID)
 		type sessKey struct{ channel, accountID, chatID string }
 		latest := map[sessKey]store.SessionMeta{}
@@ -252,7 +286,7 @@ func makeListCronJobs(st store.Store, userID, agentID string) ToolFunc {
 		views := make([]cronJobView, 0, len(jobs))
 		for _, j := range jobs {
 			v := cronJobView{CronJobRecord: j}
-			if !j.Silent {
+			if j.Channel != "" {
 				if s, ok := latest[sessKey{j.Channel, j.AccountID, j.ChatID}]; ok {
 					v.SessionKey = s.Key
 					v.SessionTitle = s.Title
