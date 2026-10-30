@@ -126,6 +126,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateCronJobsBackgroundDeliver(ctx); err != nil {
 		return fmt.Errorf("migrate cron_jobs.background/deliver: %w", err)
 	}
+	if err := d.migrateDropFailureSweepCursor(ctx); err != nil {
+		return fmt.Errorf("migrate drop failure sweep cursor: %w", err)
+	}
 	if err := d.migrateDropAgentGrants(ctx); err != nil {
 		return fmt.Errorf("migrate drop agent_grants: %w", err)
 	}
@@ -2234,6 +2237,22 @@ func (d *DBStore) migrateCronJobsFailureCount(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx,
 		`ALTER TABLE cron_jobs ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0`); err != nil {
 		return fmt.Errorf("add failure_count: %w", err)
+	}
+	return nil
+}
+
+// migrateDropFailureSweepCursor removes the abandoned failure-sweep scan
+// cursor row. The sweep used a single monotonic watermark, which couldn't
+// express per-session backoff state (it advanced past a session before the
+// retry was due, so auto-retry never fired); scheduling now lives in a
+// per-session in-memory cache whose truth is the session history, leaving
+// this row with no reader. Idempotent.
+func (d *DBStore) migrateDropFailureSweepCursor(ctx context.Context) error {
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM configs WHERE kind = %s AND name = %s`,
+			d.ph(1), d.ph(2)), KindSweep, "failure_sweep_cursor")
+	if err != nil {
+		return fmt.Errorf("delete failure_sweep_cursor: %w", err)
 	}
 	return nil
 }

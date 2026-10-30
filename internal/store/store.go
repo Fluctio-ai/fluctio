@@ -634,6 +634,9 @@ const (
 	KindProvider = "provider"
 	KindChannel  = "channel"
 	KindSetting  = "setting"
+	// KindSweep holds the background sweeps' own bookkeeping rows (scan
+	// watermarks, notification dedupe). Not user-facing configuration.
+	KindSweep = "sweep"
 )
 
 // ConfigRecord is one row of the configs table — the unified

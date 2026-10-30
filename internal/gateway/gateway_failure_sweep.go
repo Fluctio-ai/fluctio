@@ -428,7 +428,7 @@ func (g *Gateway) claimFailureNotice(ctx context.Context, dbs *store.DBStore, de
 	// Write-through, best-effort: a lost write only costs one duplicate
 	// notification after the next restart.
 	_ = dbs.SaveConfig(ctx, &store.ConfigRecord{
-		Kind:    "sweep",
+		Kind:    store.KindSweep,
 		Name:    "failure_notified",
 		Enabled: true,
 		Data:    snapshot,
@@ -439,7 +439,7 @@ func (g *Gateway) claimFailureNotice(ctx context.Context, dbs *store.DBStore, de
 // loadFailureNotified hydrates the in-memory dedupe map from the settings
 // row at boot, so a restart doesn't re-announce already-reported chains.
 func (g *Gateway) loadFailureNotified(ctx context.Context, dbs *store.DBStore) {
-	rec, err := dbs.GetConfigByName(ctx, "sweep", "", "failure_notified")
+	rec, err := dbs.GetConfigByName(ctx, store.KindSweep, "", "failure_notified")
 	if err != nil || rec == nil {
 		return
 	}
