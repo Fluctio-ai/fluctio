@@ -152,7 +152,7 @@ func analyzeFailureChain(msgs []provider.Message) (failureChain, bool) {
 		// The tag's attempt number is cosmetic — the chain length is the
 		// truth, and a missing link breaks the walk anyway (so a parsed
 		// number could never disagree).
-		if strings.HasPrefix(text, failureRetryTag) {
+		if failureRetryTurn(user, text) {
 			chain.retries++
 		} else {
 			originalText = text
@@ -165,6 +165,17 @@ func analyzeFailureChain(msgs []provider.Message) (failureChain, bool) {
 	}
 	chain.userText = originalText
 	return chain, true
+}
+
+// failureRetryTurn reports whether a user turn is a system replay. The
+// loop stamps failureRetry metadata on SourceFailureRetry turns (see
+// agent.markFailureRetryTurn); the text-prefix match stays for chains
+// persisted before the metadata marker existed.
+func failureRetryTurn(m provider.Message, text string) bool {
+	if v, ok := m.Metadata["failureRetry"].(bool); ok && v {
+		return true
+	}
+	return strings.HasPrefix(text, failureRetryTag)
 }
 
 // toolsExecutedOf reads the notice's toolsExecuted metadata (set by the
@@ -181,11 +192,37 @@ func toolsExecutedOf(m provider.Message) int {
 	return 0
 }
 
-// failureScanWindow is how far back each pass looks for failures. It must
-// exceed the longest backoff (base<<attempts — 105min at the defaults)
-// plus a tick of slack so an unresolved chain keeps being seen; 6h also
-// lines up with the notification dedupe window.
+// failureScanWindow is how far back each pass looks for failures at the
+// default knobs. It must exceed the longest backoff (base<<attempts —
+// 105min at the defaults) plus a tick of slack so an unresolved chain
+// keeps being seen; 6h also lines up with the notification dedupe
+// window. Hot-tuned knobs that push the longest backoff past it stretch
+// the actual query window — see failureScanWindowFor.
 const failureScanWindow = 6 * time.Hour
+
+// failureScanWindowFor returns this pass's seed-query look-back: the 6h
+// baseline, stretched when the tuned knobs push the longest backoff
+// (base << last attempt, plus a tick of slack) past it — otherwise a
+// long knob slides the due retry out of the window and the ladder
+// stalls. The shift is capped so an absurd maxAttempts can't overflow.
+func failureScanWindowFor(base time.Duration, maxAttempts int) time.Duration {
+	w := failureScanWindow
+	if maxAttempts >= 1 {
+		shift := uint(maxAttempts - 1)
+		if shift > 20 {
+			shift = 20
+		}
+		if need := (base << shift) + 10*time.Minute; need > w {
+			w = need
+		}
+	}
+	return w
+}
+
+// failureScanPageSize caps one seed-query page; the sweep walks further
+// pages by id cursor so a mass outage beyond one page still surfaces
+// every session.
+const failureScanPageSize = 1000
 
 // failureScanState is the per-session cache entry (see the file header):
 // the newest diag row already analyzed, and — while a retry is pending —
@@ -211,20 +248,29 @@ func (g *Gateway) sweepFailures(ctx context.Context) {
 	if !ok || dbs == nil {
 		return
 	}
-	rows, err := dbs.ListRecoverableCallFailures(ctx, time.Now().Add(-failureScanWindow), 1000)
-	if err != nil {
-		slog.Warn("failure sweep: list failed calls", "error", err)
-		return
-	}
+	base, maxAttempts := failureRetryRuntime(ctx, g.store)
+	since := time.Now().Add(-failureScanWindowFor(base, maxAttempts))
 
-	// Newest row per session (rows come oldest-first, so overwrite).
+	// Newest row per session (pages come oldest-first, so overwrite).
+	// Keyset-paginated: a mass outage producing more than one page of
+	// failure rows still surfaces every session this pass.
 	type sessRef struct{ agentID, key string }
 	newest := map[sessRef]store.LLMCallDiagRow{}
-	for _, r := range rows {
-		newest[sessRef{r.AgentID, r.SessionKey}] = r
+	for afterID := int64(0); ; {
+		rows, err := dbs.ListRecoverableCallFailures(ctx, since, afterID, failureScanPageSize)
+		if err != nil {
+			slog.Warn("failure sweep: list failed calls", "error", err)
+			return
+		}
+		for _, r := range rows {
+			newest[sessRef{r.AgentID, r.SessionKey}] = r
+		}
+		if len(rows) < failureScanPageSize {
+			break
+		}
+		afterID = rows[len(rows)-1].ID
 	}
 
-	base, maxAttempts := failureRetryRuntime(ctx, g.store)
 	agents := map[string]*store.AgentRecord{}
 	now := time.Now()
 	for ref, row := range newest {
@@ -344,17 +390,35 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 		return
 	}
 	g.replayFailedTurn(ctx, dbs, rec, ag, sess, chain)
-	// Re-analyze next pass: a failed replay appends a fresh notice (new
-	// retry count, new backoff anchor), a successful one ends on an
-	// assistant reply and is announced then.
-	g.setFailureState(agentID, sessionKey, failureScanState{handledUpTo: upTo})
+	// Schedule from the chain the replay just wrote — do NOT wait for a
+	// newer llm_call_diag row: a replay that dies at the quota breaker
+	// writes no row at all. Settling here stalled the ladder after the
+	// first failed replay (the gave-up notice never fired).
+	g.setFailureState(agentID, sessionKey, postReplayScanState(sess.GetMessages(), upTo))
+}
+
+// postReplayScanState decides the session's scan state right after a
+// replay: a still-unresolved chain keeps a pending nextAt so the next
+// pass re-derives everything from the fresh chain (backoff wait, next
+// attempt, or the gave-up / not-replayable notice); a resolved one
+// (assistant reply appended) settles.
+func postReplayScanState(msgs []provider.Message, upTo int64) failureScanState {
+	if _, ok := analyzeFailureChain(msgs); ok {
+		return failureScanState{handledUpTo: upTo, nextAt: time.Now()}
+	}
+	return failureScanState{handledUpTo: upTo}
 }
 
 // replayFailedTurn re-enters the original request through HandleMessage on
-// the SAME session. The replayed turn is prefixed with the retry tag so the
-// LLM knows the context and the chain analysis counts the attempt; a
-// successful replay appends an assistant reply after the chain, which the
-// next pass reads as "resolved".
+// the SAME session — pinned by SessionKey, so a /new that minted a fresher
+// session for the chat triple can't redirect the replay into it. The
+// replayed turn is prefixed with the retry tag (and stamped failureRetry
+// metadata by the loop) so the LLM knows the context and the chain
+// analysis counts the attempt; a successful replay appends an assistant
+// reply after the chain, which the next pass reads as "resolved". The
+// turn is dispatched with an exclusive claim: a user message racing in
+// between the sweep's TurnInFlight probe and the turn start makes the
+// replay skip entirely (nothing appended), retried next pass.
 func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, ag *agent.Agent, sess *session.Session, chain failureChain) {
 	channel, accountID, chatID, projectID := sess.RouteInfo()
 	attempt := chain.retries + 1
@@ -362,11 +426,13 @@ func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec 
 	slog.Info("failure sweep: replaying failed turn",
 		"agent", ag.Name(), "session", sess.Key(), "attempt", attempt, "category", chain.category)
 
+	ctx = agent.WithExclusiveTurn(ctx)
 	reply := ag.HandleMessage(ctx, bus.InboundMessage{
 		Channel:     channel,
 		AccountID:   accountID,
 		ChatID:      chatID,
 		ProjectID:   projectID,
+		SessionKey:  sess.Key(),
 		AgentID:     ag.ID(),
 		Text:        text,
 		Source:      bus.SourceFailureRetry,
@@ -394,8 +460,9 @@ func (g *Gateway) notifyFailureOnce(ctx context.Context, dbs *store.DBStore, rec
 		return
 	}
 	uid := sweepOwnerUID(ctx, dbs, *rec)
-	// "" lets resolveSweepTarget fall back to the configured default
-	// channel instead of pinning wechat (the other sweeps pass "" too).
+	// "" keeps resolveSweepTarget's own default-channel fallback (wechat
+	// today unless configured otherwise) — same convention as the other
+	// sweeps.
 	ch, chatID, targetKey, _ := g.resolveSweepTarget(ctx, dbs, rec.ID, "", "failure sweep")
 	g.deliverSweepNudge(ctx, dbs, *rec, uid, ch, chatID, targetKey,
 		"llm_failure", title, body, "/agents/"+rec.ID+"/chat", "llm_failure", "failure sweep")

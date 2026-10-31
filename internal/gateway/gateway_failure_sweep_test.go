@@ -147,6 +147,134 @@ func TestAnalyzeFailureChain(t *testing.T) {
 	})
 }
 
+// TestAnalyzeFailureChainMetadataRetry covers the metadata-marked replay:
+// the loop stamps failureRetry metadata on SourceFailureRetry turns (see
+// agent.markFailureRetryTurn), so the turn's TEXT no longer has to carry
+// the Chinese prefix — a chain of clean-text replay turns must count.
+// The legacy prefix shape stays covered by TestAnalyzeFailureChain.
+func TestAnalyzeFailureChainMetadataRetry(t *testing.T) {
+	notice := func(ts int64) provider.Message {
+		return provider.Message{
+			Role:    "user",
+			Origin:  provider.OriginTurnError,
+			Content: "⚠️ failed",
+			Metadata: map[string]any{
+				"turnError":     "quota_exhausted",
+				"toolsExecuted": 0,
+			},
+			Timestamp: ts,
+		}
+	}
+	metaRetryTurn := func(text string, ts int64) provider.Message {
+		return provider.Message{
+			Role:      "user",
+			Content:   text,
+			Metadata:  map[string]any{"failureRetry": true},
+			Timestamp: ts,
+		}
+	}
+
+	t.Run("clean-text replay counts via metadata", func(t *testing.T) {
+		msgs := []provider.Message{
+			{Role: "user", Content: "帮我找视频", Timestamp: 1},
+			notice(2),
+			metaRetryTurn("第1次·帮我找视频", 3),
+			notice(4),
+		}
+		chain, ok := analyzeFailureChain(msgs)
+		if !ok {
+			t.Fatalf("expected chain")
+		}
+		if chain.retries != 1 {
+			t.Errorf("retries = %d, want 1 (metadata-marked, no text prefix)", chain.retries)
+		}
+		if chain.userText != "帮我找视频" {
+			t.Errorf("userText = %q", chain.userText)
+		}
+	})
+
+	t.Run("mixed metadata and legacy-prefix links both count", func(t *testing.T) {
+		msgs := []provider.Message{
+			{Role: "user", Content: "跑构建", Timestamp: 1},
+			notice(2),
+			{Role: "user", Content: failureRetryTag + "第1次·跑构建", Timestamp: 3}, // legacy
+			notice(4),
+			metaRetryTurn("第2次·跑构建", 5),
+			notice(6),
+		}
+		chain, ok := analyzeFailureChain(msgs)
+		if !ok {
+			t.Fatalf("expected chain")
+		}
+		if chain.retries != 2 {
+			t.Errorf("retries = %d, want 2 (one legacy + one metadata)", chain.retries)
+		}
+	})
+}
+
+// TestPostReplayScanState pins the HIGH-1 fix: after a replay the scan
+// state must keep the session PENDING (nextAt set) whenever the chain is
+// still unresolved — a replay that dies at the quota breaker writes no
+// llm_call_diag row at all, so waiting for a newer row would stall the
+// ladder forever. A resolved chain settles.
+func TestPostReplayScanState(t *testing.T) {
+	notice := func(ts int64) provider.Message {
+		return provider.Message{
+			Role:    "user",
+			Origin:  provider.OriginTurnError,
+			Content: "⚠️ failed",
+			Metadata: map[string]any{
+				"turnError":     "quota_exhausted",
+				"toolsExecuted": 0,
+			},
+			Timestamp: ts,
+		}
+	}
+	failed := []provider.Message{
+		{Role: "user", Content: "x", Timestamp: 1},
+		notice(2),
+		{Role: "user", Content: failureRetryTag + "第1次·x", Metadata: map[string]any{"failureRetry": true}, Timestamp: 3},
+		notice(4),
+	}
+
+	st := postReplayScanState(failed, 42)
+	if st.handledUpTo != 42 || st.nextAt.IsZero() {
+		t.Errorf("unresolved chain must stay pending, got %+v", st)
+	}
+
+	resolved := append(append([]provider.Message{}, failed...),
+		provider.Message{Role: "assistant", Content: "done", Timestamp: 5})
+	st = postReplayScanState(resolved, 42)
+	if st.handledUpTo != 42 || !st.nextAt.IsZero() {
+		t.Errorf("resolved chain must settle, got %+v", st)
+	}
+}
+
+// TestFailureScanWindowFor pins the window derivation: the 6h baseline
+// holds at the default knobs, hot-tuned knobs that push the longest
+// backoff past it stretch the window (or the due retry slides out of
+// the seed query and the ladder stalls), and an absurd maxAttempts
+// can't overflow the shift.
+func TestFailureScanWindowFor(t *testing.T) {
+	cases := []struct {
+		name string
+		base time.Duration
+		max  int
+		want time.Duration
+	}{
+		{"defaults hold 6h", 15 * time.Minute, 3, 6 * time.Hour},
+		{"90min base stretches", 90 * time.Minute, 3, 90*time.Minute<<2 + 10*time.Minute},
+		{"shift capped at 20", time.Hour, 1000, time.Hour<<20 + 10*time.Minute},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := failureScanWindowFor(c.base, c.max); got != c.want {
+				t.Errorf("failureScanWindowFor(%v, %d) = %v, want %v", c.base, c.max, got, c.want)
+			}
+		})
+	}
+}
+
 // TestFailureRetryBackoffSchedule pins the backoff arithmetic: first retry
 // waits base, each further attempt doubles it. This is the schedule
 // handleFailureSession gates on (chain.lastAt.Add(base << retries)).

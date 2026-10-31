@@ -1280,6 +1280,18 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 	return resp, nil
 }
 
+// diagSessionKeyCtx tags the turn's session_key onto the turn ctx so
+// recordLLMCallDiag can attribute LLM calls made without a webchat
+// stream on the same ctx (IM / cron / sweep replays). Exported wrapper
+// below; the key type stays private so only this package can read it.
+type diagSessionKeyCtx struct{}
+
+// WithDiagSessionKey tags ctx with the session_key llm_call_diag rows
+// should carry when no stream context supplies one.
+func WithDiagSessionKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, diagSessionKeyCtx{}, key)
+}
+
 // llmDiagInfo carries the outcome-specific fields the diagnostic recorder
 // needs; common fields (agent/session/provider/model/duration) it derives
 // itself from the agent + ctx.
@@ -1294,8 +1306,11 @@ type llmDiagInfo struct {
 
 // recordLLMCallDiag writes one llm_call_diag row, best-effort. Best-effort
 // because diagnostics must never break the agent turn — a DB hiccup or a
-// non-DBStore store is swallowed and the turn proceeds. sessionKey is pulled
-// from the stream on ctx (the call sites don't receive it directly).
+// non-DBStore store is swallowed and the turn proceeds. sessionKey comes
+// from the webchat stream on ctx when present (historical path), else from
+// the turn-entry tag (WithDiagSessionKey) — without the fallback, turns
+// with no stream (IM, cron, sweep replays) recorded an empty session_key
+// and the failure sweep's seed query never saw them.
 func (a *Agent) recordLLMCallDiag(ctx context.Context, dur time.Duration, info llmDiagInfo) {
 	db, ok := a.dataStore.(*store.DBStore)
 	if !ok || db == nil {
@@ -1305,6 +1320,9 @@ func (a *Agent) recordLLMCallDiag(ctx context.Context, dur time.Duration, info l
 	sessionKey := ""
 	if s := streamFromContext(ctx); s != nil {
 		sessionKey = s.sessionKey
+	}
+	if sessionKey == "" {
+		sessionKey, _ = ctx.Value(diagSessionKeyCtx{}).(string)
 	}
 	rec := store.LLMCallDiag{
 		AgentID:         a.agentID,
@@ -3266,6 +3284,50 @@ func (a *Agent) handleRegexHookReply(ctx context.Context, msg bus.InboundMessage
 	emitEvent(ctx, ChatEvent{Type: "done"})
 }
 
+// markFailureRetryTurn stamps the failureRetry marker onto a replayed
+// user turn (inbound Source=failure_retry). The failure sweep counts
+// attempts from this metadata — robust to wording and locale — instead
+// of parsing the turn's text; the text tag remains for the LLM's and
+// the renderer's benefit. No-op for every other source.
+func markFailureRetryTurn(msg bus.InboundMessage, userMsg provider.Message) provider.Message {
+	if msg.Source != bus.SourceFailureRetry {
+		return userMsg
+	}
+	if userMsg.Metadata == nil {
+		userMsg.Metadata = map[string]any{}
+	}
+	userMsg.Metadata["failureRetry"] = true
+	return userMsg
+}
+
+// sessionForTurn resolves the session a turn runs on. An explicit
+// SessionKey pins the exact session (the failure sweep's replay must
+// continue the conversation that failed, even after /new minted a
+// fresher session for the same chat triple); otherwise the active
+// session for the message's channel triple.
+func (a *Agent) sessionForTurn(msg bus.InboundMessage) *session.Session {
+	if msg.SessionKey != "" {
+		return a.sessions.GetByKey(msg.SessionKey)
+	}
+	return a.sessions.Get(sessionTriple(msg, msg.ProjectID))
+}
+
+// exclusiveTurnCtx asks the loop to claim the session's turn slot
+// atomically instead of sharing it. Set by the failure sweep's replay so
+// it cannot interleave with a user turn that lands between the sweep's
+// TurnInFlight probe and the turn start.
+type exclusiveTurnCtx struct{}
+
+// WithExclusiveTurn marks ctx as requesting an exclusive turn claim.
+func WithExclusiveTurn(ctx context.Context) context.Context {
+	return context.WithValue(ctx, exclusiveTurnCtx{}, true)
+}
+
+func exclusiveTurnRequested(ctx context.Context) bool {
+	v, _ := ctx.Value(exclusiveTurnCtx{}).(bool)
+	return v
+}
+
 func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) string {
 	a.persistInboundImages(&msg)
 	// Lift the chatter's UI locale out of Params (where the web client
@@ -3394,7 +3456,12 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	slog.Info("turn: refreshing skills",
 		"agent", a.name, "channel", msg.Channel, "chat_id", msg.ChatID, "user", chatterUID)
 	a.refreshSkillsFromStore(chatterUID)
-	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
+	sess := a.sessionForTurn(msg)
+	// Attribute this turn's llm_call_diag rows to the session even when
+	// no webchat stream rides the ctx (IM / cron / sweep replays) — those
+	// rows used to land with session_key='', invisible to the failure
+	// sweep's seed query. See recordLLMCallDiag.
+	ctx = WithDiagSessionKey(ctx, sess.SessionKey())
 	// Bind chatter onto sess. Session.ctx() builds its own
 	// context.Background-rooted ctx for store calls, so the
 	// WithChatterUserID we stamped onto the caller ctx above does NOT
@@ -3434,7 +3501,20 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// steer that lost the end-of-turn race into history. Registered
 	// before PadOrphanToolResults so it runs LAST (defers are LIFO) —
 	// orphan padding settles history first.
-	sess.BeginTurn()
+	//
+	// Exclusive replays (the failure sweep) claim the slot atomically:
+	// when a user turn already holds it, the replay is skipped entirely
+	// — nothing has been appended to history yet, and the sweep retries
+	// on a later pass.
+	if exclusiveTurnRequested(ctx) {
+		if !sess.TryBeginTurn() {
+			slog.Info("failure replay skipped — user turn in flight",
+				"agent", a.name, "session", sess.SessionKey())
+			return ""
+		}
+	} else {
+		sess.BeginTurn()
+	}
 	defer a.flushLeftoverSteer(sess)
 
 	// Safety net for client-aborted turns: if the loop exits with a
@@ -3476,6 +3556,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// (no-op outside projects / once history exists).
 	a.injectProjectCard(ctx, sess, msg.ProjectID, msg.Text)
 	userMsg := buildUserMessage(msg, a.model)
+	userMsg = markFailureRetryTurn(msg, userMsg)
 	sess.Append(userMsg)
 
 	// Context compaction: check if session messages are too large
@@ -4450,7 +4531,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	slog.Info("turn: refreshing skills",
 		"agent", a.name, "channel", msg.Channel, "chat_id", msg.ChatID, "user", chatterUID)
 	a.refreshSkillsFromStore(chatterUID)
-	sess := a.sessions.Get(sessionTriple(msg, msg.ProjectID))
+	sess := a.sessionForTurn(msg)
+	// Same diag attribution as HandleMessage — see there.
+	ctx = WithDiagSessionKey(ctx, sess.SessionKey())
 	// Bind chatter onto sess so its ctx() embeds WithChatterUserID
 	// for DBStore session writes — Session.ctx() rebuilds ctx from its
 	// own fields, so the chatter has to live on sess itself.
@@ -4491,6 +4574,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// (no-op outside projects / once history exists).
 	a.injectProjectCard(ctx, sess, msg.ProjectID, msg.Text)
 	userMsg := buildUserMessage(msg, a.model)
+	userMsg = markFailureRetryTurn(msg, userMsg)
 	sess.Append(userMsg)
 
 	sessionMsgs := sess.GetMessages()

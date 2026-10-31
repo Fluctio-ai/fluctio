@@ -4524,19 +4524,21 @@ func (d *DBStore) ListLLMCallDiagBySession(ctx context.Context, sessionKey strin
 }
 
 // ListRecoverableCallFailures returns the failure rows worth looking at
-// for failure RECOVERY, oldest first: a user-cancelled call ('canceled' —
-// a Stop, not a provider problem) never produces a turn-error chain, and
-// ASC ordering lets a caller holding a watermark process a bounded window
-// without starving the oldest rows. Kept separate from ListFailedLLMCalls
-// so the error-report generator's newest-first overview stays unchanged.
-func (d *DBStore) ListRecoverableCallFailures(ctx context.Context, since time.Time, limit int) ([]LLMCallDiagRow, error) {
+// for failure RECOVERY, keyset-paginated oldest-first (id-ascending;
+// afterID=0 starts from the oldest row): a user-cancelled call
+// ('canceled' — a Stop, not a provider problem) never produces a
+// turn-error chain, and the id cursor lets the caller walk a mass
+// outage past one page without rescanning. Kept separate from
+// ListFailedLLMCalls so the error-report generator's newest-first
+// overview stays unchanged.
+func (d *DBStore) ListRecoverableCallFailures(ctx context.Context, since time.Time, afterID int64, limit int) ([]LLMCallDiagRow, error) {
 	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
 	return d.queryLLMCallDiag(ctx,
 		fmt.Sprintf(`SELECT `+llmCallDiagCols+` FROM llm_call_diag
 			WHERE status NOT IN ('ok', 'canceled') AND session_key != ''
-			  AND created_at >= %s
-			ORDER BY created_at ASC LIMIT %s`, d.ph(1), d.ph(2)),
-		sinceStr, limit)
+			  AND created_at >= %s AND id > %s
+			ORDER BY id ASC LIMIT %s`, d.ph(1), d.ph(2), d.ph(3)),
+		sinceStr, afterID, limit)
 }
 
 // ListFailedLLMCalls returns llm_call_diag rows with status != 'ok' within

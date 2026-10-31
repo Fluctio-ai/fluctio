@@ -855,6 +855,23 @@ func (s *Session) BeginTurn() {
 	activeTurns.Add(1)
 }
 
+// TryBeginTurn begins a turn only when none is in flight, returning
+// false otherwise. For out-of-band triggers (the failure sweep's replay)
+// that must not interleave with a user turn: probe-then-dispatch races
+// against a message landing between the TurnInFlight probe and the turn
+// start. Depth accounting matches BeginTurn, so the normal EndTurn
+// releases the claim.
+func (s *Session) TryBeginTurn() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnDepth > 0 {
+		return false
+	}
+	s.turnDepth++
+	activeTurns.Add(1)
+	return true
+}
+
 // EndTurn marks a turn as finished. When the last in-flight turn ends it
 // returns any steer messages still buffered (the end-of-turn race: a
 // message pushed after the loop's final drain). Callers redispatch the

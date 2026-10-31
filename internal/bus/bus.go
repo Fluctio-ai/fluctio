@@ -51,6 +51,12 @@ type InboundMessage struct {
 	ProjectID   string
 	UserID      string // user identifier
 	OwnerUserID string // fluctio user that owns the agent (for multi-user routing)
+	// SessionKey, when set, pins the turn to that exact session_key
+	// instead of resolving the active session for the channel triple.
+	// Set by the failure sweep's replay: after /new the triple resolves
+	// to a fresher session, and a replay must continue the conversation
+	// that actually failed. Empty for every other producer.
+	SessionKey string
 	// AgentID is an *explicit* agent target. Non-empty when the source
 	// of the message already knows which agent should handle it (cron
 	// jobs, web chat, sub-agent spawns) — bypasses binding lookup +

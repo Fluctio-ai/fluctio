@@ -147,9 +147,9 @@ func TestListLLMCallDiagBySession(t *testing.T) {
 
 // TestListRecoverableCallFailures covers the sweep's query contract: the
 // scan window, oldest-first ordering (so a watermark can't starve the
-// oldest rows), and the two exclusions — a user-cancelled call ('canceled')
+// oldest rows), the two exclusions — a user-cancelled call ('canceled')
 // never produces a turn-error chain, and a row with no session key can't be
-// replayed.
+// replayed — and the id keyset cursor the sweep pages a mass outage with.
 func TestListRecoverableCallFailures(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)
@@ -174,7 +174,7 @@ func TestListRecoverableCallFailures(t *testing.T) {
 		old.Format("2006-01-02 15:04:05")); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
-	got, err := db.ListRecoverableCallFailures(ctx, time.Now().Add(-6*time.Hour), 100)
+	got, err := db.ListRecoverableCallFailures(ctx, time.Now().Add(-6*time.Hour), 0, 100)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -193,5 +193,24 @@ func TestListRecoverableCallFailures(t *testing.T) {
 	}
 	if !keys["s1"] || !keys["s3"] {
 		t.Errorf("missing expected sessions: %v", keys)
+	}
+
+	// Keyset pagination: page through the same window one row at a time —
+	// every page after the first starts strictly past the previous page's
+	// last id, and the walk terminates with a short page.
+	var walked []string
+	for afterID := int64(0); ; {
+		page, err := db.ListRecoverableCallFailures(ctx, time.Now().Add(-6*time.Hour), afterID, 1)
+		if err != nil {
+			t.Fatalf("page: %v", err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		walked = append(walked, page[0].SessionKey)
+		afterID = page[len(page)-1].ID
+	}
+	if len(walked) != 2 || walked[0] != "s1" || walked[1] != "s3" {
+		t.Errorf("keyset walk = %v, want [s1 s3] oldest-first", walked)
 	}
 }
