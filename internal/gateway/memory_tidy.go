@@ -149,18 +149,20 @@ Output STRICT JSON only — no markdown fences, no commentary:
 		return
 	}
 
-	// Always-reasoning models (GLM-5.3 via z.ai's anthropic endpoint always
-	// thinks — the thinking control is ignored there) can burn the ENTIRE
-	// output budget on reasoning and return 200 with ZERO content: the tidy
-	// budget (2048 + len/4) was measured smaller than the reasoning alone
-	// (~4.8k tokens for a 10k-char MEMORY.md). One retry with a quadrupled
-	// budget covers the reasoning overhead; still empty fails closed to the
-	// next sweep.
+	// Always-reasoning models (GLM-5.3 via z.ai's anthropic endpoint
+	// thinks unboundedly by default) can burn the ENTIRE output budget on
+	// reasoning and return 200 with ZERO content: the tidy budget
+	// (2048 + len/4) measured smaller than the reasoning alone, a plain
+	// larger budget is a coin flip, and budget_tokens is ignored by that
+	// backend. The retry sends thinking:disabled — verified to suppress
+	// reasoning to a stub (the same starving call then completes in ~1.3k
+	// tokens) — with a modest content floor. Still empty fails closed to
+	// the next sweep.
 	if strings.TrimSpace(resp.Content) == "" {
-		retryMax := min(maxTokens*4, 16384)
-		slog.Info("memory tidy: empty response — reasoning likely ate the budget, retrying larger",
+		retryMax := max(maxTokens, 8192)
+		slog.Info("memory tidy: empty response — reasoning likely ate the budget, retrying with thinking disabled",
 			"agent", agentID, "model", model, "maxTokens", maxTokens, "retryMaxTokens", retryMax)
-		callCtx, cancel := chatCtx(5 * time.Minute)
+		callCtx, cancel := context.WithTimeout(provider.WithThinkingDisabled(provider.WithJSONMode(provider.WithNoThinking(ctx))), 3*time.Minute)
 		resp, err = prov.Chat(callCtx, []provider.Message{
 			{Role: "user", Content: prompt},
 		}, nil, model, retryMax, 0.2)

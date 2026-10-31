@@ -93,6 +93,43 @@ type anthropicRequest struct {
 	MaxTokens int                    `json:"max_tokens"`
 	Stream    bool                   `json:"stream"`
 	Tools     []anthropicTool        `json:"tools,omitempty"`
+	// Thinking, when set, toggles request-level thinking control. The
+	// lever for always-reasoning backends: z.ai's GLM-5.3 via the
+	// anthropic endpoint thinks unboundedly by default (measured: 16k+
+	// tokens of reasoning on a 13k-char consolidation prompt, consuming
+	// the ENTIRE max_tokens and returning zero content) — {"type":
+	// "disabled"} there suppresses reasoning to a protocol stub (same
+	// call then completes in ~1.3k tokens). budget_tokens is NOT honored
+	// by that backend. Not sent by default: native Anthropic thinking is
+	// opt-off already and rejects a disabled block.
+	Thinking *anthropicThinkingControl `json:"thinking,omitempty"`
+}
+
+// anthropicThinkingControl is the request-level thinking toggle. Only the
+// "disabled" shape is emitted today (always-reasoning backends); "enabled"
+// with a budget is native-Anthropic territory and left to future callers.
+type anthropicThinkingControl struct {
+	Type string `json:"type"` // "disabled"
+}
+
+// thinkingDisabledCtx lets a caller suppress model reasoning. See
+// anthropicRequest.Thinking for the measured behavior.
+type thinkingDisabledCtx struct{}
+
+// WithThinkingDisabled asks the provider to turn the model's reasoning
+// off. Consumed by the anthropic path (emitted as {"type":"disabled"});
+// other apiTypes ignore it. Unlike WithNoThinking — which this package
+// does not act on, since native anthropic thinking is opt-off by default —
+// this works on always-reasoning backends that ignore the off switch,
+// and is only for retry paths: native Anthropic rejects the block, so it
+// must never ride the primary call.
+func WithThinkingDisabled(ctx context.Context) context.Context {
+	return context.WithValue(ctx, thinkingDisabledCtx{}, true)
+}
+
+func thinkingDisabledFromContext(ctx context.Context) bool {
+	v, _ := ctx.Value(thinkingDisabledCtx{}).(bool)
+	return v
 }
 
 // toAnthropicMessages converts provider Messages to Anthropic wire format.
@@ -470,6 +507,9 @@ func (p *AnthropicProvider) buildRequest(ctx context.Context, messages []Message
 				InputSchema: t.Function.Parameters,
 			})
 		}
+	}
+	if thinkingDisabledFromContext(ctx) {
+		req.Thinking = &anthropicThinkingControl{Type: "disabled"}
 	}
 
 	body, err := json.Marshal(req)
