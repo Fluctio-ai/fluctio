@@ -1313,7 +1313,7 @@ func (a *Agent) recordLLMCallDiag(ctx context.Context, dur time.Duration, info l
 		Model:           mdl,
 		Status:          info.status,
 		HTTPStatus:      info.httpStatus,
-		ErrorMsg:        truncateRunes(info.errMsg, 500),
+		ErrorMsg:        TruncateRunes(info.errMsg, 500),
 		DurationMs:      dur.Milliseconds(),
 		RequestMsgCount: info.msgCount,
 		HasImage:        info.hasImage,
@@ -1370,8 +1370,10 @@ func requestHasImage(messages []provider.Message) bool {
 	return false
 }
 
-// truncateRunes caps a string to n runes so error_msg can't blow up the row.
-func truncateRunes(s string, n int) string {
+// TruncateRunes caps a string to n runes, marking the cut with an ellipsis.
+// Exported so the gateway sweeps' notification bodies share it instead of
+// carrying private copies.
+func TruncateRunes(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
@@ -1379,7 +1381,7 @@ func truncateRunes(s string, n int) string {
 	if len(r) <= n {
 		return s
 	}
-	return string(r[:n])
+	return string(r[:n]) + "…"
 }
 
 // HookRegistry returns the agent's hook registry for external hook registration.
@@ -1824,6 +1826,14 @@ func (a *Agent) Sessions() *session.Manager {
 	return a.sessions
 }
 
+// turnMarkerKinds maps a runtime turn-boundary origin to the history
+// entry kind the web UI renders (a centered notice pill). One table so a
+// new marker type is a one-line addition here — no second switch to find.
+var turnMarkerKinds = map[string]string{
+	provider.OriginTurnAbort: "turn_aborted_notice",
+	provider.OriginTurnError: "turn_error_notice",
+}
+
 // WebChatHistory returns chat history for a specific session — the
 // name is historical; it now serves any channel because the dashboard
 // surfaces all-channel chats in the sidebar.
@@ -1837,13 +1847,6 @@ func (a *Agent) Sessions() *session.Manager {
 // sessionId may be either a canonical session_key (what
 // ListWebSessions returns) or a legacy web chat_id from older URLs;
 // ResolveSessionKey untangles them.
-// turnMarkerKinds maps a runtime turn-boundary origin to the history
-// entry kind the web UI renders (a centered notice pill). One table so a
-// new marker type is a one-line addition here — no second switch to find.
-var turnMarkerKinds = map[string]string{
-	provider.OriginTurnAbort: "turn_aborted_notice",
-	provider.OriginTurnError: "turn_error_notice",
-}
 
 // WebChatHistory returns one paginated slice of the session's archived
 // messages for the web chat panel. beforeSeq > 0 returns messages with
@@ -2938,7 +2941,7 @@ func firstErrorLine(err error) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
-	return truncateRunes(s, 120)
+	return TruncateRunes(s, 120)
 }
 
 // failTurn ends a turn whose LLM call died after all retries, for BOTH

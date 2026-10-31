@@ -325,7 +325,7 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 		g.setFailureState(agentID, sessionKey, settled)
 		g.notifyFailureOnce(ctx, dbs, rec, sessionKey, "gave_up",
 			"自动重试已放弃",
-			fmt.Sprintf("你的消息「%s」已自动重试 %d 次仍失败（类别 %s）。不再继续尝试——请检查模型配置或额度后手动重发。", truncateRunes(chain.userText, 40), chain.retries, chain.category))
+			fmt.Sprintf("你的消息「%s」已自动重试 %d 次仍失败（类别 %s）。不再继续尝试——请检查模型配置或额度后手动重发。", agent.TruncateRunes(chain.userText, 40), chain.retries, chain.category))
 		return
 	}
 	// Backoff before the next attempt: base << retries since the newest
@@ -382,7 +382,7 @@ func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec 
 	g.notifyFailureOnce(ctx, dbs, rec, sess.Key(), "recovered",
 		"失败消息已自动恢复",
 		fmt.Sprintf("你之前那条「%s」在服务恢复后已自动重试成功。回复（摘要）：%s",
-			truncateRunes(chain.userText, 40), truncateRunes(reply, 160)))
+			agent.TruncateRunes(chain.userText, 40), agent.TruncateRunes(reply, 160)))
 }
 
 // notifyFailureOnce delivers a sweep notification through the shared
@@ -421,6 +421,10 @@ func (g *Gateway) claimFailureNotice(ctx context.Context, dbs *store.DBStore, de
 	for k, at := range g.failureNotified {
 		if at.After(cutoff) {
 			snapshot[k] = at.UTC().Format(time.RFC3339)
+		} else {
+			// Stale — drop it from memory too, matching the snapshot, so
+			// the map doesn't grow for the process lifetime.
+			delete(g.failureNotified, k)
 		}
 	}
 	g.mu.Unlock()
@@ -468,13 +472,4 @@ func (g *Gateway) agentRecord(ctx context.Context, dbs *store.DBStore, agentID s
 		return nil
 	}
 	return rec
-}
-
-// truncateRunes caps a string for notification bodies.
-func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
 }

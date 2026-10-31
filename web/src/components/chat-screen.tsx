@@ -2906,11 +2906,11 @@ export function ChatScreen() {
                   elements.push(
                     <div key={msg.id} className="flex justify-center my-3">
                       <span
-                        className={
+                        className={`text-xs rounded-full px-3 py-1 ${
                           isError
-                            ? "text-xs text-destructive bg-destructive/10 rounded-full px-3 py-1"
-                            : "text-xs text-muted-foreground bg-muted/40 rounded-full px-3 py-1"
-                        }
+                            ? "text-destructive bg-destructive/10"
+                            : "text-muted-foreground bg-muted/40"
+                        }`}
                       >
                         {msg.content}
                       </span>

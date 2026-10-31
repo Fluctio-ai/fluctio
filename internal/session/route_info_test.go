@@ -3,8 +3,6 @@ package session
 import (
 	"context"
 	"testing"
-
-	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
 // tripleStore is a SessionStore whose only real behaviour is the
@@ -44,8 +42,7 @@ func TestGetByKeyLateBindsRouteInfo(t *testing.T) {
 
 	// A caller that already knows the triple must not be overridden by the
 	// (possibly stale) stored one.
-	s2 := m.Get("web", "", "web-chat-1", "")
-	_ = s2
+	m.Get("web", "", "web-chat-1", "")
 	ch2, _, _, _ := m.GetByKey("s-cold-2").RouteInfo()
 	if ch2 != "wechat" {
 		t.Errorf("unexpected triple for uncached key: %q", ch2)
@@ -55,4 +52,3 @@ func TestGetByKeyLateBindsRouteInfo(t *testing.T) {
 // guard: the compile-time contract that the stub still satisfies the
 // interface after future additions.
 var _ SessionStore = tripleStore{}
-var _ provider.Message = provider.Message{}

@@ -308,28 +308,29 @@ function JobRow({
                 {t("scheduler.via")} {job.channel}
               </span>
             )}
-            {[
-              { key: "background", on: !!job.background, set: onSetBackground },
-              // Deliver only applies to a background job — a foreground one
-              // answers in the bound conversation, so the switch would
-              // promise something it can't do.
-              ...(job.background
-                ? [{ key: "deliver", on: job.deliver !== false, set: onSetDeliver }]
-                : []),
-            ].map(({ key, on, set }) => (
-              <label
-                key={key}
-                className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer"
-              >
+            <label className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer">
+              <Switch
+                checked={!!job.background}
+                disabled={flagBusy}
+                onCheckedChange={onSetBackground}
+                aria-label={t("scheduler.background")}
+              />
+              {t("scheduler.background")}
+            </label>
+            {/* Deliver only applies to a background job — a foreground one
+                answers in the bound conversation, so the switch would
+                promise something it can't do. */}
+            {job.background && (
+              <label className="flex items-center gap-1 text-2xs text-muted-foreground cursor-pointer">
                 <Switch
-                  checked={on}
+                  checked={job.deliver !== false}
                   disabled={flagBusy}
-                  onCheckedChange={set}
-                  aria-label={t(`scheduler.${key}`)}
+                  onCheckedChange={onSetDeliver}
+                  aria-label={t("scheduler.deliver")}
                 />
-                {t(`scheduler.${key}`)}
+                {t("scheduler.deliver")}
               </label>
-            ))}
+            )}
           </div>
           <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <MessageSquare className="size-3.5 mt-0.5 shrink-0" />

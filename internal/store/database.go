@@ -4483,91 +4483,16 @@ type LLMCallDiagRow struct {
 	CreatedAt       time.Time
 }
 
-// ListLLMCallDiagBySession returns every diagnostic row for one session in
-// ascending created_at order. Feeds the LLM-call side of a failure timeline
-// (debug why-failed).
-func (d *DBStore) ListLLMCallDiagBySession(ctx context.Context, sessionKey string) ([]LLMCallDiagRow, error) {
-	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT id, agent_id, session_key, provider, model, status,
-			http_status, error_msg, duration_ms, tool_call_count, response_chars,
-			request_msg_count, has_image, input_tokens, output_tokens, created_at
-			FROM llm_call_diag WHERE session_key = %s ORDER BY created_at ASC`, d.ph(1)),
-		sessionKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []LLMCallDiagRow
-	for rows.Next() {
-		var r LLMCallDiagRow
-		var hasImg int
-		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Provider, &r.Model,
-			&r.Status, &r.HTTPStatus, &r.ErrorMsg, &r.DurationMs, &r.ToolCallCount,
-			&r.ResponseChars, &r.RequestMsgCount, &hasImg, &r.InputTokens, &r.OutputTokens,
-			&r.CreatedAt); err != nil {
-			return nil, err
-		}
-		r.HasImage = hasImg != 0
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
+// llmCallDiagCols is the shared SELECT list for the llm_call_diag readers
+// below — one list so a new column can't drift between them (the same
+// discipline as cronSelectCols).
+const llmCallDiagCols = `id, agent_id, session_key, provider, model, status,
+	http_status, error_msg, duration_ms, tool_call_count, response_chars,
+	request_msg_count, has_image, input_tokens, output_tokens, created_at`
 
-// ListRecoverableCallFailures returns the failure rows worth looking at
-// for failure RECOVERY, oldest first: a user-cancelled call ('canceled' —
-// a Stop, not a provider problem) never produces a turn-error chain, and
-// ASC ordering lets a caller holding a watermark process a bounded window
-// without starving the oldest rows. Kept separate from ListFailedLLMCalls
-// so the error-report generator's newest-first overview stays unchanged.
-func (d *DBStore) ListRecoverableCallFailures(ctx context.Context, since time.Time, limit int) ([]LLMCallDiagRow, error) {
-	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
-	q := fmt.Sprintf(`SELECT id, agent_id, session_key, provider, model, status,
-		http_status, error_msg, duration_ms, tool_call_count, response_chars,
-		request_msg_count, has_image, input_tokens, output_tokens, created_at
-		FROM llm_call_diag
-		WHERE status NOT IN ('ok', 'canceled') AND session_key != ''
-		  AND created_at >= %s
-		ORDER BY created_at ASC LIMIT %s`, d.ph(1), d.ph(2))
-	rows, err := d.db.QueryContext(ctx, q, sinceStr, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []LLMCallDiagRow
-	for rows.Next() {
-		var r LLMCallDiagRow
-		var hasImg int
-		if err := rows.Scan(&r.ID, &r.AgentID, &r.SessionKey, &r.Provider, &r.Model,
-			&r.Status, &r.HTTPStatus, &r.ErrorMsg, &r.DurationMs, &r.ToolCallCount,
-			&r.ResponseChars, &r.RequestMsgCount, &hasImg, &r.InputTokens, &r.OutputTokens,
-			&r.CreatedAt); err != nil {
-			return nil, err
-		}
-		r.HasImage = hasImg != 0
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// ListFailedLLMCalls returns llm_call_diag rows with status != 'ok' within
-// the time window, newest first. agentID="" means all agents. Feeds the
-// error-report generator's failure-overview + representative-case selection.
-// created_at is a SQLite CURRENT_TIMESTAMP string, so `since` is formatted
-// to match (same convention as the prune path).
-func (d *DBStore) ListFailedLLMCalls(ctx context.Context, since time.Time, agentID string, limit int) ([]LLMCallDiagRow, error) {
-	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
-	q := fmt.Sprintf(`SELECT id, agent_id, session_key, provider, model, status,
-		http_status, error_msg, duration_ms, tool_call_count, response_chars,
-		request_msg_count, has_image, input_tokens, output_tokens, created_at
-		FROM llm_call_diag WHERE status != 'ok' AND created_at >= %s`, d.ph(1))
-	args := []any{sinceStr}
-	if agentID != "" {
-		q += fmt.Sprintf(" AND agent_id = %s", d.ph(2))
-		args = append(args, agentID)
-	}
-	next := d.ph(len(args) + 1)
-	q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT %s", next)
-	args = append(args, limit)
+// queryLLMCallDiag runs one llm_call_diag SELECT (llmCallDiagCols) and scans
+// the rows; the caller owns the WHERE/ORDER/LIMIT tail.
+func (d *DBStore) queryLLMCallDiag(ctx context.Context, q string, args ...any) ([]LLMCallDiagRow, error) {
 	rows, err := d.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -4587,6 +4512,49 @@ func (d *DBStore) ListFailedLLMCalls(ctx context.Context, since time.Time, agent
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ListLLMCallDiagBySession returns every diagnostic row for one session in
+// ascending created_at order. Feeds the LLM-call side of a failure timeline
+// (debug why-failed).
+func (d *DBStore) ListLLMCallDiagBySession(ctx context.Context, sessionKey string) ([]LLMCallDiagRow, error) {
+	return d.queryLLMCallDiag(ctx,
+		fmt.Sprintf(`SELECT `+llmCallDiagCols+` FROM llm_call_diag WHERE session_key = %s ORDER BY created_at ASC`, d.ph(1)),
+		sessionKey)
+}
+
+// ListRecoverableCallFailures returns the failure rows worth looking at
+// for failure RECOVERY, oldest first: a user-cancelled call ('canceled' —
+// a Stop, not a provider problem) never produces a turn-error chain, and
+// ASC ordering lets a caller holding a watermark process a bounded window
+// without starving the oldest rows. Kept separate from ListFailedLLMCalls
+// so the error-report generator's newest-first overview stays unchanged.
+func (d *DBStore) ListRecoverableCallFailures(ctx context.Context, since time.Time, limit int) ([]LLMCallDiagRow, error) {
+	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+	return d.queryLLMCallDiag(ctx,
+		fmt.Sprintf(`SELECT `+llmCallDiagCols+` FROM llm_call_diag
+			WHERE status NOT IN ('ok', 'canceled') AND session_key != ''
+			  AND created_at >= %s
+			ORDER BY created_at ASC LIMIT %s`, d.ph(1), d.ph(2)),
+		sinceStr, limit)
+}
+
+// ListFailedLLMCalls returns llm_call_diag rows with status != 'ok' within
+// the time window, newest first. agentID="" means all agents. Feeds the
+// error-report generator's failure-overview + representative-case selection.
+// created_at is a SQLite CURRENT_TIMESTAMP string, so `since` is formatted
+// to match (same convention as the prune path).
+func (d *DBStore) ListFailedLLMCalls(ctx context.Context, since time.Time, agentID string, limit int) ([]LLMCallDiagRow, error) {
+	sinceStr := since.UTC().Format("2006-01-02 15:04:05")
+	q := `SELECT ` + llmCallDiagCols + ` FROM llm_call_diag WHERE status != 'ok' AND created_at >= ` + d.ph(1)
+	args := []any{sinceStr}
+	if agentID != "" {
+		q += fmt.Sprintf(" AND agent_id = %s", d.ph(2))
+		args = append(args, agentID)
+	}
+	q += fmt.Sprintf(" ORDER BY created_at DESC LIMIT %s", d.ph(len(args)+1))
+	args = append(args, limit)
+	return d.queryLLMCallDiag(ctx, q, args...)
 }
 
 // ListSessionMessages returns every archived turn for one session in

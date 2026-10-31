@@ -174,7 +174,6 @@ func TestListRecoverableCallFailures(t *testing.T) {
 		old.Format("2006-01-02 15:04:05")); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
-	_ = fresh
 	got, err := db.ListRecoverableCallFailures(ctx, time.Now().Add(-6*time.Hour), 100)
 	if err != nil {
 		t.Fatalf("list: %v", err)
