@@ -273,6 +273,7 @@ func (g *Gateway) sweepFailures(ctx context.Context) {
 
 	agents := map[string]*store.AgentRecord{}
 	now := time.Now()
+	slog.Info("failure sweep: pass", "since", since, "sessions", len(newest))
 	for ref, row := range newest {
 		if !shouldScan(g.failureState(ref.agentID, ref.key), row.ID, now) {
 			continue
@@ -338,16 +339,28 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 	if rec == nil {
 		return
 	}
-	space, err := g.users.getOrLoad(ctx, rec.UserID)
+	// agents rows carry no user_id (ownership lives with the sessions) —
+	// resolve the owner the way the other sweeps do. rec.UserID is always
+	// empty here; using it directly made this sweep silently skip EVERY
+	// session (loadUserSpace: userID required).
+	uid := sweepOwnerUID(ctx, dbs, *rec)
+	if uid == "" {
+		slog.Warn("failure sweep: no owner for agent", "agent", agentID)
+		return
+	}
+	space, err := g.users.getOrLoad(ctx, uid)
 	if err != nil || space == nil || space.Agents == nil {
+		slog.Warn("failure sweep: user space unavailable", "agent", agentID, "owner", uid, "error", err)
 		return
 	}
 	ag := space.Agents.AgentByID(agentID)
 	if ag == nil {
+		slog.Warn("failure sweep: agent not in space", "agent", agentID)
 		return
 	}
 	sess := ag.Sessions().GetByKey(sessionKey)
 	if sess == nil {
+		slog.Warn("failure sweep: session not loadable", "agent", agentID, "session", sessionKey)
 		return
 	}
 	settled := failureScanState{handledUpTo: upTo}
@@ -389,7 +402,7 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 		g.setFailureState(agentID, sessionKey, settled)
 		return
 	}
-	g.replayFailedTurn(ctx, dbs, rec, ag, sess, chain)
+	g.replayFailedTurn(ctx, dbs, rec, uid, ag, sess, chain)
 	// Schedule from the chain the replay just wrote — do NOT wait for a
 	// newer llm_call_diag row: a replay that dies at the quota breaker
 	// writes no row at all. Settling here stalled the ladder after the
@@ -419,7 +432,7 @@ func postReplayScanState(msgs []provider.Message, upTo int64) failureScanState {
 // turn is dispatched with an exclusive claim: a user message racing in
 // between the sweep's TurnInFlight probe and the turn start makes the
 // replay skip entirely (nothing appended), retried next pass.
-func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, ag *agent.Agent, sess *session.Session, chain failureChain) {
+func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, ownerUID string, ag *agent.Agent, sess *session.Session, chain failureChain) {
 	channel, accountID, chatID, projectID := sess.RouteInfo()
 	attempt := chain.retries + 1
 	text := fmt.Sprintf("%s第%d次·%s", failureRetryTag, attempt, chain.userText)
@@ -436,7 +449,7 @@ func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec 
 		AgentID:     ag.ID(),
 		Text:        text,
 		Source:      bus.SourceFailureRetry,
-		OwnerUserID: rec.UserID,
+		OwnerUserID: ownerUID,
 	})
 
 	// Success = the persisted chain no longer reads as unresolved. Judging
