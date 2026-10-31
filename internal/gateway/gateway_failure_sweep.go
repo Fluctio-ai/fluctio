@@ -200,6 +200,10 @@ func toolsExecutedOf(m provider.Message) int {
 // the actual query window — see failureScanWindowFor.
 const failureScanWindow = 6 * time.Hour
 
+// failureScanMaxWindow bounds failureScanWindowFor: even absurd hot-tuned
+// knobs can't turn every pass into a scan of weeks of failure rows.
+const failureScanMaxWindow = 7 * 24 * time.Hour
+
 // failureScanWindowFor returns this pass's seed-query look-back: the 6h
 // baseline, stretched when the tuned knobs push the longest backoff
 // (base << last attempt, plus a tick of slack) past it — otherwise a
@@ -212,7 +216,11 @@ func failureScanWindowFor(base time.Duration, maxAttempts int) time.Duration {
 		if shift > 20 {
 			shift = 20
 		}
-		if need := (base << shift) + 10*time.Minute; need > w {
+		need := (base << shift) + 10*time.Minute
+		if need > failureScanMaxWindow {
+			need = failureScanMaxWindow
+		}
+		if need > w {
 			w = need
 		}
 	}
@@ -273,7 +281,11 @@ func (g *Gateway) sweepFailures(ctx context.Context) {
 
 	agents := map[string]*store.AgentRecord{}
 	now := time.Now()
-	slog.Info("failure sweep: pass", "since", since, "sessions", len(newest))
+	if len(newest) > 0 {
+		// Actions only — an empty pass every 10 minutes would be pure log
+		// noise (the neighbouring sweeps log when they have work).
+		slog.Info("failure sweep: pass", "since", since, "sessions", len(newest))
+	}
 	for ref, row := range newest {
 		if !shouldScan(g.failureState(ref.agentID, ref.key), row.ID, now) {
 			continue
@@ -374,7 +386,7 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 		// Died mid-tool: a replay could double-execute side effects.
 		// Surface it once instead — the user must judge what to redo.
 		g.setFailureState(agentID, sessionKey, settled)
-		g.notifyFailureOnce(ctx, dbs, rec, sessionKey, "not_replayable",
+		g.notifyFailureOnce(ctx, dbs, rec, uid, sessionKey, "not_replayable",
 			"任务中途失败，无法自动重试",
 			fmt.Sprintf("一条任务在执行过程中失败（类别 %s，已有部分工具执行，自动重试可能重复副作用）。请打开会话确认进度后手动重发。", chain.category))
 		return
@@ -382,7 +394,7 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 	if chain.retries >= maxAttempts {
 		// Cap reached: stop retrying, tell the user what was spent.
 		g.setFailureState(agentID, sessionKey, settled)
-		g.notifyFailureOnce(ctx, dbs, rec, sessionKey, "gave_up",
+		g.notifyFailureOnce(ctx, dbs, rec, uid, sessionKey, "gave_up",
 			"自动重试已放弃",
 			fmt.Sprintf("你的消息「%s」已自动重试 %d 次仍失败（类别 %s）。不再继续尝试——请检查模型配置或额度后手动重发。", agent.TruncateRunes(chain.userText, 40), chain.retries, chain.category))
 		return
@@ -402,44 +414,36 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 		g.setFailureState(agentID, sessionKey, settled)
 		return
 	}
-	g.replayFailedTurn(ctx, dbs, rec, uid, ag, sess, chain)
 	// Schedule from the chain the replay just wrote — do NOT wait for a
 	// newer llm_call_diag row: a replay that dies at the quota breaker
 	// writes no row at all. Settling here stalled the ladder after the
-	// first failed replay (the gave-up notice never fired).
-	g.setFailureState(agentID, sessionKey, postReplayScanState(sess.GetMessages(), upTo))
-}
-
-// postReplayScanState decides the session's scan state right after a
-// replay: a still-unresolved chain keeps a pending nextAt so the next
-// pass re-derives everything from the fresh chain (backoff wait, next
-// attempt, or the gave-up / not-replayable notice); a resolved one
-// (assistant reply appended) settles.
-func postReplayScanState(msgs []provider.Message, upTo int64) failureScanState {
-	if _, ok := analyzeFailureChain(msgs); ok {
-		return failureScanState{handledUpTo: upTo, nextAt: time.Now()}
+	// first failed replay (the gave-up notice never fired). A pending
+	// nextAt makes the next pass re-derive backoff/cap/notice from the
+	// fresh chain; resolution settles (assistant reply ends the chain).
+	st := failureScanState{handledUpTo: upTo}
+	if !g.replayFailedTurn(ctx, dbs, rec, uid, ag, sess, chain) {
+		st.nextAt = time.Now()
 	}
-	return failureScanState{handledUpTo: upTo}
+	g.setFailureState(agentID, sessionKey, st)
 }
 
 // replayFailedTurn re-enters the original request through HandleMessage on
 // the SAME session — pinned by SessionKey, so a /new that minted a fresher
 // session for the chat triple can't redirect the replay into it. The
 // replayed turn is prefixed with the retry tag (and stamped failureRetry
-// metadata by the loop) so the LLM knows the context and the chain
-// analysis counts the attempt; a successful replay appends an assistant
-// reply after the chain, which the next pass reads as "resolved". The
-// turn is dispatched with an exclusive claim: a user message racing in
-// between the sweep's TurnInFlight probe and the turn start makes the
-// replay skip entirely (nothing appended), retried next pass.
-func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, ownerUID string, ag *agent.Agent, sess *session.Session, chain failureChain) {
+// metadata by buildUserMessage) so the LLM knows the context and the chain
+// analysis counts the attempt. Returns whether the chain ended resolved
+// (an assistant reply after the notices). The loop claims the turn
+// exclusively for replay-source turns: a user message racing in between
+// the sweep's TurnInFlight probe and the turn start makes the replay skip
+// entirely (nothing appended, chain unresolved), retried next pass.
+func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, ownerUID string, ag *agent.Agent, sess *session.Session, chain failureChain) bool {
 	channel, accountID, chatID, projectID := sess.RouteInfo()
 	attempt := chain.retries + 1
 	text := fmt.Sprintf("%s第%d次·%s", failureRetryTag, attempt, chain.userText)
 	slog.Info("failure sweep: replaying failed turn",
 		"agent", ag.Name(), "session", sess.Key(), "attempt", attempt, "category", chain.category)
 
-	ctx = agent.WithExclusiveTurn(ctx)
 	reply := ag.HandleMessage(ctx, bus.InboundMessage{
 		Channel:     channel,
 		AccountID:   accountID,
@@ -456,28 +460,30 @@ func (g *Gateway) replayFailedTurn(ctx context.Context, dbs *store.DBStore, rec 
 	// by the history (not the reply string) keeps this independent of the
 	// notice wording.
 	if _, failed := analyzeFailureChain(sess.GetMessages()); failed {
-		return
+		return false
 	}
-	g.notifyFailureOnce(ctx, dbs, rec, sess.Key(), "recovered",
+	g.notifyFailureOnce(ctx, dbs, rec, ownerUID, sess.Key(), "recovered",
 		"失败消息已自动恢复",
 		fmt.Sprintf("你之前那条「%s」在服务恢复后已自动重试成功。回复（摘要）：%s",
 			agent.TruncateRunes(chain.userText, 40), agent.TruncateRunes(reply, 160)))
+	return true
 }
 
 // notifyFailureOnce delivers a sweep notification through the shared
 // three-leg policy (IM best-effort + notification queue + session archive).
 // Dedupe keys are persisted (sweep/failure_notified) so a daemon restart
-// doesn't re-announce a chain that was already reported.
-func (g *Gateway) notifyFailureOnce(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, sessionKey, event, title, body string) {
+// doesn't re-announce a chain that was already reported. ownerUID is the
+// already-resolved owner (sweepOwnerUID is deployment-global — every
+// caller of this sweep holds it, no per-event re-query).
+func (g *Gateway) notifyFailureOnce(ctx context.Context, dbs *store.DBStore, rec *store.AgentRecord, ownerUID, sessionKey, event, title, body string) {
 	if !g.claimFailureNotice(ctx, dbs, rec.ID+"|"+sessionKey+"|"+event) {
 		return
 	}
-	uid := sweepOwnerUID(ctx, dbs, *rec)
 	// "" keeps resolveSweepTarget's own default-channel fallback (wechat
 	// today unless configured otherwise) — same convention as the other
 	// sweeps.
 	ch, chatID, targetKey, _ := g.resolveSweepTarget(ctx, dbs, rec.ID, "", "failure sweep")
-	g.deliverSweepNudge(ctx, dbs, *rec, uid, ch, chatID, targetKey,
+	g.deliverSweepNudge(ctx, dbs, *rec, ownerUID, ch, chatID, targetKey,
 		"llm_failure", title, body, "/agents/"+rec.ID+"/chat", "llm_failure", "failure sweep")
 }
 

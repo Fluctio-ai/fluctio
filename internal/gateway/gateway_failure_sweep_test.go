@@ -212,49 +212,11 @@ func TestAnalyzeFailureChainMetadataRetry(t *testing.T) {
 	})
 }
 
-// TestPostReplayScanState pins the HIGH-1 fix: after a replay the scan
-// state must keep the session PENDING (nextAt set) whenever the chain is
-// still unresolved — a replay that dies at the quota breaker writes no
-// llm_call_diag row at all, so waiting for a newer row would stall the
-// ladder forever. A resolved chain settles.
-func TestPostReplayScanState(t *testing.T) {
-	notice := func(ts int64) provider.Message {
-		return provider.Message{
-			Role:    "user",
-			Origin:  provider.OriginTurnError,
-			Content: "⚠️ failed",
-			Metadata: map[string]any{
-				"turnError":     "quota_exhausted",
-				"toolsExecuted": 0,
-			},
-			Timestamp: ts,
-		}
-	}
-	failed := []provider.Message{
-		{Role: "user", Content: "x", Timestamp: 1},
-		notice(2),
-		{Role: "user", Content: failureRetryTag + "第1次·x", Metadata: map[string]any{"failureRetry": true}, Timestamp: 3},
-		notice(4),
-	}
-
-	st := postReplayScanState(failed, 42)
-	if st.handledUpTo != 42 || st.nextAt.IsZero() {
-		t.Errorf("unresolved chain must stay pending, got %+v", st)
-	}
-
-	resolved := append(append([]provider.Message{}, failed...),
-		provider.Message{Role: "assistant", Content: "done", Timestamp: 5})
-	st = postReplayScanState(resolved, 42)
-	if st.handledUpTo != 42 || !st.nextAt.IsZero() {
-		t.Errorf("resolved chain must settle, got %+v", st)
-	}
-}
-
 // TestFailureScanWindowFor pins the window derivation: the 6h baseline
 // holds at the default knobs, hot-tuned knobs that push the longest
 // backoff past it stretch the window (or the due retry slides out of
 // the seed query and the ladder stalls), and an absurd maxAttempts
-// can't overflow the shift.
+// can't overflow the shift or push the window past failureScanMaxWindow.
 func TestFailureScanWindowFor(t *testing.T) {
 	cases := []struct {
 		name string
@@ -264,7 +226,7 @@ func TestFailureScanWindowFor(t *testing.T) {
 	}{
 		{"defaults hold 6h", 15 * time.Minute, 3, 6 * time.Hour},
 		{"90min base stretches", 90 * time.Minute, 3, 90*time.Minute<<2 + 10*time.Minute},
-		{"shift capped at 20", time.Hour, 1000, time.Hour<<20 + 10*time.Minute},
+		{"bounded by max window", time.Hour, 1000, failureScanMaxWindow},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
