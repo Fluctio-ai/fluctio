@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -162,11 +163,22 @@ Output STRICT JSON only — no markdown fences, no commentary:
 		retryMax := max(maxTokens, 8192)
 		slog.Info("memory tidy: empty response — reasoning likely ate the budget, retrying with thinking disabled",
 			"agent", agentID, "model", model, "maxTokens", maxTokens, "retryMaxTokens", retryMax)
-		callCtx, cancel := context.WithTimeout(provider.WithThinkingDisabled(provider.WithJSONMode(provider.WithNoThinking(ctx))), 3*time.Minute)
-		resp, err = prov.Chat(callCtx, []provider.Message{
-			{Role: "user", Content: prompt},
-		}, nil, model, retryMax, 0.2)
-		cancel()
+		chatRetry := func(ctx context.Context) (*provider.Response, error) {
+			callCtx, cancel := context.WithTimeout(provider.WithJSONMode(provider.WithNoThinking(ctx)), 3*time.Minute)
+			defer cancel()
+			return prov.Chat(callCtx, []provider.Message{
+				{Role: "user", Content: prompt},
+			}, nil, model, retryMax, 0.2)
+		}
+		resp, err = chatRetry(provider.WithThinkingDisabled(ctx))
+		var httpErr *provider.HTTPError
+		if errors.As(err, &httpErr) && httpErr.StatusCode/100 == 4 {
+			// Native Anthropic rejects the disabled block — fall back to a
+			// plain retry (same pattern as the openai path's
+			// response_format 4xx fallback). Empty 200s are near-impossible
+			// there, so this arm is theoretical, but it costs one call.
+			resp, err = chatRetry(ctx)
+		}
 		if err != nil {
 			slog.Warn("memory tidy: LLM call failed (budget retry)", "agent", agentID, "model", model, "error", err)
 			return
