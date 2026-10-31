@@ -22,18 +22,23 @@ func TestBuiltinMetaTable(t *testing.T) {
 	}
 	cases := map[string]ModelMeta{
 		"claude-opus-4-8": {ContextWindow: 1000000, MaxTokens: 128000},
-		"claude-sonnet-4": {ContextWindow: 1000000, MaxTokens: 64000},
+		// Anthropic's canonical listing says 200k (the 1M figure is the
+		// extended-context beta) — refreshed snapshot trusts the source.
+		"claude-sonnet-4": {ContextWindow: 200000, MaxTokens: 64000},
 		"gpt-5":           {ContextWindow: 400000, MaxTokens: 128000},
-		"deepseek-chat":   {ContextWindow: 1000000, MaxTokens: 384000},
-		// grok-4-fast has no maxOutputTokens in the source → MaxTokens stays 0.
-		"grok-4-fast": {ContextWindow: 2000000, MaxTokens: 0},
+		// deepseek-chat resolves to the v3.x window; v4 SKUs (1M) are
+		// listed under their own ids.
+		"deepseek-chat": {ContextWindow: 128000, MaxTokens: 8192},
+		// The bare grok-4-fast id was retired upstream; xAI serves the
+		// split variants.
+		"grok-4-fast-non-reasoning": {ContextWindow: 2000000, MaxTokens: 30000},
 	}
 	for key, want := range cases {
 		if got := tbl[key]; !metaEq(got, want) {
 			t.Errorf("builtinMetaTable()[%q] = %+v, want %+v", key, got, want)
 		}
 	}
-	if len(tbl) < 600 {
+	if len(tbl) < 1200 {
 		t.Errorf("builtin meta table too small: %d entries", len(tbl))
 	}
 }

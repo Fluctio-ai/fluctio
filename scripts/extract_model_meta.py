@@ -32,20 +32,31 @@ def _as_int(val) -> int | None:
     return None
 
 
-def extract(models: list) -> dict[str, dict[str, int]]:
-    out: dict[str, dict[str, int]] = {}
+def extract(models: list) -> dict[str, dict]:
+    out: dict[str, dict] = {}
     for m in models:
         if not isinstance(m, dict):
             continue
         mid = m.get("id")
         cw = _as_int(m.get("contextWindow"))
-        if not mid or cw is None or cw <= 0:
-            continue  # need at least an id + a usable contextWindow
+        # Skip aggregator-prefixed ids ("anthropic/claude-opus-4-8"): the
+        # bare id already substring-matches prefixed model strings, and a
+        # longer prefixed key would out-match a user's local override for
+        # the bare id (documented to wholly replace builtin).
+        if not mid or "/" in mid or cw is None or cw <= 0:
+            continue  # need a bare id + a usable contextWindow
         mt = _as_int(m.get("maxOutputTokens"))
-        out[mid] = {
+        entry: dict[str, object] = {
             "contextWindow": cw,
             "maxTokens": mt if (mt is not None and mt > 0) else 0,
         }
+        # Modalities project verbatim so callers can route by capability
+        # (ModelMeta.SupportsVision reads inputModalities).
+        for f in ("inputModalities", "outputModalities"):
+            v = m.get(f)
+            if isinstance(v, list) and v:
+                entry[f] = v
+        out[mid] = entry
     return out
 
 

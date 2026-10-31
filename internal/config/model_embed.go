@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 )
 
 // ModelMeta is the per-model metadata projected from the builtin table.
@@ -32,16 +33,29 @@ func (m ModelMeta) SupportsVision() bool {
 //go:embed model_meta.json
 var modelMetaJSON []byte
 
-// builtinMetaTable parses the embedded model_meta.json.
-// Returns key=model id substring, value=ModelMeta. A nil return signals a
-// parse failure (shouldn't happen for a static embed) — callers fall back
-// to an empty map.
+// builtinTableOnce caches the parsed embedded table: the embed never
+// changes at runtime, and with ~4k entries (~800KB JSON) a per-lookup
+// unmarshal (the pre-cache behavior) cost milliseconds on every
+// LookupModelMeta call — per user message for vision routing and per
+// provider model enrichment.
+var (
+	builtinTableOnce sync.Once
+	builtinTable     map[string]ModelMeta
+)
+
+// builtinMetaTable returns the parsed embedded model_meta.json, cached
+// after the first call. Returns the SHARED map — callers must not mutate.
+// A nil return signals a parse failure (shouldn't happen for a static
+// embed); mergedMetaTable replaces nil with an empty map.
 func builtinMetaTable() map[string]ModelMeta {
-	out := map[string]ModelMeta{}
-	if err := json.Unmarshal(modelMetaJSON, &out); err != nil {
-		return nil
-	}
-	return out
+	builtinTableOnce.Do(func() {
+		out := map[string]ModelMeta{}
+		if err := json.Unmarshal(modelMetaJSON, &out); err != nil {
+			return
+		}
+		builtinTable = out
+	})
+	return builtinTable
 }
 
 // MergedMetaTablePublic is the HTTP-facing entry point: builtin table
@@ -55,29 +69,42 @@ func MergedMetaTablePublic() map[string]ModelMeta {
 // the builtin entry for the same key. Parsing is tolerant: entries whose
 // value is not a ModelMeta object (e.g. a "_comment" string authored for
 // human readers) are skipped, so the seeded file's comment doesn't break
-// the whole override. Used by LookupModelMeta.
+// the whole override. With no usable overrides the SHARED cached builtin
+// map is returned as-is (read-only); only when overrides exist is a fresh
+// merged copy built. Used by LookupModelMeta.
 func mergedMetaTable(localPath string) map[string]ModelMeta {
-	out := builtinMetaTable()
-	if out == nil {
-		out = map[string]ModelMeta{}
+	builtin := builtinMetaTable()
+	if builtin == nil {
+		builtin = map[string]ModelMeta{}
 	}
 	if localPath == "" {
-		return out
+		return builtin
 	}
 	data, err := os.ReadFile(localPath)
 	if err != nil {
-		return out
+		return builtin
 	}
 	raw := map[string]json.RawMessage{}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return out
+		return builtin
 	}
+	overrides := map[string]ModelMeta{}
 	for k, rv := range raw {
 		var m ModelMeta
 		if err := json.Unmarshal(rv, &m); err == nil {
-			out[k] = m
+			overrides[k] = m
 		}
 		// Non-ModelMeta values (e.g. "_comment": "...") are skipped.
+	}
+	if len(overrides) == 0 {
+		return builtin
+	}
+	out := make(map[string]ModelMeta, len(builtin)+len(overrides))
+	for k, v := range builtin {
+		out[k] = v
+	}
+	for k, v := range overrides {
+		out[k] = v
 	}
 	return out
 }
