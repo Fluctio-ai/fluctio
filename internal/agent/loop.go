@@ -2792,7 +2792,26 @@ func (a *Agent) appendSteer(ctx context.Context, sess *session.Session, messages
 		emitEvent(ctx, ChatEvent{Type: "steer", Data: map[string]any{"content": sm.Content}})
 		slog.Info("steer message folded into running turn", "agent", a.name)
 	}
+	// One nudge after the whole batch (not per message) tells the model
+	// these arrived mid-task — see steerNudge for why the bare user
+	// messages aren't enough.
+	messages = append(messages, steerNudge())
 	return messages
+}
+
+// steerNudge is the transient system message appended after folded-in
+// steer messages so the model knows they arrived while it was working.
+// A bare user message sandwiched between tool results reads like a
+// fresh instruction, and the model may drop the half-finished task to
+// chase it — the same reason Claude Code wraps steers in a
+// system_reminder. Mirrors the other nudges: messages-only, never
+// persisted to the session (the history keeps the raw user text, so
+// replays and the next turn see clean bubbles).
+func steerNudge() provider.Message {
+	return provider.Message{
+		Role: "system",
+		Content: "The user sent new message(s) while you were working (the user message(s) right above). They are mid-task additions, not a new task: continue the current work, fold them in, and address them as part of this turn. Do not discard or restart the work already done.",
+	}
 }
 
 // flushLeftoverSteer handles the end-of-turn race: a steer accepted by
