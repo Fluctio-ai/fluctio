@@ -152,7 +152,7 @@ func registerExecFull(r *Registry, sbCfg *SandboxConfig, envProvider SkillEnvPro
 			},
 			"timeout": map[string]interface{}{
 				"type":        "integer",
-				"description": "Timeout in seconds (default 120). Headless-browser workflows (camoufox-cli) need a longer ceiling for the first call — the daemon + browser cold-start can take 2-3 min when traffic is proxied; subsequent calls in the same session are sub-second.",
+				"description": execTimeoutParamDesc,
 			},
 			"sandbox": map[string]interface{}{
 				"type":        "boolean",
@@ -170,6 +170,30 @@ func registerExecFull(r *Registry, sbCfg *SandboxConfig, envProvider SkillEnvPro
 func makeExecTool(sbCfg *SandboxConfig) ToolFunc {
 	return makeExecToolFull(nil, sbCfg, nil, nil)
 }
+
+// maxExecTimeoutSeconds caps the model-reported exec timeout across all
+// three exec variants (exec / host_exec / sandbox exec). Without it a
+// self-reported 3600 parks the turn — and any steered user message
+// waiting between tool rounds — for an hour. Longer jobs are supposed
+// to go through run_in_background (host) or tmux (sandbox).
+const maxExecTimeoutSeconds = 600
+
+// clampExecTimeout resolves the per-call timeout: unset/garbage → the
+// 120s default, runaway self-reports → the hard cap.
+func clampExecTimeout(requested int) int {
+	if requested <= 0 {
+		return 120
+	}
+	if requested > maxExecTimeoutSeconds {
+		return maxExecTimeoutSeconds
+	}
+	return requested
+}
+
+// execTimeoutParamDesc is the schema description shared by all three
+// exec variants (exec / host_exec / sandbox exec) — one string so the
+// three contracts can't drift apart.
+const execTimeoutParamDesc = "Timeout in seconds (default 120, hard cap 600 — use run_in_background or tmux for longer jobs). Headless-browser workflows (camoufox-cli) need a longer ceiling for the first call — the daemon + browser cold-start can take 2-3 min when traffic is proxied; subsequent calls in the same session are sub-second."
 
 // makeExecToolFull captures the registry pointer so it can consult the
 // runtime `sandboxRequired` flag at call time — that's the contract
@@ -196,10 +220,7 @@ func makeExecToolFull(r *Registry, sbCfg *SandboxConfig, envProvider SkillEnvPro
 			}
 		}
 
-		timeout := 120
-		if args.Timeout > 0 {
-			timeout = args.Timeout
-		}
+		timeout := clampExecTimeout(args.Timeout)
 
 		execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 		defer cancel()
@@ -481,7 +502,7 @@ func registerHostExec(r *Registry, envProvider SkillEnvProvider, skillDirs []str
 				},
 				"timeout": map[string]interface{}{
 					"type":        "integer",
-					"description": "Timeout in seconds (default 120). Headless-browser workflows (camoufox-cli) need a longer ceiling for the first call — the daemon + browser cold-start can take 2-3 min when traffic is proxied; subsequent calls in the same session are sub-second.",
+					"description": execTimeoutParamDesc,
 				},
 			},
 			"required": []string{"command"},
@@ -500,10 +521,7 @@ func registerHostExec(r *Registry, envProvider SkillEnvProvider, skillDirs []str
 					return "", fmt.Errorf("dangerous command blocked: %s", args.Command)
 				}
 			}
-			timeout := 120
-			if args.Timeout > 0 {
-				timeout = args.Timeout
-			}
+			timeout := clampExecTimeout(args.Timeout)
 			execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 			defer cancel()
 			command := args.Command
@@ -552,7 +570,7 @@ func registerSandboxedExec(r *Registry, ex sandbox.Executor) {
 			},
 			"timeout": map[string]interface{}{
 				"type":        "integer",
-				"description": "Timeout in seconds (default 120). Headless-browser workflows (camoufox-cli) need a longer ceiling for the first call — the daemon + browser cold-start can take 2-3 min when traffic is proxied; subsequent calls in the same session are sub-second.",
+				"description": execTimeoutParamDesc,
 			},
 			"run_in_background": map[string]interface{}{
 				"type":        "boolean",
@@ -571,10 +589,7 @@ func registerSandboxedExec(r *Registry, ex sandbox.Executor) {
 		if args.RunInBackground {
 			return "", fmt.Errorf("run_in_background is not yet supported in sandbox mode — use tmux inside the sandbox instead: exec({command: \"tmux new-session -d -s job '<your command>'\"}) to start, exec({command: \"tmux capture-pane -t job -p\"}) to read, exec({command: \"tmux kill-session -t job\"}) to stop")
 		}
-		timeout := 120
-		if args.Timeout > 0 {
-			timeout = args.Timeout
-		}
+		timeout := clampExecTimeout(args.Timeout)
 		command := args.Command
 		// Stdin via heredoc (mirror the host path) so callers can pipe
 		// JSON args to a skill script.
