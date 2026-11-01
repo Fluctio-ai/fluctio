@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -147,7 +148,12 @@ func TestQQTokenExpiresAndRefetches(t *testing.T) {
 	qqTokenFetchMu.Lock()
 	qqTokenFetch = func(_ context.Context, _, _ string) (string, int, error) {
 		atomic.AddInt32(&calls, 1)
-		return "FRESH", 1, // 1s expiry — shorter than qqTokenRefreshLead
+		// 1s expiry — shorter than qqTokenRefreshLead, so the NEXT
+		// synchronous call sees the entry as expired and refetches.
+		// Side effect: the background refresh loop's wait clamps to 0
+		// and it may fire an extra fetch at any moment, so both
+		// assertions below are lower bounds, not exact counts.
+		return "FRESH", 1,
 			nil
 	}
 	qqTokenFetchMu.Unlock()
@@ -158,20 +164,29 @@ func TestQQTokenExpiresAndRefetches(t *testing.T) {
 	}()
 
 	ctx := context.Background()
+	// Unique appID per run: a previous run's background refresh loop
+	// for the same appID can still be mid-flight inside qqTokenSF.Do;
+	// singleflight would merge this run's first synchronous fetch into
+	// that doomed (cancelled) call and surface ctx.Canceled here. A
+	// unique id also makes any stale loop's next wakeup a cache miss.
+	appID := fmt.Sprintf("EXP-%d", time.Now().UnixNano())
 	// First call populates the cache.
-	if _, err := qqGetToken(ctx, "EXP", "s"); err != nil {
+	if _, err := qqGetToken(ctx, appID, "s"); err != nil {
 		t.Fatal(err)
 	}
 	// Immediately after, the entry's expiresAt - qqTokenRefreshLead is
-	// in the past, so the next call must re-fetch.
-	if atomic.LoadInt32(&calls) != 1 {
-		t.Fatalf("prereq: expected 1 initial fetch, got %d", atomic.LoadInt32(&calls))
+	// in the past, so the next call must re-fetch. >=: the entry's own
+	// background refresh loop (wait clamped to 0 by the short TTL) may
+	// have fired an extra fetch between the two synchronous calls.
+	if atomic.LoadInt32(&calls) < 1 {
+		t.Fatalf("prereq: expected at least 1 initial fetch, got %d", atomic.LoadInt32(&calls))
 	}
-	if _, err := qqGetToken(ctx, "EXP", "s"); err != nil {
+	before := atomic.LoadInt32(&calls)
+	if _, err := qqGetToken(ctx, appID, "s"); err != nil {
 		t.Fatal(err)
 	}
-	if n := atomic.LoadInt32(&calls); n != 2 {
-		t.Errorf("after expiry window: %d fetches, want 2", n)
+	if n := atomic.LoadInt32(&calls); n < before+1 {
+		t.Errorf("after expiry window: %d fetches (before %d) — the expired entry was served from cache without a refetch", n, before)
 	}
 }
 

@@ -325,6 +325,132 @@ func TestQQIsDisallowedHost(t *testing.T) {
 
 // ----- text body construction (msg_type 0 vs 2) ------------------------------
 
+// TestQQSendTextKeyboardBuildsCorrectBody: Buttons present → msg_type=2
+// + keyboard with type=2 command buttons whose data is the callback
+// text (a tap sends it back as the user's own message).
+func TestQQSendTextKeyboardBuildsCorrectBody(t *testing.T) {
+	qqResetTokenCacheForTest()
+	qqResetFileInfoCacheForTest()
+	defer qqResetTokenCacheForTest()
+	defer qqResetFileInfoCacheForTest()
+
+	restoreTok := installTokenForSend(t, "TOK_KB")
+	defer restoreTok()
+	cap, restoreSend := installStubSendDo(200, []byte(`{"id":"MSG_OUT"}`))
+	defer restoreSend()
+
+	q, _ := newTestQQ(t)
+	q.SetUseMarkdown(false) // keyboard must upgrade to msg_type=2 regardless
+
+	err := q.SendMessage(bus.OutboundMessage{
+		ChatID: "USER_OID",
+		Text:   "选一个",
+		Buttons: [][]bus.OutboundButton{
+			{{Text: "方案一", CallbackData: "方案一"}},
+			{{Text: "方案二", CallbackData: "方案二"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	_, bodies := cap.snapshot()
+	if len(bodies) != 1 {
+		t.Fatalf("expected 1 body, got %d", len(bodies))
+	}
+	var body qqTextRequestBody
+	if err := json.Unmarshal(bodies[0], &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.MsgType != qqMsgTypeMarkdown {
+		t.Errorf("msg_type = %d, want %d (keyboard rides on markdown body)", body.MsgType, qqMsgTypeMarkdown)
+	}
+	if body.Keyboard == nil {
+		t.Fatalf("keyboard field missing")
+	}
+	rows := body.Keyboard.Content.Rows
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	for i, want := range []string{"方案一", "方案二"} {
+		btn := rows[i].Buttons[0]
+		if btn.RenderData.Label != want {
+			t.Errorf("row %d label = %q, want %q", i, btn.RenderData.Label, want)
+		}
+		if btn.Action.Type != 2 {
+			t.Errorf("row %d action.type = %d, want 2 (command)", i, btn.Action.Type)
+		}
+		if btn.Action.Data != want {
+			t.Errorf("row %d action.data = %q, want %q", i, btn.Action.Data, want)
+		}
+		if btn.Action.Permission.Type != 2 {
+			t.Errorf("row %d permission.type = %d, want 2 (everyone)", i, btn.Action.Permission.Type)
+		}
+	}
+}
+
+// TestQQSendTextKeyboardFallbackOnReject: a 4xx on the keyboard send
+// retries once as plain text with the choices numbered inline, so the
+// chatter still gets an answerable reply on bots without keyboard
+// permission.
+func TestQQSendTextKeyboardFallbackOnReject(t *testing.T) {
+	qqResetTokenCacheForTest()
+	qqResetFileInfoCacheForTest()
+	defer qqResetTokenCacheForTest()
+	defer qqResetFileInfoCacheForTest()
+
+	restoreTok := installTokenForSend(t, "TOK_KBFB")
+	defer restoreTok()
+
+	cap := &capturedSend{}
+	prev := qqSendDo
+	qqSendDoMu.Lock()
+	qqSendDo = func(_ context.Context, _, _ string, _ *http.Client, method, url string, body []byte) (int, http.Header, []byte, error) {
+		cap.record(method, url, body)
+		if len(cap.bodies) == 1 {
+			return 400, http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"code":1204}`), nil
+		}
+		return 200, http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"id":"MSG_OUT"}`), nil
+	}
+	qqSendDoMu.Unlock()
+	defer func() {
+		qqSendDoMu.Lock()
+		qqSendDo = prev
+		qqSendDoMu.Unlock()
+	}()
+
+	q, _ := newTestQQ(t)
+	err := q.SendMessage(bus.OutboundMessage{
+		ChatID: "USER_OID",
+		Text:   "选一个",
+		Buttons: [][]bus.OutboundButton{
+			{{Text: "A", CallbackData: "A"}},
+			{{Text: "B", CallbackData: "B"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	_, bodies := cap.snapshot()
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 bodies (keyboard try + plain retry), got %d", len(bodies))
+	}
+	var plain qqTextRequestBody
+	if err := json.Unmarshal(bodies[1], &plain); err != nil {
+		t.Fatalf("unmarshal retry body: %v", err)
+	}
+	if plain.Keyboard != nil {
+		t.Errorf("retry body must not carry a keyboard")
+	}
+	if !strings.Contains(plain.Content, "1. A") || !strings.Contains(plain.Content, "2. B") {
+		t.Errorf("retry content missing numbered choices: %q", plain.Content)
+	}
+	if !strings.Contains(plain.Content, "选一个") {
+		t.Errorf("retry content lost original text: %q", plain.Content)
+	}
+}
+
 // TestQQSendTextPlainBuildsCorrectBody: useMarkdown=false produces a
 // msg_type=0 body with the downgraded content.
 func TestQQSendTextPlainBuildsCorrectBody(t *testing.T) {

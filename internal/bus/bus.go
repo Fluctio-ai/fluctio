@@ -142,6 +142,23 @@ type OutboundButton struct {
 	URL          string
 }
 
+// AppendNumberedChoices renders the chatter-facing fallback for quick-
+// reply choices on channels that can't show native buttons: a header
+// line plus "1. label" rows, appended to text. Shared by the gateway's
+// generic-channel branch and QQ's keyboard-reject retry so both paths
+// stay word-for-word identical. Returns text unchanged when choices is
+// empty.
+func AppendNumberedChoices(text string, choices []string) string {
+	if len(choices) == 0 {
+		return text
+	}
+	numbered := text + "\n\n💬 回复序号或直接输入："
+	for i, c := range choices {
+		numbered += fmt.Sprintf("\n%d. %s", i+1, c)
+	}
+	return numbered
+}
+
 // MediaItem is an attachment whose bytes are already resolved (read
 // from workspace.Store / sandbox snapshot / wherever) by the time the
 // message lands on the bus. Channels that can't access the host

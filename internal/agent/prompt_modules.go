@@ -104,6 +104,7 @@ var agentModules = []moduleEntry{
 	{"thinking", modThinking},
 	{"autonomy", modAutonomy},
 	{"tool_discipline", modToolDiscipline},
+	{"reply_options", modReplyOptions},
 	{"never_fabricate", modNeverFabricate},
 	{"workspace_update", modWorkspaceUpdate},
 
@@ -130,6 +131,7 @@ var chatbotModules = []moduleEntry{
 	{"group_chat", modGroupChat},
 	{"thinking", modThinking},
 	{"chatbot_tools", modChatbotTools},
+	{"reply_options", modReplyOptions},
 
 	// ── Volatile (per-chatter, last for cache) ──
 	{"chatter_profile", modChatterProfile},
@@ -720,6 +722,29 @@ func modThinking(p *promptCtx) string {
 func modToolDiscipline(p *promptCtx) string {
 	return toolDisciplineContent
 }
+
+// modReplyOptions teaches the ```options quick-reply protocol: ending a
+// reply with an options fenced block renders tappable choice buttons on
+// web/app and native keyboard buttons on Telegram/QQ (numbered-reply
+// fallback elsewhere). Tapping a button simply sends that text back, so
+// the user always retains free-form input. See internal/agent/replyoptions.go.
+func modReplyOptions(p *promptCtx) string {
+	return replyOptionsContent
+}
+
+// replyOptionsContent is the protocol contract shown to the model. The
+// example fence uses literal backticks inside a double-quoted string —
+// Go raw strings cannot contain them.
+const replyOptionsContent = "# Quick-Reply Options\n\n" +
+	"When your reply asks the user to choose between a small set of clear alternatives, end the reply with an options block so chat clients render tappable buttons:\n\n" +
+	"```options\n" +
+	"[\"选项一\", \"选项二\", \"选项三\"]\n" +
+	"```\n\n" +
+	"Rules:\n" +
+	"- Use ONLY when the user must pick between 2-4 concrete, mutually exclusive alternatives. Open-ended questions get no block — do not fabricate choices.\n" +
+	"- The body is a flat JSON array of short strings; each option is at most ~20 characters.\n" +
+	"- One block per reply, placed at the end. The surrounding prose should pose the question in plain language first.\n" +
+	"- The user may tap a button (which sends that exact text back to you) or type a free-form answer — treat both identically."
 
 // modWorkspaceUpdate emits self-update and scheduling instructions.
 func modWorkspaceUpdate(p *promptCtx) string {

@@ -261,14 +261,50 @@ func (q *QQChannel) UseMarkdown() bool { return q.useMarkdown }
 // Text path
 // ---------------------------------------------------------------------------
 
-// sendText builds the JSON body per useMarkdown and POSTs it.
+// sendText builds the JSON body per useMarkdown and POSTs it. When the
+// message carries quick-reply Buttons, it first tries msg_type=2 with a
+// custom keyboard (action.type=2 command buttons — a tap makes QQ send
+// the button's data as the user's own text message, so the inbound side
+// needs no new event handling). If QQ rejects the keyboard (4xx —
+// markdown/keyboard permissions vary per bot), it retries once as plain
+// text with the choices inlined, so the chatter still gets an answerable
+// reply.
 func (q *QQChannel) sendText(ctx context.Context, scope, openid string, msg bus.OutboundMessage) error {
+	if len(msg.Buttons) > 0 {
+		body, err := q.buildTextBody(msg) // keyboard variant when Buttons present
+		if err != nil {
+			return err
+		}
+		status, respBody, err := q.postText(ctx, scope, openid, body)
+		if err == nil && status < 400 {
+			return nil
+		}
+		slog.Warn("qq keyboard send rejected — retrying as plain text",
+			"account", q.accountID, "chat", openid, "status", status,
+			"error", err, "body", qqSnippet(respBody))
+		plain := msg
+		plain.Buttons = nil
+		plain.Text = bus.AppendNumberedChoices(msg.Text, flattenButtonLabels(msg.Buttons))
+		return q.sendText(ctx, scope, openid, plain)
+	}
+	return q.sendTextPlain(ctx, scope, openid, msg)
+}
+
+// postText POSTs one marshalled text body to the /messages endpoint and
+// returns the raw status/body for the caller to interpret.
+func (q *QQChannel) postText(ctx context.Context, scope, openid string, body []byte) (int, []byte, error) {
+	endpoint := fmt.Sprintf("%s/v2/%s/%s/messages", qqAPIBase, scope, openid)
+	status, _, respBody, err := q.doREST(ctx, http.MethodPost, endpoint, body)
+	return status, respBody, err
+}
+
+// sendTextPlain is the no-keyboard path (the original sendText body).
+func (q *QQChannel) sendTextPlain(ctx context.Context, scope, openid string, msg bus.OutboundMessage) error {
 	body, err := q.buildTextBody(msg)
 	if err != nil {
 		return err
 	}
-	endpoint := fmt.Sprintf("%s/v2/%s/%s/messages", qqAPIBase, scope, openid)
-	status, _, respBody, err := q.doREST(ctx, http.MethodPost, endpoint, body)
+	status, respBody, err := q.postText(ctx, scope, openid, body)
 	if err != nil {
 		return fmt.Errorf("qq send text: %w", err)
 	}
@@ -278,20 +314,39 @@ func (q *QQChannel) sendText(ctx context.Context, scope, openid string, msg bus.
 	return nil
 }
 
+// flattenButtonLabels collects every button's label across rows.
+func flattenButtonLabels(rows [][]bus.OutboundButton) []string {
+	var out []string
+	for _, row := range rows {
+		for _, b := range row {
+			if b.Text != "" {
+				out = append(out, b.Text)
+			}
+		}
+	}
+	return out
+}
+
 // buildTextBody constructs the request JSON for the text path. Returns
-// the marshalled body, choosing msg_type=2 when useMarkdown=true,
-// otherwise msg_type=0 with downgraded markdown.
+// the marshalled body, choosing msg_type=2 when useMarkdown=true OR the
+// message carries quick-reply Buttons (the keyboard field only rides on
+// markdown message bodies), otherwise msg_type=0 with downgraded
+// markdown.
 func (q *QQChannel) buildTextBody(msg bus.OutboundMessage) ([]byte, error) {
 	seq := qqNextMsgSeq()
-	if q.useMarkdown {
-		return json.Marshal(qqTextRequestBody{
+	if q.useMarkdown || len(msg.Buttons) > 0 {
+		body := qqTextRequestBody{
 			MsgType: qqMsgTypeMarkdown,
 			MsgSeq:  seq,
 			MsgID:   msg.ReplyToMsgID,
 			Markdown: &qqMarkdownField{
 				Content: msg.Text,
 			},
-		})
+		}
+		if len(msg.Buttons) > 0 {
+			body.Keyboard = buildQQKeyboard(msg.Buttons)
+		}
+		return json.Marshal(body)
 	}
 	return json.Marshal(qqTextRequestBody{
 		MsgType: qqMsgTypeText,
@@ -714,17 +769,79 @@ func qqSnippet(b []byte) string {
 
 // qqTextRequestBody is the JSON sent to /messages for the text path
 // (contract §3.5). Only one of Markdown/Content is populated; msg_type
-// signals which.
+// signals which. Keyboard carries quick-reply buttons (msg_type=2 only).
 type qqTextRequestBody struct {
 	MsgType  int              `json:"msg_type"`
 	MsgSeq   int              `json:"msg_seq"`
 	MsgID    string           `json:"msg_id,omitempty"`
 	Content  string           `json:"content,omitempty"`
 	Markdown *qqMarkdownField `json:"markdown,omitempty"`
+	Keyboard *qqKeyboardField `json:"keyboard,omitempty"`
 }
 
 type qqMarkdownField struct {
 	Content string `json:"content"`
+}
+
+// qqKeyboardField is the custom-keyboard payload (QQ bot API): one row
+// per OutboundButton row, each button a type=2 "command" action whose
+// data QQ sends back as the user's own text message on tap. permission
+// type=2 = everyone may tap.
+type qqKeyboardField struct {
+	Content qqKeyboardContent `json:"content"`
+}
+
+type qqKeyboardContent struct {
+	Rows []qqKeyboardRow `json:"rows"`
+}
+
+type qqKeyboardRow struct {
+	Buttons []qqKeyboardButton `json:"buttons"`
+}
+
+type qqKeyboardButton struct {
+	ID         string               `json:"id"`
+	RenderData qqButtonRenderData  `json:"render_data"`
+	Action     qqButtonAction      `json:"action"`
+}
+
+type qqButtonRenderData struct {
+	Label        string `json:"label"`
+	VisitedLabel string `json:"visited_label"`
+	Style        int    `json:"style"`
+}
+
+type qqButtonAction struct {
+	Type       int                 `json:"type"`
+	Data       string              `json:"data"`
+	Permission qqButtonPermission  `json:"permission"`
+}
+
+type qqButtonPermission struct {
+	Type int `json:"type"`
+}
+
+// buildQQKeyboard converts OutboundButton rows to the QQ keyboard wire
+// shape. Style 1 = outlined (secondary) button — a full primary-color
+// row would visually drown the message.
+func buildQQKeyboard(rows [][]bus.OutboundButton) *qqKeyboardField {
+	kb := &qqKeyboardField{}
+	for i, row := range rows {
+		var qr qqKeyboardRow
+		for j, b := range row {
+			qr.Buttons = append(qr.Buttons, qqKeyboardButton{
+				ID:         fmt.Sprintf("%d-%d", i, j),
+				RenderData: qqButtonRenderData{Label: b.Text, VisitedLabel: b.Text, Style: 1},
+				Action: qqButtonAction{
+					Type:       2, // command: tap sends `data` as the user's message
+					Data:       b.CallbackData,
+					Permission: qqButtonPermission{Type: 2}, // everyone
+				},
+			})
+		}
+		kb.Content.Rows = append(kb.Content.Rows, qr)
+	}
+	return kb
 }
 
 // qqMediaRequestBody is the JSON sent for msg_type=7 (rich media).

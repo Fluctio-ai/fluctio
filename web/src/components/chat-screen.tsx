@@ -116,6 +116,7 @@ import { usePageHeader } from "@/components/sidebar";
 import { channelLabel } from "@/components/channel-icon";
 import { ChatDashboard } from "@/components/chat-dashboard";
 import { useT } from "@/lib/i18n";
+import { splitReplyOptions } from "@/lib/reply-options";
 
 interface ProducedFile {
   path: string; // path relative to workspace
@@ -3028,6 +3029,11 @@ export function ChatScreen() {
               return elements;
 
               function renderRegularBubble(msg: ChatMessage) {
+                // Quick-reply options: one split per render feeds both the
+                // bubble text (block stripped) and the button row below.
+                // Raw content stays untouched in msg.content so copy /
+                // export / replay keep the protocol text.
+                const replySplit = msg.role === "agent" && msg.content ? splitReplyOptions(msg.content) : null;
                 return (
                 <div
                   key={msg.id}
@@ -3102,9 +3108,9 @@ export function ChatScreen() {
                           )}
                         </div>
                       )}
-                      {msg.content && (
-                        renderContentWithDataImages(
-                          msg.content,
+                      {msg.content &&
+                        (renderContentWithDataImages(
+                          replySplit?.text ?? msg.content,
                           surfacedSrcs,
                           (attachedImages.get(msg.id)?.length ?? 0) > 0,
                           selectedAgent,
@@ -3112,9 +3118,8 @@ export function ChatScreen() {
                           msg.metadata?.knowledgeSources,
                           workspaceRoot,
                         ) ?? (
-                          <ChatMarkdown text={msg.content} agentId={selectedAgent} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={msg.metadata?.knowledgeSources} />
-                        )
-                      )}
+                          <ChatMarkdown text={replySplit?.text ?? msg.content} agentId={selectedAgent} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={msg.metadata?.knowledgeSources} />
+                        ))}
                       {msg.role === "agent" && msg.metadata?.knowledgeSources && msg.metadata.knowledgeSources.length > 0 && (
                         <div className="mt-2 flex flex-wrap items-center gap-1.5">
                           <span className="text-2xs text-muted-foreground">{t("knowledge.sourcesLabel")}</span>
@@ -3144,6 +3149,21 @@ export function ChatScreen() {
                           <span className="opacity-80">
                             {t("preview.planOnlyDesc")}
                           </span>
+                        </div>
+                      )}
+                      {replySplit && replySplit.options.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {replySplit.options.map((opt) => (
+                            <Button
+                              key={opt}
+                              size="sm"
+                              variant="outline"
+                              onClick={() => (sending ? handleSteer(opt) : handleSend(opt))}
+                              className="h-8"
+                            >
+                              {opt}
+                            </Button>
+                          ))}
                         </div>
                       )}
                       {msg.role === "agent" && msg.authOptions && msg.authOptions.options.length > 0 && (
@@ -3831,13 +3851,19 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
   const inner = (
     <>
       {/* Content before tools */}
-      {msg.content && (
-        <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-2.5">
-          {renderContentWithDataImages(msg.content, surfacedSrcs, false, agentId, sessionId, msg.metadata?.knowledgeSources, workspaceRoot) ?? (
-            <ChatMarkdown text={msg.content} agentId={agentId} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={msg.metadata?.knowledgeSources} />
-          )}
-        </div>
-      )}
+      {msg.content && (() => {
+        // Mid-turn tool-group text: strip options blocks too (buttons
+        // only render on the final bubble; a stray block here would show
+        // as raw JSON otherwise).
+        const { text: midText } = splitReplyOptions(msg.content);
+        return (
+          <div className="bg-muted rounded-2xl rounded-bl-md px-4 py-2.5">
+            {renderContentWithDataImages(midText, surfacedSrcs, false, agentId, sessionId, msg.metadata?.knowledgeSources, workspaceRoot) ?? (
+              <ChatMarkdown text={midText} agentId={agentId} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={msg.metadata?.knowledgeSources} />
+            )}
+          </div>
+        );
+      })()}
       {/* Collapsed tool group summary */}
       <div className="rounded-lg border border-border bg-card/50 overflow-hidden">
           <button

@@ -604,6 +604,15 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 		// outputs, the fallback below does not sweep up draft/process files.
 		text, fileItems := splitFilesFromReply(ctx, g.workspace, task.AgentID, task.Message.ProjectID, task.Message.ChatID, text)
 		items = append(items, fileItems...)
+		// Quick-reply options: strip ```options fenced blocks from the
+		// delivered text — unconditionally, so even a malformed block
+		// (unparseable JSON) never ships raw to an IM channel. Web/app
+		// bubbles render the block themselves (the raw reply stays in
+		// history for replay); on IM the block becomes native buttons
+		// (Telegram inline keyboard, QQ keyboard) or a numbered-reply
+		// fallback line. A tap just sends that text back — no new reply
+		// channel anywhere.
+		text, replyOpts := agent.ExtractReplyOptions(text)
 		// Workspace fallback: list the session's files and attach
 		// every image whose mtime falls in this turn's window. Catches
 		// the case where the LLM emits a broken data URL (with
@@ -667,6 +676,22 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 			// agent's per-agent setting (or the system fallback baked
 			// into it at boot) — see Agent.SplitReplies.
 			AllowSplit: ag.SplitReplies(),
+		}
+		// Quick-reply buttons / fallback for the ACTUAL destination
+		// channel (ReplyRoute may redirect away from the inbound one).
+		// Web already rendered the block in its own bubble — including
+		// the web+media case that reaches here with out.Text="".
+		switch outChannel {
+		case "telegram", "qq":
+			for _, opt := range replyOpts {
+				out.Buttons = append(out.Buttons, []bus.OutboundButton{{Text: opt, CallbackData: opt}})
+			}
+		case "web":
+			// bubble-rendered — nothing to attach
+		default:
+			// No native buttons on this channel: number the choices so
+			// a plain-text reply ("2" or the label itself) resolves.
+			out.Text = bus.AppendNumberedChoices(out.Text, replyOpts)
 		}
 		// Bounded enqueue. If routeOutbound is wedged the task
 		// shouldn't sit on its taskQueue slot forever — let ctx's
