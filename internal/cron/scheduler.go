@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -430,11 +431,9 @@ func (s *Scheduler) runExact(ctx context.Context, job Job) {
 }
 
 func (s *Scheduler) runCronExpr(ctx context.Context, job Job) {
-	// Simple cron expression parser: "minute hour day month weekday"
-	// Supports * and */N for each field
-	fields := strings.Fields(job.Schedule)
-	if len(fields) != 5 {
-		slog.Error("invalid cron expression (expected 5 fields)", "name", job.Name, "schedule", job.Schedule)
+	spec, err := parseCron(job.Schedule)
+	if err != nil {
+		slog.Error("invalid cron expression", "name", job.Name, "schedule", job.Schedule, "error", err)
 		return
 	}
 
@@ -447,41 +446,149 @@ func (s *Scheduler) runCronExpr(ctx context.Context, job Job) {
 		case <-ctx.Done():
 			return
 		case t := <-ticker.C:
-			if cronMatch(fields, t) {
+			if spec.match(t) {
 				s.fireJob(job)
 			}
 		}
 	}
 }
 
-// cronMatch checks if the current time matches a 5-field cron expression.
-func cronMatch(fields []string, t time.Time) bool {
-	values := []int{t.Minute(), t.Hour(), t.Day(), int(t.Month()), int(t.Weekday())}
-	for i, field := range fields {
-		if !fieldMatch(field, values[i]) {
-			return false
+// cronPart is one comma-separated element of a cron field: the values
+// lo..hi stepping by step ("N", "A-B", "*", each optionally "/step").
+type cronPart struct{ lo, hi, step int }
+
+// cronField is one parsed field of a 5-field cron expression.
+type cronField struct{ parts []cronPart }
+
+func (f cronField) match(v int) bool {
+	for _, p := range f.parts {
+		if v >= p.lo && v <= p.hi && (v-p.lo)%p.step == 0 {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
-// fieldMatch checks if a value matches a cron field (* or */N or exact number).
-func fieldMatch(field string, value int) bool {
-	if field == "*" {
-		return true
+// cronSpec is a parsed 5-field cron expression.
+type cronSpec struct {
+	fields                       [5]cronField
+	dayRestricted, dowRestricted bool
+}
+
+var (
+	cronMonthNames   = map[string]int{"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+	cronWeekdayNames = map[string]int{"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
+)
+
+// cronFieldSpecs gives the accepted value range and name table for each
+// position of "minute hour day month weekday". Weekday accepts both 0
+// and 7 for Sunday, as standard cron does.
+var cronFieldSpecs = [5]struct {
+	min, max int
+	names    map[string]int
+}{
+	{0, 59, nil},
+	{0, 23, nil},
+	{1, 31, nil},
+	{1, 12, cronMonthNames},
+	{0, 7, cronWeekdayNames},
+}
+
+// parseCron parses "minute hour day month weekday". Each field accepts
+// "*", "N", "A-B", and any of those followed by "/step", plus
+// comma-separated lists; month and weekday accept JAN-DEC / SUN-SAT.
+func parseCron(schedule string) (*cronSpec, error) {
+	fields := strings.Fields(schedule)
+	if len(fields) != 5 {
+		return nil, fmt.Errorf("expected 5 fields (minute hour day month weekday), got %d", len(fields))
 	}
-	if strings.HasPrefix(field, "*/") {
-		n, err := strconv.Atoi(field[2:])
-		if err != nil || n <= 0 {
-			return false
+	spec := &cronSpec{
+		dayRestricted: fields[2] != "*",
+		dowRestricted: fields[4] != "*",
+	}
+	for i, field := range fields {
+		specRange := cronFieldSpecs[i]
+		for _, raw := range strings.Split(field, ",") {
+			p, err := parseCronPart(strings.TrimSpace(raw), specRange.names)
+			if err != nil {
+				return nil, fmt.Errorf("field %d (%q): %w", i+1, field, err)
+			}
+			// "*" is unbounded; everything else must fit the field.
+			if p.hi != math.MaxInt && (p.lo < specRange.min || p.hi > specRange.max) {
+				return nil, fmt.Errorf("field %d (%q) out of range %d-%d", i+1, field, specRange.min, specRange.max)
+			}
+			spec.fields[i].parts = append(spec.fields[i].parts, p)
 		}
-		return value%n == 0
 	}
-	n, err := strconv.Atoi(field)
+	return spec, nil
+}
+
+// parseCronPart parses one list element: "N", "A-B", "*", or any of
+// those followed by "/step". Month/weekday names are accepted when
+// names is non-nil.
+func parseCronPart(part string, names map[string]int) (cronPart, error) {
+	step := 1
+	if i := strings.IndexByte(part, '/'); i >= 0 {
+		n, err := strconv.Atoi(part[i+1:])
+		if err != nil || n <= 0 {
+			return cronPart{}, fmt.Errorf("invalid step in %q", part)
+		}
+		step, part = n, part[:i]
+	}
+	if part == "*" {
+		return cronPart{0, math.MaxInt, step}, nil
+	}
+	if i := strings.IndexByte(part, '-'); i >= 0 {
+		lo, errLo := cronValue(part[:i], names)
+		hi, errHi := cronValue(part[i+1:], names)
+		if errLo != nil || errHi != nil || lo > hi {
+			return cronPart{}, fmt.Errorf("invalid range %q", part)
+		}
+		return cronPart{lo, hi, step}, nil
+	}
+	n, err := cronValue(part, names)
 	if err != nil {
+		return cronPart{}, err
+	}
+	return cronPart{n, n, step}, nil
+}
+
+func cronValue(s string, names map[string]int) (int, error) {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n, nil
+	}
+	if n, ok := names[strings.ToLower(s)]; ok {
+		return n, nil
+	}
+	return 0, fmt.Errorf("invalid value %q", s)
+}
+
+// match reports whether t matches the expression. As in standard cron,
+// when both day-of-month and day-of-week are restricted, either may
+// match.
+func (s *cronSpec) match(t time.Time) bool {
+	if !s.fields[0].match(t.Minute()) || !s.fields[1].match(t.Hour()) || !s.fields[3].match(int(t.Month())) {
 		return false
 	}
-	return n == value
+	dayOK := s.fields[2].match(t.Day())
+	dow := int(t.Weekday())
+	dowOK := s.fields[4].match(dow) || (dow == 0 && s.fields[4].match(7))
+	switch {
+	case !s.dayRestricted:
+		return dowOK
+	case !s.dowRestricted:
+		return dayOK
+	default:
+		return dayOK || dowOK
+	}
+}
+
+// Validate reports whether schedule is a 5-field cron expression this
+// package can evaluate. Creation paths call it so unsupported syntax is
+// rejected instead of persisting a job that can never fire.
+func Validate(schedule string) error {
+	_, err := parseCron(schedule)
+	return err
 }
 
 func (s *Scheduler) fireJob(job Job) {
@@ -565,22 +672,23 @@ func LocationOf(name string) *time.Location {
 // expression after the given time, with the expression's wall-clock
 // fields (minute/hour/day/month/weekday) read in loc — "0 9 * * *"
 // stored with Asia/Shanghai fires at 09:00 Beijing time regardless of
-// the server's TZ. Scans up to 48 hours ahead.
+// the server's TZ. Scans up to four years ahead so weekly/monthly/
+// yearly schedules (and Feb 29) resolve; an expression that never
+// matches returns after+1h (creation paths reject those via Validate).
 func NextOccurrenceIn(schedule string, after time.Time, loc *time.Location) time.Time {
-	fields := strings.Fields(schedule)
-	if len(fields) != 5 {
+	spec, err := parseCron(schedule)
+	if err != nil {
+		slog.Warn("cron: invalid expression, next run falls back to +1h", "schedule", schedule, "error", err)
 		return after.Add(time.Hour)
 	}
 	if loc == nil {
 		loc = time.Local
 	}
 	t := after.In(loc).Truncate(time.Minute).Add(time.Minute)
-	limit := after.Add(48 * time.Hour)
-	for t.Before(limit) {
-		if cronMatch(fields, t) {
+	for limit := t.AddDate(4, 0, 0); t.Before(limit); t = t.Add(time.Minute) {
+		if spec.match(t) {
 			return t
 		}
-		t = t.Add(time.Minute)
 	}
 	return after.Add(time.Hour)
 }

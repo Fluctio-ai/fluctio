@@ -94,6 +94,11 @@ func cronCreateCmd() *cobra.Command {
 			if typ == "" {
 				typ = "cron"
 			}
+			if typ == "cron" {
+				if err := cron.Validate(schedule); err != nil {
+					return fmt.Errorf("invalid cron schedule %q: %w", schedule, err)
+				}
+			}
 			if timezone == "" {
 				timezone = time.Local.String()
 			}

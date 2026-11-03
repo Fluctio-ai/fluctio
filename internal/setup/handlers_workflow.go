@@ -507,6 +507,10 @@ func (s *Server) handleWorkflowScheduleCreate(w http.ResponseWriter, r *http.Req
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "cron_expr required"})
 		return
 	}
+	if err := cron.Validate(body.CronExpr); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid cron_expr: " + err.Error()})
+		return
+	}
 	owner := ""
 	if ident, ok := auth.FromContext(r.Context()); ok {
 		owner = ident.EffectiveUserID()

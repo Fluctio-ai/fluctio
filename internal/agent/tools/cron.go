@@ -58,7 +58,7 @@ func RegisterCronTools(r *Registry, st store.Store, userID, agentID string) {
 				},
 				"schedule": map[string]interface{}{
 					"type":        "string",
-					"description": "When to fire, in the CHATTER'S local timezone (the timezone shown on the 'Current date/time' line of your system prompt) — write '每天早上 9 点' as '0 9 * * *' directly, do NOT convert to UTC. For type='cron': a 5-field cron expression like '0 9 * * *'. For type='interval': a duration like '5m' / '30m' / '2h'. For type='once': an ISO-8601 datetime like '2026-05-02T15:56:52' (no offset = chatter's local time; an explicit offset like '+08:00' or 'Z' is honored as written).",
+					"description": "When to fire, in the CHATTER'S local timezone (the timezone shown on the 'Current date/time' line of your system prompt) — write '每天早上 9 点' as '0 9 * * *' directly, do NOT convert to UTC. For type='cron': a 5-field cron expression 'minute hour day month weekday'; each field accepts *, N, A-B, */S, A-B/S and comma lists; month/weekday names work (JAN-DEC, SUN-SAT) and Sunday is 0 or 7 — e.g. '30 7 * * 1-5' = weekdays 07:30, '30 8 * * 6' = Saturdays 08:30. For type='interval': a duration like '5m' / '30m' / '2h'. For type='once': an ISO-8601 datetime like '2026-05-02T15:56:52' (no offset = chatter's local time; an explicit offset like '+08:00' or 'Z' is honored as written).",
 				},
 				"message": map[string]interface{}{
 					"type":        "string",
@@ -203,9 +203,14 @@ func makeCreateCronJob(st store.Store, r *Registry, userID, agentID string) Tool
 			}
 			nextRun = now.Add(dur)
 		default:
-			// cron expression — first occurrence in the chatter's zone.
-			// (Previously nextRun=now, which fired the job once
-			// immediately on creation — a spurious reminder.)
+			// cron expression — reject unsupported syntax instead of
+			// saving a job whose schedule can never match, then compute
+			// the first occurrence in the chatter's zone. (Previously
+			// nextRun=now, which fired the job once immediately on
+			// creation — a spurious reminder.)
+			if err := cron.Validate(args.Schedule); err != nil {
+				return "", fmt.Errorf("invalid cron schedule %q: %w", args.Schedule, err)
+			}
 			nextRun = cron.NextOccurrenceIn(args.Schedule, now, loc)
 		}
 

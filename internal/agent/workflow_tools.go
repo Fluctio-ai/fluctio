@@ -359,7 +359,7 @@ func (a *Agent) registerWorkflowTools() {
 			"type": "object",
 			"properties": map[string]any{
 				"workflow": map[string]any{"type": "string", "description": "workflow id (from workflow_list)"},
-				"cron":     map[string]any{"type": "string", "description": "5-field cron expression (min hour dom mon dow), UTC+8"},
+				"cron":     map[string]any{"type": "string", "description": "5-field cron expression (min hour dom mon dow), UTC+8 — ranges/lists/names work, e.g. '30 7 * * 1-5' = weekdays 07:30"},
 				"input":    map[string]any{"type": "object", "description": "fixed entry input for every fire (defaults to {})"},
 			},
 			"required": []any{"workflow", "cron"},
@@ -375,6 +375,9 @@ func (a *Agent) registerWorkflowTools() {
 			}
 			if len(strings.Fields(req.Cron)) != 5 {
 				return "", fmt.Errorf("workflow_schedule_create: cron %q must be 5 space-separated fields (min hour dom mon dow), UTC+8", req.Cron)
+			}
+			if err := cron.Validate(req.Cron); err != nil {
+				return "", fmt.Errorf("workflow_schedule_create: invalid cron %q: %w", req.Cron, err)
 			}
 			dbs, ok := a.dataStore.(*store.DBStore)
 			if !ok || dbs == nil {
