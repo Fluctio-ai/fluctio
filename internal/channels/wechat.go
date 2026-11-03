@@ -1056,9 +1056,9 @@ type wechatUploadedFile struct {
 // sendmessage referencing the result. The MediaItem's ContentType /
 // Filename pick the wire shape: image (type=2), video (type=5), or file
 // (type=4) for everything else (including audio — outbound voice items
-// need codec/sample-rate metadata we don't reliably have, and sending
-// audio as a file still plays back inline in WeChat). Mirrors the
-// dispatcher in upstream weclaw/messaging/media.go.
+// are defined in iLink's types (media_type=4) but the server accepts the
+// send with ret=0 and never delivers it, so MP3 still goes as a file
+// attachment). Mirrors the dispatcher in upstream weclaw/messaging/media.go.
 func (w *WeChat) sendMedia(chatID string, item bus.MediaItem) error {
 	cdnMediaType, itemType := classifyWeChatMedia(item)
 
