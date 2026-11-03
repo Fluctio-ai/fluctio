@@ -1,46 +1,58 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { MARK_LAYERS } from "./logo-mark-data";
 
-// LogoWave — the inline, animated Fluctio mark. The three wave bands are
-// one waveform: each band is the same path translated down the viewBox
-// (the bands sit exactly 204.8 units apart, matching logo.svg), so the
-// path data ships once. Bands live in their own <g> because the CSS
-// drift animation (`.logo-wave path` in globals.css) owns the path
-// transform — a transform attribute on the path itself would be
-// overridden by it. Fills follow the theme's --brand token instead of a
-// baked hex, so the mark re-colors with the surge-cyan axis per theme.
-// Static surfaces CSS can't reach (favicon, PWA icons) keep logo.svg.
-const WAVE_D =
-  "M138.24 389.12c74.24 0 112.64-15.36 145.92-28.16 30.72-12.8 53.76-23.04 110.08-23.04 53.76 0 79.36 10.24 110.08 23.04 33.28 12.8 74.24 28.16 145.92 28.16 74.24 0 112.64-15.36 145.92-28.16 28.16-12.8 53.76-23.04 110.08-23.04v-102.4c-74.24 0-112.64 15.36-145.92 28.16-28.16 12.8-53.76 23.04-110.08 23.04-53.76 0-79.36-10.24-110.08-23.04-33.28-12.8-74.24-28.16-145.92-28.16s-112.64 15.36-145.92 28.16c-30.72 12.8-53.76 23.04-110.08 23.04v102.4z";
-const BANDS = [
-  { y: 0, opacity: 0.2 },
-  { y: 204.8, opacity: 0.6 },
-  { y: 409.6, opacity: 1 },
-];
-
+// LogoWave — the inline Fluctio mark, identical to the launcher icon
+// (horizontally mirrored, then 16 deg counter-clockwise). The artwork is
+// split into its five paint-order layers; each layer rotates clockwise
+// into place with a damped settle, so the mark assembles like successive
+// surges. The layer data is generated from tool/brand/mark.svg by
+// tool/build_brand_assets.py (paint order; delayMs = reveal order).
 export function LogoWave({
   size = 32,
   className,
   title = "Fluctio",
+  loop = false,
 }: {
   size?: number;
   className?: string;
   title?: string;
+  loop?: boolean;
 }) {
   return (
     <svg
-      viewBox="0 0 1024 1024"
+      viewBox="0 0 1025 1024"
       width={size}
       height={size}
       role="img"
       aria-label={title}
-      className={cn("logo-wave shrink-0", className)}
+      className={cn("logo-wave shrink-0", loop && "logo-wave--loop", className)}
     >
-      <g transform="translate(94.24 98.32) scale(0.8)">
-        {BANDS.map((b) => (
-          <g key={b.y} transform={`translate(0 ${b.y})`}>
-            <path d={WAVE_D} fill="var(--brand)" opacity={b.opacity} />
+      <g transform="rotate(-16 512.5 512) translate(1025 0) scale(-1 1)">
+        {/* Darkest tier: a full disc settles first, then the lighter tiers
+            sweep clockwise into place, darkest to lightest (white last).
+            Each tier also paints its colour under every later-painted tier
+            (their shapes are pre-cut in the artwork), so no notch shows
+            while a lighter tier is still in flight. Later tiers repaint
+            those areas, so the settled mark is unchanged. */}
+        <g className="logo-base">
+          <circle cx="512.5" cy="512" r="511.5" fill={MARK_LAYERS[0].fill} />
+          {MARK_LAYERS[0].d.map((d, j) => (
+            <path key={j} d={d} fill={MARK_LAYERS[0].fill} />
+          ))}
+        </g>
+        {MARK_LAYERS.slice(1).map((layer, i) => (
+          <g
+            key={layer.fill}
+            className="logo-layer"
+            style={{ animationDelay: `${layer.delayMs}ms` }}
+          >
+            {[layer, ...MARK_LAYERS.slice(i + 2)].flatMap((under, u) =>
+              under.d.map((d, j) => (
+                <path key={`${u}-${j}`} d={d} fill={layer.fill} />
+              )),
+            )}
           </g>
         ))}
       </g>

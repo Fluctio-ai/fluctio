@@ -80,28 +80,43 @@ select option {
    not the flow family. */
 @theme inline {
   --ease-flow: cubic-bezier(0.45, 0, 0.25, 1);
+  --ease-settle: cubic-bezier(0.2, 1.15, 0.35, 1);
 }
 
-/* Brand waves — the three logo bands drift horizontally with phase
-   offsets. Standing water never looks alive; phase-shifted water does.
-   viewBox units: 64/1024 ≈ 1.9px at the 32px header (3px at the 48px
-   login mark) — visible without reading as wobble. The safe-area
-   padding leaves ~205 units of slack per side, so the drift never
-   clips. Paused under the collapsed icon rail (data-collapsible=icon),
-   where the mark is a static glyph and the always-on compositor work
-   buys nothing. */
-@keyframes wave-shift {
-  from { transform: translateX(0); }
-  50% { transform: translateX(64px); }
-  to { transform: translateX(0); }
+/* Brand mark — the emblem assembles layer by layer: the deep base settles
+   first, then each lighter band rotates clockwise into place with a damped
+   settle, ending on the static icon. One-shot, so no compositor work
+   lingers. The rotation centre matches the mirrored artboard centre. */
+@keyframes logo-base-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
 }
-.logo-wave path {
-  animation: wave-shift 3.9s var(--ease-flow) infinite;
+.logo-wave .logo-base,
+.logo-wave .logo-layer {
+  transform-box: view-box;
+  transform-origin: 512.5px 512px;
 }
-.logo-wave g:nth-of-type(2) path { animation-delay: -1.3s; }
-.logo-wave g:nth-of-type(3) path { animation-delay: -2.6s; }
-[data-collapsible="icon"] .logo-wave path {
-  animation-play-state: paused;
+.logo-wave .logo-base {
+  animation: logo-base-in 350ms cubic-bezier(0.2, 1, 0.3, 1) both;
+}
+@keyframes logo-surge-in {
+  0% { opacity: 0; transform: rotate(35deg) scale(0.96); }
+  30% { opacity: 1; }
+  100% { opacity: 1; transform: rotate(0deg) scale(1); }
+}
+.logo-wave .logo-layer {
+  animation: logo-surge-in 600ms var(--ease-settle) both;
+}
+/* Loading variant: the same surge replays every 2.6s and holds the settled
+   mark for the rest of the cycle, so boot gates read as a live mark rather
+   than skeleton bars. The missing 100% frame resolves to the element's
+   settled values, so the hold is implicit. */
+@keyframes logo-surge-loop {
+  0% { opacity: 0; transform: rotate(35deg) scale(0.96); }
+  23% { opacity: 1; transform: rotate(0deg) scale(1); }
+}
+.logo-wave--loop .logo-layer {
+  animation: logo-surge-loop 2600ms var(--ease-settle) infinite backwards;
 }
 
 /* Dashboard panes rise in staggered, like cards dealt onto water. */
@@ -114,7 +129,8 @@ select option {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .logo-wave path {
+  .logo-wave .logo-base,
+  .logo-wave .logo-layer {
     animation: none;
   }
   .dash-in {
