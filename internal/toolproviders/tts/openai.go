@@ -7,13 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
 
 // OpenAI posts to /v1/audio/speech. Model (e.g. "openai/tts-1") defaults to
-// "tts-1". Voice defaults to "alloy".
+// "tts-1". Voice precedence: tool arg > config option "voice" > "alloy".
+// Audio is requested and stored as wav.
 type OpenAI struct{}
 
 func (OpenAI) Category() string { return Category }
@@ -33,16 +35,19 @@ func (o *OpenAI) Execute(ctx context.Context, req toolproviders.Request) (toolpr
 	}
 	voice := a.Voice
 	if voice == "" {
+		voice = strings.TrimSpace(req.Config.Options["voice"])
+	}
+	if voice == "" {
 		voice = "alloy"
 	}
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
 	body := map[string]any{
-		"model":  model,
-		"input":  a.Text,
-		"voice":  voice,
-		"format": "mp3",
+		"model":           model,
+		"input":           a.Text,
+		"voice":           voice,
+		"response_format": "wav",
 	}
 	buf, _ := json.Marshal(body)
 	endpoint := "https://api.openai.com/v1/audio/speech"
@@ -68,7 +73,7 @@ func (o *OpenAI) Execute(ctx context.Context, req toolproviders.Request) (toolpr
 	if err != nil {
 		return toolproviders.Response{}, fmt.Errorf("read openai audio: %w", err)
 	}
-	return writeAudio(data, "mp3")
+	return writeAudio(data, "wav")
 }
 
 func retriableHTTP(name string, resp *http.Response) error {
