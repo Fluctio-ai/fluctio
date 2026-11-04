@@ -113,3 +113,6 @@ gw.err.*
 
 # Local workflow tickets (mattpocock to-tickets output, disposable, not for repo)
 /.scratch/
+
+# code review reports
+/.code-review/
