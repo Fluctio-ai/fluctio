@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -115,9 +116,27 @@ type QueryRewriter func(ctx context.Context, messages []provider.Message, query 
 // sends a different message. The LLM still sees the ingest result in
 // its tool-result stream and can call knowledgebase_search explicitly
 // to refresh — auto-query is a convenience layer, not the only path.
+//
+// Across turns, consecutive identical recalls are deduped: when a new
+// query's search returns the same hit set the current block already holds
+// — and that block is still in the request — the injection and its
+// synthetic tool pair are skipped. The old block stays put, so the request
+// prefix remains byte-stable (prompt-cache friendly) and the history stops
+// accumulating duplicate synthetic pairs. A different set, a different
+// order, or a lost block (compaction) injects as before. Strict mode
+// never injects and is exempt.
 func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, memSearch MemoryAutoSearcher, rewriter QueryRewriter) func(context.Context, *HookContext) {
 	var lastQuery string
 	var lastMemQuery string
+	// Consecutive-turn dedup state: what the current [MEM]/[KB] block in the
+	// working set holds (memory row ids / title|chunk keys). When a new turn's
+	// search returns the same set in the same order, the injection and its
+	// synthetic tool pair are skipped — the previous block is still in the
+	// request, so re-injecting would only add a duplicate synthetic pair for
+	// content the model already sees, and the history stops accumulating
+	// those pairs. Updated only on actual injection, never on skip.
+	var lastMemHitIDs []int64
+	var lastKBHitKeys []string
 	// Rewrite memo: keyed by the raw query, independent of whether any lane
 	// produced an injection (see the call site). The need verdict memoizes
 	// with it, so ReAct iterations of a need=false turn never re-pay the
@@ -258,13 +277,25 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			if memErr != nil {
 				slog.Debug("kb auto-query memory lane failed", "agent", agentID, "error", memErr)
 			} else if len(memHits) > 0 {
-				injectMEMContext(hc, memHits)
-				hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
-					Name:   "memory_search",
-					Args:   fmt.Sprintf(`{"query":%q,"limit":%d}`, searchQuery, memLimit),
-					Result: buildMemoryResultSummary(memHits),
-				})
-				slog.Info("kb auto-query memory lane", "agent", agentID, "query", searchQuery, "hits", len(memHits))
+				// Consecutive-turn dedup: the same hit set (same order — the
+				// injected bytes would be identical) with the previous [MEM]
+				// block still in scope → the model already sees this content;
+				// skip the injection and the synthetic pair so the request
+				// prefix stays byte-stable. The marker guard covers compaction
+				// having removed the block — then inject again.
+				ids := memHitIDs(memHits)
+				if slices.Equal(ids, lastMemHitIDs) && messagesContainPrefixed(hc.Messages, "[MEM]") {
+					slog.Debug("kb auto-query memory lane dedup", "agent", agentID, "query", searchQuery, "hits", len(memHits))
+				} else {
+					injectMEMContext(hc, memHits)
+					hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
+						Name:   "memory_search",
+						Args:   fmt.Sprintf(`{"query":%q,"limit":%d}`, searchQuery, memLimit),
+						Result: buildMemoryResultSummary(memHits),
+					})
+					lastMemHitIDs = ids
+					slog.Info("kb auto-query memory lane", "agent", agentID, "query", searchQuery, "hits", len(memHits))
+				}
 			}
 		}
 
@@ -326,6 +357,23 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 		lastQuery = query
 
 		if len(results) > 0 {
+			// Consecutive-turn dedup, same contract as the memory lane:
+			// identical key set with the previous [KB] block still in scope
+			// → skip the injection and the synthetic pair (the old block's
+			// [K#] numbering stays valid for the model). Strict mode never
+			// injects a [KB] block, so it has nothing to dedupe against.
+			if cfg.SearchMode != "strict" {
+				keys := kbHitKeys(results)
+				if slices.Equal(keys, lastKBHitKeys) && messagesContainPrefixed(hc.Messages, "[KB]") {
+					// Citation badges still render this turn: the ordering
+					// matched, so the [K#] ids are identical to the old block's.
+					_, sources := numberKBResults(results)
+					hc.KnowledgeSources = sources
+					slog.Debug("kb auto-query dedup", "agent", agentID, "query", searchQuery, "results", len(results))
+					return
+				}
+				lastKBHitKeys = keys
+			}
 			// Results found — number them as [K#] citation sources and
 			// attach to the hook so the loop can carry them on the
 			// assistant message for the web UI's clickable badges.
@@ -411,6 +459,26 @@ func messagesContainPrefixed(msgs []provider.Message, prefix string) bool {
 		}
 	}
 	return false
+}
+
+// memHitIDs projects memory hits to their row ids for the consecutive-turn
+// dedup comparison.
+func memHitIDs(hits []MemoryRecallHit) []int64 {
+	ids := make([]int64, len(hits))
+	for i, h := range hits {
+		ids[i] = h.ID
+	}
+	return ids
+}
+
+// kbHitKeys projects KB results to stable dedup keys (source title + chunk
+// index — the granularity a re-search of unchanged content keys on).
+func kbHitKeys(results []KBResult) []string {
+	keys := make([]string, len(results))
+	for i, r := range results {
+		keys[i] = fmt.Sprintf("%s|%d", r.SourceTitle, r.ChunkIndex)
+	}
+	return keys
 }
 
 // insertContextMessage places msg right after a leading system message

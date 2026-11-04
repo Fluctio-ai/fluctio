@@ -333,3 +333,161 @@ func TestAutoQueryHookSmartChatOnlyDegradesToKeyword(t *testing.T) {
 		t.Fatalf("rewriter calls = %d, lane queries = %v; want 0/none in a chat-only smart turn", rw.calls, mem.queries)
 	}
 }
+
+// dedupCfg is the always-mode memory config the dedup tests use.
+func dedupCfg() func() AutoQueryCfg {
+	return func() AutoQueryCfg { return AutoQueryCfg{MemoryAutoMode: "always"} }
+}
+
+// advanceTurn simulates the loop's working set carrying turn 1's result
+// into turn 2: append the assistant reply and a fresh user message.
+func advanceTurn(hc *HookContext, userMessage string) {
+	hc.Messages = append(hc.Messages,
+		provider.Message{Role: "assistant", Content: "回复"},
+		provider.Message{Role: "user", Content: userMessage})
+}
+
+func countPrefixed(msgs []provider.Message, prefix string) int {
+	n := 0
+	for _, m := range msgs {
+		if strings.HasPrefix(m.Content, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestAutoQueryHookMemoryLaneSkipsIdenticalRecall(t *testing.T) {
+	// The consecutive-turn dedup: a different query that recalls the same
+	// hit set with the previous [MEM] block still in scope skips the
+	// injection and the synthetic pair — but the search itself still runs
+	// (it's the local FTS, not the expensive part).
+	mem := &memLaneRecorder{} // returns {ID: 1} for every query
+	hook := AutoQueryHook(nil, "a1", dedupCfg(), mem.searcher(), nil)
+	hc := rewriteHookCtx()
+	hook(context.Background(), hc)
+	advanceTurn(hc, "再讲讲 agent 的话题")
+	hook(context.Background(), hc)
+
+	if len(mem.queries) != 2 {
+		t.Fatalf("lane searches = %d, want 2 (dedup skips the injection, not the search)", len(mem.queries))
+	}
+	if got := countPrefixed(hc.Messages, "[MEM]"); got != 1 {
+		t.Fatalf("[MEM] blocks = %d, want 1 across the two turns", got)
+	}
+	if got := len(hc.SyntheticToolCalls); got != 1 {
+		t.Fatalf("synthetic pairs = %d, want 1 (no duplicate pair for identical recall)", got)
+	}
+}
+
+func TestAutoQueryHookMemoryLaneReinjectsChangedHits(t *testing.T) {
+	// A different hit set injects as before: block replaced (still exactly
+	// one), a second synthetic pair appended.
+	var calls int
+	shifting := func(ctx context.Context, agentID, query string, limit int) ([]MemoryRecallHit, error) {
+		calls++
+		return []MemoryRecallHit{{ID: int64(calls), Topic: "t", Summary: "s"}}, nil
+	}
+	hook := AutoQueryHook(nil, "a1", dedupCfg(), shifting, nil)
+	hc := rewriteHookCtx()
+	hook(context.Background(), hc)
+	advanceTurn(hc, "换个话题")
+	hook(context.Background(), hc)
+
+	if got := countPrefixed(hc.Messages, "[MEM]"); got != 1 {
+		t.Fatalf("[MEM] blocks = %d, want 1 (replace, not stack)", got)
+	}
+	if got := len(hc.SyntheticToolCalls); got != 2 {
+		t.Fatalf("synthetic pairs = %d, want 2 (changed hits inject again)", got)
+	}
+}
+
+func TestAutoQueryHookMemoryLaneReinjectsAfterBlockLost(t *testing.T) {
+	// The marker guard: compaction removed the [MEM] block from the working
+	// set, so an identical hit set must inject again — the dedup only skips
+	// while the model can still see the previous block.
+	mem := &memLaneRecorder{}
+	hook := AutoQueryHook(nil, "a1", dedupCfg(), mem.searcher(), nil)
+	hc := rewriteHookCtx()
+	hook(context.Background(), hc)
+
+	var kept []provider.Message
+	for _, m := range hc.Messages {
+		if !strings.HasPrefix(m.Content, "[MEM]") {
+			kept = append(kept, m)
+		}
+	}
+	hc.Messages = kept
+	advanceTurn(hc, "再讲讲 agent 的话题")
+	hook(context.Background(), hc)
+
+	if got := len(hc.SyntheticToolCalls); got != 2 {
+		t.Fatalf("synthetic pairs = %d, want 2 (lost block forces a fresh injection)", got)
+	}
+}
+
+func TestAutoQueryHookKBLaneSkipsIdenticalRecall(t *testing.T) {
+	// KB lane, same contract: two queries matching the same single page →
+	// the second turn keeps one [KB] block, skips the pair, and still
+	// refreshes the citation badges (ordering matched → same [K#] ids).
+	db := setupKBVectorTestDB(t)
+	db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	const agent = "a1"
+	if _, err := db.ExecContext(ctx, `INSERT INTO wiki_pages (id, agent_id, page_type, slug, title, body, summary, source_ids, tags) VALUES ('source:s1', ?, 'source', 's1', 'milk secrets', 'body about milk', 'milk info', '[]', '[]')`, agent); err != nil {
+		t.Fatalf("insert wiki: %v", err)
+	}
+	store := NewKBStore(db, "sqlite")
+	hook := AutoQueryHook(store, agent, func() AutoQueryCfg {
+		return AutoQueryCfg{Enabled: true, AutoMode: "always", MemoryAutoMode: "disabled"}
+	}, nil, nil)
+
+	hc := &HookContext{Messages: []provider.Message{{Role: "user", Content: "milk secrets"}}}
+	hook(ctx, hc)
+	if len(hc.SyntheticToolCalls) != 1 {
+		t.Fatalf("first turn synthetic pairs = %d, want 1", len(hc.SyntheticToolCalls))
+	}
+
+	advanceTurn(hc, "milk")
+	hook(ctx, hc)
+
+	if got := len(hc.SyntheticToolCalls); got != 1 {
+		t.Fatalf("synthetic pairs after identical recall = %d, want 1", got)
+	}
+	if got := countPrefixed(hc.Messages, "[KB]"); got != 1 {
+		t.Fatalf("[KB] blocks = %d, want 1", got)
+	}
+	if len(hc.KnowledgeSources) == 0 {
+		t.Fatalf("KnowledgeSources empty on a deduped turn, want refreshed badges")
+	}
+}
+
+func TestAutoQueryHookKBStrictModeNotDeduped(t *testing.T) {
+	// Strict mode never injects a [KB] block — the dedup must stay exempt:
+	// an identical hit set still produces the prebuilt answer + SkipLLM.
+	db := setupKBVectorTestDB(t)
+	db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	const agent = "a1"
+	if _, err := db.ExecContext(ctx, `INSERT INTO wiki_pages (id, agent_id, page_type, slug, title, body, summary, source_ids, tags) VALUES ('source:s1', ?, 'source', 's1', 'milk secrets', 'body about milk', 'milk info', '[]', '[]')`, agent); err != nil {
+		t.Fatalf("insert wiki: %v", err)
+	}
+	store := NewKBStore(db, "sqlite")
+	hook := AutoQueryHook(store, agent, func() AutoQueryCfg {
+		return AutoQueryCfg{Enabled: true, AutoMode: "always", MemoryAutoMode: "disabled", SearchMode: "strict"}
+	}, nil, nil)
+
+	hc := &HookContext{Messages: []provider.Message{{Role: "user", Content: "milk secrets"}}}
+	hook(ctx, hc)
+	if !hc.SkipLLM {
+		t.Fatalf("first strict turn SkipLLM = false, want true")
+	}
+	hc2 := &HookContext{Messages: []provider.Message{{Role: "user", Content: "milk"}}}
+	hook(ctx, hc2)
+	if !hc2.SkipLLM {
+		t.Fatalf("strict mode must stay exempt from the dedup: SkipLLM = false, want true")
+	}
+	if hc2.PrebuiltContent == "" {
+		t.Fatalf("strict turn must carry the prebuilt KB answer")
+	}
+}
