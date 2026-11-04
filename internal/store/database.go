@@ -240,6 +240,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateDailyDiary(ctx); err != nil {
 		return fmt.Errorf("migrate daily diary table: %w", err)
 	}
+	if err := d.migrateShelvedCandidates(ctx); err != nil {
+		return fmt.Errorf("migrate shelved candidates table: %w", err)
+	}
 	if err := d.migrateKBCards(ctx); err != nil {
 		return fmt.Errorf("migrate kb cards tables: %w", err)
 	}
@@ -6234,6 +6237,138 @@ func (d *DBStore) migrateDailyDiary(ctx context.Context) error {
 		PRIMARY KEY (agent_id, date)
 	)`); err != nil {
 		return fmt.Errorf("migrate daily_diary (blindspot push runs): %w", err)
+	}
+	return nil
+}
+
+// migrateShelvedCandidates creates the shelved_candidates table — open
+// loops (deferred topics, promises, unanswered questions) noticed by the
+// conversation summary extractor. The (session_key, seq) pair points back
+// into session_messages; the raw excerpt is not duplicated here. The
+// unique key makes re-extraction of the same window idempotent.
+func (d *DBStore) migrateShelvedCandidates(ctx context.Context) error {
+	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS shelved_candidates (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		agent_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		status TEXT NOT NULL,
+		topic TEXT NOT NULL,
+		context TEXT,
+		reason TEXT,
+		session_key TEXT NOT NULL,
+		seq INTEGER NOT NULL,
+		since TEXT NOT NULL,
+		last_seen_at TIMESTAMP,
+		source TEXT NOT NULL,
+		extractor TEXT,
+		action_kind TEXT,
+		action_ref TEXT,
+		action_prompt TEXT,
+		snooze_until TIMESTAMP,
+		resolved_at TIMESTAMP,
+		resolution TEXT,
+		merged_into INTEGER,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(agent_id, session_key, seq, kind)
+	)`); err != nil {
+		return fmt.Errorf("migrate shelved_candidates: %w", err)
+	}
+	if _, err := d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_shelved_candidates_open
+		ON shelved_candidates (agent_id, status, since)`); err != nil {
+		return fmt.Errorf("migrate shelved_candidates (index): %w", err)
+	}
+	// The diary's "picked back up today" query filters resolved_at, which
+	// the open index does not cover.
+	if _, err := d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_shelved_candidates_resolved
+		ON shelved_candidates (agent_id, status, resolved_at)`); err != nil {
+		return fmt.Errorf("migrate shelved_candidates (resolved index): %w", err)
+	}
+	// shelved_extract_retries queues windows whose shelved section arrived
+	// malformed while the topic summary itself succeeded (so
+	// last_summarized_seq advanced and the window would never be re-read).
+	// The next summary for that session re-runs shelved-only extraction.
+	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS shelved_extract_retries (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		agent_id TEXT NOT NULL,
+		session_key TEXT NOT NULL,
+		seq_start INTEGER NOT NULL,
+		seq_end INTEGER NOT NULL,
+		attempts INTEGER NOT NULL DEFAULT 0,
+		last_error TEXT,
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(agent_id, session_key, seq_start, seq_end)
+	)`); err != nil {
+		return fmt.Errorf("migrate shelved_extract_retries: %w", err)
+	}
+	if err := d.backfillShelvedCandidates(ctx); err != nil {
+		return fmt.Errorf("migrate shelved_candidates (backfill): %w", err)
+	}
+	return nil
+}
+
+// backfillShelvedCandidates imports the latest diary ledger's open entries
+// into the candidate table the first time an agent has none — the
+// switchover point from the legacy daily_diary.shelved chain to the single
+// candidate ledger. Idempotent: the has-rows probe and ON CONFLICT.
+func (d *DBStore) backfillShelvedCandidates(ctx context.Context) error {
+	rows, err := d.db.QueryContext(ctx, `SELECT agent_id, shelved FROM daily_diary
+		WHERE shelved IS NOT NULL AND shelved <> '' AND shelved <> '[]'
+		ORDER BY date DESC`)
+	if err != nil {
+		return err
+	}
+	type legacyLedger struct {
+		agentID string
+		raw     string
+	}
+	var ledgers []legacyLedger
+	for rows.Next() {
+		var l legacyLedger
+		if err := rows.Scan(&l.agentID, &l.raw); err != nil {
+			rows.Close()
+			return err
+		}
+		ledgers = append(ledgers, l)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, l := range ledgers {
+		if seen[l.agentID] {
+			continue
+		}
+		seen[l.agentID] = true
+		has, err := d.HasShelvedCandidates(ctx, l.agentID)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		var entries []DiaryShelved
+		if err := json.Unmarshal([]byte(l.raw), &entries); err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.Status != "open" || e.Topic == "" || e.Session == "" {
+				continue
+			}
+			if _, err := d.db.ExecContext(ctx, fmt.Sprintf(`INSERT INTO shelved_candidates
+				(agent_id, kind, status, topic, context, reason, session_key, seq, since,
+				 last_seen_at, source, extractor, created_at, updated_at)
+				VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP,%s,%s,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+				ON CONFLICT(agent_id, session_key, seq, kind) DO NOTHING`,
+				d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8), d.ph(9),
+				d.ph(10), d.ph(11)),
+				l.agentID, "deferred", "open", e.Topic, e.Context, "", e.Session, e.Seq, e.Since,
+				"legacy_backfill", "legacy"); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

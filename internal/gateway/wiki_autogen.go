@@ -321,6 +321,9 @@ func (g *Gateway) runIdleSummaryCycle(ctx context.Context, idleAfter time.Durati
 			continue
 		}
 		sp.Agents.SummarizeIdleSessions(ctx, idleAfter, minMessages)
+		// Shelved retry windows are drained independently of whether their
+		// session summarizes again (see Agent.drainShelvedRetries).
+		sp.Agents.DrainShelvedRetries(ctx)
 	}
 }
 

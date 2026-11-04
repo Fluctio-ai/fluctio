@@ -62,11 +62,11 @@ func (g *Gateway) shelvedPushCycle(ctx context.Context) {
 			slog.Warn("shelved push: ledger", "agent", ag.ID, "error", err)
 			continue
 		}
-		// No head, or a ledger that merely rolls forward unchanged = no
-		// nudge (and no stamp: the check is one narrow row, and an
-		// unstamped no-change day keeps the door open for a manual diary
-		// regenerate that does change the ledger later today).
-		if ledgerDate == "" || !diary.ShelvedLedgerChanged(ledger, ledgerDate) {
+		// No head, or no movement (an unchanged ledger keeps its previous
+		// change date, whose stamp already exists) = no nudge. The date is
+		// the change's identity: the head diary's date for legacy rows, or
+		// the newest shelve/pickup date from the candidate ledger.
+		if ledgerDate == "" {
 			continue
 		}
 		// Dedup by the CHANGE's identity (the head diary's date), not the

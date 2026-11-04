@@ -137,12 +137,12 @@ func (s *Server) handleDiaryDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDiaryShelved GET /api/agents/{id}/diary/shelved — the live
-// shelved-topics ledger for the chat-dashboard pane: the most recent
-// diary's entries with open ones rolled to today plus that diary's
-// resolved loop. enabled:false when the agent hasn't opted in, so the
-// pane hides entirely instead of rendering an empty teaser. The enabled
-// check reads the config blob off the agent record requireAgentOwner
-// already fetched — the config loader would re-scan the agents table.
+// shelved-topics ledger for the chat-dashboard pane, read from the
+// candidate table (open entries plus recent pickups). enabled:false when
+// the agent hasn't opted in, so the pane hides entirely instead of
+// rendering an empty teaser. The enabled check reads the config blob off
+// the agent record requireAgentOwner already fetched — the config loader
+// would re-scan the agents table.
 func (s *Server) handleDiaryShelved(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	rec := s.requireAgentOwner(w, r, agentID)

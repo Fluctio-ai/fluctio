@@ -648,6 +648,26 @@ func (m *Manager) SummarizeIdleSessions(ctx context.Context, idleAfter time.Dura
 	}
 }
 
+// DrainShelvedRetries runs queued shelved-only retries across every agent
+// in this manager. Called by the gateway sweep; the summary path no
+// longer drains inline, so a session that never summarizes again cannot
+// hold its queue forever. Each agent is recovered independently.
+func (m *Manager) DrainShelvedRetries(ctx context.Context) {
+	for _, ag := range m.All() {
+		if ctx.Err() != nil {
+			return
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Warn("shelved retry sweep panic", "agent", ag.agentID, "error", r)
+				}
+			}()
+			ag.drainShelvedRetries(ctx)
+		}()
+	}
+}
+
 // UpdateProvider replaces the LLM provider for all agents (hot-reload).
 // Agents with their own per-agent provider override (agent.json providers
 // shadowing the shared one) keep their dedicated provider — this call

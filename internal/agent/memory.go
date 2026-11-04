@@ -708,26 +708,6 @@ func truncateStr(s string, n int) string {
 	return s[:n] + "..."
 }
 
-// stripJSONFence removes a leading ```json (or ```) / trailing ```
-// wrapper from an LLM response. Tuned chat models routinely wrap
-// structured output even when the prompt asks for raw JSON. Returns
-// the original (trimmed) string when no fence is present.
-func stripJSONFence(s string) string {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "```") {
-		return s
-	}
-	// Drop the opening fence (```json\n or ```\n) — anything up to the
-	// first newline after the leading backticks.
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[i+1:]
-	} else {
-		s = strings.TrimPrefix(s, "```")
-	}
-	s = strings.TrimSuffix(strings.TrimSpace(s), "```")
-	return strings.TrimSpace(s)
-}
-
 // tryAutoTitle fires the auto-title summariser when the current session
 // has enough user turns. Extracted so both the success path
 // (runPostTurn) and the empty-response bail can call it — the title
