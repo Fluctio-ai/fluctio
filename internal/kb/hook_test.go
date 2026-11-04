@@ -2,6 +2,8 @@ package kb
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -357,6 +359,24 @@ func countPrefixed(msgs []provider.Message, prefix string) int {
 	return n
 }
 
+// newDedupKBHook wires the store fixture the two KB dedup tests share: one
+// wiki page ('milk secrets') that short queries hit through the keyword
+// path, searching in augment mode unless searchMode overrides it.
+func newDedupKBHook(t *testing.T, searchMode string) func(context.Context, *HookContext) {
+	t.Helper()
+	db := setupKBVectorTestDB(t)
+	db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	const agent = "a1"
+	if _, err := db.ExecContext(ctx, `INSERT INTO wiki_pages (id, agent_id, page_type, slug, title, body, summary, source_ids, tags) VALUES ('source:s1', ?, 'source', 's1', 'milk secrets', 'body about milk', 'milk info', '[]', '[]')`, agent); err != nil {
+		t.Fatalf("insert wiki: %v", err)
+	}
+	store := NewKBStore(db, "sqlite")
+	return AutoQueryHook(store, agent, func() AutoQueryCfg {
+		return AutoQueryCfg{Enabled: true, AutoMode: "always", MemoryAutoMode: "disabled", SearchMode: searchMode}
+	}, nil, nil)
+}
+
 func TestAutoQueryHookMemoryLaneSkipsIdenticalRecall(t *testing.T) {
 	// The consecutive-turn dedup: a different query that recalls the same
 	// hit set with the previous [MEM] block still in scope skips the
@@ -381,12 +401,14 @@ func TestAutoQueryHookMemoryLaneSkipsIdenticalRecall(t *testing.T) {
 }
 
 func TestAutoQueryHookMemoryLaneReinjectsChangedHits(t *testing.T) {
-	// A different hit set injects as before: block replaced (still exactly
-	// one), a second synthetic pair appended.
+	// A different recall content injects as before: block replaced (still
+	// exactly one), a second synthetic pair appended. The hits must differ
+	// in rendered content (topic/summary), not just in row id — the dedup
+	// compares the bytes the model sees.
 	var calls int
 	shifting := func(ctx context.Context, agentID, query string, limit int) ([]MemoryRecallHit, error) {
 		calls++
-		return []MemoryRecallHit{{ID: int64(calls), Topic: "t", Summary: "s"}}, nil
+		return []MemoryRecallHit{{ID: int64(calls), Topic: "t", Summary: fmt.Sprintf("第 %d 条总结", calls)}}, nil
 	}
 	hook := AutoQueryHook(nil, "a1", dedupCfg(), shifting, nil)
 	hc := rewriteHookCtx()
@@ -411,13 +433,9 @@ func TestAutoQueryHookMemoryLaneReinjectsAfterBlockLost(t *testing.T) {
 	hc := rewriteHookCtx()
 	hook(context.Background(), hc)
 
-	var kept []provider.Message
-	for _, m := range hc.Messages {
-		if !strings.HasPrefix(m.Content, "[MEM]") {
-			kept = append(kept, m)
-		}
-	}
-	hc.Messages = kept
+	hc.Messages = slices.DeleteFunc(hc.Messages, func(m provider.Message) bool {
+		return strings.HasPrefix(m.Content, "[MEM]")
+	})
 	advanceTurn(hc, "再讲讲 agent 的话题")
 	hook(context.Background(), hc)
 
@@ -430,26 +448,16 @@ func TestAutoQueryHookKBLaneSkipsIdenticalRecall(t *testing.T) {
 	// KB lane, same contract: two queries matching the same single page →
 	// the second turn keeps one [KB] block, skips the pair, and still
 	// refreshes the citation badges (ordering matched → same [K#] ids).
-	db := setupKBVectorTestDB(t)
-	db.SetMaxOpenConns(1)
-	ctx := context.Background()
-	const agent = "a1"
-	if _, err := db.ExecContext(ctx, `INSERT INTO wiki_pages (id, agent_id, page_type, slug, title, body, summary, source_ids, tags) VALUES ('source:s1', ?, 'source', 's1', 'milk secrets', 'body about milk', 'milk info', '[]', '[]')`, agent); err != nil {
-		t.Fatalf("insert wiki: %v", err)
-	}
-	store := NewKBStore(db, "sqlite")
-	hook := AutoQueryHook(store, agent, func() AutoQueryCfg {
-		return AutoQueryCfg{Enabled: true, AutoMode: "always", MemoryAutoMode: "disabled"}
-	}, nil, nil)
+	hook := newDedupKBHook(t, "")
 
 	hc := &HookContext{Messages: []provider.Message{{Role: "user", Content: "milk secrets"}}}
-	hook(ctx, hc)
+	hook(context.Background(), hc)
 	if len(hc.SyntheticToolCalls) != 1 {
 		t.Fatalf("first turn synthetic pairs = %d, want 1", len(hc.SyntheticToolCalls))
 	}
 
 	advanceTurn(hc, "milk")
-	hook(ctx, hc)
+	hook(context.Background(), hc)
 
 	if got := len(hc.SyntheticToolCalls); got != 1 {
 		t.Fatalf("synthetic pairs after identical recall = %d, want 1", got)
@@ -465,25 +473,15 @@ func TestAutoQueryHookKBLaneSkipsIdenticalRecall(t *testing.T) {
 func TestAutoQueryHookKBStrictModeNotDeduped(t *testing.T) {
 	// Strict mode never injects a [KB] block — the dedup must stay exempt:
 	// an identical hit set still produces the prebuilt answer + SkipLLM.
-	db := setupKBVectorTestDB(t)
-	db.SetMaxOpenConns(1)
-	ctx := context.Background()
-	const agent = "a1"
-	if _, err := db.ExecContext(ctx, `INSERT INTO wiki_pages (id, agent_id, page_type, slug, title, body, summary, source_ids, tags) VALUES ('source:s1', ?, 'source', 's1', 'milk secrets', 'body about milk', 'milk info', '[]', '[]')`, agent); err != nil {
-		t.Fatalf("insert wiki: %v", err)
-	}
-	store := NewKBStore(db, "sqlite")
-	hook := AutoQueryHook(store, agent, func() AutoQueryCfg {
-		return AutoQueryCfg{Enabled: true, AutoMode: "always", MemoryAutoMode: "disabled", SearchMode: "strict"}
-	}, nil, nil)
+	hook := newDedupKBHook(t, "strict")
 
 	hc := &HookContext{Messages: []provider.Message{{Role: "user", Content: "milk secrets"}}}
-	hook(ctx, hc)
+	hook(context.Background(), hc)
 	if !hc.SkipLLM {
 		t.Fatalf("first strict turn SkipLLM = false, want true")
 	}
 	hc2 := &HookContext{Messages: []provider.Message{{Role: "user", Content: "milk"}}}
-	hook(ctx, hc2)
+	hook(context.Background(), hc2)
 	if !hc2.SkipLLM {
 		t.Fatalf("strict mode must stay exempt from the dedup: SkipLLM = false, want true")
 	}
