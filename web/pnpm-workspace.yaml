@@ -32,7 +32,9 @@ overrides:
   eslint-plugin-react-hooks: 7.0.1
   "@babel/core": ^7.29.6
   "@modelcontextprotocol/sdk": ^1.31.0
-  "@hono/node-server": ^1.19.15
+  # 1.x is vulnerable to a serveStatic path double-decode (Dependabot #84);
+  # MCP SDK 1.32.2 accepts ^2.0.5, so pin the whole package forward.
+  "@hono/node-server": 2.1.6
   sharp: ^0.35.4
   browserslist: ^4.28.7
   qs: ^6.16.0
