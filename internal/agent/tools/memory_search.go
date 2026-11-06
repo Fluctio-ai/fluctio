@@ -67,8 +67,14 @@ func flushRecallConsumed(ctx context.Context, r *Registry) {
 }
 
 // FTSSearcher is the interface for FTS5-based memory search.
+//
+// SearchByAgent is the required path: the FTS index is shared across
+// agents, so the unscoped Search would surface other agents'
+// conversation bodies. Search stays on the interface only for callers
+// that already hold agent-scoped rows; memory_search never calls it.
 type FTSSearcher interface {
 	Search(query string, limit int) ([]store.FTSResult, error)
+	SearchByAgent(ctx context.Context, agentID, query string, limit int) ([]store.FTSResult, error)
 }
 
 // VectorSearcher is the subset of *store.DBStore needed for vector recall.
@@ -469,9 +475,14 @@ func makeMemorySearch(r *Registry, workspace string, fts FTSSearcher) ToolFunc {
 		}
 	fallback:
 
-		// Path B (legacy fallback): FTS5 index of memory/logs/*.jsonl
-		if fts != nil {
-			ftsResults, err := fts.Search(args.Query, limit)
+		// Path B (legacy fallback): FTS5 index of memory/logs/*.jsonl.
+		// Agent-scoped only (SearchByAgent, matching the agent_id dimension
+		// Index writes): the index is shared across agents, so an unfiltered
+		// search would read other agents' conversation bodies. Without an
+		// agent identity on the turn, skip the lane entirely (fail closed)
+		// and fall through to Path C, which scans this agent's own workspace.
+		if fts != nil && r != nil && r.agentID != "" {
+			ftsResults, err := fts.SearchByAgent(ctx, r.agentID, args.Query, limit)
 			if err == nil && len(ftsResults) > 0 {
 				return formatFTSResults(ftsResults, args.Query), nil
 			}

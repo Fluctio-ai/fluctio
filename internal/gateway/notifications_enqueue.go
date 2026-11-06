@@ -20,13 +20,32 @@ import (
 // channel delivering is the caller's stamp gate.
 
 // sweepOwnerUID resolves the notification queue's addressee once per
-// sweep iteration — LookupSessionOwner is deployment-global under the
-// single-user flatten (it ignores agentID/sessionKey), so callers hoist
-// it out of per-item loops instead of paying a query per todo.
+// sweep iteration: the AGENT's owner, not a deployment-global account.
+// LookupSessionOwner returned the FIRST super_admin (it ignores
+// agentID/sessionKey under the single-user flatten), which
+// cross-delivered proactive pushes carrying conversation bodies to the
+// wrong user whenever more than one super_admin exists. agents.user_id
+// was dropped in phase 4 and AgentRecord.UserID is never populated by
+// the store, so the owner is resolved from session ownership:
+// sessions.user_id is the documented channel-owner / UserSpace owner,
+// and the agent's oldest session belongs to whoever created it
+// (foreign-attach viewers via EnsureAgent only add later sessions).
+// No resolvable owner → warn + "" (fail-closed); deliverSweepNudge
+// skips every leg and the sweeps retry on the next tick.
 func sweepOwnerUID(ctx context.Context, dbs *store.DBStore, ag store.AgentRecord) string {
-	uid, err := dbs.LookupSessionOwner(ctx, ag.ID, "")
+	if dbs == nil {
+		return ""
+	}
+	ph := "?"
+	if dbs.Dialect() == "postgres" {
+		ph = "$1"
+	}
+	var uid string
+	err := dbs.DB().QueryRowContext(ctx,
+		`SELECT user_id FROM sessions WHERE agent_id = `+ph+` AND user_id <> '' ORDER BY updated_at ASC LIMIT 1`,
+		ag.ID).Scan(&uid)
 	if err != nil || uid == "" {
-		slog.Warn("notification enqueue: no owner", "agent", ag.ID, "error", err)
+		slog.Warn("notification enqueue: no owner for agent, skipping delivery", "agent", ag.ID, "error", err)
 		return ""
 	}
 	return uid
@@ -57,6 +76,14 @@ func (g *Gateway) resolveSweepTarget(ctx context.Context, dbs *store.DBStore, ag
 // kind is the notification queue's kind; archiveKind is the session
 // archive's tag (deliberately distinct for the blindspot sweep).
 func (g *Gateway) deliverSweepNudge(ctx context.Context, dbs *store.DBStore, ag store.AgentRecord, uid string, ch channels.Channel, chatID, sessionKey, kind, title, body, deepLink, archiveKind, sweep string) bool {
+	if uid == "" {
+		// Fail-closed: sweepOwnerUID already warned. Skip every leg (IM +
+		// queue + archive) — delivering a push that embeds conversation
+		// bodies with an unresolvable addressee is worse than silence.
+		// Returning false keeps the caller's stamp gate closed so the
+		// sweep retries once an owner is resolvable.
+		return false
+	}
 	delivered := false
 	if ch != nil {
 		if err := ch.Send(chatID, body); err != nil {

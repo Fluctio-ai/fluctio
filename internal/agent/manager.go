@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
@@ -117,6 +118,11 @@ func WithGlobalSkillsCfg(cfg config.SkillsCfg) ManagerOption {
 
 // Manager loads and manages all agent instances.
 type Manager struct {
+	// mu guards agents + defaultAgent: EnsureAgent (hot path) writes the
+	// map while request handling reads it concurrently — an unguarded
+	// concurrent map read/write is a process-level fatal, not a data
+	// race to recover from.
+	mu           sync.RWMutex
 	agents       map[string]*Agent
 	defaultAgent *Agent
 	// opts is retained so AddAgent (hot-reload after onboard / agent
@@ -556,7 +562,11 @@ func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb
 }
 
 // AddAgent creates and registers a new agent dynamically (for hot-reload).
+// m.mu is held across the whole body: the exists-check + write must be
+// atomic against AgentByID readers and a concurrent add of the same ID.
 func (m *Manager) AddAgent(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, exists := m.agents[rc.ID]; exists {
 		return fmt.Errorf("agent %q already exists", rc.ID)
 	}
@@ -575,9 +585,12 @@ func (m *Manager) AddAgent(rc config.ResolvedAgent, prov provider.Provider, mb *
 //
 // The override is local: m.opts.globalSkillsCfg is restored before
 // returning so the next AddAgent on the same manager goes back to the
-// caller's own cfg. Held under no extra lock — callers (UserSpace.
-// EnsureAgent) already serialize via sp.mu.
+// caller's own cfg. The agents-map access is guarded by m.mu (same as
+// AddAgent); the sp.mu callers (UserSpace.EnsureAgent) take additionally
+// serializes the m.opts swap against concurrent builds on this manager.
 func (m *Manager) AddAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus, cfg config.SkillsCfg) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, exists := m.agents[rc.ID]; exists {
 		return fmt.Errorf("agent %q already exists", rc.ID)
 	}
@@ -591,6 +604,8 @@ func (m *Manager) AddAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.P
 
 // RemoveAgent unregisters an agent by ID. No-op if the agent is not loaded.
 func (m *Manager) RemoveAgent(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if _, ok := m.agents[id]; !ok {
 		return
 	}
@@ -603,16 +618,22 @@ func (m *Manager) RemoveAgent(id string) {
 
 // AgentByID returns an agent by its ID.
 func (m *Manager) AgentByID(id string) *Agent {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.agents[id]
 }
 
 // DefaultAgent returns the default agent (set when only one agent exists).
 func (m *Manager) DefaultAgent() *Agent {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.defaultAgent
 }
 
 // All returns all loaded agents.
 func (m *Manager) All() []*Agent {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	result := make([]*Agent, 0, len(m.agents))
 	for _, ag := range m.agents {
 		result = append(result, ag)
@@ -622,6 +643,8 @@ func (m *Manager) All() []*Agent {
 
 // Names returns all agent IDs.
 func (m *Manager) Names() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	names := make([]string, 0, len(m.agents))
 	for name := range m.agents {
 		names = append(names, name)
@@ -673,6 +696,8 @@ func (m *Manager) DrainShelvedRetries(ctx context.Context) {
 // shadowing the shared one) keep their dedicated provider — this call
 // only affects agents that were using the shared instance.
 func (m *Manager) UpdateProvider(prov provider.Provider) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	for _, ag := range m.agents {
 		ag.provider = prov
 	}
@@ -687,6 +712,8 @@ func (m *Manager) UpdateProviderResolved(shared provider.Provider, resolved []co
 	for _, rc := range resolved {
 		byID[rc.ID] = rc
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	for id, ag := range m.agents {
 		if rc, ok := byID[id]; ok {
 			ag.provider = providerForAgent(rc, shared)

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -100,6 +101,52 @@ func (f *FTSStore) Search(query string, limit int) ([]FTSResult, error) {
 		ORDER BY rank
 		LIMIT ?`,
 		query, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fts search: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FTSResult
+	for rows.Next() {
+		var r FTSResult
+		var tsStr string
+		if err := rows.Scan(&r.Snippet, &r.Content, &tsStr, &r.AgentID, &r.ChatID, &r.Rank); err != nil {
+			continue
+		}
+		r.Timestamp, _ = time.Parse(time.RFC3339, tsStr)
+		results = append(results, r)
+	}
+	return results, nil
+}
+
+// SearchByAgent is Search scoped to one agent's rows. The FTS index is
+// shared across agents (Index stamps agent_id on every row), so the
+// unfiltered Search lets a memory_search running for agent A read agent
+// B's conversation bodies — cross-agent data exposure under the shared
+// index. Callers without an agent identity MUST NOT use Search; this is
+// the agent-scoped path the memory_search legacy fallback uses.
+func (f *FTSStore) SearchByAgent(ctx context.Context, agentID, query string, limit int) ([]FTSResult, error) {
+	if agentID == "" {
+		return nil, fmt.Errorf("fts search: agentID is required")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	rows, err := f.db.QueryContext(ctx,
+		`SELECT
+			snippet(messages_fts, 0, '<b>', '</b>', '...', 32) AS snippet,
+			messages_fts.content,
+			messages_fts.timestamp,
+			messages_fts.agent_id,
+			messages_fts.chat_id,
+			rank
+		FROM messages_fts
+		WHERE messages_fts MATCH ? AND messages_fts.agent_id = ?
+		ORDER BY rank
+		LIMIT ?`,
+		query, agentID, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("fts search: %w", err)
