@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
@@ -92,7 +93,19 @@ func (m *MiniMax) Execute(ctx context.Context, req toolproviders.Request) (toolp
 		return toolproviders.Response{}, fmt.Errorf("minimax decode: %w", err)
 	}
 	if out.BaseResp.StatusCode != 0 {
-		return toolproviders.Response{}, fmt.Errorf("minimax error %d: %s", out.BaseResp.StatusCode, out.BaseResp.StatusMsg)
+		err := fmt.Errorf("minimax error %d: %s", out.BaseResp.StatusCode, out.BaseResp.StatusMsg)
+		// MiniMax reports upstream problems in base_resp with HTTP 200,
+		// so a plain return reads as fatal and cuts the provider fallback
+		// chain even for rate limits / transient busy errors. Flag the
+		// message-shaped transient classes as retriable; everything else
+		// (auth, bad params) stays fatal.
+		msg := strings.ToLower(out.BaseResp.StatusMsg)
+		if strings.Contains(msg, "rate") || strings.Contains(msg, "limit") ||
+			strings.Contains(msg, "busy") || strings.Contains(msg, "timeout") ||
+			strings.Contains(msg, "unavailable") || strings.Contains(msg, "try again") {
+			return toolproviders.Response{}, toolproviders.Retry(err)
+		}
+		return toolproviders.Response{}, err
 	}
 	data, err := hex.DecodeString(out.Data.Audio)
 	if err != nil {

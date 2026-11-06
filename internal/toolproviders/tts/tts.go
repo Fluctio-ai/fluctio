@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
 )
@@ -29,6 +30,12 @@ type args struct {
 	Voice string
 }
 
+// ttsMaxTextBytes bounds the synthesis input. The LLM controls Text, and
+// an unbounded script let a single call burn unbounded external-API
+// quota; 20KB comfortably covers any spoken-length script while capping
+// the blast radius.
+const ttsMaxTextBytes = 20 << 10
+
 func parseArgs(raw map[string]any) (args, error) {
 	var a args
 	if s, ok := raw["text"].(string); ok {
@@ -36,6 +43,14 @@ func parseArgs(raw map[string]any) (args, error) {
 	}
 	if a.Text == "" {
 		return a, fmt.Errorf("text is required")
+	}
+	// Clamp on a rune boundary so CJK text isn't cut mid-character.
+	if len(a.Text) > ttsMaxTextBytes {
+		cut := a.Text[:ttsMaxTextBytes]
+		for len(cut) > 0 && !utf8.ValidString(cut) {
+			cut = cut[:len(cut)-1]
+		}
+		a.Text = cut
 	}
 	if s, ok := raw["voice"].(string); ok {
 		a.Voice = s
