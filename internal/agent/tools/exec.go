@@ -589,6 +589,17 @@ func registerSandboxedExec(r *Registry, ex sandbox.Executor) {
 		if args.RunInBackground {
 			return "", fmt.Errorf("run_in_background is not yet supported in sandbox mode — use tmux inside the sandbox instead: exec({command: \"tmux new-session -d -s job '<your command>'\"}) to start, exec({command: \"tmux capture-pane -t job -p\"}) to read, exec({command: \"tmux kill-session -t job\"}) to stop")
 		}
+		// Hardline floor: the sandbox is a filesystem/network boundary,
+		// but a destructive command aimed at a bind-mounted host path
+		// (rm -rf on the project mount) goes straight through the
+		// container to the host. Enforce the same dangerousCommands
+		// shortlist the host exec and host_exec registrations apply.
+		lower := strings.ToLower(args.Command)
+		for _, dc := range dangerousCommands {
+			if strings.Contains(lower, dc) {
+				return "", fmt.Errorf("dangerous command blocked: %s", args.Command)
+			}
+		}
 		timeout := clampExecTimeout(args.Timeout)
 		command := args.Command
 		// Stdin via heredoc (mirror the host path) so callers can pipe
