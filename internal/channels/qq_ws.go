@@ -227,6 +227,15 @@ func (q *QQChannel) Name() string        { return "qq" }
 func (q *QQChannel) AccountID() string   { return q.accountID }
 func (q *QQChannel) BotUsername() string { return "qqbot" } // sentinel: routeGroup's agentByMention checks BotUsername to recognize @bot on GROUP_AT_MESSAGE_CREATE (QQ events imply @bot; QQ has no real username)
 
+// Shutdown releases process-wide side state: the background token
+// refresh goroutine and its cached entry. Called by the channel manager
+// when the adapter is replaced or unregistered — without it the refresh
+// loop outlives the account and keeps re-fetching tokens for a dead bot
+// forever.
+func (q *QQChannel) Shutdown() {
+	qqClearToken(q.appID)
+}
+
 // Send / SendMessage / SendTyping are implemented in qq_send.go
 // (Phase 3 — contract §3.5 + §4.2 + §6.9).
 

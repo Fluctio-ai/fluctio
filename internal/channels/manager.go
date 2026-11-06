@@ -33,6 +33,14 @@ type Manager struct {
 	// channel_leases.holder_id and must stay stable across renewals.
 	leaser   Leaser
 	holderID string
+	// cancels holds the per-adapter context cancel funcs keyed by
+	// channel:accountID. Hot re-registration (dashboard saves a channel
+	// config) and Unregister cancel the OLD adapter's context and run its
+	// optional Shutdown hook — without this the replaced polling
+	// goroutine kept running forever (double-polling the same bot) and
+	// its lease row kept blocking a sibling replica from taking over.
+	// Guarded by mu.
+	cancels map[string]context.CancelFunc
 	// Captured by Start so RegisterAndStart can hot-launch goroutines for
 	// channels added after the initial bootstrap. nil until Start runs.
 	rootCtx context.Context
@@ -73,6 +81,7 @@ func NewManagerWithLeaser(mb *bus.MessageBus, leaser Leaser, holderID string) *M
 		channels:  make(map[string]Channel),
 		singleton: make(map[string]struct{}),
 		tgTokens:  make(map[string]struct{}),
+		cancels:   make(map[string]context.CancelFunc),
 		bus:       mb,
 		leaser:    leaser,
 		holderID:  holderID,
@@ -141,6 +150,11 @@ func (m *Manager) RegisterSingletonAndStart(ch Channel) {
 func (m *Manager) registerAndStart(ch Channel, singleton bool) {
 	m.mu.Lock()
 	key := channelKey(ch.Name(), ch.AccountID())
+	old, replaced := m.channels[key]
+	if old == ch {
+		replaced = false
+	}
+	oldCancel := m.cancels[key]
 	m.channels[key] = ch
 	if singleton {
 		m.singleton[key] = struct{}{}
@@ -148,20 +162,58 @@ func (m *Manager) registerAndStart(ch Channel, singleton bool) {
 	ctx := m.rootCtx
 	leaser := m.leaser
 	holderID := m.holderID
+	var chCtx context.Context
+	var cancel context.CancelFunc
+	if ctx != nil {
+		// Per-adapter context: cancelling it (hot re-registration or
+		// Unregister) stops exactly this adapter's goroutine instead of
+		// leaving it pinned to the root ctx for the process lifetime.
+		chCtx, cancel = context.WithCancel(ctx)
+		m.cancels[key] = cancel
+	}
 	m.mu.Unlock()
-	if ctx == nil {
+
+	// Stop the replaced adapter OUTSIDE the lock: its Shutdown hook may
+	// call back into the manager, and the old goroutine needs a moment
+	// to observe the cancel regardless.
+	if replaced {
+		m.stopAdapter(old, oldCancel)
+	}
+	if chCtx == nil {
 		return
 	}
 	go func() {
 		slog.Info("hot-starting channel", "key", key, "singleton", singleton)
 		if singleton {
-			runWithLease(ctx, ch, leaser, holderID)
+			runWithLease(chCtx, ch, leaser, holderID)
 			return
 		}
-		if err := ch.Start(ctx); err != nil {
+		if err := ch.Start(chCtx); err != nil {
 			slog.Error("channel stopped with error", "key", key, "error", err)
 		}
 	}()
+}
+
+// Shutdownable is the optional lifecycle hook for adapters that keep
+// process-wide side state beyond their Start goroutine — e.g. the QQ
+// adapter's background token-refresh loop and cache, which otherwise
+// outlives the account and keeps re-fetching tokens for a dead bot.
+// Called by the manager when the adapter is replaced or unregistered.
+type Shutdownable interface {
+	Shutdown()
+}
+
+// stopAdapter cancels the adapter's per-adapter context (its Start
+// goroutine exits) and runs the optional Shutdown hook. Lease release is
+// left to runWithLease's own exit path, which fires right after the ctx
+// is observed — an explicit Release here would race it.
+func (m *Manager) stopAdapter(old Channel, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
+	}
+	if s, ok := old.(Shutdownable); ok {
+		s.Shutdown()
+	}
 }
 
 // Unregister removes a channel from the routing table. The channel's
@@ -174,8 +226,19 @@ func (m *Manager) registerAndStart(ch Channel, singleton bool) {
 // route to the agent.
 func (m *Manager) Unregister(channelType, accountID string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.channels, channelKey(channelType, accountID))
+	key := channelKey(channelType, accountID)
+	old, existed := m.channels[key]
+	oldCancel := m.cancels[key]
+	delete(m.channels, key)
+	delete(m.cancels, key)
+	m.mu.Unlock()
+	// Stop the adapter's polling goroutine + run its Shutdown hook. The
+	// previous behavior left the poll loop running for the process
+	// lifetime; with per-adapter contexts it exits promptly and the
+	// lease is released by runWithLease's exit path.
+	if existed {
+		m.stopAdapter(old, oldCancel)
+	}
 }
 
 // Start launches all channels and the outbound message router.
@@ -204,18 +267,24 @@ func (m *Manager) Start(ctx context.Context) {
 	// Start each channel
 	for key, ch := range chans {
 		singleton := singletons[key]
+		// Register the per-adapter cancel so a later hot re-registration
+		// or Unregister can stop this goroutine.
+		chCtx, cancel := context.WithCancel(ctx)
+		m.mu.Lock()
+		m.cancels[key] = cancel
+		m.mu.Unlock()
 		wg.Add(1)
-		go func(k string, c Channel, s bool) {
+		go func(k string, c Channel, s bool, cCtx context.Context) {
 			defer wg.Done()
 			slog.Info("starting channel", "key", k, "singleton", s)
 			if s {
-				runWithLease(ctx, c, leaser, holderID)
+				runWithLease(cCtx, c, leaser, holderID)
 				return
 			}
-			if err := c.Start(ctx); err != nil {
+			if err := c.Start(cCtx); err != nil {
 				slog.Error("channel stopped with error", "key", k, "error", err)
 			}
-		}(key, ch, singleton)
+		}(key, ch, singleton, chCtx)
 	}
 
 	wg.Wait()
