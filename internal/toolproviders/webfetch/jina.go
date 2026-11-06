@@ -61,7 +61,9 @@ func (j *Jina) Execute(ctx context.Context, req toolproviders.Request) (toolprov
 			return toolproviders.Response{}, err
 		}
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(a.MaxLen*3)))
+	// Clamp the 3x-amplified read window the same way FetchReadLimit does,
+	// so it stays bounded even if MaxLen ever arrives uncapped.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(min(a.MaxLen*3, webfetchMaxLengthCap*3))))
 	if err != nil {
 		return toolproviders.Response{}, toolproviders.Retry(fmt.Errorf("jina read: %w", err))
 	}

@@ -180,9 +180,21 @@ func (c *ClawHubClient) downloadAndExtract(tarballURL string, destDir string) er
 			continue
 		}
 
+		// Reject entry names outright that could dodge the boundary check
+		// below: absolute paths, and any ".." element (on Windows a
+		// backslash inside the name acts as a separator, so the substring
+		// check is what stops "..\..\"-style escapes).
+		if filepath.IsAbs(name) || strings.Contains(name, "..") {
+			continue
+		}
+
 		target := filepath.Join(destDir, name)
-		// Prevent path traversal
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
+		// Path-traversal guard: a bare strings.HasPrefix(cleanTarget,
+		// cleanDest) also accepts sibling directories — "dest" is a prefix
+		// of "dest-evil". Require the path-separator boundary so the cleaned
+		// target must land strictly inside destDir.
+		cleanDest := filepath.Clean(destDir) + string(os.PathSeparator)
+		if !strings.HasPrefix(filepath.Clean(target), cleanDest) {
 			continue
 		}
 

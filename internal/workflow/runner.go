@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -214,9 +215,6 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 	if input == nil {
 		input = map[string]any{}
 	}
-	if err := Validate(def, input); err != nil {
-		return nil, fmt.Errorf("validate: %w", err)
-	}
 
 	var cfg runConfig
 	for _, o := range opts {
@@ -225,6 +223,33 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 
 	runID := cfg.runID
 	if runID != "" {
+		// Resume: load the run's original input BEFORE validating. A resume
+		// caller doesn't re-send the input (service.ResumeWorkflowStream
+		// passes nil), so validating the typically-empty caller input first
+		// made every run with required inputs deterministically unresumable.
+		// This is also the run's existence check: an unknown runID fails
+		// here with a clear error instead of continuing silently.
+		orig, err := r.store.GetWorkflowRunInput(context.Background(), runID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("resume: run %s not found", runID)
+			}
+			return nil, fmt.Errorf("load run %s input: %w", runID, err)
+		}
+		// Merge the stored original input over whatever the caller passed:
+		// the run row is authoritative (earlier nodes executed against it),
+		// caller values only fill keys the run row lacks.
+		merged := make(map[string]any, len(orig)+len(input))
+		for k, v := range input {
+			merged[k] = v
+		}
+		for k, v := range orig {
+			merged[k] = v
+		}
+		input = merged
+		if err := Validate(def, input); err != nil {
+			return nil, fmt.Errorf("validate: %w", err)
+		}
 		if err := r.store.MarkRunRunning(context.Background(), runID); err != nil {
 			return nil, fmt.Errorf("mark run running: %w", err)
 		}
@@ -233,12 +258,10 @@ func (r *Runner) Run(ctx context.Context, def *Definition, input map[string]any,
 			return nil, fmt.Errorf("load resume snapshot: %w", err)
 		}
 		cfg.resume = resumeSnap
-		// A resume caller doesn't re-send the input; replay ${input.*}
-		// references against the run's original input object.
-		if orig, ierr := r.store.GetWorkflowRunInput(context.Background(), runID); ierr == nil && len(orig) > 0 {
-			input = orig
-		}
 	} else {
+		if err := Validate(def, input); err != nil {
+			return nil, fmt.Errorf("validate: %w", err)
+		}
 		runID = r.newID()
 		if err := r.store.CreateWorkflowRun(context.Background(), runID, def.ID, def.Version, input, cfg.session, cfg.owner); err != nil {
 			return nil, fmt.Errorf("create workflow run: %w", err)

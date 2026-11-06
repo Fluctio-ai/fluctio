@@ -38,6 +38,39 @@ func NewStdioClient(command string, args []string, env map[string]string, dir st
 	}
 }
 
+// scrubbedEnv returns the minimal child environment for an MCP stdio
+// subprocess: only the system variables the OS and language runtimes need
+// (binary lookup, temp dirs, Windows loader paths, locale), covering both
+// Windows and POSIX. Everything else the host inherited is dropped — MCP
+// servers are low-trust and must not receive host credentials through the
+// environment.
+func scrubbedEnv() []string {
+	keep := map[string]bool{
+		"PATH":        true, // binary lookup (POSIX and Windows launchers)
+		"PATHEXT":     true, // Windows: executable extensions for resolution
+		"HOME":        true,
+		"TEMP":        true,
+		"TMP":         true,
+		"TMPDIR":      true,
+		"SystemRoot":  true, // Windows: required by the loader / winsock
+		"COMSPEC":     true, // Windows: cmd.exe location for shell-outs
+		"USERPROFILE": true,
+		"APPDATA":     true,
+		"LANG":        true,
+	}
+	env := make([]string, 0, 16)
+	for _, kv := range os.Environ() {
+		k := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			k = kv[:i]
+		}
+		if keep[k] || strings.HasPrefix(k, "LC_") {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
 // Connect starts the subprocess and initializes the MCP session.
 func (c *StdioClient) Connect() error {
 	c.cmd = exec.Command(c.command, c.args...)
@@ -48,8 +81,12 @@ func (c *StdioClient) Connect() error {
 		c.cmd.Dir = c.dir
 	}
 
-	// Set environment variables
-	c.cmd.Env = os.Environ()
+	// Pass only the minimal environment an MCP subprocess needs to run.
+	// Inheriting the full os.Environ() would hand every credential the host
+	// process holds (API keys, tokens, service URLs) straight to a low-trust
+	// MCP server, bypassing env redaction. The per-server env below is the
+	// only extra data the child receives.
+	c.cmd.Env = scrubbedEnv()
 	for k, v := range c.env {
 		if strings.HasPrefix(v, "$") {
 			v = os.Getenv(v[1:])

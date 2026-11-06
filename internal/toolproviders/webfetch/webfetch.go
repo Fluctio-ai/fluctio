@@ -22,6 +22,14 @@ const Category = "web_fetch"
 // a chain doesn't change reply truncation behaviour.
 const DefaultMaxLen = 10000
 
+// webfetchMaxLengthCap is the hard ceiling for the model-controlled
+// max_length arg. Left unbounded, a huge value drives the providers' 3x
+// amplified read window (FetchReadLimit) and the in-memory body — an easy
+// OOM. A float64 arg that overflows int on conversion also lands negative,
+// which previously slipped past truncation. 2MB of text is far beyond what
+// an LLM reply window needs.
+const webfetchMaxLengthCap = 2 << 20
+
 // RegisterAll installs every built-in web_fetch provider in r.
 func RegisterAll(r *toolproviders.Registry) {
 	r.Register(&Direct{})
@@ -48,8 +56,15 @@ func parseArgs(raw map[string]any) (args, error) {
 	case int:
 		a.MaxLen = v
 	}
+	// max_length is model-controlled, so clamp it: <=0 (missing, or a
+	// float64 that overflowed int on conversion) falls back to the legacy
+	// default, and anything above the cap is pinned to the cap. Without the
+	// cap the providers' 3x-amplified read window is attacker-sized.
 	if a.MaxLen <= 0 {
 		a.MaxLen = DefaultMaxLen
+	}
+	if a.MaxLen > webfetchMaxLengthCap {
+		a.MaxLen = webfetchMaxLengthCap
 	}
 	return a, nil
 }
@@ -73,11 +88,17 @@ func isWeChatArticle(rawURL string) bool {
 	return host == "mp.weixin.qq.com" || strings.HasSuffix(host, ".mp.weixin.qq.com")
 }
 
+// FetchReadLimit returns how many raw bytes providers may read for a
+// maxLen-char reply window: 3x, because HTML is verbose and tag stripping
+// shrinks it substantially. The product is clamped to 3x the max_length cap
+// so the amplified read window stays bounded even when a caller passes an
+// uncapped maxLen straight in (parseArgs clamps its own path; this is the
+// second line of defense).
 func FetchReadLimit(rawURL string, maxLen int) int64 {
 	if isWeChatArticle(rawURL) {
 		return 2 << 20
 	}
-	return int64(maxLen * 3)
+	return int64(min(maxLen*3, webfetchMaxLengthCap*3))
 }
 
 func HTMLToText(rawURL, htmlBody string) string {
