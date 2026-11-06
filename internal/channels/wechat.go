@@ -1377,6 +1377,19 @@ func wechatCDNDialContext(ctx context.Context, network, addr string) (net.Conn, 
 			err  error
 		}
 		out := make(chan result, 1)
+		// closeStagedConn drains the result channel non-blockingly and
+		// closes a successful connection nobody consumed. Without this,
+		// a ctx cancellation winning the select against the loser
+		// goroutine's staged send leaks one open TCP fd per dial.
+		closeStagedConn := func() {
+			select {
+			case r := <-out:
+				if r.conn != nil {
+					_ = r.conn.Close()
+				}
+			default:
+			}
+		}
 		tryAll := func(addrs []string) {
 			var lastErr error
 			for _, a := range addrs {
@@ -1424,9 +1437,11 @@ func wechatCDNDialContext(ctx context.Context, network, addr string) (net.Conn, 
 				}
 				return nil, r2.err
 			case <-ctx.Done():
+				closeStagedConn()
 				return nil, ctx.Err()
 			}
 		case <-ctx.Done():
+			closeStagedConn()
 			return nil, ctx.Err()
 		}
 	}
