@@ -586,11 +586,14 @@ func (r *Registry) SessionID() string {
 	return r.sessionID
 }
 
-// EffectiveUserID returns the user the in-flight turn acts as: the
-// per-turn chatter when resolved, else the boot-time owner. Mirrors the
-// fallback systemFileUserID uses for per-user files. The coding-agent
-// runtime tools use it to key the project runtime to the same user the
-// project (and its workspace files) belong to.
+// EffectiveUserID returns the user the in-flight turn acts as. The
+// chatterUserID plumbing this doc comment once promised was retired
+// (phase-4 ownership flatten — "single-user product"): every chatter
+// acts as the boot-time owner, which is what r.userID holds. Billing,
+// preferences, and memory writes are all owner-keyed by design; if
+// per-chatter isolation ever becomes a product goal, this method and
+// the store interface signatures are where the identity parameter gets
+// re-introduced (see final-overview 横切模式①).
 func (r *Registry) EffectiveUserID() string {
 	return r.userID
 }

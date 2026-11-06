@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -217,6 +218,19 @@ type Agent struct {
 	// instead of re-burning the retry ladder; half-open probes recovery
 	// every resolveQuotaProbeInterval().
 	quota quotaBreaker
+
+	// turnMu serializes whole turns on THIS agent. bindSession rewrites
+	// agent-level shared state (registry, ctxBuilder, mcpMgr) at the top
+	// of every turn, so two parallel turns of the same agent (allowed
+	// today: taskqueue serializes per chat but the global maxConcurrent
+	// lets different chats run concurrently) raced each other's rebind —
+	// exec landing in the wrong container, MCP calls hitting a Closed
+	// manager. Taking this lock at HandleMessage/HandleMessageStream
+	// entry makes cross-chat turns of one agent queue up instead of
+	// interleaving. Short-term mitigation by design: the long-term fix
+	// is a per-turn immutable context object so bindSession never
+	// mutates shared state.
+	turnMu sync.Mutex
 }
 
 // compactionThresholdNow computes the effective compaction threshold for
@@ -3336,6 +3350,13 @@ func (a *Agent) sessionForTurn(msg bus.InboundMessage) *session.Session {
 }
 
 func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) string {
+	// Serialize turns on this agent: bindSession rewrites agent-level
+	// shared state (registry/ctxBuilder/mcpMgr) that a parallel turn of
+	// the same agent would be reading mid-flight. See the turnMu field
+	// comment for the long-term plan.
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+
 	a.persistInboundImages(&msg)
 	// Lift the chatter's UI locale out of Params (where the web client
 	// forwards its i18n setting) into the Lang field, so slash replies can
@@ -4490,6 +4511,11 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 // a StreamReader for the final response. Tool call iterations use non-streaming Chat;
 // the final text response uses ChatStream for true SSE streaming.
 func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage) *provider.StreamReader {
+	// Same per-agent turn serialization as HandleMessage — the streaming
+	// path runs the same bindSession rebind against shared state.
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+
 	a.persistInboundImages(&msg)
 	// Same lift-and-remove as HandleMessage's popLang site: recognized
 	// keys must not survive into the Client Parameters blob.

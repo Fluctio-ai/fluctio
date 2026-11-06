@@ -24,6 +24,19 @@ var ErrSessionHasChildren = errors.New("session has fork children")
 
 // Store is the unified interface for all persistent data.
 //
+// DEPLOYMENT SEMANTICS (single-user flatten, phase 3.2/4): Fluctio is a
+// single-user product. Every authenticated caller acts as the boot-time
+// owner; "user" dimensions that survive in column names are owner keys,
+// not end-user isolation. Several legacy tables had user_id dropped by
+// the ownership flatten (see migrateFlattenUserData), and the interface
+// signatures deliberately carry (agentID, sessionKey) instead of a
+// caller identity — Do NOT add per-caller filtering assumptions when
+// writing new queries, and do not treat `user_id` columns as tenant
+// boundaries. If per-chatter isolation becomes a product goal, this
+// interface is where caller-identity parameters get re-introduced
+// across every implementation (see .code-review/reports/final-overview.md
+// 横切模式① for the audited gap list).
+//
 // Tables fall into three buckets:
 //   - account-scoped (users, web_sessions, apikeys): keyed by users.id
 //   - agent-scoped (agents, agent_files, cron_jobs): keyed by agents.id;
