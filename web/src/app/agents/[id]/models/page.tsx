@@ -506,6 +506,15 @@ export default function AgentModelsPage() {
     if (!agentId) return;
     const name = formName.toLowerCase().trim().replace(/\s+/g, "-");
     if (!name) return;
+    // Guard the (scope, name) upsert: the backend replaces an existing
+    // same-name row wholesale, so creating with a name that already
+    // exists silently wipes its stored API key. Refuse duplicates here
+    // instead of destroying credentials two clicks later.
+    const duplicate = !editingId && providers.some((p) => p.name === name);
+    if (duplicate) {
+      window.alert(`A provider named "${name}" already exists — open it to edit instead of creating a duplicate.`);
+      return;
+    }
     const cleanedModels = formModels.filter((m) => m.id.trim());
     const editingRow = editingId
       ? providers.find((p) => p.id === editingId)
@@ -534,9 +543,14 @@ export default function AgentModelsPage() {
         });
       }
       flashSaved();
-    } finally {
+    } catch (err) {
+      // Surface the failure: the save used to flash "saved" even when the
+      // request failed, leaving the operator with a stale key row.
+      window.alert(`Failed to save provider: ${err instanceof Error ? err.message : String(err)}`);
       setSaving(false);
+      return;
     }
+    setSaving(false);
     setDialogOpen(false);
     await fetchAll();
   };

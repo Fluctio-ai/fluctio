@@ -570,6 +570,10 @@ export async function createProvider(req: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `create provider failed (${res.status})`);
+  }
   return res.json();
 }
 
@@ -579,6 +583,10 @@ export async function updateProvider(id: string, req: Partial<ProviderRow>) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `update provider failed (${res.status})`);
+  }
   return res.json();
 }
 

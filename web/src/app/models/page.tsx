@@ -354,6 +354,14 @@ export default function ModelsPage() {
   const handleSaveProvider = async () => {
     const name = formName.toLowerCase().trim().replace(/\s+/g, "-");
     if (!name) return;
+    // Guard the (scope, name) upsert: the backend replaces an existing
+    // same-name row wholesale, so creating with an existing name silently
+    // wipes its stored API key. Refuse duplicates instead.
+    const duplicate = !editingId && providers.some((p) => p.name === name);
+    if (duplicate) {
+      window.alert(`A provider named "${name}" already exists — open it to edit instead of creating a duplicate.`);
+      return;
+    }
     const cleanedModels = formModels.filter((m) => m.id.trim());
     const editingRow = editingId ? providers.find((p) => p.id === editingId) : undefined;
     setSaving(true);
@@ -364,7 +372,14 @@ export default function ModelsPage() {
         await createProvider({ scope: writeScope, scopeId: writeScopeId, name, apiBase: formApiBase, apiKey: formApiKey, apiType: formApiType, authType: formAuthType, models: cleanedModels });
       }
       flashSaved();
-    } finally { setSaving(false); }
+    } catch (err) {
+      // Surface the failure: the save used to flash "saved" even when the
+      // request failed, leaving the operator with a stale key row.
+      window.alert(`Failed to save provider: ${err instanceof Error ? err.message : String(err)}`);
+      setSaving(false);
+      return;
+    }
+    setSaving(false);
     setDialogOpen(false);
     await fetchConfig(isSuperAdmin, me?.id || "");
   };
