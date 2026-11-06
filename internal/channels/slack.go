@@ -93,10 +93,16 @@ func (s *Slack) Send(chatID string, text string) error {
 // raw text. Flatten tables to "label: value" / middle-dot lines first
 // so the chatter sees structured prose instead of pipe soup.
 func (s *Slack) SendMessage(msg bus.OutboundMessage) error {
+	// Report the first send/upload failure instead of swallowing it: the
+	// old code logged and returned nil unconditionally, so the failure/
+	// retry chain upstream never saw a dead bot token and failed replies
+	// were silently lost. Later items are still attempted.
+	var firstErr error
 	if msg.Text != "" {
 		text := FlattenMarkdownTables(msg.Text)
 		if err := s.Send(msg.ChatID, text); err != nil {
 			slog.Warn("slack text send failed", "error", err)
+			firstErr = err
 		}
 	}
 	for _, item := range msg.MediaItems {
@@ -107,9 +113,12 @@ func (s *Slack) SendMessage(msg bus.OutboundMessage) error {
 		}
 		if _, err := s.client.UploadFile(params); err != nil {
 			slog.Warn("slack file upload failed", "filename", item.Filename, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // SendTyping sends a typing indicator. Slack Socket Mode does not support this directly.

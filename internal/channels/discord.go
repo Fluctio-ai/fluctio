@@ -313,6 +313,14 @@ func (d *Discord) SendMessage(msg bus.OutboundMessage) error {
 		// "label: value" / middle-dot block that scans cleanly.
 		text := FlattenMarkdownTables(msg.Text)
 		chunks := splitDiscordMessage(text)
+		// firstErr remembers the first chunk failure so SendMessage can
+		// report it once every chunk had its chance. The old code logged
+		// and swallowed every error, returning nil unconditionally — the
+		// caller-side failure/retry chain (FailureReporter, OnFailed)
+		// never saw a failed reply, so dead bot tokens went unnoticed.
+		// All chunks still get attempted: partial delivery beats stopping
+		// at the first broken chunk.
+		var firstErr error
 		for i, chunk := range chunks {
 			var ref *discordgo.MessageReference
 			if i == 0 && msg.ReplyToMsgID != "" {
@@ -347,10 +355,16 @@ func (d *Discord) SendMessage(msg bus.OutboundMessage) error {
 						} else {
 							slog.Warn("discord chunk send failed (retry also failed)",
 								"i", i, "error", err, "retry_error", retryErr)
+							if firstErr == nil {
+								firstErr = err
+							}
 							continue
 						}
 					}
 					slog.Warn("discord chunk send failed", "i", i, "error", err)
+					if firstErr == nil {
+						firstErr = err
+					}
 				}
 				continue
 			}
@@ -363,13 +377,19 @@ func (d *Discord) SendMessage(msg bus.OutboundMessage) error {
 					} else {
 						slog.Warn("discord final chunk+files failed (retry also failed)",
 							"error", err, "retry_error", retryErr)
+						if firstErr == nil {
+							firstErr = err
+						}
 						continue
 					}
 				}
 				slog.Warn("discord final chunk+files failed", "error", err)
+				if firstErr == nil {
+					firstErr = err
+				}
 			}
 		}
-		return nil
+		return firstErr
 	}
 	if len(msg.MediaItems) > 0 {
 		var ref *discordgo.MessageReference
