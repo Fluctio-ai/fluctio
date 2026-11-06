@@ -77,9 +77,13 @@ func (s *Service) RunWorkflowStream(ctx context.Context, id string, input map[st
 		return nil, fmt.Errorf("unknown workflow %q", id)
 	}
 	// Apply the workflow's concurrency policy (spec decision 13): serial may
-	// block until a prior run finishes; cancel_previous may cancel one. allow
+	// block until a prior run finishes (ctx-aware — a cancelled caller
+	// returns instead of parking); cancel_previous may cancel one. allow
 	// is a no-op. release runs after the run completes.
-	ctx, release := s.concurrency.Acquire(ctx, id, def.Concurrency)
+	ctx, release, err := s.concurrency.Acquire(ctx, id, def.Concurrency)
+	if err != nil {
+		return nil, err
+	}
 	defer release()
 	opts := []RunOption{WithOwner(owner), WithSession(session)}
 	if sink != nil {
@@ -100,7 +104,10 @@ func (s *Service) ResumeWorkflowStream(ctx context.Context, id, runID, formNode 
 	if !ok {
 		return nil, fmt.Errorf("unknown workflow %q", id)
 	}
-	ctx, release := s.concurrency.Acquire(ctx, id, def.Concurrency)
+	ctx, release, err := s.concurrency.Acquire(ctx, id, def.Concurrency)
+	if err != nil {
+		return nil, err
+	}
 	defer release()
 	opts := []RunOption{WithResume(runID), WithFormValues(formNode, formValues), WithOwner(owner)}
 	if sink != nil {

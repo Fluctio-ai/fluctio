@@ -2,7 +2,9 @@ package workflow
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 )
 
 // ConcurrencyManager enforces a workflow's concurrency policy across overlapping
@@ -40,13 +42,27 @@ func NewConcurrencyManager() *ConcurrencyManager {
 
 // Acquire applies mode for workflowID and returns the ctx the run should use
 // plus a release func the caller MUST call when the run ends (typically defer).
-// For serial it may block; for cancel_previous it may cancel a prior run.
-func (m *ConcurrencyManager) Acquire(ctx context.Context, workflowID string, mode Concurrency) (context.Context, func()) {
+// For serial it may block (ctx-aware: a cancelled/waiting ctx returns an
+// error instead of parking forever — the gateway's scheduler fires every
+// minute on a single goroutine, so an unbounded block would stall every
+// later schedule); for cancel_previous it may cancel a prior run.
+func (m *ConcurrencyManager) Acquire(ctx context.Context, workflowID string, mode Concurrency) (context.Context, func(), error) {
 	switch mode {
 	case ConcurrencySerial:
 		lk := m.lockFor(workflowID)
-		lk.Lock()
-		return ctx, func() { lk.Unlock() }
+		// ctx-aware lock acquisition: poll TryLock so a cancelled caller
+		// waiting on a long run gives up instead of parking the scheduler
+		// goroutine indefinitely.
+		for {
+			if lk.TryLock() {
+				return ctx, func() { lk.Unlock() }, nil
+			}
+			select {
+			case <-ctx.Done():
+				return ctx, func() {}, fmt.Errorf("workflow %s: serial concurrency wait cancelled: %w", workflowID, ctx.Err())
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
 	case ConcurrencyCancelPrevious:
 		m.mu.Lock()
 		if prev := m.inflight[workflowID]; prev != nil {
@@ -66,9 +82,9 @@ func (m *ConcurrencyManager) Acquire(ctx context.Context, workflowID string, mod
 			m.mu.Unlock()
 			cancel() // idempotent; no-op if the run already ended
 		}
-		return derived, release
+		return derived, release, nil
 	default: // ConcurrencyAllow
-		return ctx, func() {}
+		return ctx, func() {}, nil
 	}
 }
 

@@ -21,7 +21,10 @@ func TestConcurrencySerialNoOverlap(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, release := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencySerial)
+			_, release, aerr := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencySerial)
+			if aerr != nil {
+				panic(aerr) // Background ctx never cancels; a failure here means the lock is wedged
+			}
 			defer release()
 			cur := atomic.AddInt32(&inflight, 1)
 			for {
@@ -44,10 +47,16 @@ func TestConcurrencySerialNoOverlap(t *testing.T) {
 // leaving the second active.
 func TestConcurrencyCancelPreviousCancelsPrior(t *testing.T) {
 	m := workflow.NewConcurrencyManager()
-	ctx1, release1 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencyCancelPrevious)
+	ctx1, release1, aerr1 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencyCancelPrevious)
+	if aerr1 != nil {
+		t.Fatalf("Acquire failed: %v", aerr1)
+	}
 	defer release1()
 	// first run "in flight"; a second trigger arrives.
-	ctx2, release2 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencyCancelPrevious)
+	ctx2, release2, aerr2 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencyCancelPrevious)
+	if aerr2 != nil {
+		t.Fatalf("Acquire failed: %v", aerr2)
+	}
 	defer release2()
 
 	select {
@@ -65,10 +74,16 @@ func TestConcurrencyCancelPreviousCancelsPrior(t *testing.T) {
 // release's own cancel is idempotent.
 func TestConcurrencyCancelPreviousReleaseClearsSlot(t *testing.T) {
 	m := workflow.NewConcurrencyManager()
-	_, release1 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencyCancelPrevious)
+	_, release1, aerr1 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencyCancelPrevious)
+	if aerr1 != nil {
+		t.Fatalf("Acquire failed: %v", aerr1)
+	}
 	release1() // run 1 finished
 	// A new trigger should not panic / misbehave; its ctx stays active.
-	ctx2, release2 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencyCancelPrevious)
+	ctx2, release2, aerr2 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencyCancelPrevious)
+	if aerr2 != nil {
+		t.Fatalf("Acquire failed: %v", aerr2)
+	}
 	defer release2()
 	if ctx2.Err() != nil {
 		t.Errorf("ctx2 should be active, got %v", ctx2.Err())
@@ -79,7 +94,10 @@ func TestConcurrencyCancelPreviousReleaseClearsSlot(t *testing.T) {
 func TestConcurrencyAllowNoOp(t *testing.T) {
 	m := workflow.NewConcurrencyManager()
 	parent := context.Background()
-	ctx, release := m.Acquire(parent, "wf-1", workflow.ConcurrencyAllow)
+	ctx, release, aerr := m.Acquire(parent, "wf-1", workflow.ConcurrencyAllow)
+	if aerr != nil {
+		t.Fatalf("Acquire failed: %v", aerr)
+	}
 	defer release()
 	if ctx != parent {
 		t.Error("allow should return the ctx unchanged")
@@ -89,12 +107,18 @@ func TestConcurrencyAllowNoOp(t *testing.T) {
 // AC4 — different workflows don't interfere: serial on wf-1 doesn't block wf-2.
 func TestConcurrencyDifferentWorkflowsIndependent(t *testing.T) {
 	m := workflow.NewConcurrencyManager()
-	_, release1 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencySerial)
+	_, release1, aerr1 := m.Acquire(context.Background(), "wf-1", workflow.ConcurrencySerial)
+	if aerr1 != nil {
+		t.Fatalf("Acquire failed: %v", aerr1)
+	}
 	defer release1()
 	// wf-2 should acquire immediately despite wf-1's lock being held.
 	done := make(chan struct{})
 	go func() {
-		_, rel := m.Acquire(context.Background(), "wf-2", workflow.ConcurrencySerial)
+		_, rel, aerr := m.Acquire(context.Background(), "wf-2", workflow.ConcurrencySerial)
+		if aerr != nil {
+			panic(aerr) // Background ctx never cancels
+		}
 		rel()
 		close(done)
 	}()
