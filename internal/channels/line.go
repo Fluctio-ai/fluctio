@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,6 +123,37 @@ func (l *LINE) Send(chatID, text string) error {
 // of writing). MediaItems are deferred — LINE supports image messages
 // but they require a public CDN URL or upload via /v2/bot/message/...,
 // neither of which we plumb yet.
+// lineMaxTextChars is LINE's hard limit for a text message. Longer
+// replies used to be sent as-is and rejected by the API with the whole
+// message lost — chunk them so every part lands.
+const lineMaxTextChars = 5000
+
+// splitLineText splits s into chunks of at most lineMaxTextChars runes,
+// preferring to break at the last newline before the limit so paragraphs
+// survive. Runes, not bytes: CJK text hits the char limit ~3x sooner.
+func splitLineText(s string) []string {
+	runes := []rune(s)
+	if len(runes) <= lineMaxTextChars {
+		return []string{s}
+	}
+	var chunks []string
+	for start := 0; start < len(runes); {
+		end := start + lineMaxTextChars
+		if end >= len(runes) {
+			end = len(runes)
+		} else {
+			// Prefer the last newline inside the window; fall back to the
+			// hard cut so a paragraph longer than the limit still splits.
+			if nl := strings.LastIndex(string(runes[start:end]), "\n"); nl > 0 {
+				end = start + nl + 1
+			}
+		}
+		chunks = append(chunks, string(runes[start:end]))
+		start = end
+	}
+	return chunks
+}
+
 func (l *LINE) SendMessage(msg bus.OutboundMessage) error {
 	if msg.Text == "" && len(msg.MediaItems) == 0 {
 		return nil
@@ -139,9 +171,17 @@ func (l *LINE) SendMessage(msg bus.OutboundMessage) error {
 
 	// Pop a cached replyToken if present + unexpired. Single-use, so
 	// this also clears the slot — concurrent sends in the same turn
-	// only get one shot at the free reply path.
+	// only get one shot at the free reply path. The reply path only
+	// carries the FIRST chunk (a reply message can't be a multi-part
+	// burst); remaining chunks go out via push below.
 	if tok := l.popReplyToken(msg.ChatID); tok != "" {
-		if err := l.postReply(tok, text); err == nil {
+		chunks := splitLineText(text)
+		if err := l.postReply(tok, chunks[0]); err == nil {
+			for _, extra := range chunks[1:] {
+				if err := l.postPush(msg.ChatID, extra); err != nil {
+					return err
+				}
+			}
 			return nil
 		} else {
 			// reply can fail (token already consumed by a parallel
@@ -152,7 +192,15 @@ func (l *LINE) SendMessage(msg bus.OutboundMessage) error {
 				"account", l.accountID, "chat", msg.ChatID, "error", err)
 		}
 	}
-	return l.postPush(msg.ChatID, text)
+	var firstErr error
+	for _, chunk := range splitLineText(text) {
+		if err := l.postPush(msg.ChatID, chunk); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }
 
 // SendTyping is a no-op. LINE doesn't expose a typing indicator API
