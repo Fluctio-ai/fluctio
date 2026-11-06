@@ -51,6 +51,12 @@ type StoreInterface interface {
 	// counter and returns the new total. The scheduler self-deletes
 	// the row once the counter crosses cronMaxConsecutiveFailures.
 	IncrementCronJobFailure(ctx context.Context, jobID string) (int, error)
+	// AdvanceCronJobFailure records a missed tick atomically: advances
+	// next_run AND bumps failure_count in one statement (UpdateCronJobRun
+	// would reset the counter first). This is what keeps the channel-
+	// missing grace period measured in scheduled ticks instead of
+	// milliseconds.
+	AdvanceCronJobFailure(ctx context.Context, jobID string, lastRun, nextRun time.Time) (int, error)
 	DeleteCronJob(ctx context.Context, jobID string) error
 	GetNextDueTime(ctx context.Context) (time.Time, error)
 }
@@ -208,7 +214,12 @@ func (s *Scheduler) pollStore(ctx context.Context) {
 		} else {
 			sleepDur = time.Until(nextDue)
 			if sleepDur <= 0 {
-				continue
+				// A due job should have been processed (and its next_run
+				// advanced) by processDueJobs above. If something is still
+				// due right now, don't spin — take a short floor sleep so
+				// any unexpected due-now state degrades to a 1s poll
+				// instead of a hot loop.
+				sleepDur = time.Second
 			}
 		}
 
@@ -222,6 +233,30 @@ func (s *Scheduler) pollStore(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+// cronChannelMissRetryBackoff is the retry horizon for a missed tick that
+// has no natural next occurrence (a "once" job) or whose schedule math
+// returned a non-future time. Short by design: the job auto-deletes after
+// cronMaxConsecutiveFailures consecutive misses anyway, so this only
+// spaces the retries out enough for a restarting gateway to re-register
+// the channel adapter.
+const cronChannelMissRetryBackoff = time.Minute
+
+// nextRunAfterMiss computes when the scheduler should reconsider a job
+// whose tick was skipped because its destination channel was missing.
+// Interval/cron jobs advance to their next scheduled occurrence (one
+// failure per missed tick, preserving the grace-period semantics); "once"
+// jobs get a fixed short backoff since their moment has already passed.
+func (s *Scheduler) nextRunAfterMiss(j StoreJob, now time.Time) time.Time {
+	if j.Type == "once" {
+		return now.Add(cronChannelMissRetryBackoff)
+	}
+	next := NextOccurrenceIn(j.Schedule, now, LocationOf(j.Timezone))
+	if !next.After(now) {
+		return now.Add(cronChannelMissRetryBackoff)
+	}
+	return next
 }
 
 func (s *Scheduler) processDueJobs(ctx context.Context) {
@@ -262,9 +297,19 @@ func (s *Scheduler) processDueJobs(ctx context.Context) {
 		replyDelivered := !j.Background || j.Deliver
 		if replyDelivered && s.channels != nil && j.Channel != "" && j.Channel != "web" && j.Channel != "api" {
 			if !s.channels.Has(j.Channel, j.AccountID) {
-				count, ferr := s.store.IncrementCronJobFailure(ctx, j.ID)
+				// Record the miss atomically: advance next_run past the
+				// missed occurrence AND bump the failure counter. The old
+				// path only bumped the counter and left next_run in the
+				// past — the row stayed due, pollStore spun with zero
+				// sleep, and cronMaxConsecutiveFailures consecutive
+				// misses collapsed from ~3 ticks to ~3 milliseconds,
+				// silently deleting user jobs during any transient
+				// adapter outage (e.g. a gateway restart before the
+				// channel re-registered).
+				nextRun := s.nextRunAfterMiss(j, now)
+				count, ferr := s.store.AdvanceCronJobFailure(ctx, j.ID, now, nextRun)
 				if ferr != nil {
-					slog.Error("failed to bump cron failure count", "id", j.ID, "error", ferr)
+					slog.Error("failed to record cron miss", "id", j.ID, "error", ferr)
 					continue
 				}
 				if count >= cronMaxConsecutiveFailures {
@@ -280,6 +325,7 @@ func (s *Scheduler) processDueJobs(ctx context.Context) {
 				slog.Warn("cron destination channel missing, skipping fire",
 					"id", j.ID, "name", j.Name,
 					"channel", j.Channel, "account", j.AccountID,
+					"next_run", nextRun,
 					"failures", count, "threshold", cronMaxConsecutiveFailures)
 				continue
 			}

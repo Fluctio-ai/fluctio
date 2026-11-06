@@ -17,6 +17,7 @@ type mockStore struct {
 	locked  map[string]bool
 	deleted map[string]bool
 	updated map[string]time.Time // jobID → nextRun
+	missed  map[string]int       // jobID → consecutive miss count
 }
 
 func newMockStore() *mockStore {
@@ -24,6 +25,7 @@ func newMockStore() *mockStore {
 		locked:  make(map[string]bool),
 		deleted: make(map[string]bool),
 		updated: make(map[string]time.Time),
+		missed:  make(map[string]int),
 	}
 }
 
@@ -90,6 +92,15 @@ func (m *mockStore) GetNextDueTime(ctx context.Context) (time.Time, error) {
 
 func (m *mockStore) IncrementCronJobFailure(ctx context.Context, jobID string) (int, error) {
 	return 1, nil
+}
+
+func (m *mockStore) AdvanceCronJobFailure(ctx context.Context, jobID string, lastRun, nextRun time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.missed[jobID]++
+	m.updated[jobID] = nextRun
+	m.locked[jobID] = false
+	return m.missed[jobID], nil
 }
 
 func (m *mockStore) isDeleted(jobID string) bool {

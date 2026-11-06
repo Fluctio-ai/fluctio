@@ -215,9 +215,10 @@ func (s *Server) handleFetchModelsByConfig(w http.ResponseWriter, r *http.Reques
 		// Stored-key path: the Edit dialog sends the saved provider's
 		// id when the key field was left untouched (useStoredKey mode).
 		// Resolve the row server-side — the unmasked key never reaches
-		// the browser. Body apiBase / apiType override the stored values
-		// so the operator can test edits before saving (same semantics
-		// as handleTestStoredProvider).
+		// the browser. Body apiBase / apiType are IGNORED on this path:
+		// honoring them let any reader of the row redirect the stored
+		// secret to an attacker-chosen URL (key-exfiltration oracle).
+		// The stored key only ever goes to the URL stored beside it.
 		rec, err := s.dataStore.GetConfig(r.Context(), body.ProviderID)
 		if err != nil || rec == nil || rec.Kind != store.KindProvider {
 			jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "provider not found"})
@@ -231,12 +232,8 @@ func (s *Server) handleFetchModelsByConfig(w http.ResponseWriter, r *http.Reques
 			_ = json.Unmarshal(blob, &stored)
 		}
 		prov.APIKey = stored.APIKey
-		if prov.APIBase == "" {
-			prov.APIBase = stored.APIBase
-		}
-		if prov.APIType == "" {
-			prov.APIType = stored.APIType
-		}
+		prov.APIBase = stored.APIBase
+		prov.APIType = stored.APIType
 		prov.AuthType = stored.AuthType
 	} else {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{

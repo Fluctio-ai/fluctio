@@ -93,8 +93,12 @@ const (
 )
 
 // fileWriteTools are the built-in tools that mutate the filesystem.
+// edit_file is registered by tools/file.go alongside write_file; both carry
+// a plain "path" argument. apply_patch carries its targets inside the
+// "input" envelope (see writePathsFor).
 var fileWriteTools = map[string]bool{
 	"write_file":     true,
+	"edit_file":      true,
 	"create_file":    true,
 	"str_replace":    true,
 	"insert":         true,
@@ -170,29 +174,40 @@ func (g *authGate) evaluateCall(toolName, argsJSON, mode string) authDecision {
 		return modeGate(mode, "command execution (may touch outside workspace)")
 	}
 
-	// file write tools: workspace boundary on the path argument.
+	// file write tools: workspace boundary on every path the call touches.
 	if fileWriteTools[toolName] {
-		path := extractStringArg(argsJSON, "path")
-		if path == "" {
+		paths := writePathsFor(toolName, argsJSON)
+		if len(paths) == 0 {
 			return authDecision{action: authAllow}
 		}
-		abs := resolveAgainst(g.workspace, path)
-		if isUnder(abs, g.workspace) {
-			return authDecision{action: authAllow}
-		}
-		// Allowlisted (preset dirs + policy.json) writes are fine.
-		g.mu.RLock()
-		for _, p := range g.allowWrite {
-			if isUnder(abs, p) {
-				g.mu.RUnlock()
-				return authDecision{action: authAllow}
+		outside := ""
+		for _, path := range paths {
+			abs := resolveAgainst(g.workspace, path)
+			if isUnder(abs, g.workspace) {
+				continue
+			}
+			// Allowlisted (preset dirs + policy.json) writes are fine.
+			allowed := false
+			g.mu.RLock()
+			for _, p := range g.allowWrite {
+				if isUnder(abs, p) {
+					allowed = true
+					break
+				}
+			}
+			g.mu.RUnlock()
+			if !allowed {
+				outside = path
+				break
 			}
 		}
-		g.mu.RUnlock()
+		if outside == "" {
+			return authDecision{action: authAllow}
+		}
 		if sandboxed {
 			return authDecision{action: authAllow}
 		}
-		return modeGate(mode, "write outside workspace: "+path)
+		return modeGate(mode, "write outside workspace: "+outside)
 	}
 
 	// All other tools (read_file, list_dir, web_fetch, mcp_*, ...): allow.
@@ -228,15 +243,14 @@ func (g *authGate) writeTargetOutsideWorkspace(toolName, argsJSON string) (strin
 	if !fileWriteTools[toolName] {
 		return "", false
 	}
-	path := extractStringArg(argsJSON, "path")
-	if path == "" {
-		return "", false
+	for _, path := range writePathsFor(toolName, argsJSON) {
+		abs := resolveAgainst(g.workspace, path)
+		if isUnder(abs, g.workspace) {
+			continue
+		}
+		return abs, true
 	}
-	abs := resolveAgainst(g.workspace, path)
-	if isUnder(abs, g.workspace) {
-		return "", false
-	}
-	return abs, true
+	return "", false
 }
 
 // extractStringArg pulls a string field from a JSON args blob without
@@ -255,6 +269,40 @@ func extractStringArg(argsJSON, key string) string {
 		return ""
 	}
 	return s
+}
+
+// patchFileLineRE matches the apply_patch envelope directives that name a
+// filesystem target. Paths are workspace-relative and resolve exactly like
+// read_file/write_file (see tools/apply_patch.go).
+var patchFileLineRE = regexp.MustCompile(`(?m)^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$`)
+
+// writePathsFor returns every filesystem path a file-write tool call
+// touches. apply_patch carries its targets inside the "input" envelope
+// (its schema has no "path" key — extracting "path" always came back empty
+// and silently bypassed the gate); every other write tool uses a plain
+// "path" argument. Returns nil when the call names no path at all, which
+// callers treat as "nothing to gate" (malformed payloads surface as tool
+// errors at execution time, matching evaluateCall's fail-open-for-malformed
+// contract).
+func writePathsFor(toolName, argsJSON string) []string {
+	if toolName == "apply_patch" {
+		input := extractStringArg(argsJSON, "input")
+		if input == "" {
+			return nil
+		}
+		var paths []string
+		for _, m := range patchFileLineRE.FindAllStringSubmatch(input, -1) {
+			p := strings.TrimSpace(m[1])
+			if p != "" {
+				paths = append(paths, p)
+			}
+		}
+		return paths
+	}
+	if p := extractStringArg(argsJSON, "path"); p != "" {
+		return []string{p}
+	}
+	return nil
 }
 
 // resolveAgainst resolves a possibly-relative path against a base dir,
@@ -435,12 +483,14 @@ func classifyCommand(command string) (commandTier, string) {
 // the command falls through to the mode gate.
 //
 // Covered: `|`, `||`, `&&`, `;`, `>`, `>>`, `<`, `<<`, backtick (cmd
-// substitution), `$(...)` (cmd substitution via `$(`), and bare `&`
-// (background). `$` alone is not flagged (Windows filenames may contain
-// it); only `$(` is — so `echo $HOME` is NOT blocked, but `echo $(rm x)`
-// is. Note: because we test for `$(`, `echo $HOME` is allowed while
-// `echo $(whoami)` is not.
-var shellOperatorRE = regexp.MustCompile("(`|\\$\\(|\\|\\||&&|\\||;|>|<|&)")
+// substitution), `$(...)` (cmd substitution via `$(`), bare `&`
+// (background), and CR/LF newlines (a second line after a safe verb is a
+// second command in every shell, so `echo\nrm -rf x` must never match the
+// safe whitelist — `\s` in the verb patterns would otherwise swallow the
+// newline and let the trailing line ride through). `$` alone is not
+// flagged (Windows filenames may contain it); only `$(` is — so
+// `echo $HOME` is NOT blocked, but `echo $(rm x)` is.
+var shellOperatorRE = regexp.MustCompile("(`|\\$\\(|\\|\\||&&|\\||;|>|<|&|\\r|\\n)")
 
 // safePatterns is the conservative whitelist of read-only / query command
 // shapes. Patterns are matched against the lowercased command AFTER the

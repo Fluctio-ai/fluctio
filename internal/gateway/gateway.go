@@ -613,6 +613,13 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 		// fallback line. A tap just sends that text back — no new reply
 		// channel anywhere.
 		text, replyOpts := agent.ExtractReplyOptions(text)
+		// TTS audio closure: the tts tool stages generated audio and emits
+		// "MEDIA:<path>" marker lines, expecting them to become outbound
+		// attachments. Nothing consumed the markers — audio files piled up
+		// in /tmp and raw "MEDIA:/tmp/…" lines leaked into the reply. Read
+		// each referenced file into a MediaItem and strip the lines.
+		text, ttsItems := extractMediaLineAttachments(text)
+		items = append(items, ttsItems...)
 		// Workspace fallback: list the session's files and attach
 		// every image whose mtime falls in this turn's window. Catches
 		// the case where the LLM emits a broken data URL (with
@@ -1248,6 +1255,50 @@ var fileRefRegex = regexp.MustCompile(`\[([^\]]*)\]\((/workspace/[^)]+)\)`)
 
 // splitFilesFromReply resolves explicitly linked workspace documents into
 // outbound attachments and removes the raw markdown link from IM text.
+// mediaLineRE matches the TTS pipeline's "MEDIA:<path>" marker lines (one
+// per staged audio file).
+var mediaLineRE = regexp.MustCompile(`(?m)^MEDIA:(.+)$`)
+
+// extractMediaLineAttachments turns "MEDIA:<path>" marker lines in the
+// reply into outbound MediaItems and strips the lines from the delivered
+// text. Files that can't be read are skipped but their marker lines are
+// still stripped — the LLM-visible status line above each marker already
+// tells the user the audio was generated, and a raw "MEDIA:C:\…" line in
+// the chat is worse than a missing attachment. Paths are local temp files
+// staged by the tts tool, never user-controlled URLs.
+func extractMediaLineAttachments(reply string) (string, []bus.MediaItem) {
+	matches := mediaLineRE.FindAllStringSubmatchIndex(reply, -1)
+	if len(matches) == 0 {
+		return reply, nil
+	}
+	var items []bus.MediaItem
+	var out strings.Builder
+	cursor := 0
+	for _, m := range matches {
+		path := strings.TrimSpace(reply[m[2]:m[3]])
+		out.WriteString(reply[cursor:m[0]])
+		cursor = m[1]
+		if cursor < len(reply) && reply[cursor] == '\n' {
+			cursor++
+		}
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			slog.Warn("media line: read staged file failed", "path", path, "error", err)
+			continue
+		}
+		// The staging file is disposable once read — remove it so /tmp
+		// doesn't accumulate one audio file per TTS call.
+		_ = os.Remove(path)
+		base := filepath.Base(path)
+		items = append(items, bus.MediaItem{Filename: base, ContentType: mime.TypeByExtension(filepath.Ext(base)), Bytes: data})
+	}
+	out.WriteString(reply[cursor:])
+	return strings.TrimSpace(out.String()), items
+}
+
 func splitFilesFromReply(ctx context.Context, ws workspace.Store, agentID, projectID, sessionID, reply string) (string, []bus.MediaItem) {
 	if reply == "" || ws == nil {
 		return reply, nil

@@ -630,7 +630,10 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/backup", auth(s.handleDeleteBackup))
 	mux.HandleFunc("GET /api/backup/list", auth(s.handleListBackups))
 	mux.HandleFunc("POST /api/backup/now", auth(s.handleBackupNow))
-	mux.HandleFunc("GET /api/backup/download", auth(s.handleDownloadBackup))
+	// Snapshot download = the entire database: provider API keys, chat
+	// transcripts, the user table. Plain auth let any logged-in account
+	// walk off with the full store — super-admin only.
+	mux.HandleFunc("GET /api/backup/download", admin(s.handleDownloadBackup))
 	// Online SQLite maintenance: staged backup→VACUUM coordinator.
 	// Status is readable by any admin-session user; the vacuum trigger
 	// is super-admin-only because it queues all DB traffic briefly.

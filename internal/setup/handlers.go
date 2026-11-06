@@ -793,42 +793,27 @@ func (s *Server) handleTestStoredProvider(w http.ResponseWriter, r *http.Request
 	if !s.authorizeScope(w, r, rec.LegacyScope(), rec.LegacyScopeID(), scopeRead) {
 		return
 	}
-	// The browser never receives the unmasked API key, so it stays
-	// server-side via the stored row. But everything else (apiBase,
-	// apiType, authType) is freely editable in the form and the user
-	// expects Test to exercise *what they typed*, not the saved row —
-	// otherwise tweaking the URL and clicking Test silently re-pings
-	// the old URL and reports green. Honor any overrides the client
-	// sends; fall back to the stored values when a field is omitted.
+	// The stored API key is only ever sent to the apiBase stored next to
+	// it. Client-supplied apiBase/apiType/authType overrides are ignored
+	// on this endpoint: honoring them turned "test stored provider" into
+	// a key-exfiltration oracle — any caller who could read the row could
+	// point the stored secret at an attacker-chosen URL. Testing a
+	// re-typed key or a new URL belongs to the inline test endpoint,
+	// which takes the key in the request body and never reads the store.
 	var body struct {
-		Model    string  `json:"model"`
-		APIBase  *string `json:"apiBase,omitempty"`
-		APIType  *string `json:"apiType,omitempty"`
-		AuthType *string `json:"authType,omitempty"`
+		Model string `json:"model"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	pc := config.ProviderConfig{}
 	if blob, err := json.Marshal(rec.Data); err == nil {
 		_ = json.Unmarshal(blob, &pc)
 	}
-	apiBase := pc.APIBase
-	if body.APIBase != nil {
-		apiBase = *body.APIBase
-	}
-	apiType := pc.APIType
-	if body.APIType != nil {
-		apiType = *body.APIType
-	}
-	authType := pc.AuthType
-	if body.AuthType != nil {
-		authType = *body.AuthType
-	}
 	jsonResponse(w, http.StatusOK, runProviderTest(r.Context(), testProviderRequest{
-		APIBase:  apiBase,
+		APIBase:  pc.APIBase,
 		APIKey:   pc.APIKey,
 		Model:    body.Model,
-		APIType:  apiType,
-		AuthType: authType,
+		APIType:  pc.APIType,
+		AuthType: pc.AuthType,
 	}, true))
 }
 

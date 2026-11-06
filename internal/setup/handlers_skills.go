@@ -221,6 +221,14 @@ func (s *Server) handleDeleteAgentSkill(w http.ResponseWriter, r *http.Request) 
 	if s.requireAgentOwner(w, r, id) == nil {
 		return
 	}
+	// name is a raw path segment (ServeMux decodes %2F), so an unvalidated
+	// "a/b" or ".." would join outside the agent's skills dir and RemoveAll
+	// an arbitrary directory. Reject anything that isn't a single safe name
+	// before building the path.
+	if err := skills.IsValidSkillName(name); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	homePath, err := config.AgentHomeDir(id)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})

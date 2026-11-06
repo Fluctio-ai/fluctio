@@ -74,18 +74,36 @@ func cronJobColumnsExcept(exclude ...string) []string {
 }
 
 // cronJobCreateSQL renders the table definition for the given CREATE
-// prefix ("CREATE TABLE IF NOT EXISTS " / "CREATE TABLE ").
-func cronJobCreateSQL(prefix, table string) string {
+// prefix ("CREATE TABLE IF NOT EXISTS " / "CREATE TABLE ") in the given
+// dialect.
+func cronJobCreateSQL(prefix, table, dialect string) string {
 	var b strings.Builder
 	b.WriteString(prefix + table + " (")
 	for i, c := range cronJobColumnDefs {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString("\n\t\t\t" + c.Name + " " + c.Decl)
+		b.WriteString("\n\t\t\t" + c.Name + " " + cronColumnDecl(c.Decl, dialect))
 	}
 	b.WriteString("\n\t\t)")
 	return b.String()
+}
+
+// cronColumnDecl maps a SQLite-style column declaration to the given
+// dialect. Postgres rejects integer literals as BOOLEAN defaults
+// (DEFAULT 0 / DEFAULT 1 fail on a boolean column), so those two literals
+// translate to FALSE / TRUE. Everything else is identical across dialects.
+func cronColumnDecl(decl, dialect string) string {
+	if dialect != "postgres" {
+		return decl
+	}
+	switch {
+	case strings.Contains(decl, "DEFAULT 1"):
+		return strings.Replace(decl, "DEFAULT 1", "DEFAULT TRUE", 1)
+	case strings.Contains(decl, "DEFAULT 0"):
+		return strings.Replace(decl, "DEFAULT 0", "DEFAULT FALSE", 1)
+	}
+	return decl
 }
 
 // cronJobInsertSQL renders the upsert used by saveCronJob. Postgres uses

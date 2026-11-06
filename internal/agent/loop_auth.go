@@ -141,7 +141,7 @@ func (a *Agent) drainApprovedPending(ctx context.Context, sess *session.Session,
 	if len(calls) == 0 {
 		return 0
 	}
-	results := a.engine.executeToolsConcurrently(ctx, a.registry, calls, a.workspacePath)
+	results := a.engine.executeToolsConcurrently(ctx, a.registry, calls, a.workspacePath, builtinAllowForMode(a.promptMode))
 
 	// Synthesize a fresh tool_calls assistant message + per-call tool
 	// results, so the pair is well-formed regardless of the original IDs.

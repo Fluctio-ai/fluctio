@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/kb"
@@ -121,8 +123,13 @@ func kbSourcesMetadata(sources []kb.KnowledgeSource) map[string]any {
 // It can inspect and modify the HookContext.
 type HookFunc func(ctx context.Context, hc *HookContext)
 
-// HookRegistry stores registered hooks per hook point.
+// HookRegistry stores registered hooks per hook point. Register and Run
+// are synchronized: the gateway lazily attaches plugin-provided hooks
+// (hook_adapter) while turns are in flight, so map writes can race
+// concurrent Run iterations — an unprotected map access is a process-level
+// fatal in Go.
 type HookRegistry struct {
+	mu    sync.RWMutex
 	hooks map[HookPoint][]HookFunc
 }
 
@@ -135,14 +142,36 @@ func NewHookRegistry() *HookRegistry {
 
 // Register adds a hook function for the given hook point.
 func (hr *HookRegistry) Register(point HookPoint, fn HookFunc) {
+	hr.mu.Lock()
+	defer hr.mu.Unlock()
 	hr.hooks[point] = append(hr.hooks[point], fn)
 }
 
-// Run executes all hooks registered at the given point.
+// Run executes all hooks registered at the given point. Each hook is
+// isolated behind a recover: a panicking hook (plugin-supplied code,
+// regex hooks with bad user data) must not take down the whole gateway
+// process — it logs and the turn continues without that hook's effects.
 func (hr *HookRegistry) Run(ctx context.Context, hc *HookContext) {
-	for _, fn := range hr.hooks[hc.Point] {
-		fn(ctx, hc)
+	hr.mu.RLock()
+	hooks := make([]HookFunc, len(hr.hooks[hc.Point]))
+	copy(hooks, hr.hooks[hc.Point])
+	hr.mu.RUnlock()
+	for _, fn := range hooks {
+		runHookSafely(ctx, hc, fn)
 	}
+}
+
+func runHookSafely(ctx context.Context, hc *HookContext, fn HookFunc) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("hook panicked — skipped",
+				"point", hc.Point,
+				"agent", hc.AgentName,
+				"panic", r,
+				"stack", string(debug.Stack()))
+		}
+	}()
+	fn(ctx, hc)
 }
 
 // LoggingHook returns a hook function that logs each hook point.

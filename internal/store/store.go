@@ -303,6 +303,14 @@ type Store interface {
 	// the configured channel; the caller decides whether to delete the
 	// row at threshold.
 	IncrementCronJobFailure(ctx context.Context, jobID string) (int, error)
+	// AdvanceCronJobFailure records a missed tick atomically: advances
+	// next_run past the missed occurrence AND bumps failure_count in one
+	// statement, returning the new count. Keeping the two in one update
+	// is what preserves the "N consecutive missed ticks" grace semantics —
+	// advancing next_run via UpdateCronJobRun would reset the counter
+	// first, and not advancing at all leaves the row due so the poller
+	// hot-loops and burns every retry in milliseconds.
+	AdvanceCronJobFailure(ctx context.Context, jobID string, lastRun, nextRun time.Time) (int, error)
 	// GetNextDueTime returns the earliest next_run across all enabled
 	// cron jobs. Used by the scheduler to sleep precisely until the
 	// next job is due instead of polling.

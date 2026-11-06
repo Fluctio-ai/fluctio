@@ -3,8 +3,11 @@ package channels
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
+	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -110,17 +113,67 @@ func (t *Telegram) handleUpdate(update tgbotapi.Update) {
 	t.bus.Inbound <- *inbound
 }
 
+// telegramMaxPhotoBytes caps the staged photo download. Telegram photo
+// files are far below this; the cap just bounds a misbehaving upstream.
+const telegramMaxPhotoBytes = 20 << 20
+
+// downloadTelegramPhoto fetches the photo through the Bot API and stages
+// it as a local temp file, returning the local path. We deliberately do
+// NOT propagate GetFileDirectURL's URL downstream: it embeds the bot
+// token (https://api.telegram.org/file/bot<token>/<path>) and PhotoURL
+// lands in WARN logs and the persisted session history — a stored token
+// that outlives the message. The token here is scoped to this function.
+func (t *Telegram) downloadTelegramPhoto(fileID string) (string, error) {
+	f, err := t.bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		return "", err
+	}
+	dl := fmt.Sprintf(tgbotapi.FileEndpoint, t.bot.Token, f.FilePath)
+	resp, err := http.Get(dl) //nolint:gosec // endpoint+path are constructed from the Bot API response, not user input
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", fmt.Errorf("telegram file download: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, telegramMaxPhotoBytes))
+	if err != nil {
+		return "", err
+	}
+	ext := ".jpg"
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		if exts, _ := mime.ExtensionsByType(ct); len(exts) > 0 {
+			ext = exts[0]
+		}
+	}
+	tmp, err := os.CreateTemp("", "tg-photo-*"+ext)
+	if err != nil {
+		return "", err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	return tmp.Name(), nil
+}
+
 func (t *Telegram) buildInboundMessage(msg *tgbotapi.Message) *bus.InboundMessage {
 	// Handle photos
 	var photoURL string
 	if msg.Photo != nil && len(msg.Photo) > 0 {
 		// Use the largest photo (last in the array)
 		largest := msg.Photo[len(msg.Photo)-1]
-		fileURL, err := t.bot.GetFileDirectURL(largest.FileID)
+		localPath, err := t.downloadTelegramPhoto(largest.FileID)
 		if err != nil {
-			slog.Warn("telegram get photo URL", "error", err)
+			slog.Warn("telegram download photo", "error", err)
 		} else {
-			photoURL = fileURL
+			photoURL = "file://" + localPath
 		}
 	}
 

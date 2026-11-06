@@ -89,6 +89,10 @@ func (a *cronStoreAdapter) IncrementCronJobFailure(ctx context.Context, jobID st
 	return a.st.IncrementCronJobFailure(ctx, jobID)
 }
 
+func (a *cronStoreAdapter) AdvanceCronJobFailure(ctx context.Context, jobID string, lastRun, nextRun time.Time) (int, error) {
+	return a.st.AdvanceCronJobFailure(ctx, jobID, lastRun, nextRun)
+}
+
 func (a *cronStoreAdapter) DeleteCronJob(ctx context.Context, jobID string) error {
 	return a.st.DeleteCronJob(ctx, jobID)
 }

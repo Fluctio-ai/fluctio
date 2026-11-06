@@ -160,6 +160,35 @@ type completionUsage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+// safeSessionKey validates the client-supplied x-fluctio-session-key
+// header before it is used as a filesystem path segment (attachments
+// land under sessions/<key>/ in the agent workspace). Only
+// [A-Za-z0-9._-] are allowed, and "", ".." and keys longer than 128
+// bytes are rejected, so a crafted header cannot traverse out of the
+// workspace root. Local mirror of internal/agent's safeIDPart to avoid
+// cross-package coupling.
+func safeSessionKey(s string) (string, error) {
+	const maxLen = 128
+	if s == "" {
+		return "", fmt.Errorf("empty session key")
+	}
+	if len(s) > maxLen {
+		return "", fmt.Errorf("session key too long: %d bytes", len(s))
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+		default:
+			return "", fmt.Errorf("invalid character %q", r)
+		}
+	}
+	if strings.Contains(s, "..") {
+		return "", fmt.Errorf(`".." is not allowed`)
+	}
+	return s, nil
+}
+
 // HandleChatCompletions handles POST /v1/chat/completions.
 func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var req chatCompletionRequest
@@ -221,6 +250,15 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	sessionKey := r.Header.Get("x-fluctio-session-key")
 	if sessionKey == "" {
 		sessionKey = "api-" + fmt.Sprintf("%d", time.Now().UnixNano())
+	} else if _, err := safeSessionKey(sessionKey); err != nil {
+		// The session key becomes a filesystem path segment when
+		// attachments materialize (sessions/<key>/ under the agent
+		// workspace), so a crafted header like "../.." must never reach
+		// the write path — reject the request instead.
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]string{"message": "invalid x-fluctio-session-key", "type": "invalid_request_error"},
+		})
+		return
 	}
 
 	// Extract the last user message

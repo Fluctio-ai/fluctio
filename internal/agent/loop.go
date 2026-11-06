@@ -1801,11 +1801,20 @@ func inboundScopeDir(projectID, sessionKey string) string {
 }
 
 // fetchImageBytes resolves an image reference to bytes + extension. Accepts
-// data: URLs (base64-decoded) and http(s) URLs (downloaded via the shared
-// downloadMediaURL helper). ext includes the leading dot.
+// data: URLs (base64-decoded), http(s) URLs (downloaded via the shared
+// downloadMediaURL helper), and file:// local paths staged by channel
+// adapters — e.g. the telegram photo downloader — so bot-token-bearing
+// upstream URLs never leave the adapter. ext includes the leading dot.
 func fetchImageBytes(ref string) ([]byte, string, error) {
 	if strings.HasPrefix(ref, "data:") {
 		return decodeDataURL(ref)
+	}
+	if strings.HasPrefix(ref, "file://") {
+		b, err := os.ReadFile(strings.TrimPrefix(ref, "file://"))
+		if err != nil {
+			return nil, "", err
+		}
+		return b, extFromMIME(http.DetectContentType(b)), nil
 	}
 	if strings.HasPrefix(ref, "http://") || strings.HasPrefix(ref, "https://") {
 		b, err := downloadMediaURL(ref)
@@ -4031,7 +4040,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			"agent", a.name,
 			"count", len(executeCalls),
 		)
-		results := a.engine.executeToolsConcurrently(ctx, a.registry, executeCalls, a.workspacePath)
+		results := a.engine.executeToolsConcurrently(ctx, a.registry, executeCalls, a.workspacePath, builtinAllowForMode(a.promptMode))
 		// Merge auth-denied calls (each already paired to its tool_use id)
 		// into the result set so the next API request is well-formed.
 		results = append(results, authBlocked...)
@@ -4050,30 +4059,17 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			})
 		}
 
-		// Defensive backstop: if the SDK returned fewer results than tool
-		// calls (and the bridge somehow didn't already pad — belt and
-		// suspenders since orphan tool_use ids poison the next API request
-		// with HTTP 400), synthesize a failure result so every tool_use
-		// gets a paired tool_result in the conversation history.
-		if len(results) < len(resp.ToolCalls) {
-			padded := make([]toolCallResult, len(resp.ToolCalls))
-			gotByID := make(map[string]toolCallResult, len(results))
-			for _, r := range results {
-				gotByID[r.toolCallID] = r
-			}
-			for i, tc := range resp.ToolCalls {
-				if r, ok := gotByID[tc.ID]; ok {
-					padded[i] = r
-					continue
-				}
-				padded[i] = toolCallResult{
-					toolCallID: tc.ID,
-					toolName:   tc.Function.Name,
-					result:     "tool execution did not return a result",
-					err:        fmt.Errorf("missing executor response for %s", tc.ID),
-				}
-			}
-			results = padded
+		// Defensive backstop: pair results to tool_use ids by ID — NEVER by
+		// position. The executed batch is a filtered subset (auth gate +
+		// parallel cap + deferrals), so results[0] is not necessarily
+		// resp.ToolCalls[0]: a mixed allow/blocked round would otherwise
+		// attach tool results to the wrong ids and corrupt the session
+		// history (and the next LLM request). Every original tool_use id
+		// must receive a paired tool_result; orphans 400 the next request,
+		// so any id without an executor response gets a synthesized failure.
+		byID := make(map[string]toolCallResult, len(results))
+		for _, r := range results {
+			byID[r.toolCallID] = r
 		}
 
 		// Round-level failure detection: did EVERY result come back
@@ -4081,9 +4077,17 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// the next iteration can decide whether to drop tools.
 		roundAllFailed := len(results) > 0
 		// Process results
-		for idx, r := range results {
+		for _, tc := range resp.ToolCalls {
+			r, ok := byID[tc.ID]
+			if !ok {
+				r = toolCallResult{
+					toolCallID: tc.ID,
+					toolName:   tc.Function.Name,
+					result:     "tool execution did not return a result",
+					err:        fmt.Errorf("missing executor response for %s", tc.ID),
+				}
+			}
 			totalToolCalls++
-			tc := resp.ToolCalls[idx]
 			resultContent, meta := extractToolMeta(r.result)
 			resultContent = annotateReachability(r.toolName, resultContent, a.registry)
 
@@ -4865,12 +4869,28 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			}
 		}
 		// Execute tools concurrently via SDK engine
-		results := a.engine.executeToolsConcurrently(ctx, a.registry, streamCalls, a.workspacePath)
+		results := a.engine.executeToolsConcurrently(ctx, a.registry, streamCalls, a.workspacePath, builtinAllowForMode(a.promptMode))
 		results = append(results, authBlocked...)
 		totalToolCalls += len(results)
 
-		for idx, r := range results {
-			tc := resp.ToolCalls[idx]
+		// Pair results to tool_use ids by ID — never by position: the
+		// executed batch is a filtered subset (auth gate), so results[0]
+		// is not necessarily resp.ToolCalls[0] and position zip would
+		// attach results to the wrong ids in any mixed allow/blocked round.
+		byID := make(map[string]toolCallResult, len(results))
+		for _, r := range results {
+			byID[r.toolCallID] = r
+		}
+		for _, tc := range resp.ToolCalls {
+			r, ok := byID[tc.ID]
+			if !ok {
+				r = toolCallResult{
+					toolCallID: tc.ID,
+					toolName:   tc.Function.Name,
+					result:     "tool execution did not return a result",
+					err:        fmt.Errorf("missing executor response for %s", tc.ID),
+				}
+			}
 			resultContent, meta := extractToolMeta(r.result)
 			resultContent = annotateReachability(r.toolName, resultContent, a.registry)
 			// Gate the structured-failure tag behind isFailedToolResult so that

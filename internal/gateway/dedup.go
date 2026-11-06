@@ -56,7 +56,12 @@ func (g *Gateway) isDuplicate(msg bus.InboundMessage) bool {
 	if msg.MessageID == "" {
 		return false
 	}
-	key := fmt.Sprintf("dm:%s:%s:%s", msg.Channel, msg.AccountID, msg.MessageID)
+	// ChatID is part of the key: Telegram/Slack message_ids are only
+	// unique WITHIN a conversation, so two different users hitting the
+	// same bot with colliding sequence numbers inside the 60s window
+	// would silently swallow each other's messages on a bare
+	// (channel, accountID, messageID) key.
+	key := fmt.Sprintf("dm:%s:%s:%s:%s", msg.Channel, msg.AccountID, msg.ChatID, msg.MessageID)
 	_, loaded := g.dedup.LoadOrStore(key, dedupEntry{seenAt: time.Now()})
 	return loaded
 }

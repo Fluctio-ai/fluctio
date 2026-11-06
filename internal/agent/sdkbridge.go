@@ -105,9 +105,15 @@ func newSDKEngine(sessionID string) *sdkEngine {
 }
 
 // buildSDKRegistry converts Fluctio's tool registry into an SDK registry.
-func buildSDKRegistry(fcRegistry *tools.Registry) *sdktools.Registry {
+// builtinAllow mirrors Registry.DefinitionsForMode semantics (nil = all
+// built-ins, empty = none, list = only those) so the EXECUTION layer cannot
+// run a tool the definition layer excluded — otherwise a prompt-injected
+// model could invoke a mode-excluded built-in (e.g. exec in chatbot mode)
+// via a raw tool_call, since DefinitionsForMode only filters what the
+// model sees.
+func buildSDKRegistry(fcRegistry *tools.Registry, builtinAllow []string) *sdktools.Registry {
 	sdkReg := sdktools.NewRegistry()
-	for _, def := range fcRegistry.Definitions() {
+	for _, def := range fcRegistry.DefinitionsForMode(builtinAllow) {
 		fn := fcRegistry.GetFunc(def.Function.Name)
 		if fn == nil {
 			continue
@@ -131,16 +137,43 @@ type toolCallResult struct {
 }
 
 // executeToolsConcurrently runs tool calls using the SDK's concurrent executor.
-func (e *sdkEngine) executeToolsConcurrently(ctx context.Context, fcRegistry *tools.Registry, toolCalls []provider.ToolCall, workspace string) []toolCallResult {
-	sdkReg := buildSDKRegistry(fcRegistry)
+// builtinAllow mirrors Registry.DefinitionsForMode (see buildSDKRegistry):
+// calls naming a tool outside the mode allowlist are refused outright with
+// an explicit denial result instead of being executed.
+func (e *sdkEngine) executeToolsConcurrently(ctx context.Context, fcRegistry *tools.Registry, toolCalls []provider.ToolCall, workspace string, builtinAllow []string) []toolCallResult {
+	allowed := make(map[string]bool)
+	for _, def := range fcRegistry.DefinitionsForMode(builtinAllow) {
+		allowed[def.Function.Name] = true
+	}
+
+	// Partition: mode-allowed calls go to the executor; the rest get a
+	// deterministic denial result so every tool_use id still receives a
+	// paired tool_result.
+	var runnable []provider.ToolCall
+	results := make([]toolCallResult, len(toolCalls))
+	for i, tc := range toolCalls {
+		if allowed[tc.Function.Name] {
+			runnable = append(runnable, tc)
+			continue
+		}
+		results[i] = toolCallResult{
+			toolCallID: tc.ID,
+			toolName:   tc.Function.Name,
+			result: fmt.Sprintf("tool %q is not available in the current prompt mode — the call was NOT executed. "+
+				"Use one of the tools available in this mode instead.", tc.Function.Name),
+			err: fmt.Errorf("tool %q excluded by mode allowlist", tc.Function.Name),
+		}
+	}
+
+	sdkReg := buildSDKRegistry(fcRegistry, builtinAllow)
 	executor := sdktools.NewExecutor(sdkReg, nil, &sdktypes.ToolUseContext{
 		WorkingDir: workspace,
 		AbortCtx:   ctx,
 	})
 
 	// Convert Fluctio tool calls to SDK format
-	calls := make([]sdktools.ToolCallRequest, len(toolCalls))
-	for i, tc := range toolCalls {
+	calls := make([]sdktools.ToolCallRequest, len(runnable))
+	for i, tc := range runnable {
 		var input map[string]interface{}
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &input); err != nil {
 			input = map[string]interface{}{"_raw": tc.Function.Arguments}
@@ -168,8 +201,7 @@ func (e *sdkEngine) executeToolsConcurrently(ctx context.Context, fcRegistry *to
 	for _, resp := range responses {
 		byID[resp.ToolUseID] = resp
 	}
-	results := make([]toolCallResult, len(toolCalls))
-	for i, tc := range toolCalls {
+	for i, tc := range runnable {
 		resp, ok := byID[tc.ID]
 		if !ok {
 			results[i] = toolCallResult{
@@ -189,7 +221,7 @@ func (e *sdkEngine) executeToolsConcurrently(ctx context.Context, fcRegistry *to
 				}
 				results[i] = toolCallResult{
 					toolCallID: resp.ToolUseID,
-					toolName:   toolCalls[i].Function.Name,
+					toolName:   tc.Function.Name,
 					result:     resultText + "\n[Analyze the error above and try a different approach.]",
 					err:        fmt.Errorf("%s", resultText),
 				}
@@ -207,14 +239,14 @@ func (e *sdkEngine) executeToolsConcurrently(ctx context.Context, fcRegistry *to
 		if resp.Error != nil {
 			results[i] = toolCallResult{
 				toolCallID: resp.ToolUseID,
-				toolName:   toolCalls[i].Function.Name,
+				toolName:   tc.Function.Name,
 				result:     resultText,
 				err:        resp.Error,
 			}
 		} else {
 			results[i] = toolCallResult{
 				toolCallID: resp.ToolUseID,
-				toolName:   toolCalls[i].Function.Name,
+				toolName:   tc.Function.Name,
 				result:     resultText,
 			}
 		}

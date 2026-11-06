@@ -8,12 +8,29 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/bus"
 )
+
+// pluginIDRE constrains manifest ids to a filesystem-safe slug. The id is
+// used to build install/remove paths (filepath.Join(pluginsDir, id) →
+// os.RemoveAll), so separators, traversal tokens, and leading dots must be
+// rejected before one can become a path component.
+var pluginIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// IsValidPluginID reports whether id is a safe plugin identifier for path
+// construction. Exported for the CLI install/remove paths, which take ids
+// from untrusted plugin.json files and operator command lines.
+func IsValidPluginID(id string) bool {
+	if id == "" || id == "." || id == ".." || len(id) > 128 {
+		return false
+	}
+	return pluginIDRE.MatchString(id)
+}
 
 const shutdownTimeout = 5 * time.Second
 
@@ -461,6 +478,12 @@ func loadManifest(dir string) (*Manifest, error) {
 
 	if m.ID == "" {
 		return nil, fmt.Errorf("%s: missing id field", path)
+	}
+	// The id keys the plugin map AND builds install/remove paths
+	// (cmd/fluctio plugin install/remove). An untrusted plugin.json with
+	// id "../somewhere" would escape the plugins dir on both.
+	if !IsValidPluginID(m.ID) {
+		return nil, fmt.Errorf("%s: invalid plugin id %q (allowed: A-Z a-z 0-9 . _ -, no leading separator)", path, m.ID)
 	}
 	if m.Command == "" {
 		return nil, fmt.Errorf("%s: missing command field", path)

@@ -364,15 +364,20 @@ func registerQQChannels(rec store.ConfigRecord, chCfg config.ChannelConfig, mb *
 
 		// Live claim closure. Re-reads Admins["qq"] on every inbound
 		// so a /claim in another session takes effect immediately.
+		// Compare against the INBOUND openid — the checker receives the
+		// sender's platform id and Admins["qq"] holds QQ openids (written
+		// by /claim). The old code compared the channel row's Fluctio
+		// owner user id instead, which never matches an openid: after a
+		// successful /claim every message was still dropped (fail-closed),
+		// and only a hand-edited config could flip it to fail-open.
 		if agentID := rec.AgentID; agentID != "" {
-			ownerID := rec.UserID
 			q.SetAllowedChecker(func(openid string) bool {
 				cfg, ok := config.AgentFileConfigLoader(agentID, "")
 				if !ok {
 					return false
 				}
 				for _, id := range cfg.Admins["qq"] {
-					if id == ownerID {
+					if id == openid {
 						return true
 					}
 				}

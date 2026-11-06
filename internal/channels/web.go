@@ -62,7 +62,15 @@ func (w *WebChannel) Subscribe(agentID, chatID string) (<-chan bus.OutboundMessa
 		if len(w.subscribers[key]) == 0 {
 			delete(w.subscribers, key)
 		}
-		close(ch)
+		// Deliberately NO close(ch) here. SendMessage copies the
+		// subscriber list under RLock and sends AFTER releasing it, so a
+		// close from cleanup racing that copy panics the whole gateway
+		// ("send on closed channel"). The only consumer selects on
+		// ctx.Done() / request teardown and tolerates a never-closed
+		// channel (it treats ok==false as "stop listening", which simply
+		// never fires). Once removed from the map the channel is
+		// unreachable and GC reclaims it; buffered leftovers cap at 8
+		// messages.
 	}
 	return ch, cleanup
 }

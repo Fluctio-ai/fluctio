@@ -373,13 +373,22 @@ func (s *Server) requireUserOrAdmin(w http.ResponseWriter, r *http.Request, path
 
 // requireAgentOwner returns the agent record if the caller owns it (or is
 // super_admin), otherwise writes a 403/404 and returns nil.
+//
+// Ownership is enforced through the caller identity's agent ACL: session
+// users and unrestricted apikeys pass for every agent (single-user
+// behavior unchanged), while an apikey carrying a non-empty AllowedAgents
+// list is scoped to exactly those agents. The previous unconditional
+// flatten let an ACL'd apikey modify or delete any agent on the platform.
 func (s *Server) requireAgentOwner(w http.ResponseWriter, r *http.Request, agentID string) *store.AgentRecord {
 	rec, err := s.dataStore.GetAgent(r.Context(), agentID)
 	if err != nil || rec == nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
 		return nil
 	}
-	// Single-user flatten: every authenticated caller owns every agent.
+	if ident, ok := authIdentity(r); ok && !ident.CanAccessAgent(agentID) {
+		jsonResponse(w, http.StatusForbidden, map[string]any{"error": "forbidden: agent not in caller's agent ACL"})
+		return nil
+	}
 	return rec
 }
 
@@ -405,7 +414,9 @@ func (s *Server) callerOwnsAgent(r *http.Request, agentID string) bool {
 		return false
 	}
 	_ = rec
-	// Single-user flatten: every authenticated caller owns every agent.
+	if ident, ok := authIdentity(r); ok && !ident.CanAccessAgent(agentID) {
+		return false
+	}
 	return true
 }
 
@@ -416,7 +427,12 @@ func (s *Server) requireAgentReadable(w http.ResponseWriter, r *http.Request, ag
 		return false
 	}
 	_ = rec
-	// Single-user flatten: every authenticated caller can read every agent.
+	// Session users and unrestricted apikeys can read every agent; an
+	// apikey with a non-empty AllowedAgents ACL is scoped to its list.
+	if ident, ok := authIdentity(r); ok && !ident.CanAccessAgent(agentID) {
+		jsonResponse(w, http.StatusForbidden, map[string]any{"error": "forbidden: agent not in caller's agent ACL"})
+		return false
+	}
 	return true
 }
 

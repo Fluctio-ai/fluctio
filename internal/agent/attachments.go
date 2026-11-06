@@ -56,6 +56,55 @@ type Attachment struct {
 	Name string
 }
 
+// maxIDPartLen caps caller-supplied session/project IDs before they are
+// used as path segments. Generous next to the "s-<ms>-<6>" session keys
+// the store mints, tight enough to bound the joined path.
+const maxIDPartLen = 128
+
+// safeIDPart validates a caller-supplied session/project identifier that
+// will be used as a filesystem path segment (scopedHostDir joins, store
+// keys, in-sandbox destinations). Only [A-Za-z0-9._-] are allowed; "",
+// ".." and anything longer than maxIDPartLen bytes are rejected. A
+// whitelist — rather than blacklisting separators — means a crafted value
+// like "../.." can never traverse out of the workspace root when joined.
+func safeIDPart(s string) (string, error) {
+	if s == "" {
+		return "", fmt.Errorf("empty id")
+	}
+	if len(s) > maxIDPartLen {
+		return "", fmt.Errorf("id too long: %d bytes", len(s))
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+		default:
+			return "", fmt.Errorf("invalid character %q", r)
+		}
+	}
+	if strings.Contains(s, "..") {
+		return "", fmt.Errorf(`".." is not allowed`)
+	}
+	return s, nil
+}
+
+// validateScopeIDs checks the session/project scope pair against the
+// safeIDPart whitelist. Empty means "unset" and is allowed (several
+// layouts legitimately omit one side); any non-empty ID that fails
+// rejects the whole scope so callers can skip the write instead of
+// joining a traversable path.
+func validateScopeIDs(sessionID, projectID string) error {
+	for _, p := range []struct{ kind, id string }{{"session", sessionID}, {"project", projectID}} {
+		if p.id == "" {
+			continue
+		}
+		if _, err := safeIDPart(p.id); err != nil {
+			return fmt.Errorf("%s id: %w", p.kind, err)
+		}
+	}
+	return nil
+}
+
 // scopedHostDir returns the on-disk workspace directory for a given
 // session/project, mirroring bindSession's scopeDir math (loop.go:
 // sessions/<sessionKey>/ or projects/<pid>/ under the agent workspace
@@ -68,10 +117,18 @@ type Attachment struct {
 // the [Attached:] breadcrumb was injected). Computing the scope from
 // sessionID/projectID directly avoids the stale-UserRoot race.
 //
-// Returns "" when workspacePath is unset or neither sessionID nor
-// projectID is known (caller falls back to UserRoot / agent root).
+// Returns "" when workspacePath is unset, neither sessionID nor
+// projectID is known (caller falls back to UserRoot / agent root), or a
+// supplied ID fails the safeIDPart whitelist — degrading to the
+// agent-scoped root beats joining a traversable path.
 func (a *Agent) scopedHostDir(sessionID, projectID string) string {
 	if a.workspacePath == "" || (sessionID == "" && projectID == "") {
+		return ""
+	}
+	// Defense in depth: callers validate their scope up front, but never
+	// join an ID that failed the whitelist regardless of who got here.
+	if err := validateScopeIDs(sessionID, projectID); err != nil {
+		slog.Warn("scopedHostDir: invalid scope id", "agent", a.name, "error", err)
 		return ""
 	}
 	seg := "sessions/" + sessionID
@@ -119,6 +176,15 @@ func (a *Agent) scopedHostDir(sessionID, projectID string) string {
 // harmless for E2B (gateway-local bytes nobody reads).
 func (a *Agent) WriteSessionAttachments(ctx context.Context, sessionID, projectID string, atts []Attachment) []string {
 	if len(atts) == 0 {
+		return nil
+	}
+	// Security: sessionID/projectID arrive from clients (API request
+	// headers, web chat bodies, store rows) and are joined into host
+	// paths, workspace-store keys and in-sandbox destinations below.
+	// Reject any scope that fails the ID whitelist — skipping the batch
+	// beats writing outside the workspace root.
+	if err := validateScopeIDs(sessionID, projectID); err != nil {
+		slog.Warn("attachment write skipped: invalid scope id", "agent", a.name, "session", sessionID, "project", projectID, "error", err)
 		return nil
 	}
 	var paths []string
@@ -490,6 +556,12 @@ func (a *Agent) persistImageGenOutput(ctx context.Context, sessionID, projectID,
 // three-write loop in WriteSessionAttachments.
 func (a *Agent) writeWorkspaceBytes(ctx context.Context, sessionID, projectID, name string, data []byte) {
 	ext := filepath.Ext(name)
+	// Same scope whitelist as WriteSessionAttachments — image_gen runs on
+	// the same client-reachable session/project identifiers.
+	if err := validateScopeIDs(sessionID, projectID); err != nil {
+		slog.Warn("image_gen write skipped: invalid scope id", "agent", a.name, "session", sessionID, "project", projectID, "error", err)
+		return
+	}
 	// Same scoped-host-dir logic as WriteSessionAttachments step 1 — see
 	// the stale-UserRoot note there. writeWorkspaceBytes runs inside the
 	// agent loop (bindSession has set UserRoot for the current turn), so

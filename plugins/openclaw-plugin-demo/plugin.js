@@ -27,19 +27,34 @@ module.exports = {
       // Register a calculator tool
       api.registerTool({
         name: "calculate",
-        description: "Evaluate a math expression",
+        description: "Evaluate a simple arithmetic expression (+ - * / % and parentheses)",
         parameters: {
           type: "object",
           properties: {
-            expression: { type: "string", description: "Math expression to evaluate" },
+            expression: { type: "string", description: "Arithmetic expression, e.g. (2+3)*4" },
           },
           required: ["expression"],
         },
         async execute(args) {
+          // The old demo used Function(`return (${expression})`) — dynamic
+          // code evaluation exposed to the LLM, i.e. unsandboxed RCE on the
+          // plugin host (which inherits the gateway's full environment).
+          // A demo plugin is copied verbatim by users, so it now evaluates
+          // with a strict arithmetic-only character check and a real parser
+          // via Function on a VERIFIED-safe operand string only.
+          const expr = String(args.expression || "");
+          if (!/^[0-9+\-*/%().\s]+$/.test(expr)) {
+            return "Error: only numbers and + - * / % ( ) are allowed";
+          }
           try {
-            // Simple eval for demo (in real plugin, use a safe parser)
-            const result = Function(`"use strict"; return (${args.expression})`)();
-            return `${args.expression} = ${result}`;
+            // expr is now guaranteed to contain only digits, operators,
+            // parens and whitespace — no identifiers, so no property or
+            // function access is possible.
+            const result = Function(`"use strict"; return (${expr})`)();
+            if (typeof result !== "number" || !Number.isFinite(result)) {
+              return `Error: expression did not evaluate to a finite number`;
+            }
+            return `${expr} = ${result}`;
           } catch (e) {
             return `Error: invalid expression`;
           }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -87,11 +90,13 @@ func doUpgrade() error {
 		suffix = fmt.Sprintf("fluctio_%s_%s.tar.gz", goos, goarch)
 	}
 
-	var downloadURL string
+	var downloadURL, checksumsURL string
 	for _, asset := range release.Assets {
 		if asset.Name == suffix {
 			downloadURL = asset.BrowserDownloadURL
-			break
+		}
+		if asset.Name == "checksums.txt" {
+			checksumsURL = asset.BrowserDownloadURL
 		}
 	}
 	if downloadURL == "" {
@@ -119,6 +124,26 @@ func doUpgrade() error {
 		return fmt.Errorf("download failed: %w", err)
 	}
 	tmpFile.Close()
+
+	// Verify the archive against the release's checksums.txt before it
+	// gets executed or installed. goreleaser publishes the file for every
+	// release; a missing checksums file or mismatched hash aborts the
+	// upgrade instead of installing unverified bytes.
+	if checksumsURL == "" {
+		return fmt.Errorf("release %s has no checksums.txt — refusing to install unverified artifacts", release.TagName)
+	}
+	expected, err := fetchExpectedChecksum(client, checksumsURL, suffix)
+	if err != nil {
+		return fmt.Errorf("checksum lookup failed: %w", err)
+	}
+	got, err := fileSHA256(tmpPath)
+	if err != nil {
+		return fmt.Errorf("checksum failed: %w", err)
+	}
+	if got != expected {
+		return fmt.Errorf("checksum mismatch for %s: got %s, want %s — the download may be corrupted or tampered with", suffix, got, expected)
+	}
+	fmt.Printf("🔒 checksum OK (%s…)\n", got[:12])
 
 	// 5. Extract binary
 	tmpDir, err := os.MkdirTemp("", "fluctio-extract-*")
@@ -162,8 +187,11 @@ func doUpgrade() error {
 	// 7. Replace current binary
 	fmt.Printf("📝 Installing to %s...\n", currentBin)
 
-	// Try direct overwrite first; if permission denied, use sudo on Unix
-	if err := replaceBinary(currentBin, newBin); err != nil {
+	// Atomic-ish swap: stage + rename. A direct overwrite of the running
+	// image fails on Linux (ETXTBSY) and Windows (file lock), which made
+	// the self-upgrade dead on both platforms.
+	cleanupOld, err := replaceBinary(currentBin, newBin)
+	if err != nil {
 		if goos != "windows" {
 			fmt.Println("🔐 Need elevated permissions, trying sudo...")
 			sudo := exec.Command("sudo", "cp", newBin, currentBin)
@@ -176,16 +204,82 @@ func doUpgrade() error {
 		} else {
 			return fmt.Errorf("install failed: %w", err)
 		}
+	} else {
+		// Best-effort cleanup of the swapped-out image. On Windows the
+		// running process still maps the old file, so the delete may fail
+		// here; the next successful upgrade removes the leftover.
+		cleanupOld()
 	}
 
 	fmt.Printf("✅ Upgraded to %s\n", release.TagName)
 	return nil
 }
 
-func replaceBinary(dst, src string) error {
-	srcData, err := os.ReadFile(src)
+// fetchExpectedChecksum downloads a goreleaser checksums.txt and returns
+// the expected sha256 for the given asset filename. checksums.txt lines
+// are "<hex>  <filename>" (two spaces).
+func fetchExpectedChecksum(client *http.Client, checksumsURL, assetName string) (string, error) {
+	resp, err := client.Get(checksumsURL)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return os.WriteFile(dst, srcData, 0o755)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("checksums.txt returned %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 2 && fields[1] == assetName {
+			return fields[0], nil
+		}
+	}
+	return "", fmt.Errorf("checksums.txt has no entry for %s", assetName)
+}
+
+// fileSHA256 returns the hex sha256 of the file at path.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// replaceBinary swaps the running executable via a same-directory rename
+// chain: stage the new image next to the destination, move the old one
+// aside, then move the new one into place. Overwriting the running image
+// in place fails on Linux (ETXTBSY) and Windows (image file lock) — the
+// direct os.WriteFile approach made the self-upgrade unusable on both.
+// The returned func removes the swapped-out copy (best-effort; on Windows
+// the running process still maps it, and the leftover is removed by the
+// next upgrade).
+func replaceBinary(dst, src string) (func(), error) {
+	stage := dst + ".new"
+	old := dst + ".old"
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(stage, data, 0o755); err != nil {
+		return nil, err
+	}
+	_ = os.Remove(old) // stale leftover from a previous upgrade
+	if err := os.Rename(dst, old); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(stage, dst); err != nil {
+		// Roll the old image back so the installation isn't left broken.
+		_ = os.Rename(old, dst)
+		return nil, err
+	}
+	return func() { _ = os.Remove(old) }, nil
 }

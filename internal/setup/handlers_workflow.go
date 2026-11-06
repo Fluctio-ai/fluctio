@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/auth"
@@ -325,6 +326,27 @@ func (s *Server) handleWorkflowList(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "workflows": out})
 }
 
+// workflowFilePath validates a raw wfID path segment and returns the path of
+// the workflow's YAML file under dir, or writes a 400 and returns ok=false.
+// wfID comes straight from the URL (ServeMux decodes %2F), so an unvalidated
+// id containing "/" or ".." would join outside the agent's WorkflowsDir and
+// read or remove an arbitrary .yaml file. ValidateID enforces the safe id
+// charset (no separators, no dot segments); the cleaned-path containment
+// check below is defense in depth in case that rule is ever relaxed.
+func workflowFilePath(w http.ResponseWriter, dir, wfID string) (string, bool) {
+	if err := workflow.ValidateID(wfID); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return "", false
+	}
+	path := filepath.Clean(filepath.Join(dir, wfID+".yaml"))
+	cleanRoot := filepath.Clean(dir)
+	if path != cleanRoot && !strings.HasPrefix(path, cleanRoot+string(filepath.Separator)) {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid workflow id"})
+		return "", false
+	}
+	return path, true
+}
+
 // handleWorkflowGet — GET /api/agents/{agentID}/workflows/{wfID}
 //
 // Reads one workflow's YAML source (for the editor's YAML pane, ticket 09).
@@ -334,7 +356,10 @@ func (s *Server) handleWorkflowGet(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
 		return
 	}
-	path := filepath.Join(ag.WorkflowsDir(), r.PathValue("wfID")+".yaml")
+	path, ok := workflowFilePath(w, ag.WorkflowsDir(), r.PathValue("wfID"))
+	if !ok {
+		return
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "workflow not found"})
@@ -403,7 +428,12 @@ func (s *Server) handleWorkflowDelete(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
 		return
 	}
-	path := filepath.Join(ag.WorkflowsDir(), r.PathValue("wfID")+".yaml")
+	// Validate before Join: the raw path segment could otherwise escape
+	// WorkflowsDir (see workflowFilePath).
+	path, ok := workflowFilePath(w, ag.WorkflowsDir(), r.PathValue("wfID"))
+	if !ok {
+		return
+	}
 	if err := os.Remove(path); err != nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "workflow not found"})
 		return

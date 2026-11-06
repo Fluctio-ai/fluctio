@@ -133,6 +133,11 @@ func installFromLocal(srcDir, pluginsDir string) error {
 	if manifest.ID == "" {
 		return fmt.Errorf("plugin.json missing 'id' field")
 	}
+	// manifest.ID builds the RemoveAll + copy destination below; an
+	// untrusted plugin.json with a traversal id would escape pluginsDir.
+	if !plugin.IsValidPluginID(manifest.ID) {
+		return fmt.Errorf("invalid plugin id %q in plugin.json (allowed: A-Z a-z 0-9 . _ -, no leading separator)", manifest.ID)
+	}
 
 	destDir := filepath.Join(pluginsDir, manifest.ID)
 	os.RemoveAll(destDir)
@@ -216,6 +221,9 @@ func installFromHub(name, pluginsDir string) error {
 	}
 
 	// No plugin.json — copy as utility (e.g. plugin-bridge)
+	if !plugin.IsValidPluginID(name) {
+		return fmt.Errorf("invalid plugin name %q (allowed: A-Z a-z 0-9 . _ -, no leading separator)", name)
+	}
 	toolsDir := filepath.Join(filepath.Dir(pluginsDir), "tools")
 	os.MkdirAll(toolsDir, 0o755)
 	destDir := filepath.Join(toolsDir, name)
@@ -393,6 +401,11 @@ func pluginRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := args[0]
+			// The id builds the RemoveAll target below — same validation
+			// the manager applies to plugin.json ids.
+			if !plugin.IsValidPluginID(id) {
+				return fmt.Errorf("invalid plugin id %q (allowed: A-Z a-z 0-9 . _ -, no leading separator)", id)
+			}
 			homeDir, err := config.HomeDir()
 			if err != nil {
 				return err

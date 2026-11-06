@@ -187,6 +187,14 @@ func skillRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			// Validate BEFORE joining: an unvalidated name reaches
+			// os.RemoveAll, so `skill remove ..` would wipe the whole
+			// ~/.fluctio tree (DB, configs, every agent) and `../..`
+			// could climb into the user's home directory. Same rule the
+			// skill install/pending paths apply.
+			if err := skills.IsValidSkillName(name); err != nil {
+				return fmt.Errorf("invalid skill name: %w", err)
+			}
 			homeDir, err := config.HomeDir()
 			if err != nil {
 				return err

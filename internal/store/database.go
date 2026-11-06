@@ -637,7 +637,7 @@ func (d *DBStore) migrateKBWiki(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_kb_note_att_note ON kb_note_attachments (note_id)`,
 	}
 	for _, s := range stmts {
-		if _, err := d.db.ExecContext(ctx, s); err != nil {
+		if _, err := d.db.ExecContext(ctx, d.adaptDDL(s)); err != nil {
 			return fmt.Errorf("kb/wiki migration: %w", err)
 		}
 	}
@@ -2044,7 +2044,7 @@ func (d *DBStore) migrateCronJobsDropUserID(ctx context.Context) error {
 		}
 	} else {
 		for _, s := range []string{
-			cronJobCreateSQL("CREATE TABLE ", "cron_jobs_new"),
+			cronJobCreateSQL("CREATE TABLE ", "cron_jobs_new", d.dialect),
 			// Column list derived from the same definitions as the CREATE
 			// above, so a future column can't be dropped by this rebuild.
 			`INSERT INTO cron_jobs_new (` + strings.Join(cronJobAllCols, ", ") + `)
@@ -2279,8 +2279,11 @@ func (d *DBStore) migrateCronJobsBackgroundDeliver(ctx context.Context) error {
 		if has {
 			continue
 		}
+		// Postgres rejects integer literals as BOOLEAN defaults — route
+		// the decl through the shared dialect mapping (DEFAULT 0/1 →
+		// FALSE/TRUE).
 		if _, err := d.db.ExecContext(ctx,
-			fmt.Sprintf(`ALTER TABLE cron_jobs ADD COLUMN %s %s`, col.name, col.decl)); err != nil {
+			fmt.Sprintf(`ALTER TABLE cron_jobs ADD COLUMN %s %s`, col.name, cronColumnDecl(col.decl, d.dialect))); err != nil {
 			return fmt.Errorf("add %s: %w", col.name, err)
 		}
 	}
@@ -3051,7 +3054,7 @@ func (d *DBStore) migrationSQL() []string {
 		//
 		// idx_configs_scope likewise deferred to migrateConfigsMergeScopeID
 		// — on legacy databases scope_id does not exist yet at this point.
-		cronJobCreateSQL("CREATE TABLE IF NOT EXISTS ", "cron_jobs"),
+		cronJobCreateSQL("CREATE TABLE IF NOT EXISTS ", "cron_jobs", d.dialect),
 		// idx_cron_jobs_user creation is moved to migrateCronJobsAddUserID
 		// so legacy installs hit it after the column-add ALTER. Fresh
 		// installs reach the same code path via Migrate's full sweep.
@@ -3287,6 +3290,33 @@ func (d *DBStore) Close() error {
 }
 
 // ph returns the correct placeholder for the dialect.
+// rowidCol returns the physical row identifier for bounded-delete /
+// order-by-subquery patterns. SQLite exposes rowid on ordinary tables;
+// Postgres has none but provides ctid, which serves the same role here
+// (migrateFlattenUserData already uses ctid for the same reason).
+func (d *DBStore) rowidCol() string {
+	if d.dialect == "postgres" {
+		return "ctid"
+	}
+	return "rowid"
+}
+
+// adaptDDL translates SQLite-isms in hand-written DDL to the active
+// dialect. Postgres rejects AUTOINCREMENT (use BIGSERIAL) and BLOB (use
+// BYTEA); both appear throughout the hand-maintained migration statements,
+// which is what made a fresh Postgres install fail Migrate on the kb/wiki
+// and cards tables. Everything else in those statements is compatible.
+// No-op on SQLite. Scanning/parameterizing works unchanged: []byte maps to
+// BYTEA, and BIGSERIAL ids scan into int64 like INTEGER PRIMARY KEY did.
+func (d *DBStore) adaptDDL(stmt string) string {
+	if d.dialect != "postgres" {
+		return stmt
+	}
+	stmt = strings.ReplaceAll(stmt, "INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+	stmt = strings.ReplaceAll(stmt, " BLOB", " BYTEA")
+	return stmt
+}
+
 func (d *DBStore) ph(n int) string {
 	if d.dialect == "postgres" {
 		return fmt.Sprintf("$%d", n)
@@ -3467,7 +3497,13 @@ func (d *DBStore) DeleteUser(ctx context.Context, id string) error {
 		return err
 	}
 	// Per-user state that's not agent-scoped (agent_files is now agent-only).
-	for _, t := range []string{"web_sessions", "apikeys", "sessions", "session_messages", "session_events"} {
+	// Filter by actual column presence: the ownership flatten drops user_id
+	// from some of these tables on legacy databases.
+	withUID, err := d.tablesWithUserID(ctx, []string{"web_sessions", "apikeys", "sessions", "session_messages", "session_events"})
+	if err != nil {
+		return err
+	}
+	for _, t := range withUID {
 		if _, err := tx.ExecContext(ctx,
 			fmt.Sprintf("DELETE FROM %s WHERE user_id = %s", t, d.ph(1)), id); err != nil {
 			return err
@@ -3485,6 +3521,28 @@ func (d *DBStore) DeleteUser(ctx context.Context, id string) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// tablesWithUserID filters the given tables down to those that actually
+// have a user_id column in the current database. The ownership flatten
+// drops user_id from several tables on legacy databases (agent_files,
+// sessions, session_messages, session_events, cron_jobs,
+// conversation_summaries), while fresh installs still create them with
+// the column — DeleteUser and ReassignUserData must not emit SQL that
+// references a dropped column, or boot-time single-owner enforcement
+// fails outright on every flattened install.
+func (d *DBStore) tablesWithUserID(ctx context.Context, tables []string) ([]string, error) {
+	var out []string
+	for _, t := range tables {
+		has, err := d.tableHasColumn(ctx, t, "user_id")
+		if err != nil {
+			return nil, err
+		}
+		if has {
+			out = append(out, t)
+		}
+	}
+	return out, nil
 }
 
 func (d *DBStore) CountUsers(ctx context.Context) (int, error) {
@@ -3508,13 +3566,21 @@ func (d *DBStore) ReassignUserData(ctx context.Context, fromID, toID string) err
 		return err
 	}
 	defer tx.Rollback()
-	for _, t := range []string{
+	// Filter by actual column presence: the ownership flatten drops
+	// user_id from several of these tables on legacy databases, and an
+	// UPDATE referencing the dropped column would abort the boot-time
+	// merge before it starts.
+	withUID, err := d.tablesWithUserID(ctx, []string{
 		"web_sessions", "push_devices", "apikeys", "agents",
 		"sessions", "session_messages", "session_events",
 		"agent_files", "cron_jobs", "projects", "project_runtimes",
 		"token_usage_daily", "quotas", "token_usage_log",
 		"channels", "conversation_summaries",
-	} {
+	})
+	if err != nil {
+		return err
+	}
+	for _, t := range withUID {
 		if _, err := tx.ExecContext(ctx,
 			fmt.Sprintf("UPDATE %s SET user_id = %s WHERE user_id = %s", t, d.ph(1), d.ph(2)),
 			toID, fromID); err != nil {
@@ -4355,16 +4421,17 @@ func (d *DBStore) PruneSessionEvents(ctx context.Context, before time.Time, batc
 	// comparison matches how rows are stored, independent of how the driver
 	// serialises time.Time (which can differ and silently break the compare).
 	beforeStr := before.UTC().Format("2006-01-02 15:04:05")
+	rid := d.rowidCol()
 	var total int64
 	for {
 		res, err := d.db.ExecContext(ctx,
 			fmt.Sprintf(`DELETE FROM session_events
-				WHERE rowid IN (
-					SELECT rowid FROM session_events
+				WHERE %s IN (
+					SELECT %s FROM session_events
 					WHERE created_at < %s
-					ORDER BY rowid
+					ORDER BY %s
 					LIMIT %s
-				)`, d.ph(1), d.ph(2)),
+				)`, rid, rid, d.ph(1), rid, d.ph(2)),
 			beforeStr, batchSize)
 		if err != nil {
 			return total, err
@@ -4436,16 +4503,17 @@ func (d *DBStore) PruneLLMCallDiag(ctx context.Context, before time.Time, batchS
 		batchSize = 1000
 	}
 	beforeStr := before.UTC().Format("2006-01-02 15:04:05")
+	rid := d.rowidCol()
 	var total int64
 	for {
 		res, err := d.db.ExecContext(ctx,
 			fmt.Sprintf(`DELETE FROM llm_call_diag
-				WHERE rowid IN (
-					SELECT rowid FROM llm_call_diag
+				WHERE %s IN (
+					SELECT %s FROM llm_call_diag
 					WHERE created_at < %s
-					ORDER BY rowid
+					ORDER BY %s
 					LIMIT %s
-				)`, d.ph(1), d.ph(2)),
+				)`, rid, rid, d.ph(1), rid, d.ph(2)),
 			beforeStr, batchSize)
 		if err != nil {
 			return total, err
@@ -5508,6 +5576,32 @@ func (d *DBStore) IncrementCronJobFailure(ctx context.Context, jobID string) (in
 	return n, nil
 }
 
+// AdvanceCronJobFailure records a missed tick in one statement: next_run
+// moves to the caller-supplied time and failure_count increments, so the
+// grace counter survives the advancement (see Store.AdvanceCronJobFailure).
+func (d *DBStore) AdvanceCronJobFailure(ctx context.Context, jobID string, lastRun, nextRun time.Time) (int, error) {
+	if d.dialect == "postgres" {
+		var n int
+		err := d.db.QueryRowContext(ctx,
+			`UPDATE cron_jobs SET last_run=$1, next_run=$2, failure_count = failure_count + 1, locked_by=NULL, locked_at=NULL
+			 WHERE id=$3 RETURNING failure_count`, lastRun, nextRun, jobID).Scan(&n)
+		if err != nil {
+			return 0, scanErr(err)
+		}
+		return n, nil
+	}
+	if _, err := d.db.ExecContext(ctx,
+		`UPDATE cron_jobs SET last_run=?, next_run=?, failure_count = failure_count + 1, locked_by=NULL, locked_at=NULL WHERE id=?`,
+		lastRun, nextRun, jobID); err != nil {
+		return 0, err
+	}
+	var n int
+	if err := d.db.QueryRowContext(ctx, `SELECT failure_count FROM cron_jobs WHERE id = ?`, jobID).Scan(&n); err != nil {
+		return 0, scanErr(err)
+	}
+	return n, nil
+}
+
 func (d *DBStore) GetNextDueTime(ctx context.Context) (time.Time, error) {
 	var q string
 	if d.dialect == "postgres" {
@@ -6247,7 +6341,7 @@ func (d *DBStore) migrateDailyDiary(ctx context.Context) error {
 // into session_messages; the raw excerpt is not duplicated here. The
 // unique key makes re-extraction of the same window idempotent.
 func (d *DBStore) migrateShelvedCandidates(ctx context.Context) error {
-	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS shelved_candidates (
+	if _, err := d.db.ExecContext(ctx, d.adaptDDL(`CREATE TABLE IF NOT EXISTS shelved_candidates (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		agent_id TEXT NOT NULL,
 		kind TEXT NOT NULL,
@@ -6271,7 +6365,7 @@ func (d *DBStore) migrateShelvedCandidates(ctx context.Context) error {
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(agent_id, session_key, seq, kind)
-	)`); err != nil {
+	)`)); err != nil {
 		return fmt.Errorf("migrate shelved_candidates: %w", err)
 	}
 	if _, err := d.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_shelved_candidates_open
@@ -6454,7 +6548,7 @@ func (d *DBStore) migrateKBCards(ctx context.Context) error {
 		)`,
 	}
 	for _, stmt := range stmts {
-		if _, err := d.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := d.db.ExecContext(ctx, d.adaptDDL(stmt)); err != nil {
 			return fmt.Errorf("migrate kb_cards: %w", err)
 		}
 	}

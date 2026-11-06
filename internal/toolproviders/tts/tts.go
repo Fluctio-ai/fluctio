@@ -44,8 +44,11 @@ func parseArgs(raw map[string]any) (args, error) {
 }
 
 // writeAudio dumps audio bytes to a tmp file and returns an LLM-visible
-// response. The MEDIA: marker is how loop.go's extractMediaPaths picks files
-// up and attaches them to the outbound chat message.
+// response. The MEDIA: marker lines are consumed by the gateway's
+// extractMediaLineAttachments, which reads the staged file into an
+// outbound MediaItem (audio attachment on IM) and strips the marker from
+// the delivered text. The temp file is removed on successful read;
+// orphaned files from failed deliveries are bounded by the OS temp dir.
 func writeAudio(data []byte, ext string) (toolproviders.Response, error) {
 	if len(data) == 0 {
 		return toolproviders.Response{}, toolproviders.ErrNoResults

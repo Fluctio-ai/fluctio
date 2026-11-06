@@ -89,9 +89,12 @@ func (a *Agent) runSubagentLoop(ctx context.Context, task string, maxIterations 
 
 	// Filter delegate_task out of the sub-agent's toolset — no nesting
 	// in v1. Other tools (web_fetch, exec, file ops, MCP, …) flow
-	// through unchanged.
+	// through, filtered by the parent's prompt mode so the sub-agent
+	// can't reach built-ins the mode excludes (same rule as the parent's
+	// definition AND execution layers).
+	modeAllow := builtinAllowForMode(a.promptMode)
 	var toolDefs []provider.Tool
-	for _, t := range a.registry.Definitions() {
+	for _, t := range a.registry.DefinitionsForMode(modeAllow) {
 		if t.Function.Name == "delegate_task" {
 			continue
 		}
@@ -205,10 +208,24 @@ func (a *Agent) runSubagentLoop(ctx context.Context, task string, maxIterations 
 			"tools":     toolNames,
 		}})
 
-		results := a.engine.executeToolsConcurrently(ctx, a.registry, resp.ToolCalls, a.workspacePath)
+		// Authorization gate: the subagent inherits the parent's registry,
+		// so without this check every ask/auto/dangerous/hardline rule the
+		// parent turn went through is bypassed here. Prompt-tier decisions
+		// collapse to block — a subagent has no session and no /yes channel
+		// to answer a prompt. Results stay paired by tool_use id.
+		toExec, blocked := a.filterSubagentCalls(resp.ToolCalls)
+		execResults := a.engine.executeToolsConcurrently(ctx, a.registry, toExec, a.workspacePath, modeAllow)
+		resultsByID := make(map[string]toolCallResult, len(resp.ToolCalls))
+		for _, r := range execResults {
+			resultsByID[r.toolCallID] = r
+		}
+
 		roundAllFailed := true
-		for idx, r := range results {
-			tc := resp.ToolCalls[idx]
+		for _, tc := range resp.ToolCalls {
+			r, ok := resultsByID[tc.ID]
+			if !ok {
+				r = blocked[tc.ID]
+			}
 			// Mirror the streaming exit (loop.go ~:3443-3455):
 			// keep meta, annotate outside-root artifacts so the subagent
 			// learns to call deliver_file, and tag genuinely failed
@@ -257,6 +274,47 @@ func (a *Agent) runSubagentLoop(ctx context.Context, task string, maxIterations 
 		return fmt.Sprintf("[subagent reached %d-iteration limit without producing a final answer]", maxIterations), nil
 	}
 	return finalResp.Content, nil
+}
+
+// filterSubagentCalls runs the auth gate over subagent tool calls. The
+// subagent shares the parent's registry, so without this check every
+// ask/auto/dangerous/hardline rule the parent turn went through is
+// bypassed here. A subagent has no session and no /yes channel, so
+// prompt-tier decisions degrade to block — the denial text tells the
+// sub-agent to fold the limitation into its deliverable instead of
+// retrying. Hardline stays unconditional; yolo still allows everything
+// (the operator opted into full trust for the whole turn).
+func (a *Agent) filterSubagentCalls(calls []provider.ToolCall) (toExec []provider.ToolCall, blocked map[string]toolCallResult) {
+	blocked = make(map[string]toolCallResult)
+	if a.authGate == nil {
+		return calls, blocked
+	}
+	mode := a.authMode
+	if mode == "" {
+		mode = AuthModeAsk
+	}
+	for _, tc := range calls {
+		dec := a.authGate.evaluateCall(tc.Function.Name, tc.Function.Arguments, mode)
+		switch dec.action {
+		case authAllow:
+			toExec = append(toExec, tc)
+		case authPrompt:
+			blocked[tc.ID] = toolCallResult{
+				toolCallID: tc.ID,
+				toolName:   tc.Function.Name,
+				result: denyMessageBypass(dec.reason +
+					" — subagents cannot request interactive authorization; " +
+					"the parent agent must perform this action itself, or the session mode must allow it"),
+			}
+		default: // authBlock
+			blocked[tc.ID] = toolCallResult{
+				toolCallID: tc.ID,
+				toolName:   tc.Function.Name,
+				result:     denyMessageBypass(dec.reason),
+			}
+		}
+	}
+	return toExec, blocked
 }
 
 // subagentSystemSuffix is appended to the agent's normal system prompt

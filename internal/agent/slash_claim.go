@@ -25,6 +25,14 @@ func (a *Agent) slashClaim(msg bus.InboundMessage) slashResult {
 	if len(parts) < 2 || parts[1] == "" {
 		return slashResult{handled: true, reply: "用法：`/claim <code>` —— 从 agent owner 的网页「绑定 IM 身份」面板获取 6 位验证码。"}
 	}
+	// Guard: persistAdminImID appends msg.UserID verbatim to Admins[channel].
+	// An empty platform id would match EVERY empty-uid inbound message in
+	// isAdminChatter, silently promoting all anonymous messages on this
+	// channel to admin — and the dirty entry can't be removed from the UI
+	// (the backend rejects empty platformId on unbind). Refuse instead.
+	if strings.TrimSpace(msg.UserID) == "" {
+		return slashResult{handled: true, reply: "❌ 绑定失败：未能识别你的平台身份（UserID 为空）。请确认渠道适配器已上报发送者 ID 后重试。"}
+	}
 	if a.dataStore == nil {
 		return slashResult{handled: true, reply: "❌ 验证失败：系统未就绪，请稍后重试。"}
 	}
