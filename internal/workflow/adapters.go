@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/sandbox"
 )
@@ -113,10 +114,19 @@ func (c *SandboxCodeCaller) Run(ctx context.Context, language, code string) (str
 // matching the code-node limit.
 const httpExecTimeout = 30 * time.Second
 
-// NetHTTPCaller is the production HTTPCaller for the M3 http node: a stateless
-// net/http client. It builds the request from the node's resolved input,
-// forwards declared headers, and returns the final status + raw body (the
-// runner parses the body into {status, body}).
+// httpExecMaxResponseBytes caps the http node's response body. Workflows
+// are user-authored and the body flows into node output (and the run
+// log), so an unbounded ReadAll let any workflow OOM the gateway.
+const httpExecMaxResponseBytes = 2 << 20
+
+// NetHTTPCaller is the production HTTPCaller for the M3 http node: a
+// stateless net/http client routed through the shared SafeClient dialer.
+// Workflows are user-authored, so without the SSRF dialer an http node
+// could probe the gateway's loopback/private network from inside the
+// process — the same defense web_fetch and kb fetches already use. It
+// builds the request from the node's resolved input, forwards declared
+// headers, and returns the final status + raw body (the runner parses
+// the body into {status, body}).
 type NetHTTPCaller struct{}
 
 // Do implements HTTPCaller.
@@ -132,12 +142,12 @@ func (NetHTTPCaller) Do(ctx context.Context, method, url string, headers map[str
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := (&http.Client{Timeout: httpExecTimeout}).Do(req)
+	resp, err := httpclient.SafeClient(httpExecTimeout).Do(req)
 	if err != nil {
 		return 0, "", err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	b, err := io.ReadAll(io.LimitReader(resp.Body, httpExecMaxResponseBytes))
 	if err != nil {
 		return resp.StatusCode, "", fmt.Errorf("read body: %w", err)
 	}
