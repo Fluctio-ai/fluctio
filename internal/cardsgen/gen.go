@@ -95,18 +95,16 @@ func Run(
 		return 0, fmt.Errorf("cardsgen: llm pass: %w", err)
 	}
 
-	// Consume the fed wiki pages on a successful LLM pass — even when the
-	// output dedups to zero or the daily cap truncates it, re-feeding the
-	// same pages nightly would only burn tokens. A failed pass leaves them
-	// uncarded for the next run to retry.
+	// Consume the fed wiki pages AFTER the cards persist — the old order
+	// marked pages before a single SaveCard ran, so a DB hiccup during the
+	// save loop permanently consumed the day's material with nothing
+	// produced. Now a failed save leaves the pages uncarded for the next
+	// run to retry.
 	wikiIDs := make([]string, 0, len(sources))
 	for _, s := range sources {
 		if s.kind == "wiki" {
 			wikiIDs = append(wikiIDs, s.ref)
 		}
-	}
-	if err := ws.MarkPagesCarded(ctx, agentID, wikiIDs); err != nil {
-		slog.Warn("cardsgen: mark wiki pages carded failed", "agent", agentID, "error", err)
 	}
 
 	// Batch the dedup checks: one embedding call and one embedding-table
@@ -136,6 +134,7 @@ func Run(
 	}
 
 	created, skipped := 0, 0
+	saveFailures := 0
 	seen := map[string]bool{}
 	for i, c := range cards {
 		q := strings.TrimSpace(c.Question)
@@ -155,10 +154,23 @@ func Run(
 		src := clampSource(c.SourceIndex, sources)
 		if _, err := ks.SaveCard(ctx, agentID, q, a, src.kind, src.ref, clip(c.Excerpt, 200)); err != nil {
 			slog.Warn("cardsgen: save card failed", "agent", agentID, "error", err)
+			saveFailures++
 			continue
 		}
 		seen[key] = true
 		created++
+	}
+	// Mark consumed material only when every LLM candidate either saved or
+	// was deduped against an existing card. Any save failure means part of
+	// the output is lost — leave the pages uncarded so the next run re-feeds
+	// them (the daily cap may re-produce, but nothing is silently consumed).
+	if saveFailures == 0 {
+		if err := ws.MarkPagesCarded(ctx, agentID, wikiIDs); err != nil {
+			slog.Warn("cardsgen: mark wiki pages carded failed", "agent", agentID, "error", err)
+		}
+	} else {
+		slog.Warn("cardsgen: save failures — leaving wiki pages uncarded for retry",
+			"agent", agentID, "save_failures", saveFailures, "created", created)
 	}
 	if err := dbs.StampCardGenRun(ctx, agentID, date, created, model); err != nil {
 		slog.Warn("cardsgen: stamp run failed", "agent", agentID, "date", date, "error", err)
