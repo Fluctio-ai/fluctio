@@ -14,6 +14,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -67,8 +68,24 @@ func currentBillingWindow(now time.Time, resetDay int) (since, until time.Time) 
 func CheckQuota(ctx context.Context, qs QuotaStore, meter Meter, userID string) (*QuotaStatus, error) {
 	q, err := qs.GetQuota(ctx, userID)
 	if err != nil {
-		// No quota row → unlimited.
+		// No quota row → unlimited. A real store failure (DB down) lands
+		// in the same branch — fail-open is a deliberate product choice
+		// (billing must not hard-block turns on infra hiccups), so log
+		// loudly instead of silently swallowing the lookup error.
+		slog.Error("quota lookup failed — failing open", "user", userID, "error", err)
 		return &QuotaStatus{Allowed: true}, nil
+	}
+	// A NEGATIVE limit is an invalid write (PUT /v1/quota doesn't range
+	// check) and used to pass the <=0 "unlimited" test — deny rather than
+	// letting a malformed row act as a bypass.
+	if q.MonthlyTokenLimit < 0 || q.MonthlyRequestLimit < 0 {
+		_, negUntil := currentBillingWindow(time.Now(), q.ResetDay)
+		return &QuotaStatus{
+			Allowed:             false,
+			MonthlyTokenLimit:   q.MonthlyTokenLimit,
+			MonthlyRequestLimit: q.MonthlyRequestLimit,
+			ResetsAt:            negUntil.AddDate(0, 0, 1).Format(time.RFC3339),
+		}, nil
 	}
 	if q.MonthlyTokenLimit <= 0 && q.MonthlyRequestLimit <= 0 {
 		return &QuotaStatus{Allowed: true}, nil
@@ -79,6 +96,7 @@ func CheckQuota(ctx context.Context, qs QuotaStore, meter Meter, userID string) 
 	totals, err := meter.TotalsForUser(ctx, userID, r)
 	if err != nil {
 		// Metering failure should not block the user.
+		slog.Error("quota metering failed — failing open", "user", userID, "error", err)
 		return &QuotaStatus{Allowed: true}, nil
 	}
 
