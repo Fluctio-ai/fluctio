@@ -249,7 +249,14 @@ func archiveMemoryTidy(ctx context.Context, st store.Store, agentID string, entr
 	for _, e := range entries {
 		fmt.Fprintf(&sb, "- %s\n", strings.TrimSpace(e))
 	}
-	prev, _ := st.GetAgentFile(ctx, agentID, memoryArchiveFile)
+	prev, err := st.GetAgentFile(ctx, agentID, memoryArchiveFile)
+	// Fail-safe: a transient DB read error must NOT overwrite the whole
+	// archive with only the new header block (silent history wipe).
+	// Missing file is fine — prev stays nil and the archive starts fresh.
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		slog.Warn("memory tidy: archive read failed, skipping append", "agent", agentID, "error", err)
+		return
+	}
 	if err := st.SaveAgentFile(ctx, agentID, memoryArchiveFile, append(prev, []byte(sb.String())...)); err != nil {
 		slog.Warn("memory tidy: archive save failed", "agent", agentID, "error", err)
 	}

@@ -67,5 +67,16 @@ func readRetentionHours(env string, def int) int {
 		slog.Warn("invalid env, disabling sweep", "env", env, "value", v)
 		return -1
 	}
+	// Negative/zero pass through unchanged — callers treat <=0 as
+	// "sweep disabled" (contract pinned by the retention tests). Only
+	// clamp huge positives: a value beyond time.Duration's nanosecond
+	// range overflows, the cutoff wraps into the FUTURE, and the sweep
+	// would delete the entire table. 10 years is far past any real
+	// retention intent.
+	const maxRetentionHours = 10 * 365 * 24
+	if h > maxRetentionHours {
+		slog.Warn("retention env unreasonably large, clamping", "env", env, "value", h, "max", maxRetentionHours)
+		h = maxRetentionHours
+	}
 	return h
 }
