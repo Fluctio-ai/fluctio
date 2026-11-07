@@ -40,15 +40,20 @@ func LoadFromFile(path string) (*Policy, error) {
 	return &p, nil
 }
 
-// LoadPreset returns a named preset policy.
-func LoadPreset(name string) *Policy {
+// LoadPreset returns a named preset policy. Unknown names are an ERROR,
+// not a silent fallback to the permissive default — a typo like
+// "restrictd" used to return the most permissive policy while the
+// operator believed they had tightened it.
+func LoadPreset(name string) (*Policy, error) {
 	switch strings.ToLower(name) {
 	case "restricted":
-		return RestrictedPolicy()
+		return RestrictedPolicy(), nil
 	case "standard":
-		return StandardPolicy()
+		return StandardPolicy(), nil
+	case "default", "permissive":
+		return DefaultPolicy(), nil
 	default:
-		return DefaultPolicy()
+		return nil, fmt.Errorf("unknown policy preset %q (valid: restricted, standard, default/permissive)", name)
 	}
 }
 

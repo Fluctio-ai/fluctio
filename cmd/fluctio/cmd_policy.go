@@ -48,7 +48,10 @@ func policyShowCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			p := policy.LoadPreset(name)
+			p, err := policy.LoadPreset(name)
+			if err != nil {
+				return err
+			}
 
 			data, err := json.MarshalIndent(p, "", "  ")
 			if err != nil {
