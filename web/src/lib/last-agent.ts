@@ -22,8 +22,21 @@ export function lastAgentId(): string | null {
 }
 
 // lastAgentPath returns the /agents/<id>/chat/ path of the most recently used
-// agent, or null when none is remembered. Callers fall back to /overview/.
+// agent, or null when none is remembered. The stored id is untrusted
+// localStorage data (user-editable via devtools) — validate the shape
+// before embedding it in a navigation path so a tampered value can't
+// produce an unexpected route.
 export function lastAgentPath(): string | null {
   const id = lastAgentId();
-  return id ? `/agents/${id}/chat/` : null;
+  if (!id) return null;
+  if (!/^[A-Za-z0-9._-]{1,128}$/.test(id)) {
+    // Unrecognized shape: drop it so the next rememberAgent overwrites.
+    try {
+      localStorage.removeItem(KEY);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+  return `/agents/${id}/chat/`;
 }
