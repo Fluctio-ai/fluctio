@@ -87,7 +87,7 @@ const MarkdownEditor = dynamic(
   { ssr: false },
 );
 
-type SaveState = "saved" | "saving" | "dirty";
+type SaveState = "saved" | "saving" | "dirty" | "idle";
 
 // EMPTY_BOARD is the canonical scene of a brand-new whiteboard. The fence
 // inserted by "插入白板" starts as exactly this string, so the Whiteboard's
@@ -147,6 +147,13 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   );
   const [loading, setLoading] = React.useState(() => !readCache<KBNote[]>(`kb-notes:${agentId ?? ""}`));
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  // Mirror of selectedId for async callbacks: autosave/attachment responses
+  // must not write another note's data into the currently-viewed note when
+  // the user switched mid-flight.
+  const selectedIdRef = React.useRef<string | null>(selectedId);
+  React.useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
   // editorActive tracks "an editor is open" separately from the draft's
   // emptiness: a brand-new note starts with an empty draft, and gating the
   // editor on content would bounce the user straight back to the empty
@@ -235,6 +242,10 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
       setSaveState("saving");
       try {
         const res = await saveNote(agentId, { id: id ?? undefined, ...draft });
+        // Stale-response guard: if the user switched notes while this save
+        // was in flight, neither adopt the fresh id (would yank the view
+        // back to the old note) nor stamp the new note's saved state.
+        if (selectedIdRef.current !== id) { setSaveState("idle"); return; }
         if (res.error || !res.id) { notify(res.error ?? t("knowledge.notes.saveFailed")); setSaveState("dirty"); return; }
         setSaveState("saved");
         if (res.id !== id) {
