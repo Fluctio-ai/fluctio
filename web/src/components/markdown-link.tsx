@@ -18,6 +18,14 @@ import type { AnchorHTMLAttributes } from "react";
  */
 export function ExternalAnchor(props: AnchorHTMLAttributes<HTMLAnchorElement>) {
   const { href, children, ...rest } = props;
+  // Protocol gate: content is LLM/tool output, so a scheme outside the
+  // safe set (javascript:, data:, vbscript:, app:, …) must not become a
+  // clickable anchor. Render the label as plain text instead — react-
+  // markdown's default urlTransform filters at ITS layer, but this
+  // component is shared with wiki/doc renders whose transforms differ.
+  if (hasUnsafeProtocol(href)) {
+    return <span {...rest}>{children}</span>;
+  }
   const external = isExternalHref(href);
   if (external) {
     return (
@@ -31,6 +39,18 @@ export function ExternalAnchor(props: AnchorHTMLAttributes<HTMLAnchorElement>) {
       {children}
     </a>
   );
+}
+
+// hasUnsafeProtocol reports whether href carries an explicit scheme that
+// is not in the renderable set (http/https/mailto/tel). Relative paths,
+// root-relative, hash anchors, and scheme-less values are safe by
+// definition — the browser resolves them against the page origin.
+function hasUnsafeProtocol(href: string | undefined): boolean {
+  if (!href) return false;
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href);
+  if (!m) return false;
+  const scheme = m[1].toLowerCase();
+  return scheme !== "http" && scheme !== "https" && scheme !== "mailto" && scheme !== "tel";
 }
 
 function isExternalHref(href: string | undefined): boolean {
