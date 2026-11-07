@@ -32,6 +32,15 @@ func (g *Gateway) runProjectCardCycle(ctx context.Context) {
 		if sp.Agents == nil {
 			continue
 		}
-		sp.Agents.ReconcileProjectCards(ctx)
+		// Per-space recover: one userspace's panic must not truncate the
+		// reconciliation of every later space in this round.
+		func(sp *UserSpace) {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Warn("project card reconcile panic", "user", sp.UserID, "error", r)
+				}
+			}()
+			sp.Agents.ReconcileProjectCards(ctx)
+		}(sp)
 	}
 }

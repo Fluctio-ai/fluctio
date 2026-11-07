@@ -224,6 +224,12 @@ type Gateway struct {
 	// session load per tick. Pure cache — the session history is the truth.
 	// Guarded by mu.
 	failureScan map[string]failureScanState
+	// autogenMu guards autogenInflight, the per-(kind, agent, date)
+	// in-flight set that stops a diary/cards tick from firing a second
+	// LLM generation while the previous async run is still going (double
+	// spend + last-write-wins overwrites). See diary_autogen.go.
+	autogenMu       sync.Mutex
+	autogenInflight map[string]struct{}
 }
 
 // SetProjectRuntime wires the coding-agent runtime manager. Call once at
@@ -276,7 +282,13 @@ func (g *Gateway) Store() store.Store { return g.store }
 // preview runs in the SAME executor the coding agent writes files to —
 // the only way edits reach the server on backends (E2B) without a shared
 // host mount.
-func (g *Gateway) SandboxPool() sandbox.ExecutorPool { return g.sandboxPool }
+func (g *Gateway) SandboxPool() sandbox.ExecutorPool {
+	// ReloadSandbox swaps the field under g.mu; read under the same lock
+	// so a runtime call concurrent with a hot reload can't race.
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.sandboxPool
+}
 
 // TaskQueue returns the gateway's task queue.
 func (g *Gateway) TaskQueue() *taskqueue.Queue { return g.taskQueue }
@@ -472,7 +484,15 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 	// its own) need this — without a system-level pool, the per-user
 	// builder produced nil for those spaces and the agent's exec tool
 	// refused to run with "sandbox required but no executor available".
-	systemSandboxPool := buildSystemSandboxPool(readSystemSandboxCfg(st), ws)
+	sandboxCfg, sandboxCfgErr := readSystemSandboxCfg(st)
+	if sandboxCfgErr != nil {
+		// First boot has no previous pool to keep: degrade to the env-only
+		// merge (same as the old swallowed-error behavior) but say so —
+		// a silent zero cfg would disable the sandbox for every user.
+		slog.Error("sandbox config read failed; using env-only sandbox config",
+			"error", sandboxCfgErr)
+	}
+	systemSandboxPool := buildSystemSandboxPool(sandboxCfg, ws)
 
 	// Accounts service is used by the inbound routing loop to lazy-mint
 	// per-(channel, IM-sender) app_user rows so each chatter on an IM
@@ -1062,8 +1082,13 @@ func (g *Gateway) Run() error {
 	if g.pluginMgr != nil {
 		g.pluginMgr.StopAll()
 	}
-	if g.sandboxPool != nil {
-		g.sandboxPool.CloseAll()
+	// Read the pool under mu: ReloadSandbox swaps it concurrently during
+	// the shutdown window.
+	g.mu.RLock()
+	pool := g.sandboxPool
+	g.mu.RUnlock()
+	if pool != nil {
+		pool.CloseAll()
 	}
 	slog.Info("gateway stopped")
 	return nil
@@ -1151,14 +1176,21 @@ func readSystemTaskQueue(st store.Store) config.TaskQueueCfg {
 
 // readSystemSandboxCfg reads the system-scope sandbox setting and
 // merges FLUCTIO_SANDBOX_* env vars on top. Source of truth for the
-// gateway-wide sandbox pool.
-func readSystemSandboxCfg(st store.Store) config.SandboxCfg {
+// gateway-wide sandbox pool. Store errors are returned, not swallowed: a
+// zero-value cfg builds a nil pool and would silently disable sandboxing
+// for every user. Missing setting rows are NOT an error (empty merge).
+// On error the env merge still applies to whatever was read, so the boot
+// caller can degrade to the env-only config with a loud log.
+func readSystemSandboxCfg(st store.Store) (config.SandboxCfg, error) {
 	cfg := &config.Config{}
 	if st != nil {
-		_ = scope.SettingInto(context.Background(), st, NSSandbox, "", "", &cfg.Sandbox)
+		if err := scope.SettingInto(context.Background(), st, NSSandbox, "", "", &cfg.Sandbox); err != nil {
+			config.LoadEnv().ApplyToConfig(cfg)
+			return cfg.Sandbox, fmt.Errorf("read sandbox setting: %w", err)
+		}
 	}
 	config.LoadEnv().ApplyToConfig(cfg)
-	return cfg.Sandbox
+	return cfg.Sandbox, nil
 }
 
 // Setting namespace constants. Each maps to one row in configs

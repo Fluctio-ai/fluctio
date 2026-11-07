@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/fluctio-ai/fluctio/internal/channels"
@@ -64,7 +65,15 @@ func (g *Gateway) ReloadSandbox() error {
 	if g.store == nil {
 		return nil
 	}
-	cfg := readSystemSandboxCfg(g.store)
+	cfg, err := readSystemSandboxCfg(g.store)
+	if err != nil {
+		// A transient DB failure must not degrade the cfg to its zero
+		// value — buildSystemSandboxPool would return nil and silently
+		// disable sandboxing for every user while reporting success. Keep
+		// the current pool and surface the failure instead.
+		slog.Error("hot-reload: sandbox config read failed, keeping current pool", "error", err)
+		return fmt.Errorf("read sandbox config: %w", err)
+	}
 	next := buildSystemSandboxPool(cfg, g.workspace)
 
 	g.mu.Lock()

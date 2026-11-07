@@ -181,6 +181,14 @@ func (q *QQChannel) SendMessage(msg bus.OutboundMessage) error {
 	// image_gen tool output) into MediaItems so the base64 upload path
 	// handles them. QQ runs host-mounted so os.ReadFile works.
 	for _, p := range msg.MediaPaths {
+		// Outbound clamp mirroring qqMaxDownloadBytes on the inbound side:
+		// os.ReadFile + base64 would otherwise pull arbitrarily large tool
+		// outputs fully into memory only for QQ to reject the request.
+		if fi, statErr := os.Stat(p); statErr == nil && fi.Size() > qqMaxDownloadBytes {
+			slog.Warn("qq media path exceeds size cap — skipping item",
+				"path", p, "bytes", fi.Size(), "cap", qqMaxDownloadBytes)
+			continue
+		}
 		b, err := os.ReadFile(p)
 		if err != nil {
 			slog.Warn("qq media path read failed", "path", p, "error", err)
@@ -191,6 +199,20 @@ func (q *QQChannel) SendMessage(msg bus.OutboundMessage) error {
 			Bytes:    b,
 		})
 	}
+	// Drop pre-existing MediaItems over the cap too (bus producers may
+	// attach large payloads directly); oversized items are skipped with a
+	// log, matching sendMedia's per-item failure semantics.
+	items := make([]bus.MediaItem, 0, len(msg.MediaItems))
+	for _, it := range msg.MediaItems {
+		if len(it.Bytes) > qqMaxDownloadBytes {
+			slog.Warn("qq media item exceeds size cap — skipping item",
+				"account", q.accountID, "chat", msg.ChatID,
+				"filename", it.Filename, "bytes", len(it.Bytes), "cap", qqMaxDownloadBytes)
+			continue
+		}
+		items = append(items, it)
+	}
+	msg.MediaItems = items
 
 	if msg.Text == "" && len(msg.MediaItems) == 0 {
 		return nil

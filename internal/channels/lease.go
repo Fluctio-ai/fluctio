@@ -32,6 +32,12 @@ const (
 	leaseTTL           = 30 * time.Second
 	leaseRenewInterval = 10 * time.Second
 	leaseRetryInterval = 10 * time.Second
+	// leaseOpTimeout bounds a single Acquire/Renew store round-trip.
+	// Without it a hung DB (pool exhaustion, half-open connection) blocks
+	// the caller past the TTL: a peer steals the lease while this
+	// adapter keeps running — cross-instance double delivery. A timed-out
+	// op surfaces as a regular error and counts toward lease loss.
+	leaseOpTimeout = 5 * time.Second
 )
 
 // NopLeaser is the no-singleton implementation: every Acquire wins,
@@ -73,7 +79,11 @@ func runWithLease(ctx context.Context, ch Channel, leaser Leaser, holderID strin
 		if ctx.Err() != nil {
 			return
 		}
-		ok, err := leaser.Acquire(ctx, chName, accountID, holderID, leaseTTL)
+		// Bounded Acquire: a store call that hangs must not park this
+		// goroutine forever (see leaseOpTimeout).
+		acqCtx, acqCancel := context.WithTimeout(ctx, leaseOpTimeout)
+		ok, err := leaser.Acquire(acqCtx, chName, accountID, holderID, leaseTTL)
+		acqCancel()
 		if err != nil {
 			slog.Warn("channel lease acquire failed, retrying", append(logCtx, "error", err)...)
 			if !sleepOrDone(ctx, leaseRetryInterval) {
@@ -163,7 +173,13 @@ func renewUntilLost(ctx context.Context, leaser Leaser, channel, accountID, hold
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				ok, err := leaser.Renew(ctx, channel, accountID, holderID, leaseTTL)
+				// Bounded Renew (see leaseOpTimeout): two consecutive
+				// timeouts still fit inside the TTL, so a hung DB degrades
+				// to the documented lease-loss path instead of silently
+				// double-living with a peer that took over.
+				rnCtx, rnCancel := context.WithTimeout(ctx, leaseOpTimeout)
+				ok, err := leaser.Renew(rnCtx, channel, accountID, holderID, leaseTTL)
+				rnCancel()
 				if err != nil {
 					// Transient DB error: log and keep trying. The
 					// lease expires after leaseTTL of no successful

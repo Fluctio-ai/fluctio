@@ -16,6 +16,40 @@ import (
 // gate is expressed in (an alias of diary.CST, the single source of truth).
 var diaryCST = diary.CST
 
+// autogenMaxRunTime bounds one async diary/cards generation. Both normally
+// finish in minutes (LLM calls carry their own 180s timeouts); the cap is
+// a leak guard so a hung provider can't pin the goroutine + DB conns
+// forever, and it keeps runs from piling up across ticks.
+const autogenMaxRunTime = 30 * time.Minute
+
+// autogenBegin claims the (kind, agent, date) slot for background diary /
+// cards generation; false means a previous tick's run for the same slot is
+// still going. The GetDailyDiary / HasRunFor idempotency checks only see a
+// row AFTER generation lands, so a run slower than the 30-minute tick
+// would otherwise double-fire — duplicate LLM spend and last-write-wins
+// overwrites of the same (agent_id, date) row. Process-local by design:
+// cross-replica exclusion is left to deployment (single sweep replica).
+func (g *Gateway) autogenBegin(key string) bool {
+	g.autogenMu.Lock()
+	defer g.autogenMu.Unlock()
+	if g.autogenInflight == nil {
+		g.autogenInflight = make(map[string]struct{})
+	}
+	if _, busy := g.autogenInflight[key]; busy {
+		return false
+	}
+	g.autogenInflight[key] = struct{}{}
+	return true
+}
+
+// autogenEnd releases a claimed slot; call via defer in the generator
+// goroutine.
+func (g *Gateway) autogenEnd(key string) {
+	g.autogenMu.Lock()
+	defer g.autogenMu.Unlock()
+	delete(g.autogenInflight, key)
+}
+
 // runDiaryForAgent generates one day's diary for an agent. Resolves the
 // agent's provider/model (reusing the wiki path — same scope merge),
 // reads the per-agent AgentDiaryCfg, and hands off to diary.Generate.
@@ -85,7 +119,29 @@ func (g *Gateway) runDiaryCycle(ctx context.Context) {
 		if !cronAt.IsZero() && nowCST.Before(cronAt) {
 			continue
 		}
-		go runDiaryForAgent(context.Background(), g.store, ar.ID, yesterday)
+		// In-flight guard: a run still going from a previous tick (LLM
+		// generation can outlive 30 minutes) skips this (agent, date).
+		key := "diary|" + ar.ID + "|" + yesterday
+		if !g.autogenBegin(key) {
+			continue
+		}
+		go func(ar store.AgentRecord, key string) {
+			defer g.autogenEnd(key)
+			defer func() {
+				// Bare goroutine: a panic in diary.Generate / config
+				// loaders would otherwise take down the whole process.
+				if r := recover(); r != nil {
+					slog.Warn("diary generation panic", "agent", ar.ID, "date", yesterday, "error", r)
+				}
+			}()
+			// Derived from the ticker ctx (process lifecycle) with a
+			// generous bound instead of context.Background(), so shutdown
+			// cancels in-flight generation and a hung provider can't pin
+			// the goroutine + DB connections forever.
+			genCtx, cancel := context.WithTimeout(ctx, autogenMaxRunTime)
+			defer cancel()
+			runDiaryForAgent(genCtx, g.store, ar.ID, yesterday)
+		}(ar, key)
 	}
 }
 

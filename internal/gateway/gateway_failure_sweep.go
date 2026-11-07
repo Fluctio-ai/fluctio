@@ -232,6 +232,23 @@ func failureScanWindowFor(base time.Duration, maxAttempts int) time.Duration {
 // every session.
 const failureScanPageSize = 1000
 
+// failureBackoffMaxShift caps the backoff exponent in failureBackoffDelay.
+// retries is bounded only by FailureRetryCfg.MaxAttempts (validated >= 1,
+// no upper bound); Go shifts >= 64 yield 0 and shift 63 overflows int64
+// negative — both drop `due` into the past and collapse the ladder to
+// "retry immediately every pass". Same ceiling failureScanWindowFor uses.
+const failureBackoffMaxShift = 20
+
+// failureBackoffDelay returns base << retries with the exponent clamped
+// so an extreme MaxAttempts can't overflow the backoff arithmetic.
+func failureBackoffDelay(base time.Duration, retries int) time.Duration {
+	shift := uint(retries)
+	if shift > failureBackoffMaxShift {
+		shift = failureBackoffMaxShift
+	}
+	return base << shift
+}
+
 // failureScanState is the per-session cache entry (see the file header):
 // the newest diag row already analyzed, and — while a retry is pending —
 // when to look again.
@@ -401,7 +418,9 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 	}
 	// Backoff before the next attempt: base << retries since the newest
 	// notice (base for the first retry, doubling per further attempt).
-	if due := chain.lastAt.Add(base << chain.retries); time.Now().Before(due) {
+	// The exponent goes through failureBackoffDelay: retries tracks the
+	// config-driven MaxAttempts, which has no validated upper bound.
+	if due := chain.lastAt.Add(failureBackoffDelay(base, chain.retries)); time.Now().Before(due) {
 		settled.nextAt = due
 		g.setFailureState(agentID, sessionKey, settled)
 		return

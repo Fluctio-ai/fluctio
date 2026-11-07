@@ -27,7 +27,20 @@ func (l *Feishu) startLongConn(ctx context.Context) error {
 	// no signature/encryption, so empty strings are correct.
 	d := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(_ context.Context, ev *larkim.P2MessageReceiveV1) error {
-			l.dispatchInbound(sdkEventToInternal(ev))
+			// Dispatch off the SDK callback: file/image events run a
+			// multi-second (up to 25MB) resource download inside
+			// dispatchInbound, and blocking the SDK's event loop can trip
+			// Feishu-side slow-consumer disconnects. Chat rates are low, so
+			// one goroutine per event is fine; recover keeps a panic from
+			// killing the SDK's dispatch goroutine.
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Warn("feishu ws dispatch panic", "account", l.accountID, "error", r)
+					}
+				}()
+				l.dispatchInbound(sdkEventToInternal(ev))
+			}()
 			return nil
 		})
 

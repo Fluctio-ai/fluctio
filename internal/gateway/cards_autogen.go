@@ -78,8 +78,30 @@ func (g *Gateway) runCardsCycle(ctx context.Context) {
 		if !cronAt.IsZero() && nowCST.Before(cronAt) {
 			continue
 		}
+		// In-flight guard mirrors runDiaryCycle: a cardsgen.Run slower
+		// than the 30-minute tick must not be double-fired for the same
+		// (agent, date) — duplicate LLM spend + duplicate writes.
+		key := "cards|" + ar.ID + "|" + yesterday
+		if !g.autogenBegin(key) {
+			continue
+		}
 		limit := cfg.DailyLimit
-		go runCardsForAgent(context.Background(), g.store, ar.ID, yesterday, limit)
+		go func(ar store.AgentRecord, key string, limit int) {
+			defer g.autogenEnd(key)
+			defer func() {
+				// Bare goroutine: cardsgen.Run panics must not kill the
+				// whole process (the cycle-level recover can't reach here).
+				if r := recover(); r != nil {
+					slog.Warn("cards generation panic", "agent", ar.ID, "date", yesterday, "error", r)
+				}
+			}()
+			// Bounded + lifecycle-bound ctx instead of context.Background():
+			// shutdown cancels in-flight runs, and a hung provider can't
+			// leak the goroutine + DB connections forever.
+			genCtx, cancel := context.WithTimeout(ctx, autogenMaxRunTime)
+			defer cancel()
+			runCardsForAgent(genCtx, g.store, ar.ID, yesterday, limit)
+		}(ar, key, limit)
 	}
 }
 
