@@ -12,7 +12,17 @@ import (
 
 func newTestImage(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	// Point the publishable root at a temp home: Publicize only accepts
+	// files under <home>/workspaces (host-read containment).
+	home := t.TempDir()
+	t.Setenv("USERPROFILE", home) // config.HomeDir uses os.UserHomeDir
+	orig := defaultHome
+	defaultHome = func() (string, error) { return home, nil }
+	t.Cleanup(func() { defaultHome = orig })
+	dir := filepath.Join(home, "workspaces", "agent-1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(dir, "img.png")
 	// Minimal valid PNG (1x1 transparent), enough for ServeFile content checks.
 	if err := os.WriteFile(path, []byte{
@@ -110,14 +120,8 @@ func TestEvictionCap(t *testing.T) {
 	// Build a store with a tiny cap by direct manipulation: register
 	// maxEntries+1 files and confirm the table never exceeds maxEntries.
 	s := NewStore("https://x.example")
-	dir := t.TempDir()
+	p := newTestImage(t)
 	for i := 0; i <= maxEntries; i++ {
-		p := filepath.Join(dir, "i.png")
-		if i == 0 {
-			if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
 		if _, err := s.Publicize(p); err != nil {
 			t.Fatalf("iteration %d: %v", i, err)
 		}

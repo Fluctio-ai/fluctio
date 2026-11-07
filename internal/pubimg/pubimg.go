@@ -25,7 +25,24 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fluctio-ai/fluctio/internal/config"
 )
+
+// defaultHome resolves the Fluctio root (~/.fluctio). Split into a helper
+// so tests can point it at a temp tree.
+var defaultHome = config.HomeDir
+
+// underRoot reports whether path is root itself or lives under root/
+// (lexically, after cleaning).
+func underRoot(path, root string) bool {
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, root+string(filepath.Separator))
+}
 
 const (
 	// ttl bounds how long a registered URL stays fetchable. A vision call
@@ -74,6 +91,19 @@ func (s *Store) Publicize(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("pubimg: resolve %q: %w", path, err)
+	}
+	// Containment: only files under the Fluctio home (workspaces/sessions/
+	// uploads — the areas the agent reads and writes) may be published.
+	// Without this the model could point the tool at any host-readable
+	// file (~/.ssh/id_rsa, .env) and get an unauthenticated public URL
+	// for it.
+	home, err := defaultHome()
+	if err != nil {
+		return "", fmt.Errorf("pubimg: resolve home: %w", err)
+	}
+	root := filepath.Join(home, "workspaces")
+	if !underRoot(abs, root) {
+		return "", fmt.Errorf("pubimg: %q is outside the publishable workspace root", path)
 	}
 	if fi, err := os.Stat(abs); err != nil {
 		return "", fmt.Errorf("pubimg: stat %q: %w", path, err)
