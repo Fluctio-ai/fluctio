@@ -11,14 +11,17 @@ import (
 
 type jsonRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      int             `json:"id"`
+	// ID echoes verbatim per the JSON-RPC spec: the MCP spec allows both
+	// numeric and string ids, and typed-int decoding rejected every
+	// string-id client outright (the whole request failed to parse).
+	ID      json.RawMessage `json:"id"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params"`
 }
 
 type jsonRPCResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      int             `json:"id"`
+	ID      json.RawMessage `json:"id"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *jsonRPCError   `json:"error,omitempty"`
 }
@@ -142,7 +145,7 @@ func ServeMCP(store *KBStore, agentID string) http.HandlerFunc {
 
 		var req jsonRPCRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeRPCError(w, 0, -32700, "parse error")
+			writeRPCError(w, json.RawMessage("null"), -32700, "parse error")
 			return
 		}
 		if req.JSONRPC != "2.0" {
@@ -342,7 +345,10 @@ func mcpExecDeleteSource(ctx context.Context, store *KBStore, agentID string, ar
 	return fmt.Sprintf("Deleted source %s.", p.SourceID), nil
 }
 
-func writeRPCError(w http.ResponseWriter, id, code int, msg string) {
+func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg string) {
+	if len(id) == 0 {
+		id = json.RawMessage("null")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	resp := jsonRPCResponse{
 		JSONRPC: "2.0",

@@ -17,12 +17,30 @@ func usageCmd() *cobra.Command {
 	return cmd
 }
 
+// validateUsageFlags rejects negative --days/--limit values up front.
+// The old code passed them straight to usage.LastN / SQL LIMIT clauses,
+// where the two backends forked: SQLite silently returned empty results
+// (negative LIMIT) and Postgres raised a SQL error — a typo like
+// --days -7 looked like "no usage" on one backend and a crash on the other.
+func validateUsageFlags(days, limit int) error {
+	if days < 1 {
+		return fmt.Errorf("--days must be >= 1 (got %d)", days)
+	}
+	if limit < 1 {
+		return fmt.Errorf("--limit must be >= 1 (got %d)", limit)
+	}
+	return nil
+}
+
 func usageSummaryCmd() *cobra.Command {
 	var days, limit int
 	cmd := &cobra.Command{
 		Use:   "summary",
 		Short: "Print total token usage and top users/agents",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateUsageFlags(days, limit); err != nil {
+				return err
+			}
 			meter, closeFn, err := openSQLUsageMeter()
 			if err != nil {
 				return err
@@ -62,6 +80,9 @@ func usageUserCmd() *cobra.Command {
 		Short: "Print usage totals and daily rows for one user",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateUsageFlags(days, 1); err != nil {
+				return err
+			}
 			meter, closeFn, err := openSQLUsageMeter()
 			if err != nil {
 				return err
@@ -97,6 +118,9 @@ func usageAgentCmd() *cobra.Command {
 		Short: "Print top sessions for one agent",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateUsageFlags(days, limit); err != nil {
+				return err
+			}
 			meter, closeFn, err := openSQLUsageMeter()
 			if err != nil {
 				return err
