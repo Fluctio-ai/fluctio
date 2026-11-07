@@ -1607,6 +1607,7 @@ const en: Record<string, string> = {
   "chatScreen.planHint": "Run plan to authorize the agent end-to-end, or Edit to revise below.",
   "chatScreen.actAsReadonly": "Read-only — you're viewing another user's chat. Sending messages here is disabled.",
   // Files panel / tab empty states
+  "chatScreen.loadEarlier": "Load {count} earlier messages",
   "chatScreen.filesEmptyChanged": "No changes yet — the agent hasn't edited any files.",
   "chatScreen.filesEmptyProject": "No files in this project yet.",
   "chatScreen.filesEmptySession": "No files in this session yet.",

@@ -1607,6 +1607,7 @@ const zhCN: Record<string, string> = {
   "chatScreen.planHint": "「执行计划」授权智能体完整执行；选「修改」可在下方调整后再确认。",
   "chatScreen.actAsReadonly": "只读——正在查看他人的对话，此处发送已被禁用。",
   // Files panel / tab empty states
+  "chatScreen.loadEarlier": "加载更早的 {count} 条消息",
   "chatScreen.filesEmptyChanged": "尚无变更——智能体还没有编辑任何文件。",
   "chatScreen.filesEmptyProject": "此项目还没有产出文件。",
   "chatScreen.filesEmptySession": "此会话还没有产出文件。",

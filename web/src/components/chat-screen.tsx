@@ -801,6 +801,16 @@ export function ChatScreen() {
   // can't yank them back down mid-read, then flipped back to true once
   // they return to the bottom (or hit the "scroll to latest" button).
   const stickToBottomRef = useRef(true);
+  // Render windowing for long sessions: only the last RENDER_TAIL
+  // messages mount in the DOM. `renderFrom` is the index the window
+  // starts at; null = auto (pinned to the tail). Loading an older page
+  // (scroll-to-top or the pill button) anchors the window so prepended
+  // history actually shows; returning to the bottom re-pins the tail.
+  // The walk below clamps against the tail so a stale value from a
+  // previous session can never blank the list.
+  const RENDER_TAIL = 80;
+  const [renderFrom, setRenderFrom] = useState<number | null>(null);
+  const autoFromRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1772,6 +1782,11 @@ export function ChatScreen() {
         }
         const built = buildChatMessages(history);
         setMessages((prev) => [...built, ...prev]);
+        // Anchor the render window so the prepended page is actually
+        // visible: in auto-tail mode the window would otherwise slide
+        // forward with the array and the user would never see the
+        // older history they just asked for.
+        setRenderFrom((r) => r ?? autoFromRef.current);
         earliestSeqRef.current = earliestSeq;
         hasMoreRef.current = hasMore;
         // The list grew upward by (newHeight − prevHeight); push
@@ -1856,6 +1871,11 @@ export function ChatScreen() {
 
   useEffect(() => {
     if (!stickToBottomRef.current) return;
+    // Tail pin: collapse any expanded render window. Offscreen history
+    // is unread once the user is back at the bottom, and keeping it
+    // mounted lets long sessions (streaming turns especially) grow the
+    // DOM without bound.
+    setRenderFrom(null);
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -1868,6 +1888,9 @@ export function ChatScreen() {
     const hash = typeof window !== "undefined" ? window.location.hash : "";
     if (!hash.startsWith("#seq-")) return;
     const id = hash.slice(1);
+    // The target bubble may sit outside the mounted render window —
+    // expand it to the full list so the poll below can find the node.
+    setRenderFrom(0);
     let tries = 0;
     const iv = setInterval(() => {
       const el = document.getElementById(id);
@@ -1899,7 +1922,12 @@ export function ChatScreen() {
       // server for messages missed while scrolled up. Fires only on the
       // unsticky→sticky transition so streaming output at the bottom
       // (sticky→sticky) can't retrigger it.
-      if (!wasSticky && stickToBottomRef.current) syncNewer();
+      if (!wasSticky && stickToBottomRef.current) {
+        syncNewer();
+        // Offscreen history above is unread once the user is back at the
+        // bottom — re-pin the tail window to keep the DOM bounded.
+        setRenderFrom(null);
+      }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
@@ -2499,6 +2527,11 @@ export function ChatScreen() {
   // Once any message exists the layout swings back to the standard
   // "scroll above, sticky composer at bottom" shape.
   const isEmpty = messages.length === 0;
+  // Effective render-window start. Clamped against the tail so a stale
+  // renderFrom from a longer previous session can never blank this one.
+  const autoFrom = Math.max(0, messages.length - RENDER_TAIL);
+  autoFromRef.current = autoFrom;
+  const renderWindowFrom = Math.min(renderFrom ?? autoFrom, autoFrom);
   // Compute the id of the latest agent bubble that's a pending plan
   // (numbered plan + "Reply `go` to execute" footer), only when no
   // user message has followed it. This is the single bubble that gets
@@ -2571,6 +2604,22 @@ export function ChatScreen() {
               </div>
             )}
 
+            {/* Render-window expansion: only the last RENDER_TAIL messages
+                are mounted; this pulls in one more page from the already-
+                fetched in-memory list (the server fetch itself stays in
+                loadMoreOlder's scroll-to-top path). */}
+            {renderWindowFrom > 0 && (
+              <div className="flex justify-center py-2">
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground bg-muted/40 hover:bg-muted/70 rounded-full px-3 py-1"
+                  onClick={() => setRenderFrom(Math.max(0, renderWindowFrom - HISTORY_PAGE))}
+                >
+                  {t("chatScreen.loadEarlier", { count: renderWindowFrom })}
+                </button>
+              </div>
+            )}
+
             {(() => {
               // Tool-group artefacts (e.g. an image rendered to base64 by
               // a Python script inside the sandbox) are attached to the
@@ -2587,11 +2636,16 @@ export function ChatScreen() {
               // collapsible tool panel until the model chooses to surface
               // them in its reply, instead of being forwarded unprocessed.
               const attachedImages = new Map<string, Array<{ alt: string; src: string }>>();
+              const from = renderWindowFrom;
               const surfacedSrcs = new Set<string>();
               // Calendar day of the last rendered regular message — drives
               // the day divider so long-lived (IM-synced) sessions don't
-              // read as one undifferentiated stream.
-              let lastDay: string | null = null;
+              // read as one undifferentiated stream. Seeded from the last
+              // UNRENDERED message so the window seam still gets its
+              // divider when the day changes there.
+              let lastDay: string | null = from > 0 && messages[from - 1]
+                ? new Date(messages[from - 1].timestamp).toDateString()
+                : null;
               // Walk messages once so we can bundle consecutive
               // tool-group rounds into a single collapsible. Without
               // this, a long ReAct turn with seven sequential rounds
@@ -2599,7 +2653,7 @@ export function ChatScreen() {
               // dominate the chat — the bundle hides them behind one
               // header until the user actually wants to dive in.
               const elements: React.ReactNode[] = [];
-              for (let i = 0; i < messages.length; i++) {
+              for (let i = from; i < messages.length; i++) {
                 const msg = messages[i];
                 // Compaction notice — render as a centered, muted pill
                 // bubble instead of a normal user/agent message.
