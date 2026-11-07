@@ -1483,7 +1483,7 @@ export function ChatScreen() {
             // the real reply arrives on the next bus-fired turn. Show
             // the same transient pill the backend reconnecting tier uses
             // so the user knows the agent is still coming back.
-            setReconnecting({ attempt: -1 });
+            setReconnecting({});
             break;
           }
           case "reconnecting": {
@@ -2466,7 +2466,7 @@ export function ChatScreen() {
         if (evt.type !== "reconnecting") setReconnecting(null);
         switch (evt.type) {
           case "turn_pending": {
-            setReconnecting({ attempt: -1 });
+            setReconnecting({});
             break;
           }
           case "reconnecting": {
