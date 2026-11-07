@@ -801,6 +801,15 @@ export function ChatScreen() {
   // can't yank them back down mid-read, then flipped back to true once
   // they return to the bottom (or hit the "scroll to latest" button).
   const stickToBottomRef = useRef(true);
+  // Slack (px) between viewport bottom and list bottom within which the
+  // user still counts as "at the bottom" — absorbs streaming jitter so a
+  // single token append can't flip stickiness off for one tick.
+  const STICKY_SLACK_PX = 64;
+  // How close to the top (px) the reverse-infinite older-page pull fires.
+  const LOAD_OLDER_TRIGGER_PX = 60;
+  // textarea blur fires before the slash menu's onMouseDown click lands —
+  // close the menu after this grace window instead of instantly.
+  const SLASH_BLUR_CLOSE_MS = 120;
   // Render windowing for long sessions: only the last RENDER_TAIL
   // messages mount in the DOM. `renderFrom` is the index the window
   // starts at; null = auto (pinned to the tail). Loading an older page
@@ -936,10 +945,11 @@ export function ChatScreen() {
 
   useEffect(() => {
     let aborted = false;
-    const fetch = selectedAgent
+    // (not named `fetch` — that would shadow the global)
+    const skillsFetch = selectedAgent
       ? getAgentSkills(selectedAgent).catch(() => [] as SkillInfo[])
       : Promise.resolve([] as SkillInfo[]);
-    fetch.then((list) => {
+    skillsFetch.then((list) => {
       if (!aborted) setAgentSkills(list);
     });
     return () => {
@@ -1915,9 +1925,9 @@ export function ChatScreen() {
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       const wasSticky = stickToBottomRef.current;
-      stickToBottomRef.current = distance <= 64;
+      stickToBottomRef.current = distance <= STICKY_SLACK_PX;
       // Reverse-infinite scroll: near the top, pull an older page.
-      if (el.scrollTop < 60) loadMoreOlder();
+      if (el.scrollTop < LOAD_OLDER_TRIGGER_PX) loadMoreOlder();
       // Coming back to the bottom after reading history — check the
       // server for messages missed while scrolled up. Fires only on the
       // unsticky→sticky transition so streaming output at the bottom
@@ -3000,7 +3010,7 @@ export function ChatScreen() {
                     value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
-                    onBlur={() => setTimeout(() => setSlashOpen(false), 120)}
+                    onBlur={() => setTimeout(() => setSlashOpen(false), SLASH_BLUR_CLOSE_MS)}
                     placeholder={
                       isReadOnlyView
                         ? t("chat.readOnlyPlaceholder")
@@ -3125,7 +3135,7 @@ export function ChatScreen() {
                     value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
-                    onBlur={() => setTimeout(() => setSlashOpen(false), 120)}
+                    onBlur={() => setTimeout(() => setSlashOpen(false), SLASH_BLUR_CLOSE_MS)}
                     placeholder={
                       isReadOnlyView
                         ? t("chat.readOnlyPlaceholder")
