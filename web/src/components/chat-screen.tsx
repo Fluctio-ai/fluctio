@@ -815,6 +815,19 @@ export function ChatScreen() {
   // Keep that fetch from clearing optimistic bubbles or advancing the
   // seq cursor past events the POST handler is about to render.
   const inFlightSendSessionRef = useRef<string | null>(null);
+  // Currently VIEWED session/agent, mirrored from state via the effects
+  // below. Stream callbacks capture their ORIGIN session at send time;
+  // comparing against these refs is how a stream whose user has since
+  // navigated to another session stops writing into the new session's
+  // message list (the closures themselves are stale by definition).
+  const viewedSessionRef = useRef<string | null>(sessionId);
+  const viewedAgentRef = useRef<string | null>(selectedAgent);
+  useEffect(() => {
+    viewedSessionRef.current = sessionId;
+  }, [sessionId]);
+  useEffect(() => {
+    viewedAgentRef.current = selectedAgent;
+  }, [selectedAgent]);
   // AbortController for the in-flight chat stream so the Stop button can
   // cancel both the upload and the SSE connection. Reset on every new turn.
   const abortRef = useRef<AbortController | null>(null);
@@ -1692,6 +1705,12 @@ export function ChatScreen() {
     setLoadingOlder(true);
     getChatHistoryWithCursor(selectedAgent, sessionId, { before: earliestSeqRef.current, limit: HISTORY_PAGE })
       .then(({ history, earliestSeq, hasMore }) => {
+        // Stale-response guard: the user may have switched sessions while
+        // this page was in flight — the closure's selectedAgent/sessionId
+        // are the ORIGIN session, and prepending its history into the
+        // newly viewed session's list was the reported cross-session
+        // pollution. Compare against the live refs.
+        if (viewedSessionRef.current !== sessionId || viewedAgentRef.current !== selectedAgent) return;
         if (!history || history.length === 0) {
           hasMoreRef.current = false;
           return;
@@ -1750,11 +1769,16 @@ export function ChatScreen() {
     // what we've rendered.
     getChatHistoryWithCursor(selectedAgent, sessionId, { limit: 1 })
       .then((pre) => {
+        // Stale-response guard (same rationale as loadMoreOlder).
+        if (viewedSessionRef.current !== sessionId || viewedAgentRef.current !== selectedAgent) return null;
         if (latestHistorySeq(pre.history || []) <= lastMsgSeqRef.current) return null;
         return getChatHistoryWithCursor(selectedAgent, sessionId, { limit: HISTORY_PAGE });
       })
       .then((res) => {
         if (!res) return;
+        // Second leg of the stale guard: the full page fetch may also
+        // belong to an abandoned session.
+        if (viewedSessionRef.current !== sessionId || viewedAgentRef.current !== selectedAgent) return;
         // Filter BEFORE advancing the cursor, or everything dedupes away.
         const fresh = buildChatMessages(res.history || []).filter(
           (m) => typeof m.seq === "number" && m.seq > lastMsgSeqRef.current,
@@ -2038,6 +2062,16 @@ export function ChatScreen() {
 
     try {
       await sendChatStream(selectedAgent, sessionId, fullText, (evt: ChatStreamEvent) => {
+        // Session-switch guard: this closure's sessionId is the ORIGIN
+        // session. Once the user navigates elsewhere, every render-
+        // affecting update here would land in the NEW session's message
+        // list (viewedSessionRef no longer matches). Skip all handling
+        // while away — the turn keeps consuming server-side, rendering
+        // resumes if the user returns mid-stream, and the trailing
+        // content/done events (or a history reload on switch) cover the
+        // gap. Dedup/abort bookkeeping is intentionally dropped with the
+        // render: maxSeqRef was reset by the switch anyway.
+        if (viewedSessionRef.current !== sessionId) return;
         // Dedup against /api/chat/subscribe SSE, which subscribes to
         // the same chat-events hub server-side. Whichever path arrives
         // first renders; the other skips. seq < 0 means persistence
