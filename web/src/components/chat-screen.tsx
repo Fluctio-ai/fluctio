@@ -67,6 +67,41 @@ function splitDataImages(s: string): Array<{ type: "text"; text: string } | { ty
   return out;
 }
 
+// splitReplyOptionsCache mirrors splitDataImagesCache for the imported
+// quick-reply splitter: the render path calls it per agent bubble per
+// render, and the regex scan over unchanged content is pure waste.
+const splitReplyOptionsCache = new Map<string, ReturnType<typeof splitReplyOptions>>();
+
+function splitReplyOptionsCached(s: string): ReturnType<typeof splitReplyOptions> {
+  let out = splitReplyOptionsCache.get(s);
+  if (out === undefined) {
+    out = splitReplyOptions(s);
+    if (splitReplyOptionsCache.size >= 500) splitReplyOptionsCache.clear();
+    splitReplyOptionsCache.set(s, out);
+  }
+  return out;
+}
+
+// splitDataImagesCache memoizes the regex-heavy image scan across renders.
+// The render IIFE re-runs on every state change (each streamed flush, each
+// keystroke) but message content only changes for the message actually
+// being streamed — caching by input string makes every unchanged bubble's
+// rescan free (contents with data: payloads can run to hundreds of KB).
+// Bounded with a wholesale clear to cap memory: entries are small arrays
+// of string slices referencing the cached input.
+const splitDataImagesCache = new Map<string, ReturnType<typeof splitDataImages>>();
+const splitDataImagesCacheLimit = 500;
+
+function splitDataImagesCached(s: string): ReturnType<typeof splitDataImages> {
+  let out = splitDataImagesCache.get(s);
+  if (out === undefined) {
+    out = splitDataImages(s);
+    if (splitDataImagesCache.size >= splitDataImagesCacheLimit) splitDataImagesCache.clear();
+    splitDataImagesCache.set(s, out);
+  }
+  return out;
+}
+
 // Models sometimes emit markdown images with a line break between `]` and
 // `(`, or with very long base64 destinations that some commonmark parsers
 // give up on. Rather than fight the markdown parser, extract
@@ -94,7 +129,7 @@ function renderContentWithDataImages(
   knowledgeSources?: KnowledgeSource[],
   workspaceRoot?: string,
 ): React.ReactNode | null {
-  const parts = splitDataImages(content);
+  const parts = splitDataImagesCached(content);
   if (!parts.some((p) => p.type === "image")) return null;
   return (
     <>
@@ -3186,8 +3221,9 @@ export function ChatScreen() {
                 // Quick-reply options: one split per render feeds both the
                 // bubble text (block stripped) and the button row below.
                 // Raw content stays untouched in msg.content so copy /
-                // export / replay keep the protocol text.
-                const replySplit = msg.role === "agent" && msg.content ? splitReplyOptions(msg.content) : null;
+                // export / replay keep the protocol text. Cached by input:
+                // unchanged agent bubbles skip the regex scan entirely.
+                const replySplit = msg.role === "agent" && msg.content ? splitReplyOptionsCached(msg.content) : null;
                 return (
                 <div
                   key={msg.id}
