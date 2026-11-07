@@ -628,11 +628,10 @@ func (s *Server) Run(ctx context.Context) error {
 	// the context-page UI can show what each mode does before applying.
 	mux.HandleFunc("GET /api/agents/{id}/compaction/preview", auth(s.handleCompactionPreview))
 
-	// Cron jobs (per-user, config-defined catalog)
-	mux.HandleFunc("GET /api/cron", auth(s.handleListCronJobs))
-	mux.HandleFunc("POST /api/cron", auth(s.handleCreateCronJob))
-	mux.HandleFunc("PUT /api/cron/{id}", auth(s.handleUpdateCronJob))
-	mux.HandleFunc("DELETE /api/cron/{id}", auth(s.handleDeleteCronJob))
+	// Per-agent cron jobs (DB-backed, includes anything the agent
+	// scheduled itself via create_cron_job at runtime). The legacy
+	// /api/cron set that read the flat fluctio.json catalog was removed —
+	// it wrote to a store neither the scheduler nor the dashboard read.
 
 	// Per-agent cron jobs (DB-backed, includes anything the agent
 	// scheduled itself via create_cron_job at runtime).
@@ -653,9 +652,13 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/agents/{id}/regex-hooks/scripts/{name}", auth(s.handleDeleteHookScript))
 
 	// Memory (conversation-summary recall: embedding/reranker config test
-	// + per-agent force re-vectorize).
-	mux.HandleFunc("POST /api/memory/test-embedding", auth(s.handleTestEmbedding))
-	mux.HandleFunc("POST /api/memory/test-reranker", auth(s.handleTestReranker))
+	// + per-agent force re-vectorize). The two test probes take a
+	// client-supplied apiBase and have the server fetch it — admin-only so
+	// they can't double as an authenticated port-scan of the private
+	// network. Self-hosted setups (localhost ollama) still work: the
+	// single-user owner is a super_admin.
+	mux.HandleFunc("POST /api/memory/test-embedding", admin(s.handleTestEmbedding))
+	mux.HandleFunc("POST /api/memory/test-reranker", admin(s.handleTestReranker))
 	mux.HandleFunc("GET /api/agents/{id}/memory", auth(s.handleGetAgentMemory))
 	mux.HandleFunc("PUT /api/agents/{id}/memory", auth(s.handleUpdateAgentMemory))
 	mux.HandleFunc("POST /api/agents/{id}/memory/reindex", auth(s.handleReindexAgentMemory))

@@ -149,20 +149,6 @@ export interface PluginInfo {
   config?: Record<string, unknown>;
 }
 
-export interface CronJobInfo {
-  id: string;
-  name: string;
-  type: string;
-  schedule: string;
-  agentId: string;
-  channel: string;
-  chatId: string;
-  message: string;
-  enabled: boolean;
-  lastRun?: string;
-  nextRun?: string;
-}
-
 export interface ModelCost {
   input: number;
   output: number;
@@ -3115,36 +3101,11 @@ export async function getChannels(): Promise<ChannelInfo[]> {
   return res.json();
 }
 
-// Cron Jobs
-export async function getCronJobs(): Promise<CronJobInfo[]> {
-  const res = await apiFetch("/api/cron");
-  return res.json();
-}
-
-export async function createCronJob(job: Partial<CronJobInfo>) {
-  const res = await apiFetch("/api/cron", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(job),
-  });
-  return res.json();
-}
-
-export async function updateCronJob(id: string, job: Partial<CronJobInfo>) {
-  const res = await apiFetch(`/api/cron/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(job),
-  });
-  return res.json();
-}
-
-export async function deleteCronJob(id: string) {
-  const res = await apiFetch(`/api/cron/${id}`, {
-    method: "DELETE",
-  });
-  return res.json();
-}
+// Cron jobs for a specific agent live under /api/agents/{id}/cron — see
+// listAgentCronJobs / deleteAgentCronJob / toggleAgentCronJob below. The
+// legacy /api/cron wrappers were removed along with their server routes:
+// they wrote into the flat fluctio.json catalog that neither the
+// scheduler nor the dashboard read.
 
 // --- Admin API: API keys ---
 
