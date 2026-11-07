@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Play, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  apiFetch,
   createWorkflowSchedule,
   deleteWorkflow,
   deleteWorkflowRun,
@@ -21,7 +22,6 @@ import {
   resumeWorkflowStream,
   runWorkflowStream,
   saveWorkflow,
-  toggleWorkflowSchedule,
   type WorkflowNodeOutput,
   type WorkflowRunEvent,
   type WorkflowRunRow,
@@ -52,9 +52,11 @@ export default function WorkflowsPage() {
   const t = useT();
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [runs, setRuns] = useState<WorkflowRunRow[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
+  const [runsError, setRunsError] = useState<string | null>(null);
   const [input, setInput] = useState("{}");
   // JSON validation error for the manual-trigger input — surfaced inline
   // next to the textarea instead of a raw V8 parse dump in the result pane.
@@ -67,6 +69,7 @@ export default function WorkflowsPage() {
   // cron / fixed-input state (same schema-vs-JSON split as the run form).
   const [scheds, setScheds] = useState<WorkflowSchedule[]>([]);
   const [schedLoading, setSchedLoading] = useState(false);
+  const [schedLoadError, setSchedLoadError] = useState<string | null>(null);
   const [newCron, setNewCron] = useState("");
   const [schedValues, setSchedValues] = useState<Record<string, unknown>>({});
   const [schedJSON, setSchedJSON] = useState("{}");
@@ -125,16 +128,25 @@ export default function WorkflowsPage() {
     if (!agentId) return;
     let aborted = false;
     setLoading(true);
-    listWorkflows(agentId).then((list) => {
-      if (aborted) return;
-      setWorkflows(list);
-      setLoading(false);
-      // Desktop keeps auto-selecting the first workflow; mobile lands on
-      // the list first (master-detail) instead of jumping into the detail.
-      setSelected(
-        (cur) => cur ?? (window.matchMedia("(min-width: 768px)").matches ? list[0]?.id ?? null : null),
-      );
-    });
+    setListError(null);
+    listWorkflows(agentId)
+      .then((list) => {
+        if (aborted) return;
+        setWorkflows(list);
+        setLoading(false);
+        // Desktop keeps auto-selecting the first workflow; mobile lands on
+        // the list first (master-detail) instead of jumping into the detail.
+        setSelected(
+          (cur) => cur ?? (window.matchMedia("(min-width: 768px)").matches ? list[0]?.id ?? null : null),
+        );
+      })
+      .catch((e) => {
+        // A network-level failure used to leave loading true forever — the
+        // list pane stuck on the skeleton with no explanation.
+        if (aborted) return;
+        setListError(e instanceof Error ? e.message : String(e));
+        setLoading(false);
+      });
     return () => {
       aborted = true;
     };
@@ -143,8 +155,14 @@ export default function WorkflowsPage() {
   const refreshRuns = useCallback(async () => {
     if (!agentId || !selected) return;
     setRunsLoading(true);
-    setRuns(await listWorkflowRuns(agentId, selected));
-    setRunsLoading(false);
+    try {
+      setRuns(await listWorkflowRuns(agentId, selected));
+      setRunsError(null);
+    } catch (e) {
+      setRunsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunsLoading(false);
+    }
   }, [agentId, selected]);
 
   // selDef is the selected workflow's list summary — carries input_schema, so
@@ -157,8 +175,14 @@ export default function WorkflowsPage() {
   const refreshScheds = useCallback(async () => {
     if (!agentId || !selected) return;
     setSchedLoading(true);
-    setScheds(await listWorkflowSchedules(agentId, selected));
-    setSchedLoading(false);
+    try {
+      setScheds(await listWorkflowSchedules(agentId, selected));
+      setSchedLoadError(null);
+    } catch (e) {
+      setSchedLoadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSchedLoading(false);
+    }
   }, [agentId, selected]);
 
   useEffect(() => {
@@ -309,14 +333,40 @@ export default function WorkflowsPage() {
   };
   const onToggleSched = async (id: string, v: boolean) => {
     if (!agentId || !selected) return;
-    await toggleWorkflowSchedule(agentId, selected, id, v);
+    const prev = scheds.find((s) => s.ID === id)?.Enabled ?? false;
+    // Optimistic flip, but only commit it after the server accepts: the
+    // wrapper resolves 4xx/5xx without throwing, so the old fire-and-forget
+    // path showed "enabled" schedules the backend never saved — the workflow
+    // then silently never ran on its cron.
     setScheds((cur) => cur.map((s) => (s.ID === id ? { ...s, Enabled: v } : s)));
+    try {
+      const res = await apiFetch(
+        `/api/agents/${agentId}/workflows/${encodeURIComponent(selected)}/schedules/${encodeURIComponent(id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: v }),
+        },
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok || (body as { ok?: boolean } | null)?.ok === false) {
+        throw new Error((body as { error?: string } | null)?.error || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      setScheds((cur) => cur.map((s) => (s.ID === id ? { ...s, Enabled: prev } : s)));
+      setSchedError(`Failed to update schedule: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
   const onDeleteSched = async (id: string) => {
     if (!agentId || !selected) return;
     if (!confirm(t("workflow.schedDeleteConfirm"))) return;
-    await deleteWorkflowSchedule(agentId, selected, id);
-    setScheds((cur) => cur.filter((s) => s.ID !== id));
+    try {
+      await deleteWorkflowSchedule(agentId, selected, id);
+      setScheds((cur) => cur.filter((s) => s.ID !== id));
+    } catch (e) {
+      // Keep the row and say why it survived.
+      setSchedError(`Failed to delete schedule: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   // liveNodes aggregates the event stream into per-node status (M4 streaming):
@@ -333,41 +383,69 @@ export default function WorkflowsPage() {
 
   const onPickRun = async (runId: string) => {
     if (!agentId || !selected) return;
-    const d = await getWorkflowRun(agentId, selected, runId);
-    setSelRun(d);
-    // A waiting history row reopens its form (M6): render + submit resumes it.
-    if (d.run.Status === "waiting" && d.run.PendingFormNode && d.run.PendingFormSchema) {
-      try {
-        setWaitingForm({ runID: runId, node: d.run.PendingFormNode, schema: JSON.parse(d.run.PendingFormSchema) });
-        setFormValues({});
-      } catch {
-        // bad persisted schema JSON — leave the form closed
+    try {
+      const d = await getWorkflowRun(agentId, selected, runId);
+      if (!d?.run) throw new Error("run not found");
+      setSelRun(d);
+      // A waiting history row reopens its form (M6): render + submit resumes it.
+      if (d.run.Status === "waiting" && d.run.PendingFormNode && d.run.PendingFormSchema) {
+        try {
+          setWaitingForm({ runID: runId, node: d.run.PendingFormNode, schema: JSON.parse(d.run.PendingFormSchema) });
+          setFormValues({});
+        } catch {
+          // bad persisted schema JSON — leave the form closed
+        }
       }
+    } catch (e) {
+      setLastResult("Error: " + (e instanceof Error ? e.message : String(e)));
     }
   };
 
   const onDeleteRun = async (runId: string) => {
     if (!agentId || !selected) return;
-    await deleteWorkflowRun(agentId, selected, runId);
-    if (selRun?.run.ID === runId) setSelRun(null);
-    refreshRuns();
+    try {
+      const res = await deleteWorkflowRun(agentId, selected, runId);
+      if (res && (res.ok === false || res.error)) {
+        throw new Error(res.error || `delete failed`);
+      }
+      if (selRun?.run.ID === runId) setSelRun(null);
+      refreshRuns();
+    } catch (e) {
+      setLastResult("Error: " + (e instanceof Error ? e.message : String(e)));
+    }
   };
   const onDeleteWorkflow = async () => {
     if (!agentId || !selected) return;
     if (!confirm(t("workflow.deleteConfirm"))) return;
-    await deleteWorkflow(agentId, selected);
-    const list = await listWorkflows(agentId);
-    setWorkflows(list);
-    setSelected(list[0]?.id ?? null);
+    try {
+      const ok = await deleteWorkflow(agentId, selected);
+      if (!ok) throw new Error("delete failed");
+      const list = await listWorkflows(agentId);
+      setWorkflows(list);
+      setSelected(list[0]?.id ?? null);
+    } catch (e) {
+      setLastResult("Error: " + (e instanceof Error ? e.message : String(e)));
+    }
   };
   const onCreateWorkflow = async () => {
     if (!agentId) return;
-    const id = prompt(t("workflow.newIdPrompt"));
+    const id = prompt(t("workflow.newIdPrompt"))?.trim();
     if (!id) return;
-    await saveWorkflow(agentId, id, "version: 1\nnodes: []\n");
-    const list = await listWorkflows(agentId);
-    setWorkflows(list);
-    setSelected(id);
+    try {
+      const res = await saveWorkflow(agentId, id, "version: 1\nnodes: []\n");
+      // saveWorkflow resolves 4xx/5xx as a parsed body — an id collision
+      // used to "succeed" silently and select a workflow that was never
+      // written.
+      if (!res || res.ok === false) {
+        window.alert(`Failed to create workflow: ${res?.error || "unknown error"}`);
+        return;
+      }
+      const list = await listWorkflows(agentId);
+      setWorkflows(list);
+      setSelected(id);
+    } catch (e) {
+      window.alert(`Failed to create workflow: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   usePageHeader(
@@ -390,6 +468,28 @@ export default function WorkflowsPage() {
       >
         {loading ? (
           <Skeleton className="h-8 w-full" />
+        ) : listError ? (
+          <div className="text-sm text-destructive space-y-2">
+            <p>Failed to load workflows: {listError}</p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                if (!agentId) return;
+                setLoading(true);
+                setListError(null);
+                listWorkflows(agentId)
+                  .then((list) => {
+                    setWorkflows(list);
+                    setSelected((cur) => cur ?? list[0]?.id ?? null);
+                  })
+                  .catch((e) => setListError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setLoading(false));
+              }}
+            >
+              Retry
+            </Button>
+          </div>
         ) : workflows.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t("workflow.empty")}</p>
         ) : (
@@ -440,7 +540,7 @@ export default function WorkflowsPage() {
                 wfID={selected}
                 injectOutput={schemaInject}
                 onSaved={() => {
-                  if (agentId) listWorkflows(agentId).then(setWorkflows);
+                  if (agentId) listWorkflows(agentId).then(setWorkflows).catch(() => {});
                 }}
                 onDelete={onDeleteWorkflow}
               />
@@ -516,6 +616,7 @@ export default function WorkflowsPage() {
 
             <section className="space-y-2">
               <h3 className="font-semibold">{t("workflow.schedules")}</h3>
+              {schedLoadError && <p className="text-xs text-destructive">{schedLoadError}</p>}
               {schedLoading ? (
                 <Skeleton className="h-8 w-full" />
               ) : scheds.length === 0 ? (
@@ -585,6 +686,7 @@ export default function WorkflowsPage() {
 
             <section className="space-y-2">
               <h3 className="font-semibold">{t("workflow.history")}</h3>
+              {runsError && <p className="text-xs text-destructive">{runsError}</p>}
               {runsLoading ? (
                 <Skeleton className="h-8 w-full" />
               ) : runs.length === 0 ? (

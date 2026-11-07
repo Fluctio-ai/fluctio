@@ -21,19 +21,35 @@ export default function RootPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [statusError, setStatusError] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
 
   useEffect(() => {
+    let cancelled = false;
+    setStatusError(false);
     getStatus()
       .then(async (status) => {
+        if (cancelled) return;
         // Never trust a stale localStorage token when the backend reports
         // the system is unconfigured — that token belongs to a previous
-        // deployment and would otherwise short-circuit onboarding.
-        if (!status.configured) {
+        // deployment and would otherwise short-circuit onboarding. But act
+        // only on an EXPLICIT configured:false: getStatus() resolves 5xx /
+        // malformed bodies too (configured undefined), and treating that
+        // "unknown" as "unconfigured" used to logout() and bounce to
+        // /onboard — an endless / ↔ /onboard round-trip whenever the
+        // backend hiccuped.
+        if (status.configured === false) {
           logout();
           router.replace("/onboard/");
           return;
         }
+        if (status.configured !== true) {
+          setStatusError(true);
+          setLoading(false);
+          return;
+        }
         const me = await getMe().catch(() => null);
+        if (cancelled) return;
         if (me?.ok && me.user) {
           router.replace(lastAgentPath() ?? "/overview/");
         } else {
@@ -42,9 +58,16 @@ export default function RootPage() {
         }
       })
       .catch(() => {
-        router.replace("/onboard/");
+        if (cancelled) return;
+        // Network-level failure: state unknown. Redirecting to /onboard
+        // here caused the logout loop — show a retryable error instead.
+        setStatusError(true);
+        setLoading(false);
       });
-  }, [router]);
+    return () => {
+      cancelled = true;
+    };
+  }, [router, retryTick]);
 
   const handleLogin = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -68,6 +91,28 @@ export default function RootPage() {
   if (loading && !showLogin) {
     return (
       <BootSkeleton />
+    );
+  }
+
+  if (statusError) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-background">
+        <div className="w-full max-w-sm space-y-4 p-6 text-center">
+          <div className="flex flex-col items-center gap-3">
+            <LogoWave size={48} />
+            <p className="text-sm text-destructive">{tt("login.cannotReach")}</p>
+          </div>
+          <Button
+            className="w-full"
+            onClick={() => {
+              setLoading(true);
+              setRetryTick((x) => x + 1);
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      </div>
     );
   }
 

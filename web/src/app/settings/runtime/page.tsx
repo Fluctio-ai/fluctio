@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SaveButton } from "@/components/save-button";
 import { TestButton } from "@/components/test-button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -15,15 +16,23 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Clock, Container, Database } from "lucide-react";
-import { getConfig, updateConfig, getMe, getSystemVectorization, setSystemVectorization, testEmbedding, testReranker, type ConfigResponse, type MemoryEmbeddingConfig, type MemoryRerankerConfig } from "@/lib/api";
+import { apiFetch, updateConfig, getMe, setSystemVectorization, testEmbedding, testReranker, type ConfigResponse, type MemoryEmbeddingConfig, type MemoryRerankerConfig } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-import { PageHeader, SettingsCard, CardHead, Field, NumberField, ToggleRow } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, CardHead, Field, NumberField, ToggleRow, SettingsError } from "@/components/settings-ui";
 
 export default function RuntimeSettingsPage() {
   const tt = useT();
   const router = useRouter();
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  // Distinct failure surfaces: role gate / sandbox config / vectorization
+  // defaults. Each used to fail silently (getMe → eternal skeleton,
+  // getConfig → white screen, vectorization → form quietly reset to
+  // defaults that a save would then write over the real config).
+  const [gateError, setGateError] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [vecLoadError, setVecLoadError] = useState<string | null>(null);
+  const [retryTick, setRetryTick] = useState(0);
 
   const [sandboxEnabled, setSandboxEnabled] = useState(false);
   const [sandboxBackend, setSandboxBackend] = useState("docker");
@@ -42,48 +51,79 @@ export default function RuntimeSettingsPage() {
   useEffect(() => {
     // Belt-and-suspenders gate: the layout already hides the nav item,
     // but a direct URL hit needs to bounce too.
-    getMe().then((m) => {
-      if (m?.user?.role !== "super_admin") {
-        router.replace("/settings/general");
-        return;
-      }
-      setLoading(true);
-      getConfig()
-        .then((cfg) => {
-          setConfig(cfg);
-          setSandboxEnabled(cfg.sandbox?.enabled || false);
-          const backend = cfg.sandbox?.backend || "docker";
-          setSandboxBackend(backend);
-          // Each backend has its own persisted field. For configs
-          // predating the split there's only the legacy `image` slot,
-          // so we migrate it into the backend it belonged to (the saved
-          // `backend`) and leave the other two empty.
-          const savedImage = cfg.sandbox?.image || "";
-          setSandboxDockerImage(
-            cfg.sandbox?.dockerImage ?? (backend === "docker" ? savedImage : ""),
-          );
-          setSandboxE2BTemplate(
-            cfg.sandbox?.e2bTemplate ?? (backend === "e2b" ? savedImage || "base" : "base"),
-          );
-          setSandboxBoxliteImage(
-            cfg.sandbox?.boxliteSnapshot ?? (backend === "boxlite" ? savedImage : ""),
-          );
-          setSandboxE2BKey(cfg.sandbox?.e2bKey || "");
-          setSandboxBoxliteKey(cfg.sandbox?.boxliteKey || "");
-          setSandboxBoxliteURL(cfg.sandbox?.boxliteUrl || "");
-          setDefaultTimezone(cfg.prefs?.timezone || "");
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-      getSystemVectorization()
-        .then((res) => {
-          const v = res.vectorization;
-          if (v?.embedding) setSysEmbedding({ enabled: v.embedding.enabled ?? false, provider: v.embedding.provider || "", model: v.embedding.model || "", apiKey: v.embedding.apiKey || "", apiBase: v.embedding.apiBase || "", dim: v.embedding.dim || 1024, dimEnabled: v.embedding.dimEnabled ?? false });
-          if (v?.reranker) setSysReranker({ enabled: v.reranker.enabled ?? false, provider: v.reranker.provider || "", model: v.reranker.model || "", apiKey: v.reranker.apiKey || "", apiBase: v.reranker.apiBase || "" });
-        })
-        .catch(() => {});
-    });
-  }, [router]);
+    setGateError(null);
+    setConfigError(null);
+    setVecLoadError(null);
+    getMe()
+      .then((m) => {
+        if (m?.user?.role !== "super_admin") {
+          router.replace("/settings/general");
+          return;
+        }
+        setLoading(true);
+        // Direct apiFetch so an HTTP failure is a known state — the
+        // wrapper resolves 4xx/5xx into a parsed body that used to be
+        // mapped field-by-field into the form as silent defaults.
+        apiFetch("/api/config")
+          .then(async (res) => {
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+              setConfigError((body as { error?: string } | null)?.error || `HTTP ${res.status}`);
+              return;
+            }
+            const cfg = body as ConfigResponse;
+            setConfig(cfg);
+            setConfigError(null);
+            setSandboxEnabled(cfg.sandbox?.enabled || false);
+            const backend = cfg.sandbox?.backend || "docker";
+            setSandboxBackend(backend);
+            // Each backend has its own persisted field. For configs
+            // predating the split there's only the legacy `image` slot,
+            // so we migrate it into the backend it belonged to (the saved
+            // `backend`) and leave the other two empty.
+            const savedImage = cfg.sandbox?.image || "";
+            setSandboxDockerImage(
+              cfg.sandbox?.dockerImage ?? (backend === "docker" ? savedImage : ""),
+            );
+            setSandboxE2BTemplate(
+              cfg.sandbox?.e2bTemplate ?? (backend === "e2b" ? savedImage || "base" : "base"),
+            );
+            setSandboxBoxliteImage(
+              cfg.sandbox?.boxliteSnapshot ?? (backend === "boxlite" ? savedImage : ""),
+            );
+            setSandboxE2BKey(cfg.sandbox?.e2bKey || "");
+            setSandboxBoxliteKey(cfg.sandbox?.boxliteKey || "");
+            setSandboxBoxliteURL(cfg.sandbox?.boxliteUrl || "");
+            setDefaultTimezone(cfg.prefs?.timezone || "");
+          })
+          .catch((e) => setConfigError(e instanceof Error ? e.message : String(e)))
+          .finally(() => setLoading(false));
+        apiFetch("/api/vectorization")
+          .then(async (res) => {
+            const body = await res.json().catch(() => null);
+            if (!res.ok) {
+              setVecLoadError((body as { error?: string } | null)?.error || `HTTP ${res.status}`);
+              return;
+            }
+            const v = (body as { vectorization?: { embedding?: MemoryEmbeddingConfig; reranker?: MemoryRerankerConfig } } | null)?.vectorization;
+            if (v?.embedding) setSysEmbedding({ enabled: v.embedding.enabled ?? false, provider: v.embedding.provider || "", model: v.embedding.model || "", apiKey: v.embedding.apiKey || "", apiBase: v.embedding.apiBase || "", dim: v.embedding.dim || 1024, dimEnabled: v.embedding.dimEnabled ?? false });
+            if (v?.reranker) setSysReranker({ enabled: v.reranker.enabled ?? false, provider: v.reranker.provider || "", model: v.reranker.model || "", apiKey: v.reranker.apiKey || "", apiBase: v.reranker.apiBase || "" });
+            setVecLoadError(null);
+          })
+          .catch((e) => setVecLoadError(e instanceof Error ? e.message : String(e)));
+      })
+      .catch((e) => {
+        // A getMe network failure used to leave the page on the skeleton
+        // forever with no retry path.
+        setGateError(e instanceof Error ? e.message : String(e));
+        setLoading(false);
+      });
+  }, [router, retryTick]);
+
+  const retry = useCallback(() => {
+    setLoading(true);
+    setRetryTick((x) => x + 1);
+  }, []);
 
   const handleSave = async () => {
     const activeImage =
@@ -108,10 +148,16 @@ export default function RuntimeSettingsPage() {
         boxliteUrl: sandboxBoxliteURL || undefined,
       },
     });
-    if (result?.ok === false) throw new Error(result.error || tt("common.saveFailed"));
+    // updateConfig returns the parsed body unchecked — an {error} envelope
+    // without ok:false used to slip through and the save "succeeded" while
+    // the sandbox config was rejected. Name the failing step in the error:
+    // this is a two-step write, so the operator needs to know what landed.
+    if (result && (result.ok === false || result.error)) {
+      throw new Error(`Sandbox config: ${result.error || tt("common.saveFailed")}`);
+    }
     // System vectorization defaults live in their own namespace.
     const vecRes = await setSystemVectorization({ embedding: sysEmbedding, reranker: sysReranker } as any);
-    if (vecRes?.error) throw new Error(vecRes.error);
+    if (vecRes?.error) throw new Error(`Vectorization defaults: ${vecRes.error}`);
   };
 
   if (loading) {
@@ -122,6 +168,32 @@ export default function RuntimeSettingsPage() {
       </div>
     );
   }
+  if (gateError) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title={tt("runtime.title")} desc={tt("runtime.configDesc")} />
+        <SettingsError>
+          Failed to verify your role: {gateError}
+          <Button variant="outline" size="sm" className="ml-2" onClick={retry}>
+            Retry
+          </Button>
+        </SettingsError>
+      </div>
+    );
+  }
+  if (configError) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title={tt("runtime.title")} desc={tt("runtime.configDesc")} />
+        <SettingsError>
+          Failed to load runtime config: {configError}
+          <Button variant="outline" size="sm" className="ml-2" onClick={retry}>
+            Retry
+          </Button>
+        </SettingsError>
+      </div>
+    );
+  }
   if (!config) return null;
 
   return (
@@ -129,8 +201,14 @@ export default function RuntimeSettingsPage() {
       <PageHeader
         title={tt("runtime.title")}
         desc={tt("runtime.configDesc")}
-        actions={<SaveButton onSave={handleSave} />}
+        actions={<SaveButton onSave={handleSave} disabled={!!vecLoadError} />}
       />
+
+      {vecLoadError && (
+        <SettingsError>
+          Failed to load vectorization defaults: {vecLoadError} — saving is disabled so empty defaults can't overwrite the real config.
+        </SettingsError>
+      )}
 
       {/* Sandbox + timezone share one card: sections split by border-t. */}
       <SettingsCard padded={false}>

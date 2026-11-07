@@ -10,9 +10,7 @@ import { SaveButton } from "@/components/save-button";
 import { PageHeader, SettingsCard, CardHead, Field, NumberField } from "@/components/settings-ui";
 import {
   apiFetch,
-  getSystemBackup,
   setSystemBackup,
-  listBackups,
   backupNow,
   deleteBackup,
   getMaintenanceStatus,
@@ -43,27 +41,57 @@ export default function BackupSettingsPage() {
   const [cronTime, setCronTime] = useState("03:00");
   const [maxKeep, setMaxKeep] = useState(7);
   const [loaded, setLoaded] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [items, setItems] = useState<BackupInfo[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const res = await listBackups();
-    setItems(res.backups ?? []);
+    setListError(null);
+    try {
+      // Direct apiFetch (not listBackups) so a failure is distinguishable
+      // from "no backups yet" — the wrapper collapses every HTTP error to
+      // {}, which rendered as a fake empty list. With the endpoint now
+      // admin-gated, a 403 must be visible, not silent.
+      const res = await apiFetch("/api/backup/list");
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setListError(
+          (body as { error?: string } | null)?.error || `HTTP ${res.status}`,
+        );
+        return;
+      }
+      setItems(Array.isArray(body?.backups) ? body.backups : []);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : String(e));
+    }
   }, []);
 
   useEffect(() => {
-    getSystemBackup()
-      .then((res) => {
-        const b = res.backup;
-        if (b) {
-          setEnabled(b.enabled ?? false);
-          setCronTime(b.cronTime || "03:00");
-          setMaxKeep(b.maxKeep ?? 7);
-        }
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
+    try {
+      apiFetch("/api/backup")
+        .then(async (res) => {
+          const body = await res.json().catch(() => null);
+          if (!res.ok) {
+            // Load failed → keep the form disabled so clicking Save can't
+            // overwrite the real server config with these defaults.
+            setConfigError((body as { error?: string } | null)?.error || `HTTP ${res.status}`);
+            return;
+          }
+          const b = (body as { backup?: BackupConfig } | null)?.backup;
+          if (b) {
+            setEnabled(b.enabled ?? false);
+            setCronTime(b.cronTime || "03:00");
+            setMaxKeep(b.maxKeep ?? 7);
+          }
+        })
+        .catch((e) => setConfigError(e instanceof Error ? e.message : String(e)))
+        .finally(() => setLoaded(true));
+    } catch (e) {
+      setConfigError(e instanceof Error ? e.message : String(e));
+      setLoaded(true);
+    }
     refresh();
   }, [refresh]);
 
@@ -84,6 +112,8 @@ export default function BackupSettingsPage() {
       }
       setToast(t("backup.created"));
       await refresh();
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -92,31 +122,40 @@ export default function BackupSettingsPage() {
   const handleDelete = useCallback(
     async (name: string) => {
       if (!window.confirm(t("backup.confirmDelete"))) return;
-      const res = await deleteBackup(name);
-      if (res.error) {
-        setToast(res.error);
-        return;
+      try {
+        const res = await deleteBackup(name);
+        if (res.error) {
+          setToast(res.error);
+          return;
+        }
+        await refresh();
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : String(e));
       }
-      await refresh();
     },
     [refresh, t],
   );
 
   const handleDownload = useCallback(async (name: string) => {
-    const res = await apiFetch(`/api/backup/download?file=${encodeURIComponent(name)}`);
-    if (!res.ok) {
-      setToast(`HTTP ${res.status}`);
-      return;
+    try {
+      const res = await apiFetch(`/api/backup/download?file=${encodeURIComponent(name)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setToast((body as { error?: string } | null)?.error || `HTTP ${res.status}`);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : String(e));
     }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   }, []);
 
   return (
@@ -124,8 +163,14 @@ export default function BackupSettingsPage() {
       <PageHeader
         title={t("backup.title")}
         desc={t("backup.desc")}
-        actions={<SaveButton onSave={handleSave} disabled={!loaded} />}
+        actions={<SaveButton onSave={handleSave} disabled={!loaded || !!configError} />}
       />
+
+      {configError && (
+        <p className="text-sm text-destructive" role="alert">
+          Failed to load backup config: {configError} — saving is disabled so defaults can't overwrite the real config.
+        </p>
+      )}
 
       <SettingsCard className="space-y-4">
         <CardHead
@@ -159,7 +204,15 @@ export default function BackupSettingsPage() {
           }
         />
         {toast && <p className="mt-3 text-xs text-muted-foreground">{toast}</p>}
-        {items.length === 0 ? (
+        {listError && (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            Failed to load backups: {listError}
+            <Button variant="ghost" size="sm" className="ml-2 h-6 text-xs" onClick={() => refresh()}>
+              Retry
+            </Button>
+          </p>
+        )}
+        {!listError && items.length === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">{t("backup.empty")}</p>
         ) : (
           <ul className="mt-4 divide-y divide-border">
@@ -221,18 +274,29 @@ function MaintenanceCard() {
 
   const active = !!snap && ["waiting", "backup", "vacuum"].includes(snap.st.stage);
 
-  const refresh = useCallback(async () => {
-    const res = await getMaintenanceStatus();
-    if (res.error) return;
-    // db is omitted by the backend while a run is in flight; keep the
-    // last known bloat picture rather than blanking it.
-    const db = res.db ?? snapRef.current?.db ?? null;
-    setSnap({ st: res.maintenance ?? { stage: "idle" }, db, turnsActive: !!res.turnsActive });
-  }, []);
-
   // snapRef mirrors snap for refresh() without re-creating the callback.
+  // (Declared before refresh uses it — keep this order.)
   const snapRef = useRef(snap);
   useEffect(() => { snapRef.current = snap; }, [snap]);
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await getMaintenanceStatus();
+      if (res.error) {
+        // A persistently failing status endpoint used to be invisible —
+        // the card just showed a bare start button. Say so instead.
+        setErr(res.error);
+        return;
+      }
+      setErr(null);
+      // db is omitted by the backend while a run is in flight; keep the
+      // last known bloat picture rather than blanking it.
+      const db = res.db ?? snapRef.current?.db ?? null;
+      setSnap({ st: res.maintenance ?? { stage: "idle" }, db, turnsActive: !!res.turnsActive });
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -256,6 +320,8 @@ function MaintenanceCard() {
       const res = await startMaintenanceVacuum();
       if (res.error) setErr(res.error);
       await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setStarting(false);
     }

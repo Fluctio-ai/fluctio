@@ -2,19 +2,22 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getMe } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 // Mirrors the AgentSettingsDialog USER_TABS order (General first — the
-// dialog's landing tab — About last, Runtime admin-only) so a direct
-// hit on /settings/* shows the same set of pages the dialog exposes.
+// dialog's landing tab — About last, backup/diag/runtime admin-only) so a
+// direct hit on /settings/* shows the same set of pages the dialog exposes.
 // Labels are i18n keys resolved at render time.
+// adminOnly hides the nav entry only — it is a display optimization, not
+// access control: the backend 403s the admin-only endpoints, and the pages
+// render that error instead of a fake empty state.
 const items = [
   { href: "/settings/general", label: "settings.general", adminOnly: false },
   { href: "/settings/account", label: "settings.account", adminOnly: false },
-  { href: "/settings/backup", label: "settings.backup", adminOnly: false },
-  { href: "/settings/diag", label: "settings.diag", adminOnly: false },
+  { href: "/settings/backup", label: "settings.backup", adminOnly: true },
+  { href: "/settings/diag", label: "settings.diag", adminOnly: true },
   { href: "/settings/about", label: "settings.about", adminOnly: false },
   { href: "/settings/runtime", label: "settings.runtime", adminOnly: true },
 ];
@@ -23,12 +26,22 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const t = useT();
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [meError, setMeError] = useState(false);
 
-  useEffect(() => {
+  const loadMe = useCallback(() => {
+    setMeError(false);
     getMe()
       .then((m) => setIsSuperAdmin(m?.user?.role === "super_admin"))
-      .catch(() => {});
+      .catch(() => {
+        // Identity unknown (network hiccup): without a marker the admin nav
+        // just silently vanishes until a full page reload.
+        setMeError(true);
+      });
   }, []);
+
+  useEffect(() => {
+    loadMe();
+  }, [loadMe]);
 
   const visible = items.filter((i) => !i.adminOnly || isSuperAdmin);
 
@@ -55,6 +68,15 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
               </Link>
             );
           })}
+          {meError && (
+            <button
+              type="button"
+              onClick={loadMe}
+              className="mt-2 rounded-md px-3 py-2 text-xs text-destructive hover:bg-muted"
+            >
+              Couldn't verify your role — Retry
+            </button>
+          )}
         </nav>
       </aside>
       <div className="flex-1 min-w-0">{children}</div>

@@ -141,6 +141,13 @@ export default function WikiPage() {
   const graphRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<import("@/components/wiki-graph/engine").WikiGraphEngine | null>(null);
   const handleSelectPageRef = useRef<(id: string) => void>(() => {});
+  // Selection race guard: getWikiPage responses may land out of order when
+  // pages are clicked in quick succession, and a stale body used to
+  // overwrite the newer one (center pane no longer matching the highlighted
+  // row). Only the latest selection — for the current agent — may write.
+  const selectReqRef = useRef(0);
+  const agentIdRef = useRef(agentId);
+  agentIdRef.current = agentId;
 
   const loadData = useCallback(async () => {
     if (!agentId) return;
@@ -167,11 +174,23 @@ export default function WikiPage() {
   const handleSelectPage = useCallback(
     async (pageId: string) => {
       if (!agentId) return;
+      const seq = ++selectReqRef.current;
+      const reqAgentId = agentId;
       setSelectedPageId(pageId);
       try {
-        const p = await getWikiPage(agentId, pageId);
+        const p = await getWikiPage(reqAgentId, pageId);
+        // Drop a late response whose selection (or agent) has since been
+        // replaced — otherwise the center pane shows a body that doesn't
+        // belong to the highlighted list row / graph node.
+        if (seq !== selectReqRef.current || agentIdRef.current !== reqAgentId) return;
         setSelectedPage(p);
-      } catch {}
+      } catch {
+        // Fetch failed — drop the stale body too, so the previous page's
+        // content can't sit under the new row's highlight.
+        if (seq === selectReqRef.current && agentIdRef.current === reqAgentId) {
+          setSelectedPage(null);
+        }
+      }
     },
     [agentId],
   );
@@ -184,8 +203,10 @@ export default function WikiPage() {
 
   // Deselect: state off + engine un-fade. Used by graph-node toggle-click
   // and Esc — the faded-neighbour focus mode makes other nodes hard to
-  // pick while a selection is active.
+  // pick while a selection is active. Also invalidates any in-flight page
+  // fetch so a late response can't repopulate the cleared pane.
   const clearPageSelection = useCallback(() => {
+    selectReqRef.current++;
     setSelectedPageId(null);
     setSelectedPage(null);
     engineRef.current?.clearSelection();
@@ -230,15 +251,16 @@ export default function WikiPage() {
     try {
       await deleteWikiPage(agentId, deleteTarget.id);
       if (selectedPageId === deleteTarget.id) {
-        setSelectedPageId(null);
-        setSelectedPage(null);
+        // clearPageSelection (not bare setters) so an in-flight getWikiPage
+        // for the deleted row can't repopulate the center pane.
+        clearPageSelection();
       }
       setDeleteTarget(null);
       loadData();
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : t("wiki.deleteFailed"));
     }
-  }, [agentId, deleteTarget, selectedPageId, loadData, t]);
+  }, [agentId, deleteTarget, selectedPageId, loadData, clearPageSelection, t]);
 
   // Drag a vertical divider to resize the left/right panes. Pointer
   // events attach to the document so the drag keeps tracking even when
@@ -398,13 +420,12 @@ export default function WikiPage() {
     const onReselect = (e: Event) => {
       const url = (e as CustomEvent<{ url?: string }>).detail?.url ?? "";
       if (url.includes("/wiki/")) {
-        setSelectedPageId(null);
-        setSelectedPage(null);
+        clearPageSelection();
       }
     };
     window.addEventListener("fluctio:nav-reselect", onReselect);
     return () => window.removeEventListener("fluctio:nav-reselect", onReselect);
-  }, []);
+  }, [clearPageSelection]);
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
@@ -536,7 +557,7 @@ export default function WikiPage() {
               <div className="flex items-center gap-2 mb-4">
                 <button
                   type="button"
-                  onClick={() => { setSelectedPageId(null); setSelectedPage(null); }}
+                  onClick={clearPageSelection}
                   className="md:hidden -ml-1 shrink-0 text-muted-foreground hover:text-foreground"
                   aria-label={t("common.back")}
                 >

@@ -5,10 +5,10 @@ import { Download, FileText, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  apiFetch,
   deleteDiagReport,
   diagReportDownloadUrl,
   generateDiagReport,
-  listDiagReports,
   type DiagReportEntry,
 } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -26,12 +26,26 @@ export default function DiagReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [reports, setReports] = useState<DiagReportEntry[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
   const refresh = () => {
-    listDiagReports()
-      .then(setReports)
-      .catch(() => setReports([]));
+    // Direct apiFetch (not listDiagReports) so a failure stays
+    // distinguishable: the wrapper collapses HTTP errors (now a 403 for
+    // non-admins) to [], which used to WIPE the current list and render a
+    // fake "no reports" empty state — even after a successful
+    // generate/delete whose follow-up refresh failed.
+    apiFetch("/api/diag/reports")
+      .then(async (res) => {
+        const body = await res.json().catch(() => null);
+        if (!res.ok) {
+          setListError((body as { error?: string } | null)?.error || `HTTP ${res.status}`);
+          return; // keep the list that's already on screen
+        }
+        setListError(null);
+        setReports(Array.isArray(body?.reports) ? body.reports : []);
+      })
+      .catch((e) => setListError(e instanceof Error ? e.message : String(e)));
   };
   useEffect(refresh, []);
 
@@ -102,7 +116,15 @@ export default function DiagReportPage() {
 
       <SettingsCard>
         <CardHead icon={FileText} title={t("diag.history")} />
-        {reports.length === 0 ? (
+        {listError && (
+          <p className="mt-4 text-sm text-destructive" role="alert">
+            Failed to load reports: {listError}
+            <Button variant="ghost" size="sm" className="ml-2 h-6 text-xs" onClick={refresh}>
+              Retry
+            </Button>
+          </p>
+        )}
+        {!listError && reports.length === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">{t("diag.empty")}</p>
         ) : (
           <ul className="mt-4 divide-y divide-border">

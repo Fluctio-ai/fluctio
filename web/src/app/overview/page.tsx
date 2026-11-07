@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useT } from "@/lib/i18n";
 import {
+  apiFetch,
   getStatus,
-  adminListChats,
   getTools,
   getConfig,
   type StatusResponse,
@@ -30,28 +30,72 @@ export default function OverviewPage() {
   const [runtime, setRuntime] = useState<ConfigResponse["sandbox"] | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Stale-response guard for the 10s poll: a slow tick must not overwrite
+  // fresher data that already landed from a later one.
+  const fetchSeqRef = useRef(0);
+
   const fetchStatus = () => {
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     getStatus()
       .then((s) => {
+        if (seq !== fetchSeqRef.current) return;
         setStatus(s);
         if (s.isAdmin) {
-          adminListChats()
-            .then((rows) => setChats(rows.length))
-            .catch(() => setChats(null));
+          // /api/admin/chats paginates server-side (default page=1,
+          // pageSize=30), so the sessions array truncates at 30 rows — the
+          // stat must read the response's `total`, not rows.length, or the
+          // "total sessions" figure flatlines at 30.
+          apiFetch("/api/admin/chats")
+            .then(async (res) => {
+              const body = await res.json().catch(() => null);
+              if (seq !== fetchSeqRef.current) return;
+              if (!res.ok) {
+                setChats(null);
+                return;
+              }
+              setChats(
+                typeof body?.total === "number"
+                  ? body.total
+                  : Array.isArray(body?.sessions)
+                    ? body.sessions.length
+                    : null,
+              );
+            })
+            .catch(() => {
+              if (seq !== fetchSeqRef.current) return;
+              setChats(null);
+            });
           getTools()
-            .then(setTools)
-            .catch(() => setTools(null));
+            .then((t) => {
+              if (seq !== fetchSeqRef.current) return;
+              setTools(t);
+            })
+            .catch(() => {
+              if (seq !== fetchSeqRef.current) return;
+              setTools(null);
+            });
           // getConfig is super_admin-only on the backend; admins-but-not-
           // super-admin will 403, in which case we just hide the Runtime
           // row rather than treating it as an error.
           getConfig()
-            .then((cfg) => setRuntime(cfg.sandbox ?? null))
-            .catch(() => setRuntime(null));
+            .then((cfg) => {
+              if (seq !== fetchSeqRef.current) return;
+              setRuntime(cfg.sandbox ?? null);
+            })
+            .catch(() => {
+              if (seq !== fetchSeqRef.current) return;
+              setRuntime(null);
+            });
         }
       })
-      .catch(() => setStatus(null))
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (seq !== fetchSeqRef.current) return;
+        setStatus(null);
+      })
+      .finally(() => {
+        if (seq === fetchSeqRef.current) setLoading(false);
+      });
   };
 
   useEffect(() => {

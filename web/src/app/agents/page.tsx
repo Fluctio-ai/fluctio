@@ -182,53 +182,64 @@ export default function AgentsPage() {
     if (!newName.trim()) return;
     setSaving(true);
     setCreateError(null);
-    const resp = await createAgent({
-      name: newName.trim(),
-      description: newDescription.trim() || undefined,
-    });
-    if (resp && (resp.ok === false || resp.error)) {
-      setCreateError(resp.error || "Failed to create agent");
-      setSaving(false);
-      return;
-    }
-    const newId: string | undefined = resp?.agent?.id;
-    if (newId && newAvatar) {
-      try {
-        await uploadAvatar(newId, newAvatar);
-      } catch {
-        // non-fatal — agent is created; avatar can be retried via Edit
+    try {
+      const resp = await createAgent({
+        name: newName.trim(),
+        description: newDescription.trim() || undefined,
+      });
+      if (resp && (resp.ok === false || resp.error)) {
+        setCreateError(resp.error || "Failed to create agent");
+        return;
       }
+      const newId: string | undefined = resp?.agent?.id;
+      if (newId && newAvatar) {
+        try {
+          await uploadAvatar(newId, newAvatar);
+        } catch {
+          // non-fatal — agent is created; avatar can be retried via Edit
+        }
+      }
+      setCreateOpen(false);
+      resetCreateForm();
+      fetchAgents();
+    } catch (err) {
+      // Network-level failure (or a non-JSON error body): without this the
+      // rejection was unhandled and saving stayed true forever, leaving the
+      // dialog permanently disabled.
+      setCreateError(err instanceof Error ? err.message : "Failed to create agent");
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    setCreateOpen(false);
-    resetCreateForm();
-    fetchAgents();
   };
 
   const handleEdit = async () => {
     if (!editTarget || !editName.trim()) return;
     setSaving(true);
     setEditError(null);
-    const resp = await updateAgent(editTarget.id, {
-      name: editName.trim(),
-      description: editDescription.trim(),
-    });
-    if (resp && (resp.ok === false || resp.error)) {
-      setEditError(resp.error || "Failed to update agent");
-      setSaving(false);
-      return;
-    }
-    if (editAvatar) {
-      try {
-        await uploadAvatar(editTarget.id, editAvatar);
-      } catch {
-        // non-fatal — text fields saved; user can retry avatar upload
+    try {
+      const resp = await updateAgent(editTarget.id, {
+        name: editName.trim(),
+        description: editDescription.trim(),
+      });
+      if (resp && (resp.ok === false || resp.error)) {
+        setEditError(resp.error || "Failed to update agent");
+        return;
       }
+      if (editAvatar) {
+        try {
+          await uploadAvatar(editTarget.id, editAvatar);
+        } catch {
+          // non-fatal — text fields saved; user can retry avatar upload
+        }
+      }
+      setEditTarget(null);
+      resetEditForm();
+      fetchAgents();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to update agent");
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    setEditTarget(null);
-    resetEditForm();
-    fetchAgents();
   };
 
   const handleDelete = async () => {

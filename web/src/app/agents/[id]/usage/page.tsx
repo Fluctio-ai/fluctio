@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Coins, RefreshCcw, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -84,17 +84,26 @@ export default function AgentUsagePage() {
     return m;
   }, [sessions]);
 
+  // Out-of-order guard: switching 24h/7d/30d (or agents) fires overlapping
+  // loads, and a slow older response used to overwrite the newer one — the
+  // table then showed data for a range that isn't selected. Same protection
+  // as the sessions effect above.
+  const loadSeqRef = useRef(0);
+
   async function load(r: TokenUsageRange) {
     if (!agentId) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     setError("");
     try {
       const d = await getAgentTokenUsage(agentId, r, 200);
+      if (seq !== loadSeqRef.current) return; // superseded by a newer load
       setData(d);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       setError(e instanceof Error ? e.message : t("usage.failedLoad"));
     } finally {
-      setLoading(false);
+      if (seq === loadSeqRef.current) setLoading(false);
     }
   }
 

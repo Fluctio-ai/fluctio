@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useT } from "@/lib/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -46,25 +46,52 @@ export default function AgentRecallTuningPage() {
   const [testing, setTesting] = useState(false);
   const [testNote, setTestNote] = useState<string | null>(null);
   const [recalls, setRecalls] = useState<RecallEventView[] | null>(null);
+  const [recallsError, setRecallsError] = useState<string | null>(null);
   // Audit-list time filter (days; 0 = all time). Server-side so the fetch
   // cap (100) isn't wasted on months of history the filter would hide.
   const [days, setDays] = useState("0");
+  // Out-of-order guard for the audit list: only the fetch issued for the
+  // CURRENT (agentId, days) pair may write state. A slow response for a
+  // previous agent/filter used to overwrite the newer view.
+  const recallsReqRef = useRef(0);
 
   const refresh = useCallback(async () => {
     try {
       setState(await getAgentRecallTuning(agentId));
+    } catch (e) {
+      // getAgentRecallTuning only maps HTTP failures; a network-level
+      // error must land in the same {ok:false,error} shape so the page
+      // can show WHY it's unavailable instead of a bare empty state.
+      setState({ ok: false, error: e instanceof Error ? e.message : String(e) });
     } finally {
       setLoading(false);
     }
   }, [agentId]);
 
-  const refreshRecalls = useCallback(async (d: string) => {
-    const res = await getRecentRecalls(agentId, {
-      limit: 100,
-      days: d === "0" ? undefined : Number(d),
-    });
-    setRecalls(res.events ?? []);
-  }, [agentId]);
+  const refreshRecalls = useCallback(
+    async (d: string) => {
+      const reqId = ++recallsReqRef.current;
+      setRecallsError(null);
+      try {
+        const res = await getRecentRecalls(agentId, {
+          limit: 100,
+          days: d === "0" ? undefined : Number(d),
+        });
+        if (reqId !== recallsReqRef.current) return; // superseded
+        if (res.ok === false) {
+          // Distinguish "no records" from "the request failed" — the
+          // failure used to render as a clean empty list.
+          setRecallsError(res.error || "Failed to load recent recalls");
+          return; // keep whatever list is already on screen
+        }
+        setRecalls(res.events ?? []);
+      } catch (e) {
+        if (reqId !== recallsReqRef.current) return; // superseded
+        setRecallsError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [agentId],
+  );
 
   // The tuning fetch is an availability probe (the page renders no stats),
   // so it runs once on mount; the audit list refetches when the filter
@@ -77,23 +104,33 @@ export default function AgentRecallTuningPage() {
     refreshRecalls(days);
   }, [refreshRecalls, days]);
 
+  const [testError, setTestError] = useState<string | null>(null);
   const runTest = async () => {
-    if (!testQuery.trim()) return;
+    if (!testQuery.trim() || testing) return;
     setTesting(true);
     setTestHits(null);
     setTestNote(null);
+    setTestError(null);
     try {
       const res = await previewRecall(agentId, testQuery);
+      if (res.ok === false) {
+        // A failed probe used to render as a clean "no results" empty state.
+        setTestError(res.error || "Recall test failed");
+        return;
+      }
       setTestHits(res.results ?? []);
       if (res.note) setTestNote(res.note);
+    } catch (e) {
+      setTestError(e instanceof Error ? e.message : String(e));
     } finally {
       setTesting(false);
     }
   };
 
   const vote = async (recallId: string, up: boolean) => {
-    // Optimistic mark so the click is visible immediately; the refetch
-    // confirms with the server's latest-vote state.
+    // Optimistic mark so the click is visible immediately; the server
+    // response (or refetch) confirms with the latest-vote state.
+    const prevVote = recalls?.find((rc) => rc.recall_id === recallId)?.vote;
     setRecalls((rs) =>
       rs?.map((rc) =>
         rc.recall_id === recallId
@@ -101,7 +138,28 @@ export default function AgentRecallTuningPage() {
           : rc,
       ) ?? rs,
     );
-    await sendRecallFeedback(recallId, up);
+    const rollback = () =>
+      setRecalls((rs) =>
+        rs?.map((rc) =>
+          rc.recall_id === recallId ? { ...rc, vote: prevVote } : rc,
+        ) ?? rs,
+      );
+    try {
+      const res = await sendRecallFeedback(recallId, up);
+      if (res.ok === false) {
+        // Roll the optimistic mark back and say so — a silently dropped
+        // vote reads as "recorded" until the next refetch erases it.
+        rollback();
+        window.alert(`Failed to record vote: ${res.error || "unknown error"}`);
+        return;
+      }
+    } catch (e) {
+      rollback();
+      window.alert(`Failed to record vote: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    // Only refetch after a confirmed vote — a failed refetch used to wipe
+    // the whole list (optimistic marks included) with no error shown.
     await refreshRecalls(days);
   };
 
@@ -141,6 +199,7 @@ export default function AgentRecallTuningPage() {
           </Button>
         </div>
         {testNote && <p className="mt-2 text-xs text-muted-foreground">{testNote}</p>}
+        {testError && <p className="mt-2 text-xs text-destructive">{testError}</p>}
         {testHits && testHits.length === 0 && (
           <p className="mt-3 text-sm text-muted-foreground">{t("recallTuning.noResults")}</p>
         )}
@@ -181,11 +240,19 @@ export default function AgentRecallTuningPage() {
           }
         />
         <p className="mt-2 text-xs text-muted-foreground">{t("recallTuning.auditNote")}</p>
-        {(recalls?.length ?? 0) === 0 ? (
+        {recallsError && (
+          <p className="mt-3 text-sm text-destructive">
+            {recallsError}
+            <Button variant="ghost" size="sm" className="ml-2 h-6 text-xs" onClick={() => refreshRecalls(days)}>
+              Retry
+            </Button>
+          </p>
+        )}
+        {!recallsError && (recalls?.length ?? 0) === 0 ? (
           <p className="mt-4 text-sm text-muted-foreground">{t("recallTuning.noRecalls")}</p>
         ) : (
           <ul className="mt-4 space-y-2">
-            {recalls!.map((rc) => (
+            {(recalls ?? []).map((rc) => (
               <li key={rc.recall_id} className="rounded border p-2 text-sm">
                 <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span className="font-mono">{new Date(rc.created_at).toLocaleString()}</span>
