@@ -257,17 +257,95 @@ func (a *StoreAdapter) ListWebSessions(ctx context.Context, agentID string) ([]W
 	if err != nil {
 		return nil, err
 	}
+	// Fast path: the concrete DBStore exposes a per-session preview query,
+	// so the listing doesn't decode every row of every message archive
+	// (the N+1). Other Store implementations keep the full-build loop.
+	var dbs *store.DBStore
+	if fast, ok := a.st.(*store.DBStore); ok {
+		dbs = fast
+	}
 	var sessions []WebSession
 	for _, m := range metas {
 		if m.AgentID == "" {
 			m.AgentID = agentID
 		}
-		ws := a.BuildWebSession(ctx, m)
+		var ws *WebSession
+		if dbs != nil {
+			ws = a.buildWebSessionFast(ctx, dbs, m)
+		}
+		if ws == nil {
+			ws = a.BuildWebSession(ctx, m)
+		}
 		if ws != nil {
 			sessions = append(sessions, *ws)
 		}
 	}
 	return sessions, nil
+}
+
+// buildWebSessionFast assembles the listing entry from FirstUserTurns —
+// a bounded 5-row preview query instead of the full archive decode.
+// Returns nil when the capped user turns yield no displayable preview,
+// letting the caller fall back to the full build (image-only turns deep
+// in the archive, the GetSession blob path, non-DB stores).
+func (a *StoreAdapter) buildWebSessionFast(ctx context.Context, dbs *store.DBStore, m store.SessionMeta) *WebSession {
+	turns, err := dbs.FirstUserTurns(ctx, m.AgentID, m.Key, 5)
+	if err != nil {
+		return nil
+	}
+	preview, thumb := previewFromTurns(turns)
+	if preview == "" {
+		return nil
+	}
+	channel := m.Channel
+	if channel == "" {
+		if i := strings.Index(m.Key, "_"); i > 0 {
+			channel = m.Key[:i]
+		}
+	}
+	title := displaySessionTitle(m.Title, m.Key, preview)
+	return &WebSession{
+		ID:           m.Key,
+		Channel:      channel,
+		AccountID:    m.AccountID,
+		ChatID:       m.ChatID,
+		ProjectID:    m.ProjectID,
+		Title:        title,
+		Preview:      preview,
+		ThumbnailURL: thumb,
+		ChatOnly:     m.ChatOnly,
+		CreatedAt:    m.UpdatedAt.UnixMilli(),
+		UpdatedAt:    m.UpdatedAt.UnixMilli(),
+	}
+}
+
+// previewFromTurns mirrors BuildWebSession's preview selection over a
+// pre-fetched turn slice: the first user turn with text or an image,
+// objective-extracted when tagged, truncated to 100 runes.
+func previewFromTurns(source []store.SessionMessage) (preview, thumb string) {
+	for _, msg := range source {
+		if msg.Role != "user" {
+			continue
+		}
+		text := userText(msg)
+		img := userImage(msg)
+		if text == "" && img == "" {
+			continue
+		}
+		if msg.Origin != "" {
+			if obj := extractObjective(text); obj != "" {
+				text = obj
+			}
+		}
+		preview = text
+		if preview == "" {
+			preview = "[image]"
+		}
+		preview = truncateRunes(preview, 100)
+		thumb = img
+		break
+	}
+	return preview, thumb
 }
 
 // BuildWebSession converts a single SessionMeta into a WebSession by
@@ -291,28 +369,7 @@ func (a *StoreAdapter) BuildWebSession(ctx context.Context, m store.SessionMeta)
 	} else if rec, err := a.st.GetSession(ctx, agentID, m.Key); err == nil && rec != nil {
 		source = rec.Messages
 	}
-	for _, msg := range source {
-		if msg.Role != "user" {
-			continue
-		}
-		text := userText(msg)
-		img := userImage(msg)
-		if text == "" && img == "" {
-			continue
-		}
-		if msg.Origin != "" {
-			if obj := extractObjective(text); obj != "" {
-				text = obj
-			}
-		}
-		preview = text
-		if preview == "" {
-			preview = "[image]"
-		}
-		preview = truncateRunes(preview, 100)
-		thumb = img
-		break
-	}
+	preview, thumb = previewFromTurns(source)
 	if preview == "" {
 		return nil
 	}

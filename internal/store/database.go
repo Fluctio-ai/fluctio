@@ -4675,6 +4675,45 @@ func (d *DBStore) ListSessionMessages(ctx context.Context, agentID, sessionKey s
 	return out, rows.Err()
 }
 
+// FirstUserTurns returns up to maxTurns minimal user messages for a
+// session, seq-ascending, with only the fields the web-session listing's
+// preview/thumbnail needs (Seq/Role/Content/ContentParts/Origin/
+// Timestamp). ListWebSessions used to decode every row of every message
+// archive per session just to find the first displayable user turn —
+// the N+1 behind the dashboard's sessions list.
+func (d *DBStore) FirstUserTurns(ctx context.Context, agentID, sessionKey string, maxTurns int) ([]SessionMessage, error) {
+	if maxTurns <= 0 {
+		maxTurns = 5
+	}
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT seq, content, content_parts, origin, created_at
+			FROM session_messages
+			WHERE agent_id = %s AND session_key = %s AND role = %s
+			ORDER BY seq ASC LIMIT %s`, d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
+		agentID, sessionKey, "user", maxTurns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionMessage
+	for rows.Next() {
+		var m SessionMessage
+		var contentParts string
+		if err := rows.Scan(&m.Seq, &m.Content, &contentParts, &m.Origin, &m.Timestamp); err != nil {
+			return nil, err
+		}
+		m.Role = "user"
+		if contentParts != "" && contentParts != "null" {
+			var v interface{}
+			if json.Unmarshal([]byte(contentParts), &v) == nil {
+				m.ContentParts = v
+			}
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // ListSessionMessagesByAgentAndTimeRange returns every message across ALL
 // of an agent's sessions whose created_at falls in [from, to), ordered by
 // time then seq so callers see a chronological timeline. Each row's
