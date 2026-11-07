@@ -31,6 +31,7 @@ export default function GeneralSettingsPage() {
               <button
                 key={c.value}
                 type="button"
+                aria-pressed={active}
                 onClick={() => setTheme(c.value)}
                 className={
                   "flex flex-col items-center gap-2 rounded-md border px-3 py-4 text-sm transition " +
@@ -56,6 +57,7 @@ export default function GeneralSettingsPage() {
               <button
                 key={l.value}
                 type="button"
+                aria-pressed={active}
                 onClick={() => setLocale(l.value)}
                 className={
                   "flex items-center justify-center gap-2 rounded-md border px-3 py-4 text-sm transition " +
