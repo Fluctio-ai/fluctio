@@ -8,7 +8,27 @@ import { fileUrl, getAgent, getAgentSkills, getChatHistoryWithCursor, getChatSes
 import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronRight, X, File, FileText, Image as ImageIcon, FileCode, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, RotateCcw, ListChecks, Terminal, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
-import { authPromptMessages, errorMessage, compactionMessage, skillPendingMessages } from "@/components/chat-events";
+import {
+  authPromptMessages,
+  errorMessage,
+  compactionMessage,
+  skillPendingMessages,
+  appendDelta,
+  appendTurnFailure,
+  appendUserTurn,
+  attachFilesToLast,
+  dropBubbleIfWhitespace,
+  markStoppedTools,
+  newAgentBubbleId,
+  patchToolGroup,
+  replaceSkillPills,
+  sealStreamedBubble,
+  stampLastAgentMeta,
+  stoppedNotice,
+  upsertToolGroup,
+  type ChatMessage,
+  type UserAttachment,
+} from "@/components/chat-events";
 import { splitDataImagesCached, splitReplyOptionsCached, splitOnMarker, SPLIT_MARKER } from "@/components/chat-content";
 import { FilesPanel, isSystemFile } from "@/components/chat-file-tree";
 import { FileViewer, WorkspacePanel } from "@/components/chat-workspace";
@@ -397,56 +417,6 @@ interface ProducedFile {
   modTime?: number; // unix ms — places the file under the message that produced it
 }
 
-interface UserAttachment {
-  name: string;
-  isImage: boolean;
-  // Local blob URL for instant in-bubble preview without a server round-trip.
-  // Only set on the live-send turn; reloaded history won't carry it.
-  previewUrl?: string;
-}
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "agent" | "tool-group" | "notice";
-  content: string;
-  // For role==="notice" — currently "compaction_notice" and
-  // "skill_pending" are the kinds. Set so the renderer can distinguish
-  // future notice variants.
-  kind?: string;
-  timestamp: number;
-  // session_messages.seq (0-based) from WebChatHistory — daily-diary
-  // #seq-N deep links scroll to the bubble whose id matches.
-  seq?: number;
-  toolCalls?: { id: string; name: string; arguments: string; result?: string; metadata?: ToolResultMetadata }[];
-  files?: ProducedFile[];
-  attachments?: UserAttachment[];
-  // Optimistically-rendered steer bubble awaiting the server's persisted
-  // "steer" echo. Used only to dedup against that echo (cleared on
-  // match) — not rendered differently.
-  pendingSteer?: boolean;
-  // Assistant-side metadata (e.g. iteration-cap badge). Stamped from
-  // either the live content event's `metadata` payload or the
-  // ChatHistoryMessage.metadata on a refresh.
-  metadata?: ToolResultMetadata;
-  // Authorization prompt payload (from auth_prompt SSE event). When set,
-  // the agent bubble renders tappable buttons for each option instead of
-  // asking the user to type the slash. handleSend(opt.cmd) dispatches.
-  authOptions?: {
-    description: string;
-    options: { cmd: string; label_zh: string; label_en: string }[];
-  };
-  // IM-bridge sender identity, surfaced from session_messages metadata
-  // (set by the agent loop for Discord/Telegram/... routed turns).
-  // Present means: render an avatar + nickname header instead of an
-  // anonymous "you" bubble — the message came from a third party
-  // talking to the bot, not from the agent owner themselves.
-  sender?: {
-    name: string;
-    avatarUrl?: string;
-    id?: string;
-    channel?: string;
-  };
-}
 
 // SPLIT_MARKER and splitOnMarker now live in components/chat-content.ts
 // (shared with the RegularBubble memo component).
@@ -2202,29 +2172,11 @@ export function ChatScreen() {
     // to bottom even if the user had scrolled up to read earlier in the
     // conversation.
     stickToBottomRef.current = true;
-    setMessages((prev) => {
-      // Resend of a trailing failed user turn: the server is rolling
-      // back the orphan user row (rollbackPending below), so also drop
-      // the stale failed user bubble AND any trailing error bubbles
-      // from the view before adding the fresh user bubble. Otherwise
-      // the UI shows two user bubbles (old failed + new resend) until a
-      // refresh, even though the DB is already correct.
-      let base = prev;
-      if (rollbackId) {
-        const idx = prev.findIndex((m) => m.id === rollbackId);
-        if (idx >= 0) base = prev.slice(0, idx);
-      }
-      return [
-        ...base,
-        {
-          id: `u-${Date.now()}`,
-          role: "user",
-          content: text, // bubble shows text only; attachments rendered separately above
-          timestamp: Date.now(),
-          attachments: userBubbleAttachments.length > 0 ? userBubbleAttachments : undefined,
-        },
-      ];
-    });
+    // Resend of a trailing failed user turn: the server is rolling back
+    // the orphan user row (rollbackPending), so appendUserTurn also drops
+    // the stale failed user bubble AND any trailing error bubbles before
+    // adding the fresh one — otherwise the UI shows both until a refresh.
+    setMessages((prev) => appendUserTurn(prev, rollbackId, text, userBubbleAttachments));
     setSendingSessions((prev) => {
       const next = new Set(prev);
       next.add(sessionId);
@@ -2279,7 +2231,7 @@ export function ChatScreen() {
       if (!chunk) return;
       pendingDeltaRef.current = "";
       if (!streamingMsgIdRef.current) {
-        const id = `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const id = newAgentBubbleId();
         streamingMsgIdRef.current = id;
         setMessages((prev) => [
           ...prev,
@@ -2288,13 +2240,7 @@ export function ChatScreen() {
         return;
       }
       const id = streamingMsgIdRef.current;
-      setMessages((prev) => {
-        const idx = prev.findIndex((m) => m.id === id);
-        if (idx < 0) return prev;
-        const updated = [...prev];
-        updated[idx] = { ...updated[idx], content: (updated[idx].content || "") + chunk };
-        return updated;
-      });
+      setMessages((prev) => appendDelta(prev, id, chunk));
     };
 
     try {
@@ -2384,17 +2330,7 @@ export function ChatScreen() {
               // Seal the streamed bubble. If it only collected whitespace
               // deltas this round (no real text), drop it instead of
               // leaving a phantom blank bubble.
-              setMessages((prev) => {
-                const idx = prev.findIndex((m) => m.id === id);
-                if (idx < 0) return prev;
-                if (!((prev[idx].content || "").trim())) {
-                  return prev.filter((m) => m.id !== id);
-                }
-                if (!meta) return prev;
-                const updated = [...prev];
-                updated[idx] = { ...updated[idx], metadata: { ...updated[idx].metadata, ...meta } };
-                return updated;
-              });
+              setMessages((prev) => sealStreamedBubble(prev, id, meta));
               break;
             }
             // Metadata-only event with empty content: the backend uses
@@ -2404,16 +2340,7 @@ export function ChatScreen() {
             // Apply to the last agent message instead of creating an
             // empty new bubble.
             if (!content && meta) {
-              setMessages((prev) => {
-                for (let i = prev.length - 1; i >= 0; i--) {
-                  if (prev[i].role === "agent") {
-                    const updated = [...prev];
-                    updated[i] = { ...updated[i], metadata: { ...updated[i].metadata, ...meta } };
-                    return updated;
-                  }
-                }
-                return prev;
-              });
+              setMessages((prev) => stampLastAgentMeta(prev, meta));
               break;
             }
             if (curCalls.length > 0) {
@@ -2423,7 +2350,7 @@ export function ChatScreen() {
             // Store as thinking content (may become part of next tool-group, or stay as final answer)
             setMessages((prev) => [
               ...prev,
-              { id: `a-${Date.now()}`, role: "agent", content, timestamp: Date.now(), metadata: meta },
+              { id: newAgentBubbleId(), role: "agent", content, timestamp: Date.now(), metadata: meta },
             ]);
             break;
           }
@@ -2444,13 +2371,7 @@ export function ChatScreen() {
             const tcSid = streamingMsgIdRef.current;
             streamingMsgIdRef.current = null;
             if (tcSid) {
-              setMessages((prev) => {
-                const idx = prev.findIndex((m) => m.id === tcSid);
-                if (idx >= 0 && !((prev[idx].content || "").trim())) {
-                  return prev.filter((m) => m.id !== tcSid);
-                }
-                return prev;
-              });
+              setMessages((prev) => dropBubbleIfWhitespace(prev, tcSid));
             }
             // New round starts if every tool in the current group has
             // already resolved. Without this, two assistant turns that
@@ -2466,26 +2387,12 @@ export function ChatScreen() {
               name: evt.data?.name || "",
               arguments: evt.data?.arguments || "{}",
             });
-            const groupId = curGroupId;
-            const calls = [...curCalls];
-            setMessages((prev) => {
-              // Update existing tool-group for this round (additional
-              // tool_call within the same assistant turn).
-              const idx = prev.findIndex((m) => m.id === groupId);
-              if (idx >= 0) {
-                const updated = [...prev];
-                updated[idx] = { ...updated[idx], toolCalls: calls };
-                return updated;
-              }
-              // Leave any streamed agent bubble in place — don't fold
-              // its text into the tool-group. Mirrors the split applied
-              // in buildChatMessages on history reload, so live and
-              // reloaded views stay consistent.
-              return [
-                ...prev,
-                { id: groupId, role: "tool-group" as const, content: "", timestamp: Date.now(), toolCalls: calls },
-              ];
-            });
+            // upsertToolGroup updates the round's existing group (an
+            // additional tool_call in the same turn) or appends the group
+            // as its own message. Any streamed agent bubble stays in
+            // place — mirrors the split buildChatMessages applies on
+            // history reload, so live and reloaded views stay consistent.
+            setMessages((prev) => upsertToolGroup(prev, curGroupId, [...curCalls]));
             break;
           }
           case "tool_result": {
@@ -2537,15 +2444,7 @@ export function ChatScreen() {
                 }
               } catch { /* ignore bad args */ }
             }
-            const groupId = curGroupId;
-            const calls = [...curCalls];
-            setMessages((prev) => {
-              const idx = prev.findIndex((m) => m.id === groupId);
-              if (idx < 0) return prev;
-              const updated = [...prev];
-              updated[idx] = { ...updated[idx], toolCalls: calls };
-              return updated;
-            });
+            setMessages((prev) => patchToolGroup(prev, curGroupId, [...curCalls]));
             break;
           }
           case "auth_prompt": {
@@ -2612,12 +2511,7 @@ export function ChatScreen() {
             const count = evt.data?.count ?? 0;
             const names = Array.isArray(evt.data?.names) ? evt.data!.names! : [];
             const pills = skillPendingMessages(count, names, t);
-            if (pills.length > 0) {
-              setMessages((prev) => [
-                ...prev.filter((m) => m.kind !== "skill_pending"),
-                ...pills,
-              ]);
-            }
+            setMessages((prev) => replaceSkillPills(prev, pills));
             break;
           }
         }
@@ -2720,20 +2614,10 @@ export function ChatScreen() {
         });
       }
       if (allFiles.length > 0) {
-        setMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          updated[updated.length - 1] = { ...last, files: allFiles };
-          if (process.env.NODE_ENV !== "production") {
-            console.log("[chat] attached files to last message", {
-              lastId: last.id,
-              lastRole: last.role,
-              files: allFiles,
-            });
-          }
-          return updated;
-        });
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[chat] attaching files to last message", { files: allFiles });
+        }
+        setMessages((prev) => attachFilesToLast(prev, allFiles));
       }
       loadSessions(selectedAgent);
       // First-turn of a brand-new session just got persisted — tell the
@@ -2770,44 +2654,12 @@ export function ChatScreen() {
         // stop spinning. Server-side padOrphanToolResults will write a
         // matching record on its end; this just keeps the UI consistent
         // until the next history fetch overwrites it.
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.role === "tool-group" && m.toolCalls
-              ? {
-                  ...m,
-                  toolCalls: m.toolCalls.map((tc) =>
-                    tc.result === undefined ? { ...tc, result: "(stopped)" } : tc,
-                  ),
-                }
-              : m,
-          ),
-        );
-        setMessages((prev) => [
-          ...prev,
-          { id: `e-${Date.now()}`, role: "agent", content: "(Stopped)", timestamp: Date.now() },
-        ]);
+        setMessages(markStoppedTools);
+        setMessages((prev) => [...prev, stoppedNotice()]);
       } else {
-        setMessages((prev) => {
-          const lastUser = [...prev].reverse().findIndex((m) => m.role === "user");
-          if (lastUser >= 0) {
-            const replyAfter = prev
-              .slice(prev.length - lastUser)
-              .some((m) => m.role === "agent" || m.role === "tool-group");
-            if (replyAfter) return prev; // turn already produced output
-          }
-          const errMsg = err instanceof Error && err.message
-            ? err.message
-            : "Failed to get a response. Is the gateway running?";
-          return [
-            ...prev,
-            {
-              id: `e-${Date.now()}`,
-              role: "agent",
-              content: errMsg,
-              timestamp: Date.now(),
-            },
-          ];
-        });
+        // appendTurnFailure suppresses the bubble when the turn already
+        // produced visible output after the last user message.
+        setMessages((prev) => appendTurnFailure(prev, err));
       }
     } finally {
       // Cancel a pending batched flush — the turn is over and the final
