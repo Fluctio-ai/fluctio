@@ -4,7 +4,6 @@ import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { fileUrl, getAgent, getAgentSkills, getChangedFiles, getChatHistoryWithCursor, getChatSessions, getChatTodo, deleteAgentFile, getMe, getScopePreview, getScopePreviewLogs, listAgentFiles, listProjects, renameChatSession, setChatSessionChatOnly, forkChatSession, revealAgentWorkspace, sendChatStream, steerChat, stopChat, uploadAgentFiles, getSkills, type ChatHistoryMessage, type ChatStreamEvent, type ScopePreview, type SkillInfo, type TodoItem, type KnowledgeSource, type ToolResultMetadata, type WorkspaceFile } from "@/lib/api";
 import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Globe, Target, Wrench, Zap, ChevronDown, ChevronLeft, ChevronRight, Download, X, File, FileText, Folder, FolderSearch, Image as ImageIcon, FileCode, Film, Music, Puzzle, SlidersHorizontal, ShieldCheck, Paperclip, Square, FolderOpen, GitBranch, RefreshCw, Eye, Code2, RotateCcw, ListChecks, Terminal, ExternalLink, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Minus, Trash2, MessageCircle } from "lucide-react";
@@ -2192,7 +2191,6 @@ export function ChatScreen() {
 
     let curGroupId = "";
     let curCalls: { id: string; name: string; arguments: string; result?: string; metadata?: ToolResultMetadata }[] = [];
-    let curContent = "";
     // streamingMsgIdRef tracks the in-flight assistant bubble for
     // content_delta accretion. Stored on a ref (declared above) so
     // the parallel /api/chat/subscribe SSE handler can observe it
@@ -2206,7 +2204,6 @@ export function ChatScreen() {
     const startNewGroup = () => {
       curGroupId = `tg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       curCalls = [];
-      curContent = "";
       streamingMsgIdRef.current = null;
     };
     startNewGroup();
@@ -2293,7 +2290,6 @@ export function ChatScreen() {
               flushPendingDelta();
               startNewGroup();
             }
-            curContent += delta;
             pendingDeltaRef.current += delta;
             if (!streamingMsgIdRef.current) {
               // First delta of a bubble: create it immediately so the
@@ -2343,7 +2339,6 @@ export function ChatScreen() {
                 updated[idx] = { ...updated[idx], metadata: { ...updated[idx].metadata, ...meta } };
                 return updated;
               });
-              curContent = content;
               break;
             }
             // Metadata-only event with empty content: the backend uses
@@ -2370,7 +2365,6 @@ export function ChatScreen() {
               startNewGroup();
             }
             // Store as thinking content (may become part of next tool-group, or stay as final answer)
-            curContent = content;
             setMessages((prev) => [
               ...prev,
               { id: `a-${Date.now()}`, role: "agent", content, timestamp: Date.now(), metadata: meta },
@@ -5402,18 +5396,6 @@ function WorkspacePanel({
       </div>
     </>
   );
-}
-
-function formatRelativeTime(ts?: number): string {
-  if (!ts) return "—";
-  const d = new Date(ts * 1000);
-  const now = Date.now();
-  const diff = now - d.getTime();
-  if (diff < 60_000) return "just now";
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
-  if (diff < 7 * 86400_000) return `${Math.floor(diff / 86400_000)}d ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 // FileViewer renders a selected workspace file inline (right column of the
