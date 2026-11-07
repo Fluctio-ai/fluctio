@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getAgentConfig, updateAgent } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useT } from "@/lib/i18n";
 import { useAutoSave } from "@/hooks/use-auto-save";
 import { SettingsCard, CardHead, GroupLabel, ToggleRow, SaveStatus } from "@/components/settings-ui";
+import { cn } from "@/lib/utils";
 import { BellRing } from "lucide-react";
 
 // The toggle set, grouped as rendered. `key` doubles as the config field
@@ -43,27 +44,48 @@ export function NotifySettingsCard() {
   const t = useT();
   const agentId = useAgentIdFromURL();
   const [enabled, setEnabled] = useState<Record<Kind, boolean>>(ALL_ON);
-  const [configLoaded, setConfigLoaded] = useState(false);
+  // Which agentId's config is loaded / whose load failed — flags are
+  // derived per agent so switching agents instantly re-arms the gate
+  // (useAutoSave won't persist until the new agent's config lands) with
+  // no synchronous reset needed in the load effect.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [loadFailedFor, setLoadFailedFor] = useState<string | null>(null);
+  const configLoaded = !!agentId && loadedFor === agentId;
+  // Load-failure surfacing: swallowing the error used to leave loaded=false
+  // forever, so every toggle only changed local state and never persisted
+  // — with no indication that anything was wrong.
+  const loadFailed = !!agentId && loadFailedFor === agentId;
+  // Latest agentId — a config response that arrives after the user
+  // switched agents must be discarded, or the stale values overwrite the
+  // toggles and the next autosave writes the previous agent's
+  // notification blob into the new agent (whole-replace contract).
+  const agentIdRef = useRef(agentId);
+  useEffect(() => {
+    agentIdRef.current = agentId;
+  }, [agentId]);
 
-  const loadConfig = useCallback(
-    () =>
-      !agentId
-        ? Promise.resolve()
-        : getAgentConfig(agentId)
-            .then((cfg) => {
-              const n = cfg.notifications;
-              if (n) {
-                const next = { ...ALL_ON };
-                for (const k of [...CONVERSATION_KINDS, ...SWEEP_KINDS]) {
-                  next[k.key] = n[k.key] ?? true;
-                }
-                setEnabled(next);
-              }
-              setConfigLoaded(true);
-            })
-            .catch(() => {}),
-    [agentId],
-  );
+  const loadConfig = useCallback(() => {
+    if (!agentId) return Promise.resolve();
+    const requestedFor = agentId;
+    return getAgentConfig(agentId)
+      .then((cfg) => {
+        if (agentIdRef.current !== requestedFor) return; // stale — discard
+        const n = cfg.notifications;
+        if (n) {
+          const next = { ...ALL_ON };
+          for (const k of [...CONVERSATION_KINDS, ...SWEEP_KINDS]) {
+            next[k.key] = n[k.key] ?? true;
+          }
+          setEnabled(next);
+        }
+        setLoadedFor(requestedFor);
+        setLoadFailedFor(null);
+      })
+      .catch(() => {
+        if (agentIdRef.current !== requestedFor) return;
+        setLoadFailedFor(requestedFor);
+      });
+  }, [agentId]);
 
   useEffect(() => {
     void loadConfig();
@@ -109,14 +131,42 @@ export function NotifySettingsCard() {
           />
         }
       />
-      <div className="space-y-4 border-t border-border pt-4">
-        <GroupLabel>{t("notify.conversations")}</GroupLabel>
-        {rows(CONVERSATION_KINDS)}
-      </div>
-      <div className="space-y-4 border-t border-border pt-4">
-        <GroupLabel>{t("notify.sweeps")}</GroupLabel>
-        {rows(SWEEP_KINDS)}
-      </div>
+      {loadFailed ? (
+        // Fail closed on load failure: show the error instead of toggles
+        // whose edits would silently never persist. English copy — no
+        // generic load-failure i18n key exists in the locales.
+        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <span>Failed to load configuration — edits are disabled until it loads.</span>
+          <button
+            type="button"
+            onClick={() => void loadConfig()}
+            className="text-xs font-medium underline underline-offset-2"
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <>
+          <div
+            className={cn(
+              "space-y-4 border-t border-border pt-4",
+              !configLoaded && "pointer-events-none opacity-60",
+            )}
+          >
+            <GroupLabel>{t("notify.conversations")}</GroupLabel>
+            {rows(CONVERSATION_KINDS)}
+          </div>
+          <div
+            className={cn(
+              "space-y-4 border-t border-border pt-4",
+              !configLoaded && "pointer-events-none opacity-60",
+            )}
+          >
+            <GroupLabel>{t("notify.sweeps")}</GroupLabel>
+            {rows(SWEEP_KINDS)}
+          </div>
+        </>
+      )}
     </SettingsCard>
   );
 }

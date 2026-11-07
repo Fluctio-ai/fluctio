@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArchiveRestore,
   Flame,
@@ -19,6 +19,26 @@ function PaneSkeleton() {
       <Skeleton className="h-4 w-3/4" />
       <Skeleton className="h-4 w-full" />
       <Skeleton className="h-4 w-2/3" />
+    </div>
+  );
+}
+
+// Terminal state for a pane whose load failed (network error — the API
+// layer already maps HTTP errors to fallback values). Without it the pane
+// would sit on the skeleton forever with no way to retry. English copy is
+// intentional-adjacent: no dashboard error i18n keys exist and locale
+// files are outside this fix's scope.
+function PaneError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 p-6 text-center">
+      <p className="text-sm text-muted-foreground">Failed to load</p>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="text-xs text-primary hover:underline"
+      >
+        Retry
+      </button>
     </div>
   );
 }
@@ -81,42 +101,104 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
   // and risks hydration mismatch under static export). 0 = not yet
   // stamped → render no time.
   const [nowTs, setNowTs] = useState(0);
+  // Per-pane load-failure flags. Every pane load must land somewhere
+  // visible: the API layer maps HTTP errors to fallback values, but a
+  // rejected fetch (offline, connection reset) used to leave four of the
+  // five panes on their skeleton forever with no error state.
+  const [paneFailed, setPaneFailed] = useState<
+    Record<"cards" | "todos" | "sessions" | "crons", boolean>
+  >({ cards: false, todos: false, sessions: false, crons: false });
+  // Alive guard shared by the mount effect and the retry closures (the
+  // effect-local `alive` flag can't cover callbacks fired after unmount).
+  const aliveRef = useRef(true);
+  const markPaneFailed = useCallback(
+    (key: "cards" | "todos" | "sessions" | "crons") =>
+      setPaneFailed((prev) => (prev[key] ? prev : { ...prev, [key]: true })),
+    [],
+  );
+
+  // One loader per pane — used by the mount effect and the PaneError retry
+  // button. No synchronous setState here (the mount effect calls these):
+  // the failure flag flips only inside the promise callbacks, so a retry
+  // keeps the error line visible until the new result lands.
+  const loadStats = useCallback(() => {
+    getCardStats(agentId)
+      .then((s) => {
+        if (!aliveRef.current) return;
+        setStats(s);
+        setPaneFailed((prev) => (prev.cards ? { ...prev, cards: false } : prev));
+      })
+      .catch(() => {
+        if (aliveRef.current) markPaneFailed("cards");
+      });
+  }, [agentId, markPaneFailed]);
+  // Board rows show title only (the full markdown body lives in KB
+  // entries — fetching those is an N+1 the board doesn't need).
+  const loadTodos = useCallback(() => {
+    kbListTodos(agentId)
+      .then((ts) => {
+        if (!aliveRef.current) return;
+        setTodos(ts.filter(isOpenTodo));
+        setPaneFailed((prev) => (prev.todos ? { ...prev, todos: false } : prev));
+      })
+      .catch(() => {
+        if (aliveRef.current) markPaneFailed("todos");
+      });
+  }, [agentId, markPaneFailed]);
+  // Order isn't guaranteed by the backend across modes — sort locally
+  // so the board always leads with the most recently touched thread.
+  const loadSessions = useCallback(() => {
+    getChatSessions(agentId)
+      .then((ss) => {
+        if (!aliveRef.current) return;
+        setNowTs(Date.now());
+        setSessions(
+          [...ss]
+            .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+            .slice(0, RECENT_SESSIONS),
+        );
+        setPaneFailed((prev) => (prev.sessions ? { ...prev, sessions: false } : prev));
+      })
+      .catch(() => {
+        if (aliveRef.current) markPaneFailed("sessions");
+      });
+  }, [agentId, markPaneFailed]);
+  const loadCrons = useCallback(() => {
+    listAgentCronJobs(agentId)
+      .then((js) => {
+        if (!aliveRef.current) return;
+        setCrons(js.filter((j) => j.enabled).slice(0, RECENT_SESSIONS));
+        setPaneFailed((prev) => (prev.crons ? { ...prev, crons: false } : prev));
+      })
+      .catch(() => {
+        if (aliveRef.current) markPaneFailed("crons");
+      });
+  }, [agentId, markPaneFailed]);
 
   useEffect(() => {
-    let alive = true;
-    getCardStats(agentId).then((s) => alive && setStats(s));
-    // Board rows show title only (the full markdown body lives in KB
-    // entries — fetching those is an N+1 the board doesn't need).
-    kbListTodos(agentId).then((ts) => {
-      if (!alive) return;
-      setTodos(ts.filter(isOpenTodo));
-    });
-    // Order isn't guaranteed by the backend across modes — sort locally
-    // so the board always leads with the most recently touched thread.
-    getChatSessions(agentId).then((ss) => {
-      if (!alive) return;
-      setNowTs(Date.now());
-      setSessions([...ss].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)).slice(0, RECENT_SESSIONS));
-    });
-    listAgentCronJobs(agentId).then((js) =>
-      alive && setCrons(js.filter((j) => j.enabled).slice(0, RECENT_SESSIONS)),
-    );
+    aliveRef.current = true;
+    loadStats();
+    loadTodos();
+    loadSessions();
+    loadCrons();
     getDiaryShelved(agentId)
       .then((v) => {
-        if (!alive) return;
+        if (!aliveRef.current) return;
         setNowTs(Date.now());
         setShelved(v);
       })
-      .catch(() => alive && setShelved({ enabled: false, items: [] }));
+      .catch(() => {
+        if (aliveRef.current) setShelved({ enabled: false, items: [] });
+      });
     return () => {
-      alive = false;
+      aliveRef.current = false;
     };
-  }, [agentId]);
+  }, [agentId, loadStats, loadTodos, loadSessions, loadCrons]);
 
   // Deck finished → refetch so the pane flips to the "nothing due"
   // resting state (or a fresh count, if tomorrow's queue leaked in).
   const onDeckFinish = () => {
-    getCardStats(agentId).then((s) => setStats(s));
+    loadStats();
   };
 
   const relativeTime = (ts?: number): string => {
@@ -197,7 +279,11 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
         </div>
         <div className="min-h-0 flex-1">
           {stats === null ? (
-            <PaneSkeleton />
+            paneFailed.cards ? (
+              <PaneError onRetry={loadStats} />
+            ) : (
+              <PaneSkeleton />
+            )
           ) : stats.due_today > 0 ? (
             <CardDeck agentId={agentId} variant="inline" onFinish={onDeckFinish} />
           ) : (
@@ -231,7 +317,11 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
           )}
         </div>
         {todos === undefined ? (
-          <PaneSkeleton />
+          paneFailed.todos ? (
+            <PaneError onRetry={loadTodos} />
+          ) : (
+            <PaneSkeleton />
+          )
         ) : todos === null || todos.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
             <ListTodo className="size-8 text-muted-foreground/50" />
@@ -272,7 +362,11 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
           {t("dashboard.recent.title")}
         </div>
         {sessions === null ? (
-          <PaneSkeleton />
+          paneFailed.sessions ? (
+            <PaneError onRetry={loadSessions} />
+          ) : (
+            <PaneSkeleton />
+          )
         ) : sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
             <MessageSquare className="size-8 text-muted-foreground/50" />
@@ -306,7 +400,11 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
           {t("dashboard.cron.title")}
         </div>
         {crons === null ? (
-          <PaneSkeleton />
+          paneFailed.crons ? (
+            <PaneError onRetry={loadCrons} />
+          ) : (
+            <PaneSkeleton />
+          )
         ) : crons.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-3 p-6 text-center">
             <Timer className="size-8 text-muted-foreground/50" />

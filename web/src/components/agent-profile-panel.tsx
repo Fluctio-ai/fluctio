@@ -35,11 +35,21 @@ export default function AgentProfilePanel() {
   const [avatarBust, setAvatarBust] = React.useState<number>(0);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  // Stale-response guard: a slow getAgent for the previous agent must not
+  // paint the form after the user switched agents — the fields would show
+  // agent A's values while Save writes them into agent B.
+  const agentIdRef = React.useRef(agentId);
+  React.useEffect(() => {
+    agentIdRef.current = agentId;
+  }, [agentId]);
+
   const refresh = React.useCallback(() => {
     if (!agentId) return;
+    const requestedFor = agentId;
     setLoading(true);
     getAgent(agentId)
       .then((a) => {
+        if (agentIdRef.current !== requestedFor) return; // stale — discard
         if (!a) {
           setAgent(null);
           return;
@@ -49,7 +59,9 @@ export default function AgentProfilePanel() {
         setDescription(a.description || "");
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (agentIdRef.current === requestedFor) setLoading(false);
+      });
   }, [agentId]);
 
   React.useEffect(() => {
@@ -82,7 +94,19 @@ export default function AgentProfilePanel() {
   const uploadAvatar = async (file: File) => {
     const fd = new FormData();
     fd.append("file", file, "avatar.png");
-    await apiFetch(`/api/agents/${agentId}/files`, { method: "POST", body: fd });
+    const res = await apiFetch(`/api/agents/${agentId}/files`, { method: "POST", body: fd });
+    // apiFetch resolves normally on 4xx/5xx — without an ok check a failed
+    // upload silently "succeeded" and the avatar never changed.
+    if (!res.ok) {
+      let msg = `Avatar upload failed (HTTP ${res.status})`;
+      try {
+        const body = await res.json();
+        if (body && typeof body.error === "string") msg = body.error;
+      } catch {
+        // non-JSON error body — keep the HTTP-status message
+      }
+      throw new Error(msg);
+    }
     setAvatarBust(Date.now());
   };
 
@@ -98,12 +122,11 @@ export default function AgentProfilePanel() {
       throw new Error(resp.error || t("profile.updateFailed"));
     }
     if (avatar) {
-      try {
-        await uploadAvatar(avatar);
-      } catch {
-        // Non-fatal: text fields saved, only the avatar upload
-        // failed. The next Save can retry the image.
-      }
+      // Failure propagates to SaveButton's error visuals; the staged file
+      // and preview are kept so the next Save retries the image. Clearing
+      // them unconditionally used to drop the file on failure while the
+      // button still flashed "saved".
+      await uploadAvatar(avatar);
       setAvatar(null);
       if (avatarPreview) URL.revokeObjectURL(avatarPreview);
       setAvatarPreview(null);

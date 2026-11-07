@@ -22,7 +22,6 @@ export function TestButton({
 }) {
   const t = useT();
   const [state, setState] = useState<"idle" | "testing" | "ok" | "fail">("idle");
-  const [msg, setMsg] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(
@@ -39,8 +38,11 @@ export function TestButton({
       setState("ok");
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setState("idle"), 3000);
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "");
+    } catch {
+      // Generic copy only: onTest implementations surface server error
+      // strings (Go http client errors embed the dialed host:port), and
+      // printing them verbatim leaked internal topology to the UI. The
+      // thrown value is dropped; details live in the server logs.
       setState("fail");
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => setState("idle"), 5000);
@@ -64,7 +66,7 @@ export function TestButton({
       ) : state === "fail" ? (
         <>
           <AlertCircle className="mr-1.5 h-3.5 w-3.5 text-destructive" />
-          {msg || t("common.testFailed")}
+          {t("common.testFailed")}
         </>
       ) : state === "testing" ? (
         <>

@@ -70,19 +70,33 @@ export function ChatRowActions({
 
   const onConfirmDelete = async () => {
     setDeleteOpen(false);
+    let res: { error?: string } | undefined;
     try {
-      await deleteChatSession(agentId, session.id);
-    } finally {
-      // If the deleted session is currently open, bounce back to the
-      // fresh chat URL so the page doesn't hang on a stale id.
-      if (
-        typeof window !== "undefined" &&
-        window.location.pathname.replace(/\/$/, "").endsWith("/chat/" + session.id)
-      ) {
-        router.replace(`/agents/${encodeURIComponent(agentId)}/chat/`);
-      }
-      onChanged();
+      res = await deleteChatSession(agentId, session.id);
+    } catch (err) {
+      // apiFetch maps HTTP errors to {error} bodies, but a rejected fetch
+      // (offline, reset) used to slip past this handler with no feedback.
+      window.alert(
+        `Failed to delete chat: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
     }
+    if (res && res.error) {
+      // Server-side failure: surface it and skip the redirect + refresh —
+      // silently closing the dialog and bouncing off the page made the
+      // user believe the chat was deleted when it wasn't.
+      window.alert(`Failed to delete chat: ${res.error}`);
+      return;
+    }
+    // If the deleted session is currently open, bounce back to the
+    // fresh chat URL so the page doesn't hang on a stale id.
+    if (
+      typeof window !== "undefined" &&
+      window.location.pathname.replace(/\/$/, "").endsWith("/chat/" + session.id)
+    ) {
+      router.replace(`/agents/${encodeURIComponent(agentId)}/chat/`);
+    }
+    onChanged();
   };
 
   // Trigger styling: SidebarMenuAction (used by the flat chats list)
@@ -194,13 +208,25 @@ function EditTitleDialog({
       return;
     }
     setSaving(true);
+    let res: { error?: string } | undefined;
     try {
-      await renameChatSession(agentId, session.id, next);
-      onSaved();
-    } finally {
+      res = await renameChatSession(agentId, session.id, next);
+    } catch (err) {
       setSaving(false);
-      onOpenChange(false);
+      window.alert(
+        `Failed to rename chat: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return; // keep the dialog open, draft intact — the user can retry
     }
+    setSaving(false);
+    if (res && res.error) {
+      // Failure previously closed the dialog silently and the list
+      // refresh flipped the title back — no hint anything went wrong.
+      window.alert(`Failed to rename chat: ${res.error}`);
+      return; // keep the dialog open so the user can retry
+    }
+    onSaved();
+    onOpenChange(false);
   };
 
   return (

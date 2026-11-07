@@ -85,7 +85,11 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const agentId = useAgentIdFromURL();
 
   const [cards, setCards] = useState<KBCard[]>([]);
-  const [total, setTotal] = useState(0); // loaded-so-far marker: == PAGE means maybe more
+  // Corpus exhausted: the last page came back short, so "load more" has
+  // nothing left to fetch. The old `total % PAGE === 0` guess stayed true
+  // forever when the corpus size was an exact multiple of PAGE, turning
+  // the button into a repeat-empty-request loop.
+  const [exhausted, setExhausted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<CardFilter>("all");
   const [source, setSource] = useState("");
@@ -126,9 +130,15 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const paneRef = useRef<HTMLDivElement>(null);
   const { width: leftWidth, startDrag } = usePaneResize(paneRef, 340, 240, 560);
 
+  // Latest-request guard for list loads: fast filter/source flips or
+  // repeated Enter searches fire overlapping fetches, and a slow older
+  // response used to replace the whole list with the wrong filter's rows.
+  const loadReqRef = useRef(0);
+
   const load = useCallback(
     async (offset: number, replace: boolean) => {
       if (!agentId) return;
+      const req = ++loadReqRef.current;
       if (replace) setLoading(true);
       try {
         const page = await listCards(agentId, {
@@ -136,9 +146,11 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
           q: queryRef.current.trim() || undefined,
           limit: PAGE, offset,
         });
+        if (loadReqRef.current !== req) return; // a newer load superseded this one
         setCards((prev) => (replace ? page : [...prev, ...page]));
-        setTotal(offset + page.length);
+        setExhausted(page.length < PAGE);
       } catch {
+        if (loadReqRef.current !== req) return;
         if (replace) setCards([]);
       }
       setLoading(false);
@@ -221,20 +233,25 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
 
   // Selecting a card fetches its review timeline; the flip resets. Wiki
   // sources resolve their page title via the useWikiTitle hook above.
+  // Latest-request guard: clicking two cards quickly must not let the
+  // slower first response paint its card into the detail pane.
+  const detailReqRef = useRef(0);
   const openCard = useCallback(
     async (c: KBCard) => {
+      const req = ++detailReqRef.current;
       setSelected(c);
       setFlipped(false);
       setReviews([]);
       setDetailLoading(true);
       try {
         const d = agentId ? await getCard(agentId, c.id) : null;
+        if (detailReqRef.current !== req) return; // another card was opened meanwhile
         if (d) {
           setSelected(d.card);
           setReviews(d.reviews);
         }
       } catch { /* detail stays on the list row */ }
-      setDetailLoading(false);
+      if (detailReqRef.current === req) setDetailLoading(false);
     },
     [agentId],
   );
@@ -470,8 +487,8 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                 );
               })
             )}
-            {/* Paged loading: fetch another PAGE when the last page was full. */}
-            {cards.length > 0 && total % PAGE === 0 && (
+            {/* Paged loading: shown only while the last page came back full. */}
+            {cards.length > 0 && !exhausted && (
               <Button variant="ghost" size="sm" className="mt-1 w-full text-xs" disabled={loading} onClick={() => load(cards.length, false)}>
                 {t("cards.loadMore")}
               </Button>

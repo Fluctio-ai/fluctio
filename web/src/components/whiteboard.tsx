@@ -94,14 +94,48 @@ function WhiteboardLoading() {
   );
 }
 
+// Max base64 dataURL payload accepted for an embedded image — 8 MB covers
+// photos and screenshots; bigger blobs are either mistakes or hostile.
+const MAX_IMAGE_DATA_URL_LENGTH = 8 * 1024 * 1024;
+
+// sanitizeFiles enforces the image/* whitelist on a scene's file map.
+// The scene JSON lives inside a note's markdown fence and is hand-editable
+// there, so file entries are untrusted input: a non-image dataURL would
+// ride into Excalidraw's initialData and its SVG export path (a known XSS
+// surface downstream in notes-view). mimeType must be image/*, the dataURL
+// must be a matching data:image/ URL, and the payload is size-capped.
+function sanitizeFiles(
+  files: unknown,
+): Record<string, { dataURL: string; mimeType: string }> | undefined {
+  if (!files || typeof files !== "object") return undefined;
+  const out: Record<string, { dataURL: string; mimeType: string }> = {};
+  for (const [id, f] of Object.entries(files as Record<string, unknown>)) {
+    if (!id || id.length > 128 || !f || typeof f !== "object") continue;
+    const rec = f as { dataURL?: unknown; mimeType?: unknown };
+    const dataURL = typeof rec.dataURL === "string" ? rec.dataURL : "";
+    const mimeType = typeof rec.mimeType === "string" ? rec.mimeType : "";
+    if (!mimeType.startsWith("image/")) continue;
+    if (!dataURL.startsWith(`data:${mimeType};`) || !dataURL.startsWith("data:image/")) continue;
+    if (dataURL.length > MAX_IMAGE_DATA_URL_LENGTH) continue;
+    out[id] = { dataURL, mimeType };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 // parseScene tolerates garbage / partial JSON (a save interrupted
-// mid-write, a hand-edited cell) by starting from an empty board.
+// mid-write, a hand-edited cell) by starting from an empty board. Elements
+// get a minimal schema gate (object with a string type); files go through
+// the image/* whitelist — both because the fence JSON is untrusted.
 function parseScene(raw: string): { elements: unknown[]; files?: Record<string, { dataURL: string; mimeType: string }> } | null {
   if (!raw) return null;
   try {
     const v = JSON.parse(raw);
     if (Array.isArray(v?.elements)) {
-      return { elements: v.elements, files: v.files ?? undefined };
+      const elements = v.elements.filter(
+        (e: unknown) =>
+          !!e && typeof e === "object" && typeof (e as { type?: unknown }).type === "string",
+      );
+      return { elements, files: sanitizeFiles(v.files) };
     }
   } catch {
     /* fall through to null */
@@ -150,15 +184,12 @@ export function Whiteboard({
           onChange={(elements, _appState, files) => {
             if (timer.current) clearTimeout(timer.current);
             timer.current = setTimeout(() => {
-              // Keep only uploaded/pasted binary files (dataURL) so the
-              // scene survives a reload; skip the in-flight placeholder
-              // entries Excalidraw tracks while an upload resolves.
-              const outFiles: Record<string, { dataURL: string; mimeType: string }> = {};
-              for (const [id, f] of Object.entries(files ?? {})) {
-                const dataURL = (f as { dataURL?: string })?.dataURL;
-                const mimeType = (f as { mimeType?: string })?.mimeType;
-                if (dataURL && mimeType) outFiles[id] = { dataURL, mimeType };
-              }
+              // Round-trip the same image/* whitelist used at load: only
+              // image files with a consistent, size-capped dataURL are
+              // persisted, so the stored scene can never grow a non-image
+              // payload. (In-flight upload placeholders lack dataURL/mime
+              // and are dropped by the sanitizer.)
+              const outFiles = sanitizeFiles(files);
               onChangeRef.current(
                 JSON.stringify({ type: "excalidraw", version: 2, elements, files: outFiles }),
               );

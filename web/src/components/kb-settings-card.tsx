@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,6 +18,7 @@ import { useT } from "@/lib/i18n";
 import { useAutoSave } from "@/hooks/use-auto-save";
 import { SettingsCard, CardHead, Field, GroupLabel, GroupHead, NumberField, ToggleRow, SaveStatus } from "@/components/settings-ui";
 import { channelLabel } from "@/components/channel-icon";
+import { cn } from "@/lib/utils";
 import { BookOpen } from "lucide-react";
 
 // KeywordField — the keyword input shown under a keyword-mode trigger,
@@ -142,47 +143,74 @@ export function KBSettingsCard() {
   // override is optional (empty = summary model).
   const [qrEnabled, setQrEnabled] = useState(true);
   const [qrModel, setQrModel] = useState("");
-  const [configLoaded, setConfigLoaded] = useState(false);
+  // Which agentId's config is currently loaded / which one's load failed.
+  // Derived flags keep the switch-safe semantics: the moment agentId
+  // changes, `configLoaded` reads false again without anyone having to
+  // reset it (a stale reset used to require synchronous setState in the
+  // load effect, and a missed reset let the previous agent's values be
+  // autosaved into the new agent).
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [loadFailedFor, setLoadFailedFor] = useState<string | null>(null);
+  const configLoaded = !!agentId && loadedFor === agentId;
+  // True when the config fetch failed for the current agent: the card must
+  // show a visible error instead of the old behavior — controls that
+  // looked editable but whose edits were silently dropped (useAutoSave
+  // refuses to save before `loaded`). English copy here: no generic
+  // load-failure i18n key exists and locale files are outside this scope.
+  const loadFailed = !!agentId && loadFailedFor === agentId;
+  // Latest agentId — a config response that arrives after the user has
+  // switched agents must be discarded, or it overwrites every field with
+  // the previous agent's values and the next autosave writes them into
+  // the new agent (kb config is whole-replace on the server).
+  const agentIdRef = useRef(agentId);
+  useEffect(() => {
+    agentIdRef.current = agentId;
+  }, [agentId]);
 
-  const loadConfig = useCallback(
-    () =>
-      !agentId
-        ? Promise.resolve()
-        : getAgentConfig(agentId)
-            .then((cfg) => {
-              const kb = cfg.kb;
-              if (kb) {
-                setKbEnabled(kb.enabled ?? false);
-                setAutoMode(kb.autoMode ?? "always");
-                setKeywords((kb.keywords ?? []).join(", "));
-                setMaxResults(kb.maxResults || 5);
-                setSearchMode(kb.searchMode ?? "augment");
-                setEmptyAction(kb.emptyAction ?? "llm");
-                setWikiRatio(kb.wikiRatio ?? 0.5);
-                setThreshold(kb.threshold ?? 0.45);
-                setReminderChannel(kb.reminderChannel || "wechat");
-                setArticleDupHigh(kb.articleDupHigh ?? 0.90);
-                setArticleDupMid(kb.articleDupMid ?? 0.72);
-                setFlashDupThreshold(kb.flashDupThreshold ?? 0.85);
-                setFtEnabled(kb.flashTodoEnabled ?? false);
-                setFtAutoMode(kb.flashTodoAutoMode ?? "disabled");
-                setFtKeywords((kb.flashTodoKeywords ?? []).join(", "));
-                setFtMaxResults(kb.flashTodoMaxResults || 3);
-                setFtThreshold(kb.flashTodoThreshold ?? 0.6);
-                setMemAutoMode(kb.memoryAutoMode || "always");
-                setMemKeywords((kb.memoryKeywords ?? []).join(", "));
-                setMemMaxResults(kb.memoryMaxResults || 3);
-                setMemThreshold(Math.max(MEM_FLOOR_MIN, kb.memoryThreshold ?? MEM_FLOOR_MIN));
-                setMemRerank(kb.memoryRerank ?? false);
-                setQrEnabled(kb.queryRewrite ?? true);
-                setQrModel(kb.queryRewriteModel || "");
-              }
-              setConfigLoaded(true);
-            })
-            // Keep the card disabled when the config can't be fetched.
-            .catch(() => {}),
-    [agentId],
-  );
+  const loadConfig = useCallback(() => {
+    if (!agentId) return Promise.resolve();
+    const requestedFor = agentId;
+    return getAgentConfig(agentId)
+      .then((cfg) => {
+        if (agentIdRef.current !== requestedFor) return; // stale — discard
+        const kb = cfg.kb;
+        if (kb) {
+          setKbEnabled(kb.enabled ?? false);
+          setAutoMode(kb.autoMode ?? "always");
+          setKeywords((kb.keywords ?? []).join(", "));
+          setMaxResults(kb.maxResults || 5);
+          setSearchMode(kb.searchMode ?? "augment");
+          setEmptyAction(kb.emptyAction ?? "llm");
+          setWikiRatio(kb.wikiRatio ?? 0.5);
+          setThreshold(kb.threshold ?? 0.45);
+          setReminderChannel(kb.reminderChannel || "wechat");
+          setArticleDupHigh(kb.articleDupHigh ?? 0.90);
+          setArticleDupMid(kb.articleDupMid ?? 0.72);
+          setFlashDupThreshold(kb.flashDupThreshold ?? 0.85);
+          setFtEnabled(kb.flashTodoEnabled ?? false);
+          setFtAutoMode(kb.flashTodoAutoMode ?? "disabled");
+          setFtKeywords((kb.flashTodoKeywords ?? []).join(", "));
+          setFtMaxResults(kb.flashTodoMaxResults || 3);
+          setFtThreshold(kb.flashTodoThreshold ?? 0.6);
+          setMemAutoMode(kb.memoryAutoMode || "always");
+          setMemKeywords((kb.memoryKeywords ?? []).join(", "));
+          setMemMaxResults(kb.memoryMaxResults || 3);
+          setMemThreshold(Math.max(MEM_FLOOR_MIN, kb.memoryThreshold ?? MEM_FLOOR_MIN));
+          setMemRerank(kb.memoryRerank ?? false);
+          setQrEnabled(kb.queryRewrite ?? true);
+          setQrModel(kb.queryRewriteModel || "");
+        }
+        setLoadedFor(requestedFor);
+        setLoadFailedFor(null);
+      })
+      .catch(() => {
+        // Keep the card disabled on failure, but say so — swallowing the
+        // error used to leave the memory lane interactive while nothing
+        // persisted.
+        if (agentIdRef.current !== requestedFor) return;
+        setLoadFailedFor(requestedFor);
+      });
+  }, [agentId]);
 
   useEffect(() => {
     void loadConfig();
@@ -226,7 +254,7 @@ export function KBSettingsCard() {
         queryRewrite: qrEnabled,
         queryRewriteModel: qrModel.trim() || undefined,
       },
-    } as any);
+    });
     if (res?.error) throw new Error(res.error);
   }, [
     agentId,
@@ -297,10 +325,33 @@ export function KBSettingsCard() {
         }
       />
 
+      {/* Load failure → fail closed: show the error and drop every
+          interactive control, so no edit can look persisted while
+          useAutoSave is actually refusing to save (loaded=false). */}
+      {loadFailed ? (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          <span>Failed to load configuration — edits are disabled until it loads.</span>
+          <button
+            type="button"
+            onClick={() => void loadConfig()}
+            className="text-xs font-medium underline underline-offset-2"
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <>
       {/* Memory recall — always visible: the lane runs outside the KB gate,
           so its trigger mode is the control, not a switch. This is the
-          [MEM] injection every message carries. */}
-      <div className="space-y-4 border-t border-border pt-4">
+          [MEM] injection every message carries. While the config is still
+          loading the controls are dimmed and inert: their edits would
+          silently never persist (useAutoSave gates on loaded). */}
+      <div
+        className={cn(
+          "space-y-4 border-t border-border pt-4",
+          !configLoaded && "pointer-events-none opacity-60",
+        )}
+      >
         <GroupHead title={t("knowledge.memoryRecall")} desc={t("knowledge.memoryRecallDesc")} />
         <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
           <Tabs value={memAutoMode} onValueChange={(v) => v && wrap(setMemAutoMode)(v)}>
@@ -347,7 +398,12 @@ export function KBSettingsCard() {
       </div>
 
       {kbEnabled && (
-        <div className="space-y-4 border-t border-border pt-4">
+        <div
+          className={cn(
+            "space-y-4 border-t border-border pt-4",
+            !configLoaded && "pointer-events-none opacity-60",
+          )}
+        >
           <GroupLabel>{t("knowledge.wikiRecall")}</GroupLabel>
           <Field label={t("knowledge.triggerMode")} hint={t("knowledge.modePickerHint")}>
             <Tabs value={autoMode} onValueChange={(v) => v && wrap(setAutoMode)(v)}>
@@ -517,7 +573,12 @@ export function KBSettingsCard() {
           the group itself hides when every lane is off. The memory lane
           runs outside the KB gate, hence the group's ungated placement. */}
       {(kbEnabled || memAutoMode !== "disabled") && (
-        <div className="space-y-4 border-t border-border pt-4">
+        <div
+          className={cn(
+            "space-y-4 border-t border-border pt-4",
+            !configLoaded && "pointer-events-none opacity-60",
+          )}
+        >
           <GroupHead
             title={t("knowledge.advThresholds")}
             desc={t("knowledge.advThresholdsDesc")}
@@ -550,6 +611,8 @@ export function KBSettingsCard() {
             )}
           </div>
         </div>
+      )}
+        </>
       )}
     </SettingsCard>
   );

@@ -18,5 +18,8 @@ export function login(token: string) {
 }
 
 export function logout() {
-  void apiLogout();
+  // api.ts's logout clears the local bearer first and swallows network
+  // failures itself; this catch only guarantees no unhandled rejection
+  // can ever escape into the console.
+  apiLogout().catch(() => {});
 }

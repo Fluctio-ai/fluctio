@@ -217,9 +217,16 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
       setProjects([]);
       return;
     }
+    // Stale-response guard: when the active agent switches quickly, the
+    // previous agent's slow getChatSessions/listProjects responses must
+    // not land after the new agent's — the sidebar would show agent A's
+    // sessions under agent B. `live` is flipped by the cleanup that runs
+    // on agent change/unmount, so every late response is dropped.
+    let live = true;
     const refetch = () => {
       getChatSessions(activeAgentId)
-        .then((list) =>
+        .then((list) => {
+          if (!live) return;
           setSessions(
             list.map((s) => ({
               id: s.id,
@@ -228,11 +235,13 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
               channel: s.channel,
               projectId: s.projectId,
             })),
-          ),
-        )
+          );
+        })
         .catch(() => {});
       listProjects(activeAgentId)
-        .then(setProjects)
+        .then((ps) => {
+          if (live) setProjects(ps);
+        })
         .catch(() => {});
     };
     refetch();
@@ -244,6 +253,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
     };
     window.addEventListener("fluctio:sessions-changed", onChange);
     return () => {
+      live = false;
       window.removeEventListener("fluctio:sessions-changed", onChange);
     };
   }, [activeAgentId]);
@@ -262,15 +272,17 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
     }
   }, [activeAgentId]);
 
-  // Optimistic + cached: most fluctio users are the owner (admin), so
-  // first-paint the admin nav (Agents/Models/Skills/Tools) instead of
-  // popping Skills/Tools in after getStatus resolves. The persisted
-  // value keeps refreshes stable; a non-admin flips to false once.
+  // Optimistic + cached, but fail-closed: a persisted "1" (this browser
+  // has confirmed admin before) first-paints the admin nav instead of
+  // popping it in after getStatus resolves. Missing/negative values
+  // default to NON-admin — the old `!== "0"` default treated every fresh
+  // visitor as admin until proven otherwise, flashing admin nav (and
+  // feeding isAdmin into the settings dialog) with no evidence.
   const isAdmin =
     status?.isAdmin ??
     (typeof window !== "undefined"
-      ? localStorage.getItem("fluctio:isAdmin") !== "0"
-      : true);
+      ? localStorage.getItem("fluctio:isAdmin") === "1"
+      : false);
   const t = useT();
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -367,7 +379,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
         onOpenChange={setSettingsOpen}
         userOnly={settingsUserOnly}
         role={
-          activeAgentId && agentRoles[activeAgentId] === "viewer"
+          activeAgentId && agentRoles[activeAgentId] !== "owner"
             ? "viewer"
             : "owner"
         }

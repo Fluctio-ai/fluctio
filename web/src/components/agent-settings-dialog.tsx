@@ -12,6 +12,7 @@ import {
   IdCardIcon,
   InfoIcon,
   LayersIcon,
+  Loader2,
   Palette,
   Plug,
   RadioIcon,
@@ -29,31 +30,90 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n";
 import { PageHeader } from "@/components/settings-ui";
 
-import AgentProfilePanel from "@/components/agent-profile-panel";
-import AgentCustomizePage from "@/app/agents/[id]/customize/page";
-import AgentModelsPage from "@/app/agents/[id]/models/page";
-import AgentContextPage from "@/app/agents/[id]/context/page";
-import AgentSkillsPage from "@/app/agents/[id]/skills/page";
-import AgentPluginsPage from "@/app/agents/[id]/plugins/page";
-import AgentChannelsPage from "@/app/agents/[id]/channels/page";
-import AgentSchedulerPage from "@/app/agents/[id]/scheduler/page";
-import AgentRegexHooksPage from "@/app/agents/[id]/regex-hooks/page";
-import { KBSettingsCard } from "@/components/kb-settings-card";
-import { NotifySettingsCard } from "@/components/notify-settings-card";
-import { DiarySettingsCard } from "@/components/diary-settings-card";
-import { CardsSettingsCard } from "@/components/cards-settings-card";
-import { WikiAutoGenSettingsCard } from "@/components/wiki-autogen-settings-card";
-import AgentMemoryPage from "@/app/agents/[id]/vectorization/page";
-import AgentPrivacyPage from "@/app/agents/[id]/privacy/page";
-import AgentRecallTuningPage from "@/app/agents/[id]/recall-tuning/page";
-import AgentMCPPage from "@/app/agents/[id]/mcp/page";
-import AgentUsagePage from "@/app/agents/[id]/usage/page";
-import AccountSettingsPage from "@/app/settings/account/page";
-import GeneralSettingsPage from "@/app/settings/general/page";
-import UserModelsPage from "@/app/models/page";
-import AboutSettingsPage from "@/app/settings/about/page";
-import BackupSettingsPage from "@/app/settings/backup/page";
-import DiagReportPage from "@/app/settings/diag/page";
+// Every tab panel is a React.lazy dynamic import: the dialog sits on the
+// first-screen path (sidebar / chat shell), and statically importing all
+// 20 settings pages used to drag Customize/Usage/Backup/etc. into the
+// initial bundle even though a session typically opens one or two tabs.
+// The chunk is fetched the first time its tab renders; switching tabs
+// unmounts the panel (the pages re-fetch on mount, so that's fine).
+const AgentProfilePanel = React.lazy(() => import("@/components/agent-profile-panel"));
+const AgentCustomizePage = React.lazy(() => import("@/app/agents/[id]/customize/page"));
+const AgentModelsPage = React.lazy(() => import("@/app/agents/[id]/models/page"));
+const AgentContextPage = React.lazy(() => import("@/app/agents/[id]/context/page"));
+const AgentSkillsPage = React.lazy(() => import("@/app/agents/[id]/skills/page"));
+const AgentPluginsPage = React.lazy(() => import("@/app/agents/[id]/plugins/page"));
+const AgentChannelsPage = React.lazy(() => import("@/app/agents/[id]/channels/page"));
+const AgentSchedulerPage = React.lazy(() => import("@/app/agents/[id]/scheduler/page"));
+const AgentRegexHooksPage = React.lazy(() => import("@/app/agents/[id]/regex-hooks/page"));
+const AgentMemoryPage = React.lazy(() => import("@/app/agents/[id]/vectorization/page"));
+const AgentPrivacyPage = React.lazy(() => import("@/app/agents/[id]/privacy/page"));
+const AgentRecallTuningPage = React.lazy(() => import("@/app/agents/[id]/recall-tuning/page"));
+const AgentMCPPage = React.lazy(() => import("@/app/agents/[id]/mcp/page"));
+const AgentUsagePage = React.lazy(() => import("@/app/agents/[id]/usage/page"));
+const UserModelsPage = React.lazy(() => import("@/app/models/page"));
+
+// Padded page hosts — same layout the tabs had before, code-split with
+// their page. All hosted pages take no props.
+function paddedHost(load: () => Promise<{ default: React.ComponentType }>) {
+  return React.lazy(async () => {
+    const { default: Page } = await load();
+    return {
+      default: () => (
+        <div className="p-6 max-w-5xl mx-auto"><Page /></div>
+      ),
+    };
+  });
+}
+const AccountSettingsTab = paddedHost(() => import("@/app/settings/account/page"));
+const GeneralSettingsTab = paddedHost(() => import("@/app/settings/general/page"));
+const AboutSettingsPage = paddedHost(() => import("@/app/settings/about/page"));
+const BackupSettingsPage = paddedHost(() => import("@/app/settings/backup/page"));
+const DiagReportPage = paddedHost(() => import("@/app/settings/diag/page"));
+
+// Knowledge tab composes five settings cards; they load as one chunk and
+// the composed panel is the lazy default export.
+const KnowledgeTab = React.lazy(async () => {
+  const [
+    { KBSettingsCard },
+    { DiarySettingsCard },
+    { CardsSettingsCard },
+    { WikiAutoGenSettingsCard },
+    { NotifySettingsCard },
+  ] = await Promise.all([
+    import("@/components/kb-settings-card"),
+    import("@/components/diary-settings-card"),
+    import("@/components/cards-settings-card"),
+    import("@/components/wiki-autogen-settings-card"),
+    import("@/components/notify-settings-card"),
+  ]);
+  return {
+    default: function KnowledgeTabContent() {
+      const tt = useT();
+      return (
+        <div className="mx-auto w-full max-w-5xl space-y-6 p-6">
+          <PageHeader
+            title={tt("knowledge.pageTitle")}
+            desc={tt("knowledge.pageSubtitle")}
+          />
+          <KBSettingsCard />
+          <DiarySettingsCard />
+          <CardsSettingsCard />
+          <WikiAutoGenSettingsCard />
+          <NotifySettingsCard />
+        </div>
+      );
+    },
+  };
+});
+
+// Suspense fallback while a tab chunk is being fetched.
+function TabFallback() {
+  return (
+    <div className="flex min-h-[160px] items-center justify-center p-6">
+      <Loader2 className="size-5 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
 
 export type AgentSettingsTab =
   | "profile"
@@ -147,9 +207,11 @@ const USER_TABS: Array<{ id: AgentSettingsTab; label: string; icon: TabIcon }> =
 // (Customize / Models / Skills / Channels / Scheduler) and the
 // per-user pages (Account / General / Runtime[admin-only]) so a
 // click on the sidebar Settings button covers everything the user
-// could want to change. Each tab mounts the existing page component
-// lazily — switching tabs unmounts the previous panel, which is fine
-// because the pages are self-contained and re-fetch on mount.
+// could want to change. Each tab panel is a React.lazy dynamic
+// import — the chunk loads the first time the tab renders, so the
+// dialog's host screens don't pay for all 20 pages up front.
+// Switching tabs unmounts the previous panel, which is fine because
+// the pages are self-contained and re-fetch on mount.
 //
 // role="viewer" hides the owner-only Agent tabs (Profile, Customize,
 // Skills, Scheduler, Usage) and only exposes Models + Channels under
@@ -272,59 +334,29 @@ export function AgentSettingsDialog({
           ))}
         </aside>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {tab === "profile" && <AgentProfilePanel />}
-          {tab === "customize" && <AgentCustomizePage />}
-          {tab === "models" &&
-            (role === "viewer" ? <UserModelsPage /> : <AgentModelsPage />)}
-          {tab === "context" && <AgentContextPage />}
-          {tab === "skills" && <AgentSkillsPage />}
-          {tab === "mcp" && <AgentMCPPage />}
-          {tab === "plugins" && <AgentPluginsPage />}
-          {tab === "channels" && <AgentChannelsPage />}
-          {tab === "scheduler" && <AgentSchedulerPage />}
-          {tab === "regex-hooks" && <AgentRegexHooksPage />}
-          {tab === "knowledge" && (
-            <div className="mx-auto w-full max-w-5xl space-y-6 p-6">
-              <PageHeader
-                title={tt("knowledge.pageTitle")}
-                desc={tt("knowledge.pageSubtitle")}
-              />
-              <KBSettingsCard />
-              <DiarySettingsCard />
-              <CardsSettingsCard />
-              <WikiAutoGenSettingsCard />
-              <NotifySettingsCard />
-            </div>
-          )}
-          {tab === "vectorization" && <AgentMemoryPage />}
-          {tab === "privacy" && <AgentPrivacyPage />}
-          {tab === "recall-tuning" && <AgentRecallTuningPage />}
-          {tab === "usage" && <AgentUsagePage />}
-          {tab === "account" && (
-            <div className="p-6 max-w-5xl mx-auto">
-              <AccountSettingsPage />
-            </div>
-          )}
-          {tab === "general" && (
-            <div className="p-6 max-w-5xl mx-auto">
-              <GeneralSettingsPage />
-            </div>
-          )}
-          {tab === "backup" && (
-            <div className="p-6 max-w-5xl mx-auto">
-              <BackupSettingsPage />
-            </div>
-          )}
-          {tab === "about" && (
-            <div className="p-6 max-w-5xl mx-auto">
-              <AboutSettingsPage />
-            </div>
-          )}
-          {tab === "diag" && (
-            <div className="p-6 max-w-5xl mx-auto">
-              <DiagReportPage />
-            </div>
-          )}
+          <React.Suspense fallback={<TabFallback />}>
+            {tab === "profile" && <AgentProfilePanel />}
+            {tab === "customize" && <AgentCustomizePage />}
+            {tab === "models" &&
+              (role === "viewer" ? <UserModelsPage /> : <AgentModelsPage />)}
+            {tab === "context" && <AgentContextPage />}
+            {tab === "skills" && <AgentSkillsPage />}
+            {tab === "mcp" && <AgentMCPPage />}
+            {tab === "plugins" && <AgentPluginsPage />}
+            {tab === "channels" && <AgentChannelsPage />}
+            {tab === "scheduler" && <AgentSchedulerPage />}
+            {tab === "regex-hooks" && <AgentRegexHooksPage />}
+            {tab === "knowledge" && <KnowledgeTab />}
+            {tab === "vectorization" && <AgentMemoryPage />}
+            {tab === "privacy" && <AgentPrivacyPage />}
+            {tab === "recall-tuning" && <AgentRecallTuningPage />}
+            {tab === "usage" && <AgentUsagePage />}
+            {tab === "account" && <AccountSettingsTab />}
+            {tab === "general" && <GeneralSettingsTab />}
+            {tab === "backup" && <BackupSettingsPage />}
+            {tab === "about" && <AboutSettingsPage />}
+            {tab === "diag" && <DiagReportPage />}
+          </React.Suspense>
         </div>
       </DialogContent>
     </Dialog>

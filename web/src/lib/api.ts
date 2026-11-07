@@ -310,6 +310,10 @@ export async function apiFetch(url: string, init?: RequestInit): Promise<Respons
     !window.location.pathname.startsWith("/onboard")
   ) {
     bouncedToLogin = true;
+    // Drop the stored bearer alongside the dead session — the bounce used
+    // to leave a stale token in localStorage that kept riding every
+    // request (including after the next login) with no expiry.
+    setAuthToken("");
     window.location.href = "/";
   }
   return res;
@@ -365,8 +369,16 @@ export async function login(loginField: string, password: string): Promise<MeRes
 }
 
 export async function logout(): Promise<void> {
-  await apiFetch("/api/logout", { method: "POST" });
+  // Clear the local bearer BEFORE the network round-trip: the old order
+  // (clear after await) left the token in localStorage whenever the POST
+  // failed or hung, while the UI already treated the user as signed out.
   setAuthToken("");
+  try {
+    await apiFetch("/api/logout", { method: "POST" });
+  } catch {
+    // Best-effort server-side revoke — the local credential is already
+    // gone and the cookie session expires on its own.
+  }
 }
 
 export async function getMe(): Promise<MeResponse> {
@@ -1931,6 +1943,10 @@ export async function generateDiary(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(date ? { date } : {}),
   });
+  // A failed POST (409 conflict, auth, 5xx) must throw so the caller
+  // aborts its 120s poll immediately instead of spinning on "generating"
+  // with no feedback — non-2xx bodies here are {error} envelopes.
+  if (!res.ok) throw new Error(await readError(res, "Diary generation failed to start"));
   return res.json();
 }
 /** Delete one day's diary. The backend cascades into the flashcards
@@ -2328,8 +2344,15 @@ export async function listKBPending(agentId: string): Promise<KBPending[]> {
 // daemon and must not be waited on. Shared by the long-task endpoints below
 // (nginx's default proxy_read_timeout is 60s; merge/reindex/insights runs
 // take longer).
-function isGatewayTimeout(status: number | null): boolean {
-  return status === null || status === 502 || status === 503 || status === 504;
+//
+// networkErr is the exception a failed apiFetch threw: fetch signals a
+// network-layer failure (gateway cutting the connection — or the request
+// never making it out) as a TypeError. Only that shape may count as a
+// possible gateway drop; status===null with any other exception kind is a
+// bug in our own code, not a reason to poll for 4+ minutes.
+function isGatewayTimeout(status: number | null, networkErr?: unknown): boolean {
+  if (status === 502 || status === 503 || status === 504) return true;
+  return status === null && networkErr instanceof TypeError;
 }
 
 export async function resolveKBPending(
@@ -2338,6 +2361,7 @@ export async function resolveKBPending(
   action: "merge" | "create" | "skip",
 ): Promise<{ action?: string; source_id?: string; error?: string }> {
   let status: number | null = null;
+  let networkErr: unknown = null;
   try {
     const res = await apiFetch(`/api/agents/${agentId}/kb/pending/${pendingId}/resolve`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -2345,10 +2369,10 @@ export async function resolveKBPending(
     });
     if (res.ok) return res.json();
     status = res.status;
-  } catch {
-    /* gateway dropped the connection — status stays null */
+  } catch (err) {
+    networkErr = err; // fetch-level failure — only a TypeError may poll
   }
-  if (!isGatewayTimeout(status)) return { error: `HTTP ${status}` };
+  if (!isGatewayTimeout(status, networkErr)) return { error: `HTTP ${status}` };
   // The merge path runs an LLM rewrite that outlives gateway timeouts, but
   // the server keeps it running detached from the connection. Poll the
   // pending list until this row disappears (= merge done and persisted).
@@ -2387,16 +2411,17 @@ export async function kbGetInsights(agentId: string, sourceId: string): Promise<
 export async function kbGenerateInsights(agentId: string, sourceId: string): Promise<ArticleInsights | { error?: string }> {
   const startedAt = Date.now();
   let status: number | null = null;
+  let networkErr: unknown = null;
   try {
     const res = await apiFetch(`/api/agents/${agentId}/kb/sources/${sourceId}/insights/generate`, {
       method: "POST", headers: { "Content-Type": "application/json" },
     });
     if (res.ok) return res.json();
     status = res.status;
-  } catch {
-    /* gateway dropped the connection — status stays null */
+  } catch (err) {
+    networkErr = err; // fetch-level failure — only a TypeError may poll
   }
-  if (!isGatewayTimeout(status)) return { error: `HTTP ${status}` };
+  if (!isGatewayTimeout(status, networkErr)) return { error: `HTTP ${status}` };
   // The synchronous POST outlives gateway timeouts (nginx cuts at 60s;
   // generation takes 1-4 min), but the server keeps running it detached
   // from the connection. Poll GET until insights land — requiring a
@@ -2782,15 +2807,22 @@ export interface VectorizationConfig {
 // of reporting a hard error.
 async function postReindex(url: string): Promise<{ ok?: boolean; processed?: number; failed?: number; error?: string }> {
   let res: Response | null = null;
+  let networkErr: unknown = null;
   try {
     res = await apiFetch(url, { method: "POST" });
-  } catch { /* gateway dropped the connection — see below */ }
+  } catch (err) {
+    networkErr = err; // gateway cut the connection — or the request never left
+  }
   if (res && res.ok) return res.json().catch(() => ({ ok: true }));
   const status = res ? res.status : null;
-  if (isGatewayTimeout(status)) {
+  if (isGatewayTimeout(status, networkErr)) {
     return {
-      error: (status === null ? "network error" : `HTTP ${status}`) +
-        " — reindex continues in background, re-open this page in a few minutes to verify",
+      // status === null means fetch itself threw (TypeError): we cannot
+      // know whether the request reached the daemon, so the message stays
+      // honest instead of asserting a background run that may not exist.
+      error: (status === null
+        ? "connection lost — if the request reached the server, reindex continues in background; re-open this page in a few minutes to verify"
+        : `HTTP ${status} — reindex continues in background, re-open this page in a few minutes to verify`),
     };
   }
   return { error: `HTTP ${status}` };

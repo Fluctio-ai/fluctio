@@ -67,6 +67,15 @@ export function MarkdownCodeMirror({
     ],
     [dark],
   );
+  // Reference-stable extensions: @uiw's useCodeMirror effect reconfigures
+  // the whole editor whenever the extensions array reference changes, and
+  // the parent re-renders on every keystroke — a fresh array (and a fresh
+  // markdown() language instance) used to force a full reconfigure and a
+  // document reparse per keystroke. Rebuild only on a theme flip.
+  const extensions = React.useMemo(
+    () => [markdown(), EditorView.lineWrapping, ...themeExt],
+    [themeExt],
+  );
   return (
     <CodeMirror
       value={value}
@@ -78,7 +87,7 @@ export function MarkdownCodeMirror({
       style={{ height: "100%" }}
       height="100%"
       theme="none"
-      extensions={[markdown(), EditorView.lineWrapping, ...themeExt]}
+      extensions={extensions}
       basicSetup={{ lineNumbers: false, foldGutter: false, highlightActiveLineGutter: false }}
     />
   );

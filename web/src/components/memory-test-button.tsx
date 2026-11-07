@@ -44,26 +44,27 @@ export function MemoryTestButton({
       // Branch per kind so the union return type narrows cleanly — the
       // embedding call carries `dim`, the reranker call doesn't.
       let ok = false;
-      let errMsg: string | undefined;
       if (kind === "embedding") {
         const r = await testEmbedding({ apiBase, apiKey, model, dim, dimEnabled });
         ok = r.ok;
-        errMsg = r.error;
         if (ok && typeof r.dim === "number") setDimResult(r.dim);
       } else {
         const r = await testReranker({ apiBase, apiKey, model });
         ok = r.ok;
-        errMsg = r.error;
       }
       if (ok) {
         setStatus("success");
       } else {
+        // Fixed copy only: the server mirrors the upstream Go http client
+        // error verbatim, and those strings embed the dialed host:port —
+        // echoing them here put the SSRF probe's view of the internal
+        // network on screen. Details stay in the server logs.
         setStatus("error");
-        setError(errMsg || t("models.connectionFailed"));
+        setError(t("models.connectionFailed"));
       }
-    } catch (e) {
+    } catch {
       setStatus("error");
-      setError(e instanceof Error ? e.message : t("models.connectionFailed"));
+      setError(t("models.connectionFailed"));
     }
   };
 

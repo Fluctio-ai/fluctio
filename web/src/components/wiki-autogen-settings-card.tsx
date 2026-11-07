@@ -56,6 +56,9 @@ export function WikiAutoGenSettingsCard() {
     total: number;
     status: string;
   } | null>(null);
+  // Inline failure line for the generate actions (no notify prop on this
+  // card; no generic wiki-generation-failed i18n key exists).
+  const [genError, setGenError] = useState<string | null>(null);
   const [kbSources, setKbSources] = useState<KBSource[]>([]);
 
   // Load auto-gen config + KB source list (sources drive the generate
@@ -93,12 +96,23 @@ export function WikiAutoGenSettingsCard() {
   const saveWikiCfg = async (next: WikiAutoGenCfg) => {
     if (wikiSavingRef.current) return;
     wikiSavingRef.current = true;
+    const prev = wikiCfg;
     setWikiCfg(next);
     setWikiSaving(true);
     try {
       const cur = await getAgentMemory(agentId).catch(() => null);
       const base = cur?.memory || {};
-      await setAgentMemory(agentId, { ...base, wikiAutoGen: next });
+      const res = await setAgentMemory(agentId, { ...base, wikiAutoGen: next });
+      // setAgentMemory returns {error} on non-2xx instead of throwing.
+      if (res?.error) throw new Error(res.error);
+    } catch (err) {
+      // Roll the optimistic flip back and say so — the switch used to
+      // stay in the new position while nothing persisted, flashing back
+      // to the old value only on the next reload.
+      setWikiCfg(prev);
+      window.alert(
+        `Failed to save wiki settings: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       setWikiSaving(false);
       wikiSavingRef.current = false;
@@ -136,28 +150,53 @@ export function WikiAutoGenSettingsCard() {
       if (!agentId || includedSources.length === 0) return;
       setGenerating(true);
       setProgress({ done: 0, total: includedSources.length, status: "running" });
+      setGenError(null);
       try {
-        await generateWiki(
+        const res = await generateWiki(
           agentId,
           includedSources.map((s) => s.id),
           force,
         );
-      } catch {
+        // generateWiki returns {error} on non-2xx instead of throwing —
+        // a failed POST used to flow straight into the progress poll,
+        // where "idle" was ignored and generating stayed true forever
+        // with both buttons disabled until a page reload.
+        if (res?.error) {
+          setGenerating(false);
+          setProgress(null);
+          setGenError(`Wiki generation failed to start: ${res.error}`);
+        }
+      } catch (err) {
         setGenerating(false);
         setProgress(null);
+        setGenError(
+          `Wiki generation failed to start: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     },
     [agentId, includedSources],
   );
 
-  // Poll generation progress while a run is in flight.
+  // Poll generation progress while a run is in flight. Exits on BOTH
+  // terminal states ("done" and the server's "failed") and gives up after
+  // 10 minutes or 5 consecutive poll errors — previously only "done"
+  // ended the run, so a failed/lost generation disabled both buttons
+  // forever.
   useEffect(() => {
     if (!agentId || !generating) return;
     let cancelled = false;
+    const startedAt = Date.now();
+    let pollFailures = 0;
+    const giveUp = (msg: string) => {
+      setGenerating(false);
+      setProgress(null);
+      setGenError(msg);
+    };
     const poll = async () => {
       try {
         const p = await getWikiProgress(agentId);
         if (cancelled) return;
+        pollFailures = 0;
         if (p.status === "idle") return;
         setProgress({
           done: p.done ?? 0,
@@ -169,8 +208,20 @@ export function WikiAutoGenSettingsCard() {
           // Refresh KB sources so the "unprocessed" count / disabled
           // state updates after a run completes.
           listKBSources(agentId).then(setKbSources).catch(() => {});
+        } else if (p.status === "failed") {
+          giveUp(
+            `Wiki generation failed on the server${p.failed ? ` (${p.failed} sources failed)` : ""}.`,
+          );
+        } else if (Date.now() - startedAt > 600_000) {
+          giveUp("Wiki generation timed out waiting for progress updates.");
         }
-      } catch {}
+      } catch {
+        if (cancelled) return;
+        pollFailures += 1;
+        if (pollFailures >= 5) {
+          giveUp("Lost track of the wiki generation run (progress endpoint unreachable).");
+        }
+      }
     };
     poll();
     const id = setInterval(poll, 2000);
@@ -292,6 +343,9 @@ export function WikiAutoGenSettingsCard() {
 
       {/* Manual generation actions */}
       <div className="space-y-2">
+        {genError && (
+          <p className="text-xs text-destructive">{genError}</p>
+        )}
         {generating && progress && (
           <span className="text-xs text-muted-foreground flex items-center gap-1">
             <RefreshCwIcon className="h-3 w-3 animate-spin" />

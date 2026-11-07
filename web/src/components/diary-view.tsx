@@ -64,6 +64,21 @@ function heatLevel(w: number): string {
   return "bg-primary/85";
 }
 
+// normalizeDiary fills the array fields the backend's in-progress stub row
+// omits (a generating placeholder carries only agentId/date/generating —
+// no themes/blindspots/shelved/archives). Reading `.themes.length` on that
+// stub used to crash the detail pane once generation exceeded the poll
+// window or another session triggered a generation for the selected day.
+function normalizeDiary(d: DailyDiary): DailyDiary {
+  return {
+    ...d,
+    themes: Array.isArray(d.themes) ? d.themes : [],
+    blindspots: Array.isArray(d.blindspots) ? d.blindspots : [],
+    shelved: Array.isArray(d.shelved) ? d.shelved : [],
+    archives: Array.isArray(d.archives) ? d.archives : [],
+  };
+}
+
 type CalDay = { date: string; day: number; has: boolean; weight: number; empty: boolean };
 function buildMonthDays(month: string, diaries: DailyDiary[]): CalDay[] {
   const [y, m] = month.split("-").map(Number);
@@ -111,13 +126,23 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
   const paneRef = useRef<HTMLDivElement>(null);
   const { width: leftWidth, startDrag } = usePaneResize(paneRef, 340, 260, 560);
 
+  // Latest-request guards: rapid month flips or day clicks fire concurrent
+  // fetches; only the most recent one may land its state, or a slow older
+  // response overwrites the list/detail with the wrong month or day.
+  const monthReqRef = useRef(0);
+  const dateReqRef = useRef(0);
+
   const loadMonth = useCallback(
     async (m: string) => {
       if (!agentId) return;
+      const req = ++monthReqRef.current;
       setLoadingMonth(true);
       try {
-        setDiaries(await listDiary(agentId, `${m}-01`, monthEnd(m)));
+        const rows = await listDiary(agentId, `${m}-01`, monthEnd(m));
+        if (monthReqRef.current !== req) return; // a newer load superseded this one
+        setDiaries(rows.map(normalizeDiary));
       } catch {
+        if (monthReqRef.current !== req) return;
         setDiaries([]);
       }
       setLoadingMonth(false);
@@ -134,9 +159,13 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
       setSelectedDate(d);
       setDetail(null);
       if (!agentId) return;
+      const req = ++dateReqRef.current;
       try {
-        setDetail(await getDiary(agentId, d));
+        const row = await getDiary(agentId, d);
+        if (dateReqRef.current !== req) return; // a newer selection superseded this one
+        setDetail(row ? normalizeDiary(row) : null);
       } catch {
+        if (dateReqRef.current !== req) return;
         setDetail(null);
       }
     },
@@ -177,31 +206,51 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
 
   const calendarDays = useMemo(() => buildMonthDays(month, diaries), [month, diaries]);
 
+  // Generation epoch: bumped on unmount and on agentId change so the
+  // 120-second poll loop can never outlive the view or keep writing the
+  // previous agent's diary rows into the current one.
+  const genEpochRef = useRef(0);
+  useEffect(() => {
+    return () => {
+      genEpochRef.current += 1;
+    };
+  }, [agentId]);
+
   const handleGenerate = useCallback(
     async (date: string) => {
       if (!agentId) return;
+      const epoch = ++genEpochRef.current;
+      const stale = () => genEpochRef.current !== epoch;
       setGenerating(true);
       try {
         const before = await getDiary(agentId, date);
+        if (stale()) return;
         const beforeAt = before?.generatedAt ?? "";
+        // Throws on HTTP failure (409 conflict, auth, …) — a failed POST
+        // used to fall straight into the full 120s poll with the button
+        // stuck on "Generating" and no feedback.
         await generateDiary(agentId, date);
+        if (stale()) return;
         // Generation runs async server-side (LLM); poll until the row
         // appears (new day) or its generatedAt advances (regenerate),
         // then refresh so the new content shows without a manual reload.
         const deadline = Date.now() + 120000;
         while (Date.now() < deadline) {
           await sleep(3000);
+          if (stale()) return;
           const d = await getDiary(agentId, date);
+          if (stale()) return;
           if (d && !d.generating && (d.generatedAt || "") !== beforeAt) break;
         }
+        if (stale()) return;
         loadMonth(month);
         if (selectedDate === date) selectDate(date);
       } catch {
-        /* silent — button resets, user can retry */
+        if (!stale()) notify(t("diary.genFailed"));
       }
-      setGenerating(false);
+      if (!stale()) setGenerating(false);
     },
-    [agentId, month, selectedDate, selectDate, loadMonth],
+    [agentId, month, selectedDate, selectDate, loadMonth, notify, t],
   );
 
   // Delete one day's diary, confirmed server-side by the cascading card
@@ -465,7 +514,7 @@ function DetailPane({
             <span className="ml-1 text-xs">{t("diary.delete")}</span>
           </Button>
         )}
-        <Button size="sm" variant="outline" onClick={() => onGenerate(date)} disabled={generating || (!!detail && detail.themes.length === 0 && detail.blindspots.length === 0)}>
+        <Button size="sm" variant="outline" onClick={() => onGenerate(date)} disabled={generating || (!!detail && (detail.themes?.length ?? 0) === 0 && (detail.blindspots?.length ?? 0) === 0)}>
           <SparklesIcon className="mr-1.5 h-3.5 w-3.5" />
           {generating ? t("diary.generating") : t("diary.regenerate")}
         </Button>
@@ -478,7 +527,7 @@ function DetailPane({
             </p>
           ) : !detail ? (
             <p className="text-sm text-muted-foreground">{t("diary.noDiary")}</p>
-          ) : detail.themes.length === 0 && detail.blindspots.length === 0 ? (
+          ) : (detail.themes?.length ?? 0) === 0 && (detail.blindspots?.length ?? 0) === 0 ? (
             <p className="text-sm text-muted-foreground">{detail.overview || t("diary.noThemes")}</p>
           ) : (
             <DiaryContent agentId={agentId} diary={detail} />
