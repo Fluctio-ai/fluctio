@@ -115,6 +115,13 @@ func Start(port int) error {
 
 // RunLoop is the daemon wrapper that auto-restarts the gateway on crash.
 // This is called internally by 'daemon __run'.
+//
+// PID FILE OWNERSHIP: while the daemon runs, the PID file belongs to the
+// WRAPPER process (RunLoop rewrites it over the placeholder `daemon start`
+// wrote for the child). Stop/status therefore target the wrapper — killing
+// it takes the restart loop and the gateway down together. The gateway
+// itself never writes the file. A killed gateway is a wrapper-internal
+// restart, not a PID event.
 func RunLoop(port int) error {
 	pidFile, logFile, _, err := Paths()
 	if err != nil {
