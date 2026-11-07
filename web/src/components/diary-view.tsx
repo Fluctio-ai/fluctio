@@ -276,7 +276,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1">
+    <div className="flex h-full min-h-0 flex-1">
       {/* Left pane: heatmap + list */}
       <div
         ref={paneRef}
@@ -376,7 +376,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
         </div>
 
         {/* List (newest first, paginated) */}
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="space-y-1 p-2">
             {loadingMonth ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("diary.loading")}</p>
@@ -519,7 +519,7 @@ function DetailPane({
           {generating ? t("diary.generating") : t("diary.regenerate")}
         </Button>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="space-y-5 p-4">
           {detail?.generating ? (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">

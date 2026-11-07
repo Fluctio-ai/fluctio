@@ -463,7 +463,7 @@ export default function WikiPage() {
             </p>
           )}
         </div>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="p-2">
             {loading ? (
               <p className="text-xs text-muted-foreground px-2 py-1.5">
@@ -552,7 +552,7 @@ export default function WikiPage() {
       {/* Center: markdown preview */}
       <div className={cn("flex-1 flex-col min-w-0", selectedPageId ? "flex" : "hidden md:flex")}>
         {selectedPage ? (
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1 min-h-0">
             <div className="p-6 max-w-5xl">
               <div className="flex items-center gap-2 mb-4">
                 <button

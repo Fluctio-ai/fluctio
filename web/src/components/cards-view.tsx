@@ -370,7 +370,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
         )}
       </div>
 
-    <div className="flex min-h-0 flex-1">
+    <div className="flex h-full min-h-0 flex-1">
       {/* ── Left: card list ── */}
       <div
         ref={paneRef}
@@ -429,7 +429,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
             {generating ? t("common.saving") : t("cards.genNow")}
           </button>
         </div>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="p-2">
             {loading ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("common.loading")}</p>
@@ -540,7 +540,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
             </div>
           </div>
 
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1 min-h-0">
             <div className="mx-auto max-w-2xl space-y-4 p-4">
               {/* Flip preview: click card to reveal the answer. */}
               <button

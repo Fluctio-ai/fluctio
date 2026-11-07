@@ -477,7 +477,7 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
             </p>
           )}
         </div>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="p-2">
             {loading ? (
               <p className="text-xs text-muted-foreground px-2 py-1.5">{t("common.loading")}</p>
@@ -595,7 +595,7 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
                   ))}
               </div>
             </div>
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1 min-h-0">
               <div className="p-6">
                 {detailTab === "text" ? (
                   entriesLoading ? (
@@ -950,7 +950,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
         </Button>
         <ToolbarAddButton onClick={() => setFlashOpen(true)}>{t("knowledge.flashes")}</ToolbarAddButton>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="p-4 columns-1 sm:columns-2 lg:columns-3 gap-3">
           {loading ? (
             <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
@@ -1148,7 +1148,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
         <SearchInput value={query} onChange={setQuery} placeholder={t("knowledge.searchBookmarks")} />
         <ToolbarAddButton onClick={() => setAddOpen(true)}>{t("knowledge.bookmarks")}</ToolbarAddButton>
       </div>
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="columns-1 gap-3 p-4 sm:columns-2 lg:columns-3 xl:columns-4">
           {loading ? (
             <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
@@ -1477,7 +1477,7 @@ export function TodoView({ notify }: { notify: (msg: string) => void }) {
           {dueToday.length > 0 && <span className="font-medium text-warning">{t("knowledge.dueToday")} {dueToday.length}</span>}
         </div>
       )}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         {view === "list" ? (
           <div className="mx-auto max-w-3xl space-y-5 p-4">
             {loading ? (
