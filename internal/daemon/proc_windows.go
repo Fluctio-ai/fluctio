@@ -3,8 +3,11 @@
 package daemon
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 )
 
 func setSysProcAttr(cmd *exec.Cmd) {}
@@ -24,6 +27,29 @@ func signalProcess(proc *os.Process, sig string) error {
 		// SIGHUP is not deliverable on Windows. Callers fall back to a
 		// hint asking the operator to restart the gateway.
 		return errReloadUnsupported
+	}
+	return nil
+}
+
+// signalProcessGroup tree-kills the daemon on Windows: taskkill /T /F
+// terminates the wrapper and every gateway child it spawned in one call.
+// The old single-process Kill orphaned the gateway, which kept serving
+// while stop reported success.
+func signalProcessGroup(pid int, sig string) error {
+	switch sig {
+	case "TERM", "KILL":
+		// taskkill /T walks the child tree; /F forces termination. The
+		// tree covers the wrapper and its gateway child on both counts,
+		// matching the Unix group-kill semantics.
+		out, err := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("taskkill %d: %w: %s", pid, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	case "CHECK":
+		// "Is alive" probes use isProcessAlive in daemon.go; nothing
+		// signal-shaped to do here.
+		return nil
 	}
 	return nil
 }

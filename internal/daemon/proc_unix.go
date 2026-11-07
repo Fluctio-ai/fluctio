@@ -34,3 +34,24 @@ func signalProcess(proc *os.Process, sig string) error {
 	}
 	return nil
 }
+
+// signalProcessGroup signals the whole process group the daemon runs in.
+// `daemon start` spawns the wrapper with Setsid, making it a session and
+// group leader whose pgid equals its pid — so a negative-pid signal
+// reaches the wrapper AND every gateway child it spawned, instead of
+// orphaning the gateway the way a single-process TERM did.
+func signalProcessGroup(pid int, sig string) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	switch sig {
+	case "TERM":
+		return syscall.Kill(-pid, syscall.SIGTERM)
+	case "KILL":
+		return syscall.Kill(-pid, syscall.SIGKILL)
+	case "CHECK":
+		return syscall.Kill(-pid, syscall.Signal(0))
+	}
+	return nil
+}

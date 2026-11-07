@@ -229,17 +229,16 @@ func Stop() error {
 		return fmt.Errorf("daemon not running (stale PID file, cleaned up)")
 	}
 
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("find process %d: %w", pid, err)
+	// Send TERM to the whole process GROUP. The wrapper is a session
+	// leader (Setsid) so its pgid equals its pid, and the gateway child
+	// inherited that group — signalling the group reaches both. The old
+	// single-PID TERM only killed the wrapper: the gateway was orphaned
+	// still holding the port while stop reported success.
+	if err := signalProcessGroup(pid, "TERM"); err != nil {
+		return fmt.Errorf("signal process group %d: %w", pid, err)
 	}
 
-	// Send SIGTERM
-	if err := signalProcess(proc, "TERM"); err != nil {
-		return fmt.Errorf("signal process %d: %w", pid, err)
-	}
-
-	// Wait up to 5s for clean shutdown
+	// Wait up to 5s for the whole group to shut down
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if !isProcessAlive(pid) {
@@ -250,15 +249,15 @@ func Stop() error {
 		time.Sleep(200 * time.Millisecond)
 	}
 
-	// Force kill
-	if err := signalProcess(proc, "KILL"); err != nil {
+	// Force kill the group
+	if err := signalProcessGroup(pid, "KILL"); err != nil {
 		// Might have already died
 		if !isProcessAlive(pid) {
 			os.Remove(pidFile)
 			fmt.Printf("Daemon stopped (PID %d)\n", pid)
 			return nil
 		}
-		return fmt.Errorf("kill process %d: %w", pid, err)
+		return fmt.Errorf("kill process group %d: %w", pid, err)
 	}
 
 	os.Remove(pidFile)
