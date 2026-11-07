@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"golang.org/x/crypto/pbkdf2"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 )
@@ -26,10 +29,18 @@ type CredentialEntry struct {
 
 // CredentialManager handles secure credential storage and retrieval.
 type CredentialManager struct {
-	masterKey     []byte
-	entries       map[string]*CredentialEntry
-	storePath     string
+	masterKey      []byte
+	entries        map[string]*CredentialEntry
+	storePath      string
 	needsReencrypt bool // true after legacy-key fallback decrypt
+	// kdf tracks the derivation parameters the CURRENT masterKey came
+	// from; save() persists them in a sidecar so load() can tell legacy
+	// single-SHA-256 files from PBKDF2 ones and migrate transparently.
+	kdf *kdfParams
+	// kdfSeedUserID captures the user id the PBKDF2 seed was built from
+	// (the storeDir basename is the same id, but storing it explicitly
+	// keeps load() independent of path parsing).
+	kdfSeedUserID string
 	mu            sync.RWMutex
 }
 
@@ -50,12 +61,33 @@ func NewCredentialManagerForUser(userID, passphrase string) (*CredentialManager,
 		return nil, fmt.Errorf("ensure user dir: %w", err)
 	}
 
-	key := deriveKeyForUser(userID, passphrase)
+	var kdf *kdfParams
+	var key []byte
+	if passphrase != "" {
+		// Explicit passphrase: derive with PBKDF2 (salted, iterated) —
+		// the old single-SHA-256 round let an offline attacker with the
+		// guessable seed material brute-force a weak passphrase at hash
+		// speed.
+		k, saltHex, err := deriveKeyPBKDF2(userID, passphrase, "")
+		if err != nil {
+			return nil, fmt.Errorf("derive key: %w", err)
+		}
+		key = k
+		kdf = &kdfParams{Algorithm: "pbkdf2-sha256", Iterations: kdfIterations, Salt: saltHex}
+	} else {
+		// Machine-derived fallback keeps the legacy single-SHA-256 shape
+		// (the seed material is host-bound, so the offline-guessing
+		// surface differs); documented trade-off, not a migration target.
+		key = deriveKeyForUser(userID, passphrase)
+		kdf = &kdfParams{Algorithm: legacyKDFMarker}
+	}
 
 	cm := &CredentialManager{
-		masterKey: key,
-		entries:   make(map[string]*CredentialEntry),
-		storePath: filepath.Join(storeDir, "credentials.json"),
+		masterKey:     key,
+		entries:       make(map[string]*CredentialEntry),
+		storePath:     filepath.Join(storeDir, "credentials.json"),
+		kdf:           kdf,
+		kdfSeedUserID: userID,
 	}
 
 	// Load existing credentials
@@ -234,13 +266,57 @@ func (cm *CredentialManager) save() error {
 		return fmt.Errorf("write credentials: %w", err)
 	}
 
+	// Persist the KDF parameters next to the ciphertext so the next load
+	// knows which derivation to use (PBKDF2 salt/iterations vs the legacy
+	// single-SHA-256). Sidecar, not a header: keeps the blob format
+	// byte-compatible with pre-KDF installs.
+	if cm.kdf != nil {
+		blob, err := json.Marshal(cm.kdf)
+		if err == nil {
+			if err := os.WriteFile(cm.storePath+".kdf", blob, 0o600); err != nil {
+				return fmt.Errorf("write kdf params: %w", err)
+			}
+		}
+	}
+
 	return nil
+}
+
+// readKDFParams reads the KDF sidecar next to a credentials file.
+// Returns has=false when the sidecar is absent or unparsable — callers
+// treat that as "pre-KDF file".
+func readKDFParams(sidecarPath string) (kdfParams, bool) {
+	blob, err := os.ReadFile(sidecarPath)
+	if err != nil {
+		return kdfParams{}, false
+	}
+	var p kdfParams
+	if json.Unmarshal(blob, &p) != nil || p.Algorithm == "" {
+		return kdfParams{}, false
+	}
+	return p, true
 }
 
 func (cm *CredentialManager) load() error {
 	data, err := os.ReadFile(cm.storePath)
 	if err != nil {
 		return err
+	}
+
+	// Read the stored KDF parameters (PBKDF2 salt/iterations) when the
+	// sidecar exists. Absent sidecar = a pre-KDF file: decrypt with the
+	// current masterKey shape, then migrate.
+	storedKDF, hasKDF := readKDFParams(cm.storePath + ".kdf")
+	if hasKDF && storedKDF.Algorithm == "pbkdf2-sha256" && cm.kdf != nil && cm.kdf.Algorithm == "pbkdf2-sha256" {
+		key, _, err := deriveKeyPBKDF2(cm.kdfSeedUserID, "", storedKDF.Salt)
+		if err != nil {
+			return fmt.Errorf("derive pbkdf2 key: %w", err)
+		}
+		decrypted, err := decrypt(data, key)
+		if err != nil {
+			return fmt.Errorf("decrypt credentials (pbkdf2): %w", err)
+		}
+		return json.Unmarshal(decrypted, &cm.entries)
 	}
 
 	decrypted, err := decrypt(data, cm.masterKey)
@@ -273,10 +349,57 @@ func legacyDeriveKey() []byte {
 // still included so the same user ID yields different keys on different
 // hosts — preventing wholesale copy of the credentials file across hosts
 // from decrypting.
-func deriveKeyForUser(userID, passphrase string) []byte {
-	if userID == "" {
-		userID = "_anonymous"
+//
+// KDF: PBKDF2-HMAC-SHA256 with 210k iterations (OWASP 2023 floor for
+// SHA-256). The legacy implementation was a single unsalted SHA-256 over
+// the seed string — an offline attacker with the seed material (user id,
+// hostname, home are all guessable) could brute-force a weak passphrase
+// at hash speed. Files encrypted with the legacy KDF are detected at
+// load (version marker) and transparently migrated, mirroring the
+// legacy-KEK re-encrypt path.
+const (
+	kdfIterations   = 210000
+	kdfSaltLength   = 16
+	kdfKeyLength    = 32
+	legacyKDFMarker = "legacy-sha256-v1"
+)
+
+type kdfParams struct {
+	Algorithm  string `json:"algorithm"` // "pbkdf2-sha256" | legacyKDFMarker
+	Iterations int    `json:"iterations,omitempty"`
+	Salt       string `json:"salt,omitempty"` // hex
+}
+
+// deriveKeyPBKDF2 derives the KEK with a random salt + PBKDF2. Returns
+// the key and the hex-encoded salt (stored alongside the ciphertext).
+func deriveKeyPBKDF2(userID, passphrase, saltHex string) ([]byte, string, error) {
+	userID = fallbackUserID(userID)
+	salt := make([]byte, kdfSaltLength)
+	if saltHex == "" {
+		if _, err := rand.Read(salt); err != nil {
+			return nil, "", err
+		}
+	} else {
+		var err error
+		salt, err = hex.DecodeString(saltHex)
+		if err != nil || len(salt) < 8 {
+			return nil, "", fmt.Errorf("invalid stored kdf salt")
+		}
 	}
+	seed := "fluctio:user:" + userID + ":pp:" + passphrase
+	key := pbkdf2.Key([]byte(seed), salt, kdfIterations, kdfKeyLength, sha256.New)
+	return key, hex.EncodeToString(salt), nil
+}
+
+func fallbackUserID(userID string) string {
+	if userID == "" {
+		return "_anonymous"
+	}
+	return userID
+}
+
+func deriveKeyForUser(userID, passphrase string) []byte {
+	userID = fallbackUserID(userID)
 	var seed string
 	if passphrase != "" {
 		seed = "fluctio:user:" + userID + ":pp:" + passphrase
