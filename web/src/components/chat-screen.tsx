@@ -10,6 +10,7 @@ import { Bot, Send, Copy, Check, Pencil, Brain, BookOpen, Clock, CreditCard, Glo
 import Link from "next/link";
 import { ChatMarkdown, knowledgeSourceLabel } from "@/components/chat-markdown";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { authPromptMessages, errorMessage, compactionMessage, skillPendingMessages } from "@/components/chat-events";
 import { splitDataImagesCached, splitReplyOptionsCached, splitOnMarker, SPLIT_MARKER } from "@/components/chat-content";
 import { usePersistedDragWidth } from "@/hooks/use-drag-width";
 
@@ -335,60 +336,6 @@ const RegularBubble = memo(function RegularBubble({
 // as updater lists so callers feed them straight to setMessages.
 // ---------------------------------------------------------------------------
 
-function authPromptMessages(desc: string, options: { cmd: string; label_zh: string; label_en: string }[]): ChatMessage[] {
-  return [
-    {
-      id: `auth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      role: "agent" as const,
-      content: desc,
-      timestamp: Date.now(),
-      authOptions: { description: desc, options },
-    },
-  ];
-}
-
-function errorMessage(message: string): ChatMessage[] {
-  // context-canceled means the user aborted — not an error worth a pill.
-  if (/\bcontext canceled\b/i.test(message)) return [];
-  return [
-    {
-      id: `e-${Date.now()}`,
-      role: "notice" as const,
-      kind: "turn_error_notice",
-      content: message || "Unknown error",
-      timestamp: Date.now(),
-    },
-  ];
-}
-
-function compactionMessage(content: unknown): ChatMessage[] {
-  if (!content || typeof content !== "string") return [];
-  return [
-    {
-      id: `cn-${Date.now()}`,
-      role: "notice" as const,
-      kind: "compaction_notice",
-      content,
-      timestamp: Date.now(),
-    },
-  ];
-}
-
-function skillPendingMessages(count: number, names: string[], t: (key: string, vars?: Record<string, string | number>) => string): ChatMessage[] {
-  if (!(count > 0)) return [];
-  const content = t("chat.skillPending", { count, names: names.join(", ") });
-  // Replace any prior skill_pending pill so consecutive turns don't
-  // stack duplicates — callers filter before appending.
-  return [
-    {
-      id: `sp-${Date.now()}`,
-      role: "notice" as const,
-      kind: "skill_pending",
-      content,
-      timestamp: Date.now(),
-    },
-  ];
-}
 
 // splitDataImagesCached (imported) memoizes the regex-heavy image scan;
 // the caching implementation now lives in components/chat-content.ts.
