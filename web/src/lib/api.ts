@@ -326,7 +326,11 @@ export async function apiFetch(url: string, init?: RequestInit): Promise<Respons
 // settle, so the next call — e.g. the sidebar's next 15s poll tick — fetches
 // fresh data. No staleness, just fewer redundant round-trips over a slow link.
 const inflightGets = new Map<string, Promise<unknown>>();
-function dedupGet<T>(key: string, run: () => Promise<T>): Promise<T> {
+
+// dedupGet collapses concurrent identical GETs into one network request.
+// Exported for hooks that mount many instances on one page (use-agent-name
+// etc.); the entry is cleared on settle so repeated calls fetch fresh data.
+export function dedupGet<T>(key: string, run: () => Promise<T>): Promise<T> {
   const existing = inflightGets.get(key) as Promise<T> | undefined;
   if (existing) return existing;
   const p = run().finally(() => {
