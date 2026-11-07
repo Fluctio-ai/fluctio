@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -51,6 +52,15 @@ type connectParams struct {
 	} `json:"auth"`
 }
 
+// wsReadLimit bounds one websocket frame. Without it an unauthenticated
+// client could stream an arbitrarily large frame into memory before the
+// auth check ever ran.
+const wsReadLimit = 1 << 20 // 1MB
+
+// wsAuthDeadline bounds how long a client may stay connected without
+// completing the connect handshake.
+const wsAuthDeadline = 30 * time.Second
+
 // HandleWebSocket handles WebSocket connections for the OpenClaw protocol.
 func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -59,6 +69,12 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	conn.SetReadLimit(wsReadLimit)
+	// Pre-auth deadline: an unauthenticated client gets 30s to complete
+	// the connect handshake. After auth the connection is trusted and the
+	// deadline is dropped (the protocol has no periodic traffic to renew
+	// a read deadline against).
+	_ = conn.SetReadDeadline(time.Now().Add(wsAuthDeadline))
 
 	slog.Info("websocket client connected", "remote", r.RemoteAddr)
 
@@ -115,6 +131,8 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			// Identity from scratch previously lost the auth state).
 			wsIdent = ident
 			authenticated = true
+			// Authenticated: lift the pre-auth read deadline.
+			_ = conn.SetReadDeadline(time.Time{})
 			s.wsRespondOK(conn, frame.ID, json.RawMessage(`{}`))
 
 		case "agents.list":
