@@ -2848,8 +2848,10 @@ export function ChatScreen() {
       }
       // Diagnostic: when sandbox-exec produces a file but the Files
       // panel doesn't show, we need to know whether the API returned
-      // the file at all and where the diff dropped it. Cheap to keep.
-      if (typeof console !== "undefined") {
+      // the file at all and where the diff dropped it. Dev-only — a
+      // shared/demo deployment shouldn't leak the workspace structure
+      // (file paths, names, counts) into the browser console.
+      if (process.env.NODE_ENV !== "production") {
         console.log("[chat] post-turn files diff", {
           agent: selectedAgent,
           sessionId,
@@ -2867,7 +2869,7 @@ export function ChatScreen() {
           const updated = [...prev];
           const last = updated[updated.length - 1];
           updated[updated.length - 1] = { ...last, files: allFiles };
-          if (typeof console !== "undefined") {
+          if (process.env.NODE_ENV !== "production") {
             console.log("[chat] attached files to last message", {
               lastId: last.id,
               lastRole: last.role,
