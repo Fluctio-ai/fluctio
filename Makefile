@@ -19,7 +19,7 @@ LDFLAGS  = -s -w \
 PREFIX ?= $(HOME)/.local
 
 build-web:
-	cd web && pnpm install --frozen-lockfile && pnpm build
+	cd web && pnpm install --frozen-lockfile && STATIC_EXPORT=1 pnpm build
 	rm -rf internal/setup/web
 	cp -r web/out internal/setup/web
 

@@ -2,7 +2,7 @@
 set -e
 
 # Build web
-cd web && pnpm build && cd ..
+cd web && STATIC_EXPORT=1 pnpm build && cd ..
 
 # Copy web output to embed dir
 rm -rf internal/setup/web
