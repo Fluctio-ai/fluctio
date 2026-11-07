@@ -139,7 +139,11 @@ func (c *Coordinator) run() {
 		s.Stage = StageBackup
 		s.SizeBefore = sizeBefore
 	})
-	ctx := context.Background()
+	// Bounded backup: the old context.Background() meant a VACUUM INTO
+	// blocked on a long turn's write lock left the coordinator stuck in
+	// StageBackup forever (vacuum returning 409, no retry path).
+	ctx, cancel := context.WithTimeout(context.Background(), orDefault(c.vacuumBudget, 10*time.Minute))
+	defer cancel()
 	name, _, err := backup.Create(ctx, c.st, time.Now())
 	if err != nil {
 		c.fail("backup failed, vacuum not attempted: " + err.Error())

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
@@ -261,7 +262,13 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	// Cut on a rune boundary: a raw byte slice mid-CJK-character produced
+	// invalid UTF-8 that flowed into reports and prompts.
+	cut := s[:n]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut + "…"
 }
 
 func orDash(s string) string {
