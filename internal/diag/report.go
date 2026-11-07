@@ -3,6 +3,7 @@ package diag
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -117,8 +118,19 @@ func pickCases(ctx context.Context, st *store.DBStore, failed []store.LLMCallDia
 			continue
 		}
 		seen[key] = true
-		llm, _ := st.ListLLMCallDiagBySession(ctx, f.SessionKey)
-		events, _ := st.ListSessionEventsSince(ctx, f.AgentID, f.SessionKey, -1)
+		llm, err := st.ListLLMCallDiagBySession(ctx, f.SessionKey)
+		if err != nil {
+			// A DB failure used to fold into "no root cause found" —
+			// indistinguishable from a genuinely clean session. Log so
+			// the report consumer knows the timeline is incomplete.
+			slog.Warn("diag: failed to load llm call diag", "session", f.SessionKey, "error", err)
+			continue
+		}
+		events, err := st.ListSessionEventsSince(ctx, f.AgentID, f.SessionKey, -1)
+		if err != nil {
+			slog.Warn("diag: failed to load session events", "session", f.SessionKey, "error", err)
+			continue
+		}
 		tl := BuildTimeline(llm, events)
 		rc, ok := Attribute(tl)
 		cases = append(cases, caseReport{
