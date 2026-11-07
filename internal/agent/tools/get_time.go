@@ -31,6 +31,8 @@ func RegisterGetTimeTool(r *Registry) {
 			loc := chatterTimezoneFromUserMD(ctx, r)
 			// time.Local.String() is just "Local" — uninformative. When
 			// no timezone is configured, surface the UTC offset instead.
+			// Format minutes too: integer-hour division mislabeled
+			// +05:30/+05:45 zones (India, Nepal) as UTC+5.
 			zoneLabel := loc.String()
 			if zoneLabel == "Local" {
 				_, off := now.In(loc).Zone()
@@ -39,7 +41,7 @@ func RegisterGetTimeTool(r *Registry) {
 					sign = "-"
 					off = -off
 				}
-				zoneLabel = fmt.Sprintf("UTC%s%02d", sign, off/3600)
+				zoneLabel = fmt.Sprintf("UTC%s%02d:%02d", sign, off/3600, (off%3600)/60)
 			}
 			return fmt.Sprintf("Current time (%s): %s\nUTC: %s",
 				zoneLabel,
