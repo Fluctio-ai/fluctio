@@ -36,7 +36,7 @@ func (d *DBStore) migrateRecallTuning(ctx context.Context) error {
 			updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS memory_recall_events (
-			id          INTEGER PRIMARY KEY,
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			recall_id   TEXT NOT NULL,
 			agent_id    TEXT NOT NULL,
 			user_id     TEXT NOT NULL DEFAULT '',
@@ -55,7 +55,7 @@ func (d *DBStore) migrateRecallTuning(ctx context.Context) error {
 		// predicate), which the composite agent index can't serve.
 		`CREATE INDEX IF NOT EXISTS idx_recall_event_created ON memory_recall_events(created_at)`,
 		`CREATE TABLE IF NOT EXISTS memory_recall_feedback (
-			id         INTEGER PRIMARY KEY,
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
 			recall_id  TEXT NOT NULL,
 			up         INTEGER NOT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -63,7 +63,10 @@ func (d *DBStore) migrateRecallTuning(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_recall_feedback_recall_id ON memory_recall_feedback(recall_id)`,
 	}
 	for _, s := range stmts {
-		if _, err := d.db.ExecContext(ctx, s); err != nil {
+		// adaptDDL: Postgres needs BIGSERIAL for the AUTOINCREMENT ids —
+		// the inserts below never supply id, so a bare INTEGER PRIMARY KEY
+		// would fail every write with a NOT NULL violation there.
+		if _, err := d.db.ExecContext(ctx, d.adaptDDL(s)); err != nil {
 			return err
 		}
 	}
@@ -285,12 +288,17 @@ func (d *DBStore) InsertRecallFeedback(ctx context.Context, recallID string, up 
 // GetLambdaFeedbackStats aggregates feedback per explored lambda for one
 // agent. Only explored recalls (e.explored=1) count — exploit recalls
 // reuse the current best lambda and carry no exploration signal.
+// Feedback is append-only (re-voting inserts a new row, latest id wins), so
+// each recall contributes only its newest vote to the aggregate — counting
+// every historical row would double-count re-votes and skew the upgrade gate.
 func (d *DBStore) GetLambdaFeedbackStats(ctx context.Context, agentID string) ([]LambdaStat, error) {
+	latestFeedback := `JOIN memory_recall_feedback f
+		ON f.id = (SELECT MAX(f2.id) FROM memory_recall_feedback f2 WHERE f2.recall_id = e.recall_id)`
 	q := `SELECT e.lambda,
 			SUM(CASE WHEN f.up = 1 THEN 1 ELSE 0 END),
 			SUM(CASE WHEN f.up = 0 THEN 1 ELSE 0 END)
 		FROM memory_recall_events e
-		JOIN memory_recall_feedback f ON f.recall_id = e.recall_id
+		` + latestFeedback + `
 		WHERE e.agent_id = ? AND e.explored = 1
 		GROUP BY e.lambda`
 	if d.dialect == "postgres" {
@@ -298,7 +306,7 @@ func (d *DBStore) GetLambdaFeedbackStats(ctx context.Context, agentID string) ([
 			SUM(CASE WHEN f.up = 1 THEN 1 ELSE 0 END),
 			SUM(CASE WHEN f.up = 0 THEN 1 ELSE 0 END)
 		FROM memory_recall_events e
-		JOIN memory_recall_feedback f ON f.recall_id = e.recall_id
+		` + latestFeedback + `
 		WHERE e.agent_id = $1 AND e.explored = 1
 		GROUP BY e.lambda`
 	}
@@ -552,6 +560,11 @@ func (d *DBStore) HasPendingImplicitFeedback(ctx context.Context, agentID string
 		maxAgeMinutes = DefaultImplicitFeedbackConfig.MaxAgeMinutes
 	}
 	cutoff := time.Now().Add(-time.Duration(maxAgeMinutes) * time.Minute)
+	// created_at is a CURRENT_TIMESTAMP string: bind the cutoff in the same
+	// UTC "YYYY-MM-DD HH:MM:SS" shape (see ListRecentRecallEvents) so the
+	// comparison doesn't depend on driver time.Time serialization (local-
+	// zone t.String() would sort before UTC wall-clock text).
+	cutoffStr := cutoff.UTC().Format("2006-01-02 15:04:05")
 	q := `SELECT EXISTS(SELECT 1 FROM memory_recall_events
 		WHERE explored = 1 AND agent_id = ? AND session_key != '' AND user_id != '' AND created_at < ?
 		  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id))`
@@ -561,7 +574,7 @@ func (d *DBStore) HasPendingImplicitFeedback(ctx context.Context, agentID string
 			  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id))`
 	}
 	var exists bool
-	err := d.db.QueryRowContext(ctx, q, agentID, cutoff).Scan(&exists)
+	err := d.db.QueryRowContext(ctx, q, agentID, cutoffStr).Scan(&exists)
 	return exists, err
 }
 
@@ -580,6 +593,10 @@ func (d *DBStore) SweepImplicitFeedback(ctx context.Context, agentID string, emb
 		cfg = DefaultImplicitFeedbackConfig
 	}
 	cutoff := time.Now().Add(-time.Duration(cfg.MaxAgeMinutes) * time.Minute)
+	// Same UTC-string binding as HasPendingImplicitFeedback — a bare
+	// time.Time serializes with a local-zone suffix under modernc.org/sqlite
+	// and miscompares against CURRENT_TIMESTAMP text.
+	cutoffStr := cutoff.UTC().Format("2006-01-02 15:04:05")
 	q := `SELECT recall_id, agent_id, user_id, session_key, summary_ids, created_at
 		FROM memory_recall_events
 		WHERE explored = 1 AND agent_id = ? AND session_key != '' AND user_id != '' AND created_at < ?
@@ -592,7 +609,7 @@ func (d *DBStore) SweepImplicitFeedback(ctx context.Context, agentID string, emb
 			  AND NOT EXISTS (SELECT 1 FROM memory_recall_feedback f WHERE f.recall_id = memory_recall_events.recall_id)
 			ORDER BY created_at LIMIT $3`
 	}
-	rows, err := d.db.QueryContext(ctx, q, agentID, cutoff, cfg.BatchLimit)
+	rows, err := d.db.QueryContext(ctx, q, agentID, cutoffStr, cfg.BatchLimit)
 	if err != nil {
 		return 0, err
 	}

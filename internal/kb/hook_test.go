@@ -223,9 +223,10 @@ func TestAutoQueryHookRewriteCacheShortCircuit(t *testing.T) {
 
 func TestAutoQueryHookRewriteMemoizedOnZeroHits(t *testing.T) {
 	// The cost-critical case: no injection means no "[MEM]" marker, so the
-	// injection cache above can't short-circuit — the rewrite memo must,
-	// or an "always mode, nothing relevant" turn re-pays the LLM call on
-	// every ReAct iteration.
+	// injection cache above can't short-circuit — the empty-result state
+	// must, or an "always mode, nothing relevant" turn re-pays the search
+	// (and via the rewrite memo the LLM judge call) on every iteration.
+	// One search + one rewrite cover the whole turn; nothing is injected.
 	rw := &countingRewriter{result: "改写后查询"}
 	var searches int
 	empty := func(ctx context.Context, agentID, query string, limit int) ([]MemoryRecallHit, error) {
@@ -241,8 +242,8 @@ func TestAutoQueryHookRewriteMemoizedOnZeroHits(t *testing.T) {
 	if rw.calls != 1 {
 		t.Fatalf("rewriter calls = %d, want 1 across three zero-hit iterations", rw.calls)
 	}
-	if searches != 3 {
-		t.Fatalf("lane searches = %d, want 3 (the lane still retries each iteration)", searches)
+	if searches != 1 {
+		t.Fatalf("lane searches = %d, want 1 (empty result memoized across iterations)", searches)
 	}
 	if hc.Messages[0].Content != "上次聊的那个方案怎么样了" {
 		t.Fatalf("zero-hit turn must not inject anything, got %q", hc.Messages[0].Content)

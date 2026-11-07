@@ -2,6 +2,7 @@ package kb
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -127,7 +128,13 @@ type QueryRewriter func(ctx context.Context, messages []provider.Message, query 
 // Strict mode never injects a block and stays exempt.
 func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, memSearch MemoryAutoSearcher, rewriter QueryRewriter) func(context.Context, *HookContext) {
 	var lastQuery string
+	// lastQueryEmpty/lastMemQueryEmpty track "this query was already run and
+	// returned zero hits" — a zero-hit lane injects no [KB]/[MEM] message, so
+	// the prefix-presence check below can never see it and the memo would
+	// never fire. Invalidated whenever the query text changes.
+	var lastQueryEmpty bool
 	var lastMemQuery string
+	var lastMemQueryEmpty bool
 	// Rewrite memo: keyed by the raw query, independent of whether any lane
 	// produced an injection (see the call site). The need verdict memoizes
 	// with it, so ReAct iterations of a need=false turn never re-pay the
@@ -198,11 +205,15 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			return
 		}
 
-		// Cache hit: same query already processed AND the injection it
-		// produced is still in hc.Messages. Per-lane caches: a KB lane
-		// checks its [KB] injection, the memory lane its [MEM] one.
-		kbDone := wikiGate == gateSkip && ftGate == gateSkip || lastQuery == query && messagesContainPrefixed(hc.Messages, "[KB]")
-		memDone := memGate == gateSkip || lastMemQuery == query && messagesContainPrefixed(hc.Messages, "[MEM]")
+		// Cache hit: same query already processed AND either the injection
+		// it produced is still in hc.Messages (prefix check) or it returned
+		// zero hits (empty-state flag — a zero-hit lane injects nothing, so
+		// the prefix check alone never short-circuits it). Per-lane caches:
+		// a KB lane checks its [KB] injection, the memory lane its [MEM] one.
+		kbDone := wikiGate == gateSkip && ftGate == gateSkip ||
+			lastQuery == query && (lastQueryEmpty || messagesContainPrefixed(hc.Messages, "[KB]"))
+		memDone := memGate == gateSkip ||
+			lastMemQuery == query && (lastMemQueryEmpty || messagesContainPrefixed(hc.Messages, "[MEM]"))
 		if kbDone && memDone {
 			return
 		}
@@ -264,7 +275,10 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 			memHits, memErr := memSearch(ctx, agentID, searchQuery, memLimit)
 			// Memoize BEFORE branching on results so an empty result also
 			// short-circuits later iterations (same rationale as lastQuery).
+			// A failed search is not memoized as empty — later iterations
+			// should retry it.
 			lastMemQuery = query
+			lastMemQueryEmpty = memErr == nil && len(memHits) == 0
 			if memErr != nil {
 				slog.Debug("kb auto-query memory lane failed", "agent", agentID, "error", memErr)
 			} else if len(memHits) > 0 {
@@ -278,9 +292,15 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 					slog.Debug("kb auto-query memory lane dedup", "agent", agentID, "query", searchQuery, "hits", len(memHits))
 				} else {
 					injectMEMContext(hc, memHits)
+					// json.Marshal, not %q: control characters and invalid
+					// UTF-8 would produce \xNN escapes JSON rejects.
+					memArgs, _ := json.Marshal(struct {
+						Query string `json:"query"`
+						Limit int    `json:"limit"`
+					}{searchQuery, memLimit})
 					hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
 						Name:   "memory_search",
-						Args:   fmt.Sprintf(`{"query":%q,"limit":%d}`, searchQuery, memLimit),
+						Args:   string(memArgs),
 						Result: buildMemoryResultSummary(memHits),
 					})
 					slog.Info("kb auto-query memory lane", "agent", agentID, "query", searchQuery, "hits", len(memHits))
@@ -289,6 +309,14 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 		}
 
 		if kbDone {
+			return
+		}
+		// Neither KB lane is on (judge rejected the query on a "smart" turn
+		// whose memory lane still ran above): skip the KB search entirely.
+		// Running SearchSplit with 0/0 limits would return empty and, under
+		// EmptyAction=stop, hijack a plain chit-chat turn into a canned
+		// "[KB] nothing found" reply instead of a normal LLM response.
+		if !wikiOn && !ftOn {
 			return
 		}
 
@@ -332,18 +360,20 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 		}
 
 		results, err := store.SearchSplit(ctx, agentID, searchQuery, wikiLimit, wikiThreshold, ftLimit, ftThreshold)
-		slog.Info("kb auto-query search", "agent", agentID, "query", searchQuery, "results", len(results), "err", err)
-
 		if err != nil {
-			slog.Debug("kb auto-query failed", "agent", agentID, "error", err)
+			// A failed search isn't memoized: later iterations should retry.
+			slog.Warn("kb auto-query failed", "agent", agentID, "query", searchQuery, "error", err)
 			return
 		}
+		slog.Info("kb auto-query search", "agent", agentID, "query", searchQuery, "results", len(results))
 
 		// Mark the query as cached BEFORE branching on results so a
 		// search that returned 0 hits is also memoized — otherwise
 		// an empty-result query in "always" mode would re-search on
-		// every iteration.
+		// every iteration. lastQueryEmpty is what makes the empty case
+		// actually short-circuit (a zero-hit lane injects no [KB] block).
 		lastQuery = query
+		lastQueryEmpty = len(results) == 0
 
 		if len(results) > 0 {
 			// Results found — number them as [K#] citation sources and
@@ -365,9 +395,17 @@ func AutoQueryHook(store *KBStore, agentID string, cfgFn func() AutoQueryCfg, me
 				return
 			}
 
+			// json.Marshal (not a hand-built format string): the rewritten or
+			// raw user query is untrusted text — a literal quote or backslash
+			// in it produced invalid JSON that strict providers choke on when
+			// replaying history.
+			kbArgs, _ := json.Marshal(struct {
+				Query string `json:"query"`
+				Limit int    `json:"limit"`
+			}{searchQuery, wikiLimit + ftLimit})
 			hc.SyntheticToolCalls = append(hc.SyntheticToolCalls, SyntheticToolCall{
 				Name:   "knowledgebase_search",
-				Args:   fmt.Sprintf(`{"query":"%s","limit":%d}`, searchQuery, wikiLimit+ftLimit),
+				Args:   string(kbArgs),
 				Result: buildToolResultSummary(results, citations),
 			})
 			switch cfg.SearchMode {

@@ -297,7 +297,12 @@ func TestSweepStepsProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := time.Now().Add(-30 * time.Minute)
-	if _, err := db.db.ExecContext(ctx, `UPDATE memory_recall_events SET created_at = ? WHERE recall_id = ?`, old, "p1"); err != nil {
+	// Backdate in the format production writes (CURRENT_TIMESTAMP → UTC
+	// "YYYY-MM-DD HH:MM:SS" text). Binding a bare time.Time here stores the
+	// driver's local-zone serialization, which compares inconsistently
+	// against the UTC-string cutoffs the sweep queries use — the fixture was
+	// masking exactly that production mismatch.
+	if _, err := db.db.ExecContext(ctx, `UPDATE memory_recall_events SET created_at = ? WHERE recall_id = ?`, old.UTC().Format("2006-01-02 15:04:05"), "p1"); err != nil {
 		t.Fatal(err)
 	}
 	t.Log("event inserted + backdated")
@@ -380,7 +385,9 @@ func TestSweepImplicitFeedbackRecordsUpDown(t *testing.T) {
 			t.Fatal(err)
 		}
 		old := time.Now().Add(-30 * time.Minute)
-		if _, err := db.db.ExecContext(ctx, `UPDATE memory_recall_events SET created_at = ? WHERE recall_id = ?`, old, recallID); err != nil {
+		// Same UTC-text backdate as above — match production's
+		// CURRENT_TIMESTAMP format so sweep cutoffs compare correctly.
+		if _, err := db.db.ExecContext(ctx, `UPDATE memory_recall_events SET created_at = ? WHERE recall_id = ?`, old.UTC().Format("2006-01-02 15:04:05"), recallID); err != nil {
 			t.Fatal(err)
 		}
 		for i, c := range msgs {
@@ -435,7 +442,7 @@ func TestHasPendingImplicitFeedback(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := db.db.ExecContext(ctx, `UPDATE memory_recall_events SET created_at = ? WHERE recall_id = ?`,
-			time.Now().Add(-time.Duration(ageMin)*time.Minute), recallID); err != nil {
+			time.Now().Add(-time.Duration(ageMin)*time.Minute).UTC().Format("2006-01-02 15:04:05"), recallID); err != nil {
 			t.Fatal(err)
 		}
 	}

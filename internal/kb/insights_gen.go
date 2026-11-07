@@ -45,6 +45,27 @@ func (s *KBStore) GenerateInsights(ctx context.Context, agentID, sourceID string
 		maxTokens = DefaultInsightMaxTokens
 	}
 
+	// Single-flight per (agent, source): a generation is an expensive deep-
+	// reading LLM pass, and two concurrent runs (HTTP endpoint + agent tool,
+	// or a double click) would both pay it while the slower, stale result
+	// overwrites the newer one via SaveInsights' unconditional upsert.
+	key := agentID + "\x00" + sourceID
+	s.insightMu.Lock()
+	if s.insightInFlight == nil {
+		s.insightInFlight = map[string]bool{}
+	}
+	if s.insightInFlight[key] {
+		s.insightMu.Unlock()
+		return nil, fmt.Errorf("insights for source %s are already being generated", sourceID)
+	}
+	s.insightInFlight[key] = true
+	s.insightMu.Unlock()
+	defer func() {
+		s.insightMu.Lock()
+		delete(s.insightInFlight, key)
+		s.insightMu.Unlock()
+	}()
+
 	// 1. Validate the source is an article owned by this agent.
 	var srcType, title string
 	err := s.db.QueryRowContext(ctx,

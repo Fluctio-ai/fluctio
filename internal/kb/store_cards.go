@@ -355,24 +355,39 @@ func (s *KBStore) UpdateCard(ctx context.Context, agentID, id, question, answer 
 	return nil
 }
 
-// DeleteCard removes a card plus its reviews and embedding.
+// DeleteCard removes a card plus its reviews and embedding, in one
+// transaction — split deletes could drop reviews/embeddings and then fail
+// on the card row, losing data with no card to show for it.
 func (s *KBStore) DeleteCard(ctx context.Context, agentID, id string) error {
-	_, _ = s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete card: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM kb_card_embeddings WHERE card_id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
-		id, agentID)
-	_, _ = s.db.ExecContext(ctx,
+		id, agentID); err != nil {
+		slog.Warn("kb delete card: embedding cascade failed", "card_id", id, "err", err)
+	}
+	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM kb_card_reviews WHERE card_id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
-		id, agentID)
-	res, err := s.db.ExecContext(ctx,
+		id, agentID); err != nil {
+		slog.Warn("kb delete card: review cascade failed", "card_id", id, "err", err)
+	}
+	res, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM kb_cards WHERE id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
 		id, agentID)
 	if err != nil {
 		return fmt.Errorf("delete card: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete card: rows affected: %w", err)
+	}
+	if n == 0 {
 		return fmt.Errorf("card not found")
 	}
-	return nil
+	return tx.Commit()
 }
 
 // execer is satisfied by both *sql.DB and *sql.Tx — the source cascade
@@ -508,20 +523,41 @@ func (s *KBStore) ReviewCard(ctx context.Context, agentID, id, grade string) (*K
 	if !newDue.IsZero() {
 		dueStr = newDue.Format(time.RFC3339)
 	}
-	_, err = s.db.ExecContext(ctx,
+	// One transaction, guarded by an optimistic check on the interval_index
+	// we read above. Two concurrent reviews (scheduled push + manual grade,
+	// double click) previously both computed from the same old index and the
+	// second UPDATE silently clobbered the first's schedule; the timeline
+	// row insert was best-effort outside any transaction, so a failure left
+	// card state and streak/timeline data inconsistent.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("review card: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`UPDATE kb_cards SET interval_index = %s, status = %s, due_at = %s,
 			last_reviewed_at = %s, review_count = review_count + 1, lapse_count = lapse_count + %s, updated_at = %s
-			WHERE id = %s AND agent_id = %s`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8)),
-		newIdx, newStatus, dueStr, now.Format(time.RFC3339), boolInt(grade == "forgot"), now.Format(time.RFC3339), id, agentID)
+			WHERE id = %s AND agent_id = %s AND interval_index = %s`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7), s.ph(8), s.ph(9)),
+		newIdx, newStatus, dueStr, now.Format(time.RFC3339), boolInt(grade == "forgot"), now.Format(time.RFC3339), id, agentID, prevIdx)
 	if err != nil {
 		return nil, fmt.Errorf("review card: %w", err)
 	}
-	_, _ = s.db.ExecContext(ctx,
+	if n, rerr := res.RowsAffected(); rerr == nil && n == 0 {
+		// GetCard above confirmed the row exists, so zero rows means the
+		// optimistic guard missed: another review landed in between.
+		return nil, fmt.Errorf("card %s was reviewed concurrently; retry", id)
+	}
+	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`INSERT INTO kb_card_reviews (card_id, agent_id, grade, prev_interval_index, new_interval_index, new_due_at, reviewed_at)
 			VALUES (%s,%s,%s,%s,%s,%s,%s)`,
 			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7)),
-		id, agentID, grade, prevIdx, newIdx, dueStr, now.Format(time.RFC3339))
+		id, agentID, grade, prevIdx, newIdx, dueStr, now.Format(time.RFC3339)); err != nil {
+		return nil, fmt.Errorf("review card: insert review row: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("review card: commit: %w", err)
+	}
 	updated, err := s.GetCard(ctx, agentID, id)
 	if err != nil {
 		return nil, err

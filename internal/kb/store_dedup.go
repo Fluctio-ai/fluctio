@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +22,11 @@ const (
 	DefaultArticleDupMid     = 0.72
 	DefaultFlashDupThreshold = 0.85
 )
+
+// dedupEmbedMaxBytes bounds the text sent to the embedder by FindSimilar —
+// candidate vectors are per-chunk, but the query side used to embed the full
+// article verbatim, overflowing provider token limits on long writes.
+const dedupEmbedMaxBytes = 8000
 
 // PendingDefaultTTL is how long a mid-tier article pend stays rescuable
 // before the expiry sweep reclaims it.
@@ -135,8 +141,16 @@ func (s *KBStore) FindSimilar(ctx context.Context, agentID, content, kbType stri
 	if s.embedder == nil || !s.embedder.Available() || threshold <= 0 {
 		return nil
 	}
-	qvecs, err := s.embedder.Embed(ctx, []string{content})
+	// Clip before embedding: content can be a full article (tens of KB) and
+	// oversized input either fails the provider's token limit or silently
+	// truncates — either way the L2 dedup leg dies. The prefix is what the
+	// ingest-time embedding of chunk 0 sees anyway.
+	embedText := clipUTF8(content, dedupEmbedMaxBytes)
+	qvecs, err := s.embedder.Embed(ctx, []string{embedText})
 	if err != nil || len(qvecs) != 1 {
+		// Dedup is fail-open (the write proceeds); make the degraded state
+		// observable instead of silent.
+		slog.Warn("kb dedup: embed failed, L2 similarity check skipped", "agent_id", agentID, "kb_type", kbType, "err", err)
 		return nil
 	}
 	q := qvecs[0]
@@ -145,8 +159,8 @@ func (s *KBStore) FindSimilar(ctx context.Context, agentID, content, kbType stri
 		 FROM kb_entry_embeddings e
 		 JOIN kb_entries ke ON ke.id = e.entry_id
 		 JOIN kb_sources s ON s.id = ke.source_id
-		 WHERE e.agent_id = `+s.ph(1)+` AND s.type = `+s.ph(2),
-		agentID, kbType)
+		 WHERE e.agent_id = `+s.ph(1)+` AND s.type = `+s.ph(2)+` AND (e.dim = `+s.ph(3)+` OR e.dim = 0)`,
+		agentID, kbType, len(q))
 	if err != nil {
 		return nil
 	}

@@ -49,13 +49,28 @@ func NormalizeBookmarkURL(raw string) string {
 // stamped content_fetched_at=now. source records the entry point ("cli" /
 // "slash" / "llm"). When an embedder is wired, title+summary is embedded
 // asynchronously so the bookmark is discoverable by vector recall. Returns
-// the new bookmark id.
+// the bookmark id — the EXISTING row's id when this (agent, normalized url)
+// is already saved: duplicate bookmarks would each embed and re-surface in
+// vector recall, so a re-save closes on the original row (callers that want
+// new metadata use UpdateBookmark explicitly).
 func (s *KBStore) SaveBookmark(ctx context.Context, agentID, rawURL, title, summary, content, source string) (string, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	if rawURL == "" {
 		return "", fmt.Errorf("url is required")
 	}
 	rawURL = NormalizeBookmarkURL(rawURL)
+	// URL dedup: NormalizeBookmarkURL's canonicalization only pays off if
+	// lookups actually use it — this SELECT is that closure point.
+	var existingID string
+	switch err := s.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT id FROM kb_bookmarks WHERE agent_id = %s AND url = %s`, s.ph(1), s.ph(2)),
+		agentID, rawURL).Scan(&existingID); {
+	case err == nil:
+		slog.Debug("kb bookmark already saved, returning existing id", "agent_id", agentID, "url", rawURL, "id", existingID)
+		return existingID, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", fmt.Errorf("lookup bookmark by url: %w", err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := uuid.New().String()
 	fetchedAt := ""
@@ -278,11 +293,13 @@ func (s *KBStore) searchBookmarksByVector(ctx context.Context, agentID, query st
 		return nil
 	}
 	q := qvecs[0]
+	// dim pre-filter (see searchWikiByVector): skip foreign-dimension blobs
+	// in SQL; dim=0 keeps legacy pre-dim rows eligible.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.embedding, b.id, b.url, b.title, b.summary
 		 FROM kb_bookmark_embeddings e
 		 JOIN kb_bookmarks b ON b.id = e.bookmark_id
-		 WHERE e.agent_id = `+s.ph(1), agentID)
+		 WHERE e.agent_id = `+s.ph(1)+` AND (e.dim = `+s.ph(2)+` OR e.dim = 0)`, agentID, len(q))
 	if err != nil {
 		tr.drop(gateQueryFailed, 1)
 		return nil

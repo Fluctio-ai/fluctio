@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"regexp"
 	"sort"
@@ -215,6 +216,7 @@ func (d *DBStore) SearchConversationSummariesFTS(
 			SELECT `+summaryCols+`
 			FROM conversation_summaries
 			WHERE agent_id = $1
+			  AND superseded_by = 0
 			  AND (`+strings.Join(clauses, " OR ")+`)
 			ORDER BY created_at DESC
 			LIMIT $`+fmt.Sprint(placeholder), args...)
@@ -953,10 +955,15 @@ func (d *DBStore) ConversationSummaryVectorShape(ctx context.Context, agentID st
 		return 0, "", err
 	}
 	err = nil
-	_ = d.db.QueryRowContext(ctx,
+	// d.ph placeholder + logged error: a broken model lookup used to fail
+	// silently on Postgres ("?" placeholder) and blank the model the
+	// rebuild queue keys on.
+	if merr := d.db.QueryRowContext(ctx,
 		`SELECT embedding_model FROM conversation_summaries
-		 WHERE agent_id = ? AND embedding_model IS NOT NULL AND embedding_model != ''
-		 ORDER BY id DESC LIMIT 1`, agentID).Scan(&model)
+		 WHERE agent_id = `+d.ph(1)+` AND embedding_model IS NOT NULL AND embedding_model != ''
+		 ORDER BY id DESC LIMIT 1`, agentID).Scan(&model); merr != nil && !errors.Is(merr, sql.ErrNoRows) {
+		slog.Warn("conversation_summary_vector_shape: model lookup failed", "agent_id", agentID, "err", merr)
+	}
 	return dim, model, nil
 }
 
@@ -1325,18 +1332,21 @@ func (d *DBStore) GetActiveSummariesByIDs(ctx context.Context, agentID string, i
 	return scanConversationSummaries(rows)
 }
 
-// GetConversationSummariesByIDs fetches summaries by primary key.
-// Used by memory_search after vector KNN returns matching IDs.
+// GetConversationSummariesByIDs fetches summaries by primary key. Used by
+// the recall audit view (handlers_recall), not by memory_search — that path
+// now goes through GetActiveSummariesByIDs. Placeholders go through d.ph so
+// both dialects work; there is deliberately no agent filter (audit inspect
+// by explicit ids) — callers gate access themselves.
 func (d *DBStore) GetConversationSummariesByIDs(ctx context.Context, ids []int64) ([]ConversationSummary, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
 
-	// Build IN clause dynamically.
+	// Build IN clause dynamically with dialect-correct placeholders.
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
-		placeholders[i] = "?"
+		placeholders[i] = d.ph(i + 1)
 		args[i] = id
 	}
 

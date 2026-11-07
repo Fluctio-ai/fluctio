@@ -91,15 +91,6 @@ func (s *KBStore) MergeArticles(ctx context.Context, agentID, sourceID, newConte
 	if err := s.replaceArticleContent(ctx, agentID, sourceID, merged); err != nil {
 		return "", fmt.Errorf("replace content: %w", err)
 	}
-	// Drop stale insights so a later explicit generate rebuilds them against
-	// the merged text; wiki_dirty_at queues the autogen sweep to rebuild too.
-	_, _ = s.db.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM kb_article_insights WHERE source_id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
-		sourceID, agentID)
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, _ = s.db.ExecContext(ctx,
-		fmt.Sprintf(`UPDATE kb_sources SET wiki_dirty_at = %s, updated_at = %s WHERE id = %s AND agent_id = %s`, s.ph(1), s.ph(2), s.ph(3), s.ph(4)),
-		now, now, sourceID, agentID)
 	return merged, nil
 }
 
@@ -107,13 +98,21 @@ func clipForMerge(s string) string {
 	if len(s) <= mergeMaxContentChars {
 		return s
 	}
-	return s[:mergeMaxContentChars] + "\n\n...(已截断)"
+	// clipUTF8 (not s[:n]): a raw byte cut would cleave a multi-byte CJK
+	// rune and feed replacement-glyph garbage into the merge prompt.
+	return clipUTF8(s, mergeMaxContentChars) + "\n\n...(已截断)"
 }
 
 // replaceArticleContent swaps an article source's kb_entries chunks for fresh
-// chunks of content: drops stale chunk embeddings (which reference old entry
-// ids), drops old chunks, inserts new ones, updates total_chars/entry_count,
-// and best-effort async re-embeds so vector search reaches the merged text.
+// chunks of content and settles the merge side effects in the SAME
+// transaction: drops stale chunk embeddings (which reference old entry ids),
+// drops old chunks, inserts new ones, refreshes orig_content (so a future
+// rewash with a changed pipeline re-chunks the merged text instead of
+// silently rolling the merge back), drops stale insights (they regenerate on
+// demand), and stamps wiki_dirty_at so the autogen sweep rebuilds derived
+// pages. Splitting those steps across transactions could leave insights
+// describing pre-merge text, or a merge that rewash would overwrite. Then
+// best-effort async re-embeds so vector search reaches the merged text.
 func (s *KBStore) replaceArticleContent(ctx context.Context, agentID, sourceID, content string) error {
 	chunks := ChunkText(content, 0, 0)
 	if len(chunks) == 0 {
@@ -147,11 +146,22 @@ func (s *KBStore) replaceArticleContent(ctx context.Context, agentID, sourceID, 
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	// orig_content tracks the merged text so RewashSources never re-chunks
+	// the pre-merge original over the user's confirmed merge.
 	if _, err := tx.ExecContext(ctx,
-		fmt.Sprintf(`UPDATE kb_sources SET total_chars = %s, entry_count = %s, updated_at = %s WHERE id = %s`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4)),
-		len(content), len(chunks), now, sourceID); err != nil {
+		fmt.Sprintf(`UPDATE kb_sources SET total_chars = %s, entry_count = %s, updated_at = %s,
+			orig_content = %s, wiki_dirty_at = %s WHERE id = %s AND agent_id = %s`,
+			s.ph(1), s.ph(2), s.ph(3), s.ph(4), s.ph(5), s.ph(6), s.ph(7)),
+		len(content), len(chunks), now, content, now, sourceID, agentID); err != nil {
 		return fmt.Errorf("update source: %w", err)
+	}
+	// Drop stale insights in the same tx so they can't describe pre-merge
+	// text (a concurrent GenerateInsights landing after this delete would
+	// still race — per-source single-flight is handled at the call sites).
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM kb_article_insights WHERE source_id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
+		sourceID, agentID); err != nil {
+		return fmt.Errorf("drop stale insights: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return err

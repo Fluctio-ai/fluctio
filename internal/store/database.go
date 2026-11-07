@@ -6382,7 +6382,7 @@ func (d *DBStore) migrateShelvedCandidates(ctx context.Context) error {
 	// malformed while the topic summary itself succeeded (so
 	// last_summarized_seq advanced and the window would never be re-read).
 	// The next summary for that session re-runs shelved-only extraction.
-	if _, err := d.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS shelved_extract_retries (
+	if _, err := d.db.ExecContext(ctx, d.adaptDDL(`CREATE TABLE IF NOT EXISTS shelved_extract_retries (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		agent_id TEXT NOT NULL,
 		session_key TEXT NOT NULL,
@@ -6393,7 +6393,7 @@ func (d *DBStore) migrateShelvedCandidates(ctx context.Context) error {
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(agent_id, session_key, seq_start, seq_end)
-	)`); err != nil {
+	)`)); err != nil {
 		return fmt.Errorf("migrate shelved_extract_retries: %w", err)
 	}
 	if err := d.backfillShelvedCandidates(ctx); err != nil {

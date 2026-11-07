@@ -198,6 +198,18 @@ func (s *KBStore) UpdateFlash(ctx context.Context, agentID, sourceID, content st
 	return nil
 }
 
+// validRFC3339 reports whether s is empty or a parseable RFC3339 timestamp.
+// Todo start/end times are compared as raw strings against due horizons, so
+// a non-RFC3339 value like "1234" sorts before every real timestamp and
+// would fire due reminders instantly.
+func validRFC3339(s string) bool {
+	if s == "" {
+		return true
+	}
+	_, err := time.Parse(time.RFC3339, s)
+	return err == nil
+}
+
 // SaveTodo stores a todo item as a single KB source of type 'todo'. status
 // defaults to pending and is validated against the four allowed values;
 // startAt/endAt are RFC3339 strings or empty.
@@ -211,6 +223,9 @@ func (s *KBStore) SaveTodo(ctx context.Context, agentID, content, status, startA
 	}
 	if !validTodoStatus(status) {
 		return "", fmt.Errorf("invalid status %q (pending/in_progress/done/cancelled)", status)
+	}
+	if !validRFC3339(startAt) || !validRFC3339(endAt) {
+		return "", fmt.Errorf("start_at/end_at must be RFC3339 timestamps (e.g. 2026-01-02T15:04:05Z)")
 	}
 	return s.saveSingleChunk(ctx, agentID, "todo", deriveTitle(content), content, "text", "manual", status, startAt, endAt)
 }
@@ -226,6 +241,10 @@ func (s *KBStore) UpdateTodo(ctx context.Context, agentID, sourceID, content, st
 	content = strings.TrimSpace(content)
 	if status != "" && !validTodoStatus(status) {
 		return fmt.Errorf("invalid status %q", status)
+	}
+	// Same RFC3339 gate as SaveTodo: these strings drive due-date compares.
+	if !validRFC3339(startAt) || !validRFC3339(endAt) {
+		return fmt.Errorf("start_at/end_at must be RFC3339 timestamps (e.g. 2026-01-02T15:04:05Z)")
 	}
 	var sets []string
 	var args []interface{}
@@ -398,12 +417,14 @@ func (s *KBStore) searchFlashTodoByVector(ctx context.Context, agentID, query st
 		return nil
 	}
 	q := qvecs[0]
+	// dim pre-filter (see searchWikiByVector): skip foreign-dimension blobs
+	// in SQL; dim=0 keeps legacy pre-dim rows eligible.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.embedding, ke.content, ke.source_id, COALESCE(s.title,''), s.type, s.status, s.end_at
 		 FROM kb_entry_embeddings e
 		 JOIN kb_entries ke ON ke.id = e.entry_id
 		 JOIN kb_sources s ON s.id = ke.source_id
-		 WHERE e.agent_id = `+s.ph(1)+` AND s.type IN ('flash','todo')`, agentID)
+		 WHERE e.agent_id = `+s.ph(1)+` AND s.type IN ('flash','todo') AND (e.dim = `+s.ph(2)+` OR e.dim = 0)`, agentID, len(q))
 	if err != nil {
 		tr.drop(gateQueryFailed, 1)
 		return nil

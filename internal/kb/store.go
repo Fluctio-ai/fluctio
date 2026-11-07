@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"sort"
+	"sync"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -72,6 +73,12 @@ type KBStore struct {
 	// lanes. Wired by the agent layer to the store insert; nil keeps
 	// observability off (transient stores, unit tests).
 	recallTracer RecallTracer
+	// insightMu/insightInFlight implement per-(agent, source) single-flight
+	// for GenerateInsights: the HTTP endpoint and the agent tool can both
+	// trigger a deep-reading generation, and the slower of two concurrent
+	// runs would overwrite the newer result via SaveInsights' upsert.
+	insightMu       sync.Mutex
+	insightInFlight map[string]bool
 }
 
 func NewKBStore(db *sql.DB, dialect string) *KBStore {
@@ -108,6 +115,17 @@ func (s *KBStore) ph(n int) string {
 		return fmt.Sprintf("$%d", n)
 	}
 	return "?"
+}
+
+// likeOp returns the case-insensitive match operator. SQLite's LIKE is
+// already ASCII case-insensitive, but Postgres's LIKE is case-sensitive —
+// query tokens are lowercased while stored titles/bodies keep their original
+// case, so Postgres needs ILIKE or recall silently drops case-varying hits.
+func (s *KBStore) likeOp() string {
+	if s.dialect == "postgres" {
+		return "ILIKE"
+	}
+	return "LIKE"
 }
 
 func (s *KBStore) IngestText(ctx context.Context, agentID, title, content, sourceType, sourceRef string) (string, error) {
@@ -417,13 +435,16 @@ func (s *KBStore) searchWikiByVector(ctx context.Context, agentID, query string,
 		return nil
 	}
 	q := qvecs[0]
+	// dim pre-filter: skip vectors of a different (non-zero) dimension in
+	// SQL instead of decoding every stale blob only to drop it in Go. The
+	// dim=0 escape keeps legacy rows written before the dim column existed.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.page_id, e.embedding, wp.title, wp.summary, wp.body, wp.page_type, wp.slug
 		 FROM wiki_page_embeddings e
 		 JOIN wiki_pages wp ON wp.id = e.page_id
-		 WHERE e.agent_id = `+s.ph(1), agentID)
+		 WHERE e.agent_id = `+s.ph(1)+` AND (e.dim = `+s.ph(2)+` OR e.dim = 0)`, agentID, len(q))
 	if err != nil {
-		tr.drop("query_failed", 1)
+		tr.drop(gateQueryFailed, 1)
 		return nil
 	}
 	defer rows.Close()
@@ -579,10 +600,11 @@ func (s *KBStore) searchWikiPrefilter(ctx context.Context, agentID, query string
 	// Build OR clause from tokens: (title LIKE '%tok1%' OR body LIKE '%tok1%' OR ...)
 	var conditions []string
 	var args []interface{}
+	like := s.likeOp()
 	for _, tok := range tokens {
 		pattern := "%" + tok + "%"
 		conditions = append(conditions,
-			fmt.Sprintf("(wp.title LIKE %s OR wp.body LIKE %s OR wp.summary LIKE %s)", s.ph(len(args)+1), s.ph(len(args)+2), s.ph(len(args)+3)))
+			fmt.Sprintf("(wp.title %s %s OR wp.body %s %s OR wp.summary %s %s)", like, s.ph(len(args)+1), like, s.ph(len(args)+2), like, s.ph(len(args)+3)))
 		args = append(args, pattern, pattern, pattern)
 	}
 	args = append(args, agentID, limit)
@@ -680,6 +702,7 @@ func (s *KBStore) searchLike(ctx context.Context, agentID, query string, sourceI
 	}
 	var clauses []string
 	var args []interface{}
+	like := s.likeOp()
 	phIdx := 0
 	for _, t := range tokens {
 		pat := "%" + t + "%"
@@ -687,7 +710,7 @@ func (s *KBStore) searchLike(ctx context.Context, agentID, query string, sourceI
 		cPH := s.ph(phIdx)
 		phIdx++
 		tPH := s.ph(phIdx)
-		clauses = append(clauses, fmt.Sprintf("(e.content LIKE %s OR s.title LIKE %s)", cPH, tPH))
+		clauses = append(clauses, fmt.Sprintf("(e.content %s %s OR s.title %s %s)", like, cPH, like, tPH))
 		args = append(args, pat, pat)
 	}
 	phIdx++
@@ -777,12 +800,16 @@ func (s *KBStore) searchRawByVector(ctx context.Context, agentID, query string, 
 		}
 		sourceCond = " AND ke.source_id IN (" + strings.Join(phs, ",") + ")"
 	}
+	// dim pre-filter as in searchWikiByVector: don't decode blobs the Go
+	// cosine loop would discard for dimension mismatch anyway. The clause
+	// sits after sourceCond so placeholder numbering follows SQL appearance
+	// order (positional "?" binding).
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT e.embedding, ke.content, ke.source_id, ke.chunk_index, COALESCE(s.title, s.source_ref, '')
 		 FROM kb_entry_embeddings e
 		 JOIN kb_entries ke ON ke.id = e.entry_id
 		 JOIN kb_sources s ON s.id = ke.source_id
-		 WHERE e.agent_id = `+s.ph(1)+sourceCond, args...)
+		 WHERE e.agent_id = `+s.ph(1)+sourceCond+` AND (e.dim = `+s.ph(len(args)+1)+` OR e.dim = 0)`, append(args, len(q))...)
 	if err != nil {
 		return nil
 	}
@@ -861,7 +888,13 @@ func (s *KBStore) embedSourceEntries(ctx context.Context, agentID, sourceID stri
 		return
 	}
 	entries, err := s.ListEntries(ctx, agentID, sourceID, 10000, 0)
-	if err != nil || len(entries) == 0 {
+	if err != nil {
+		// This runs on a detached goroutine (IngestText / rewash); without
+		// a log the silent failure is invisible until backfill rescues it.
+		slog.Warn("kb embed source entries: list failed", "agent_id", agentID, "source_id", sourceID, "err", err)
+		return
+	}
+	if len(entries) == 0 {
 		return
 	}
 	texts := make([]string, len(entries))
@@ -870,10 +903,14 @@ func (s *KBStore) embedSourceEntries(ctx context.Context, agentID, sourceID stri
 	}
 	vecs, err := s.embedder.Embed(ctx, texts)
 	if err != nil || len(vecs) != len(entries) {
+		slog.Warn("kb embed source entries: embed failed", "agent_id", agentID, "source_id", sourceID,
+			"entries", len(entries), "vecs", len(vecs), "err", err)
 		return
 	}
 	for i, e := range entries {
-		_ = s.SaveEntryEmbedding(ctx, agentID, e.ID, vecs[i], s.embedder.Model())
+		if serr := s.SaveEntryEmbedding(ctx, agentID, e.ID, vecs[i], s.embedder.Model()); serr != nil {
+			slog.Warn("kb embed source entries: save failed", "agent_id", agentID, "entry_id", e.ID, "err", serr)
+		}
 	}
 }
 
@@ -1011,25 +1048,50 @@ func (s *KBStore) ListSources(ctx context.Context, agentID string, limit, offset
 }
 
 func (s *KBStore) DeleteSource(ctx context.Context, agentID, sourceID string) error {
-	_, err := s.db.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM kb_entries WHERE agent_id = %s AND source_id = %s`, s.ph(1), s.ph(2)),
-		agentID, sourceID)
+	// One transaction for the whole cascade. Split statements could leave a
+	// half-deleted source (entries gone, source row alive → entry_count
+	// shell) when a later step failed, and never touched kb_entry_embeddings
+	// at all — orphaned per-entry vectors accumulated forever.
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("begin delete source tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Embedding rows first: they hang off kb_entries.id via subquery, so
+	// they must go while the entry rows are still present.
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM kb_entry_embeddings WHERE agent_id = %s AND entry_id IN (SELECT id FROM kb_entries WHERE agent_id = %s AND source_id = %s)`,
+			s.ph(1), s.ph(2), s.ph(3)),
+		agentID, agentID, sourceID); err != nil {
+		return fmt.Errorf("delete entry embeddings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM kb_entries WHERE agent_id = %s AND source_id = %s`, s.ph(1), s.ph(2)),
+		agentID, sourceID); err != nil {
 		return fmt.Errorf("delete entries: %w", err)
 	}
 	// Cascade: drop any deep-reading insights attached to this source.
-	_, _ = s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM kb_article_insights WHERE source_id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
-		sourceID, agentID)
-	res, err := s.db.ExecContext(ctx,
+		sourceID, agentID); err != nil {
+		slog.Warn("kb delete source: insights cascade failed", "agent_id", agentID, "source_id", sourceID, "err", err)
+	}
+	res, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM kb_sources WHERE id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
 		sourceID, agentID)
 	if err != nil {
 		return fmt.Errorf("delete source: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete source rows affected: %w", err)
+	}
 	if n == 0 {
 		return fmt.Errorf("source not found")
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit delete source: %w", err)
 	}
 	// Cascade: let the caller drop dependent artifacts (wiki pages). Only
 	// fires when a row was actually deleted, so a not-found is a no-op.
@@ -1097,14 +1159,15 @@ func (s *KBStore) ListAllEntries(ctx context.Context, agentID, query string, lim
 	var args []interface{}
 	if query != "" {
 		pattern := "%" + query + "%"
+		like := s.likeOp()
 		countSQL = fmt.Sprintf(
-			`SELECT COUNT(*) FROM kb_entries WHERE agent_id = %s AND content LIKE %s`, s.ph(1), s.ph(2))
+			`SELECT COUNT(*) FROM kb_entries WHERE agent_id = %s AND content %s %s`, s.ph(1), like, s.ph(2))
 		listSQL = fmt.Sprintf(
 			`SELECT e.id, e.source_id, e.chunk_index, e.content
 			FROM kb_entries e
-			WHERE e.agent_id = %s AND e.content LIKE %s
+			WHERE e.agent_id = %s AND e.content %s %s
 			ORDER BY e.id DESC LIMIT %s OFFSET %s`,
-			s.ph(1), s.ph(2), s.ph(3), s.ph(4))
+			s.ph(1), like, s.ph(2), s.ph(3), s.ph(4))
 		args = []interface{}{agentID, pattern, limit, offset}
 	} else {
 		countSQL = fmt.Sprintf(

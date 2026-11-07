@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,8 +20,11 @@ import (
 // table. Idempotent — CREATE IF NOT EXISTS on every boot.
 func (d *DBStore) migrateRecallHardcases(ctx context.Context) error {
 	stmts := []string{
+		// AUTOINCREMENT + adaptDDL: SQLite keeps the rowid alias, Postgres
+		// gets BIGSERIAL so the id-less upsert below can't hit a NOT NULL
+		// violation.
 		`CREATE TABLE IF NOT EXISTS recall_hardcases (
-			id          INTEGER PRIMARY KEY,
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			agent_id    TEXT NOT NULL,
 			query_hash  TEXT NOT NULL,
 			query       TEXT NOT NULL DEFAULT '',
@@ -40,7 +44,7 @@ func (d *DBStore) migrateRecallHardcases(ctx context.Context) error {
 		)`,
 	}
 	for _, s := range stmts {
-		if _, err := d.db.ExecContext(ctx, s); err != nil {
+		if _, err := d.db.ExecContext(ctx, d.adaptDDL(s)); err != nil {
 			return err
 		}
 	}
@@ -76,39 +80,70 @@ func (d *DBStore) sweepMetaSet(ctx context.Context, key, value string) error {
 
 const hardcaseWatermarkKey = "hardcase_last_mine"
 
-// MineHardcases aggregates zero-hit recall_debug_events newer than the
-// last watermark into recall_hardcases (upsert by agent+query hash, so
-// repeats increment count instead of duplicating). Returns the number of
-// groups upserted. First run mines the last `lookback` (default 24h).
-// Zero-hit means the hits column is empty or '[]' — whatever the gates
-// were, nothing survived to show the user.
+// MineHardcases aggregates zero-hit recall_debug_events into recall_hardcases
+// (upsert by agent+query hash, so repeats increment count instead of
+// duplicating). Returns the number of groups upserted. First run mines the
+// last `lookback` (default 24h). Zero-hit means the hits column is empty or
+// '[]' — whatever the gates were, nothing survived to show the user.
+//
+// The watermark is the recall_debug_events row id captured at snapshot time,
+// not a wall-clock stamp: mining selects the closed (lastID, snapID] interval,
+// so rows inserted while the mine runs — which a time-based watermark written
+// after the SELECT would permanently skip — land in the next round instead.
+// Second-granularity created_at text also can't lose the same-second boundary
+// this way.
 func (d *DBStore) MineHardcases(ctx context.Context, lookback time.Duration) (int, error) {
 	has, err := d.tableExists(ctx, "recall_debug_events")
 	if err != nil || !has {
 		return 0, err
 	}
-	sinceStr, serr := d.sweepMetaGet(ctx, hardcaseWatermarkKey)
-	var since time.Time
-	if serr != nil || sinceStr == "" {
-		since = time.Now().Add(-lookback)
-	} else if t, err := time.Parse(time.RFC3339, sinceStr); err == nil {
-		since = t
-	} else {
-		since = time.Now().Add(-lookback)
+	var lastID int64
+	firstRun := true
+	if sinceStr, serr := d.sweepMetaGet(ctx, hardcaseWatermarkKey); serr == nil && sinceStr != "" {
+		// The watermark is an id integer. A legacy value (pre-fix builds
+		// stored an RFC3339 stamp) fails to parse and just re-runs the
+		// first-run lookback window once.
+		if v, perr := strconv.ParseInt(sinceStr, 10, 64); perr == nil && v >= 0 {
+			lastID = v
+			firstRun = false
+		}
 	}
 
-	sinceFmt := since.UTC().Format("2006-01-02 15:04:05")
+	// Snapshot the table's max id BEFORE the mining SELECT. Everything with
+	// id <= snapID is already committed and will be seen; rows landing after
+	// carry id > snapID and are picked up next round.
+	var snapID int64
+	if err := d.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(id), 0) FROM recall_debug_events`).Scan(&snapID); err != nil {
+		return 0, err
+	}
+	if snapID < lastID {
+		// Retention drained the table and (legacy non-AUTOINCREMENT
+		// SQLite rowids) the counter restarted below the watermark:
+		// everything now in the table is post-drain, re-mine from scratch.
+		lastID = 0
+		firstRun = false
+	}
+
+	where := `id > ` + d.ph(1) + ` AND id <= ` + d.ph(2)
+	args := []any{lastID, snapID}
+	if firstRun {
+		// No (usable) watermark: bound the initial mine to the lookback so
+		// a huge backlog can't flood the review queue on first boot.
+		where += ` AND created_at > ` + d.ph(len(args)+1)
+		args = append(args, time.Now().Add(-lookback).UTC().Format("2006-01-02 15:04:05"))
+	}
 	q := `SELECT agent_id, query, COUNT(*), GROUP_CONCAT(DISTINCT lane)
 		FROM recall_debug_events
-		WHERE created_at > ` + d.ph(1) + ` AND (hits = '' OR hits = '[]')
+		WHERE ` + where + ` AND (hits = '' OR hits = '[]' OR hits IS NULL)
 		GROUP BY agent_id, query`
 	if d.dialect == "postgres" {
 		q = `SELECT agent_id, query, COUNT(*), STRING_AGG(DISTINCT lane, ',')
 			FROM recall_debug_events
-			WHERE created_at > ` + d.ph(1) + ` AND (hits = '' OR hits = '[]')
+			WHERE ` + where + ` AND (hits = '' OR hits = '[]' OR hits IS NULL)
 			GROUP BY agent_id, query`
 	}
-	rows, err := d.db.QueryContext(ctx, q, sinceFmt)
+	rows, err := d.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -163,9 +198,9 @@ func (d *DBStore) MineHardcases(ctx context.Context, lookback time.Duration) (in
 		}
 	}
 	// Advance the watermark only after every group landed: a failed run
-	// leaves the watermark put so the next tick re-mines the same window
-	// (idsempotent upserts make a re-run safe; a lost window doesn't).
-	return n, d.sweepMetaSet(ctx, hardcaseWatermarkKey, time.Now().UTC().Format(time.RFC3339))
+	// leaves the watermark put so the next tick re-mines the same id
+	// interval (the upsert is idempotent; a lost window isn't).
+	return n, d.sweepMetaSet(ctx, hardcaseWatermarkKey, strconv.FormatInt(snapID, 10))
 }
 
 // unionCSV merges two comma-separated lane lists without duplicates.

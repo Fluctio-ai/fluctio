@@ -1,6 +1,9 @@
 package kb
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 const (
 	defaultChunkSize = 1000
@@ -54,12 +57,15 @@ func ChunkText(text string, maxChunkSize, overlapSize int) []Chunk {
 		if bufLen+len(p)+1 > maxChunkSize && bufLen > 0 {
 			chunks = append(chunks, Chunk{Content: strings.TrimSpace(buf.String()), Index: idx})
 			idx++
-			// Keep overlap from end of buffer
+			// Keep overlap from end of buffer. overlapTail backs up to a
+			// rune boundary: a raw byte cut can cleave a multi-byte CJK
+			// rune and land invalid UTF-8 in the chunk (which then goes to
+			// FTS/embedding).
 			content := buf.String()
-			if len(content) > overlapSize {
+			if tail := overlapTail(content, overlapSize); tail != "" {
 				buf.Reset()
-				buf.WriteString(content[len(content)-overlapSize:])
-				bufLen = overlapSize
+				buf.WriteString(tail)
+				bufLen = len(tail)
 			} else {
 				buf.Reset()
 				bufLen = 0
@@ -94,6 +100,20 @@ func splitParagraphs(text string) []string {
 	return out
 }
 
+// overlapTail returns the trailing at-most-overlapSize bytes of s, backed up
+// to a UTF-8 rune start so the slice is always valid UTF-8 (sizes are in
+// bytes; a naive cut can start mid-rune in CJK text).
+func overlapTail(s string, overlapSize int) string {
+	if overlapSize <= 0 || len(s) <= overlapSize {
+		return ""
+	}
+	start := len(s) - overlapSize
+	for start > 0 && s[start]&0xC0 == 0x80 {
+		start--
+	}
+	return s[start:]
+}
+
 func splitLargeParagraph(p string, maxChunkSize, overlapSize int) []string {
 	sentences := splitSentences(p)
 	var chunks []string
@@ -104,10 +124,11 @@ func splitLargeParagraph(p string, maxChunkSize, overlapSize int) []string {
 		if bufLen+len(s)+1 > maxChunkSize && bufLen > 0 {
 			chunks = append(chunks, strings.TrimSpace(buf.String()))
 			content := buf.String()
-			if len(content) > overlapSize {
+			// overlapTail keeps the cut on a rune boundary (see ChunkText).
+			if tail := overlapTail(content, overlapSize); tail != "" {
 				buf.Reset()
-				buf.WriteString(content[len(content)-overlapSize:])
-				bufLen = overlapSize
+				buf.WriteString(tail)
+				bufLen = len(tail)
 			} else {
 				buf.Reset()
 				bufLen = 0
@@ -132,13 +153,21 @@ func splitSentences(text string) []string {
 	for i, r := range text {
 		buf.WriteRune(r)
 		if r == '.' || r == '。' || r == '?' || r == '！' || r == '？' {
-			// End of sentence if followed by space or end of text. i is a
-			// byte offset (range over string), so peek the next byte directly —
-			// rune(text[i+1]) mis-decodes when i+1 lands inside a CJK char.
-			ended := i+1 >= len(text)
-			if !ended {
-				nb := text[i+1]
-				ended = nb == ' ' || nb == '\n'
+			// CJK terminators (。！？) and '?' are unambiguous: end here.
+			// Only ASCII '.' needs the following-space check (decimals like
+			// "3.5" aren't sentence ends). i is the byte START of the rune,
+			// so peek the NEXT rune from i+utf8.RuneLen(r) — text[i+1] would
+			// land on a continuation byte of the terminator itself for CJK,
+			// never matching space/newline and silently disabling all CJK
+			// sentence splitting.
+			ended := true
+			if r == '.' {
+				after := i + utf8.RuneLen(r)
+				ended = after >= len(text)
+				if !ended {
+					nr, _ := utf8.DecodeRuneInString(text[after:])
+					ended = nr == ' ' || nr == '\n'
+				}
 			}
 			if ended {
 				s := strings.TrimSpace(buf.String())

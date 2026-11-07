@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
@@ -97,8 +98,21 @@ func registerKBSearch(r *tools.Registry, store *KBStore, agentID string, sourceR
 // wiki chunk numbers and kb_entries chunk numbers (two different index
 // spaces) don't shadow each other. Fresh chunks get continuing [K#] ids
 // (len(acc)+1) and are appended. Returns the deduped results + their ids.
+//
+// accMu serializes accumulator access: the agent loop can execute tool calls
+// concurrently within a turn, and the read-cited / read-length / append
+// sequence on the shared slice is otherwise a data race with duplicate ids.
+var accMu sync.Mutex
+
 func numberAndAccumulate(ctx context.Context, results []KBResult) ([]KBResult, []string) {
 	acc := SourcesFromCtx(ctx)
+	// The accumulator lives in the turn context and is shared by every KB
+	// tool call of that turn. The agent loop can execute tools concurrently,
+	// so the read-cited / read-length / append sequence below is guarded by
+	// a mutex — without it two parallel searches duplicate ids and race the
+	// slice append.
+	accMu.Lock()
+	defer accMu.Unlock()
 	cited := map[string]bool{}
 	if acc != nil {
 		for _, s := range *acc {
@@ -630,11 +644,11 @@ func registerKBListFlashes(r *tools.Registry, store *KBStore, agentID string) {
 			if title == "" {
 				title = "(untitled)"
 			}
-			id := f.ID
-			if len(id) > 12 {
-				id = id[:12]
-			}
-			fmt.Fprintf(&sb, "- %s (id: %s)\n", title, id)
+			// Full id, matching knowledgebase_list: the truncated form can't
+			// match WHERE id = ? downstream, so save_flash/search_raw calls
+			// with a listed id always failed (same regression
+			// TestKnowledgebaseListFullID fixed on knowledgebase_list).
+			fmt.Fprintf(&sb, "- %s (id: %s)\n", title, f.ID)
 		}
 		return sb.String(), nil
 	})

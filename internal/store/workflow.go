@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -204,11 +205,37 @@ func (d *DBStore) GetWorkflowRunInput(ctx context.Context, id string) (map[strin
 // in flight). It also drops any pending-form fields — a resumed run either
 // supplies the form values (waiting ends) or fails again, so a stale
 // pending_form must not outlive the resume.
+//
+// CAS-guarded: only the resumable states (failed/waiting/needs_intervention)
+// may flip. An unconditional update would let two concurrent resumes both
+// start executing the same run (duplicate node outputs), or silently revive
+// an already-running/succeeded one.
 func (d *DBStore) MarkRunRunning(ctx context.Context, id string) error {
-	_, err := d.db.ExecContext(ctx, fmt.Sprintf(
-		`UPDATE workflow_runs SET status = 'running', finished_at = NULL, pending_form_node = '', pending_form_schema = '' WHERE id = %s`,
+	res, err := d.db.ExecContext(ctx, fmt.Sprintf(
+		`UPDATE workflow_runs SET status = 'running', finished_at = NULL, pending_form_node = '', pending_form_schema = ''
+		 WHERE id = %s AND status IN ('failed','waiting','needs_intervention')`,
 		d.ph(1)), id)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	// No row updated: unknown id, or a state we refuse to flip out of.
+	var status string
+	err = d.db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT status FROM workflow_runs WHERE id = %s`, d.ph(1)), id).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: run %s", ErrNotFound, id)
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("run %s is %q, not resumable (want failed/waiting/needs_intervention)", id, status)
 }
 
 // SetRunWaiting parks a run on a form node (M6): status=waiting, the pending

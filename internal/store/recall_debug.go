@@ -43,8 +43,12 @@ type RecallDebugEvent struct {
 // Idempotent — CREATE IF NOT EXISTS, safe on every boot.
 func (d *DBStore) migrateRecallDebugEvents(ctx context.Context) error {
 	stmts := []string{
+		// AUTOINCREMENT + adaptDDL: SQLite keeps the rowid alias, Postgres
+		// gets BIGSERIAL so the id-less INSERT below can't hit a NOT NULL
+		// violation (AUTOINCREMENT also blocks rowid reuse after a full
+		// retention drain, which the bounded prune relies on).
 		`CREATE TABLE IF NOT EXISTS recall_debug_events (
-			id           INTEGER PRIMARY KEY,
+			id           INTEGER PRIMARY KEY AUTOINCREMENT,
 			agent_id     TEXT NOT NULL,
 			lane         TEXT NOT NULL,
 			trigger_kind TEXT NOT NULL DEFAULT '',
@@ -61,7 +65,7 @@ func (d *DBStore) migrateRecallDebugEvents(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_recall_debug_created ON recall_debug_events(created_at)`,
 	}
 	for _, s := range stmts {
-		if _, err := d.db.ExecContext(ctx, s); err != nil {
+		if _, err := d.db.ExecContext(ctx, d.adaptDDL(s)); err != nil {
 			return err
 		}
 	}

@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"log/slog"
 )
 
 // dailyRunTables whitelists the (agent_id, date)-keyed marker tables the
@@ -18,8 +21,15 @@ var dailyRunTables = map[string]bool{
 // HasDailyRun reports whether the (agent, date) marker row exists in one
 // of the whitelisted daily-run tables — the cards autogen sweep's skip
 // condition and the digest push's once-a-day gate.
+//
+// A real DB error must not be reported as "no run": callers treat false as
+// safe-to-send/generate, so a transient failure returning false would
+// double-push or double-generate. Errors are logged and conservatively
+// reported as already-run (true); the next tick retries naturally because
+// the follow-up stamp write will have failed too.
 func (d *DBStore) HasDailyRun(ctx context.Context, table, agentID, date string) bool {
 	if !dailyRunTables[table] {
+		slog.Warn("has_daily_run: unknown table", "table", table)
 		return false
 	}
 	var one int
@@ -27,7 +37,15 @@ func (d *DBStore) HasDailyRun(ctx context.Context, table, agentID, date string) 
 		fmt.Sprintf(`SELECT 1 FROM %s WHERE agent_id = %s AND date = %s`,
 			table, d.ph(1), d.ph(2)),
 		agentID, date).Scan(&one)
-	return err == nil
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	slog.Warn("has_daily_run: db error, conservatively treating as already-run",
+		"table", table, "agent_id", agentID, "date", date, "err", err)
+	return true
 }
 
 // StampCardGenRun upserts the nightly generation marker (created count +
