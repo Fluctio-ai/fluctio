@@ -718,7 +718,15 @@ export function ChatScreen() {
     liveAfterRef.current = Date.now();
   }, []);
   const [input, setInput] = useState("");
-  const [sending, setSending] = useState(false);
+  // Per-session in-flight turns: taskqueue serializes per chat but the
+  // global maxConcurrent lets different chats of one agent stream in
+  // parallel, so "is sending" is a per-session fact, not a global one.
+  // `sending` stays as the derived flag the composer/Stop/Enter routing
+  // reads for the VIEWED session — replacing it kept every existing
+  // call site's semantics while fixing the old global boolean that let
+  // one session's finally reset another session's Stop button.
+  const [sendingSessions, setSendingSessions] = useState<ReadonlySet<string>>(new Set());
+  const sending = sessionId !== null && sendingSessions.has(sessionId);
   // todo.md state for the current session — agent maintains the file,
   // we re-fetch on every write_file/edit_file event that touches
   // todo.md plus once at mount. Empty `items` hides the panel.
@@ -739,6 +747,15 @@ export function ChatScreen() {
   // it must never persist into history. Any subsequent progress event
   // (content / tool call / done) clears it.
   const [reconnecting, setReconnecting] = useState<null | { attempt?: number }>(null);
+  // SSE terminal-offline state: EventSource auto-reconnects forever with
+  // zero UI feedback, and a persistent 404 (session deleted) or dead
+  // proxy just flaps silently. After repeated failed reconnects the
+  // subscribe effect closes the connection and flips this on — the
+  // message list renders a "connection lost" pill with a manual retry
+  // (bumping subscribeRetryNonce re-runs the subscribe effect).
+  const [subscribeDead, setSubscribeDead] = useState(false);
+  const [subscribeRetryNonce, setSubscribeRetryNonce] = useState(0);
+  const subscribeErrCountRef = useRef(0);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [filesSheetOpen, setFilesSheetOpen] = useState(false);
   // File the user clicked inside the conversation (a FilesPanel row) —
@@ -803,6 +820,14 @@ export function ChatScreen() {
   // producing a duplicate bubble. The ref is reset to null at startNewGroup
   // and when a tool_call rolls the bubble into a tool-group.
   const streamingMsgIdRef = useRef<string | null>(null);
+  // Delta batching (flush throttled to ~50ms): the old path ran one
+  // setMessages full-array copy + string concat per streamed chunk and
+  // re-rendered the whole list — the O(n²) main cause of streaming jank
+  // on long sessions. Chunks accumulate here and flush on a timer (rAF
+  // pauses in hidden tabs; a timer keeps the final flush deterministic —
+  // the trailing `content` event flushes and clears it anyway).
+  const pendingDeltaRef = useRef("");
+  const deltaFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // pendingRollbackRef flags the next send as a resend of the trailing
   // failed user turn. handleRetry sets it when you re-click a message
   // with no successful assistant reply after it; handleSend consumes it
@@ -828,9 +853,11 @@ export function ChatScreen() {
   useEffect(() => {
     viewedAgentRef.current = selectedAgent;
   }, [selectedAgent]);
-  // AbortController for the in-flight chat stream so the Stop button can
-  // cancel both the upload and the SSE connection. Reset on every new turn.
-  const abortRef = useRef<AbortController | null>(null);
+  // AbortControllers for in-flight chat streams, keyed by sessionId so
+  // parallel streams (different chats of one agent) each keep their own
+  // Stop — a single slot let the newer stream overwrite the older one's
+  // controller, leaving it unstoppable.
+  const abortMapRef = useRef<Map<string, AbortController>>(new Map());
 
   // Gates the EventSource effect: holds the sessionId whose history has
   // been fetched and whose `subscribeSinceRef` is now accurate. Without
@@ -1090,6 +1117,15 @@ export function ChatScreen() {
     const since = subscribeSinceRef.current;
     const url = `/api/chat/subscribe?agentId=${encodeURIComponent(selectedAgent)}&sessionId=${encodeURIComponent(sessionId)}&since=${since}`;
     const es = new EventSource(url, { withCredentials: true });
+    subscribeErrCountRef.current = 0;
+    setSubscribeDead(false);
+    // A successful open resets the failure streak — transient network
+    // blips fire onerror per attempt but shouldn't accumulate toward
+    // the terminal-offline threshold.
+    es.onopen = () => {
+      subscribeErrCountRef.current = 0;
+      setSubscribeDead(false);
+    };
     es.onmessage = (ev) => {
       let data: {
         seq?: number;
@@ -1392,14 +1428,26 @@ export function ChatScreen() {
       ]);
     };
     es.onerror = () => {
-      // EventSource auto-reconnects on transient errors; only close on
-      // unmount. A persistent 404 (session removed, agent gone) will
-      // keep flapping but is harmless.
+      // EventSource auto-reconnects on transient errors. Count the
+      // consecutive failures: past 3 show the reconnecting pill (the
+      // connection itself gives no feedback), past 8 give up — close
+      // the EventSource and surface a manual retry. The old empty
+      // handler left persistent failures (session deleted, 401 expired,
+      // dead proxy) flapping forever with zero user-visible signal.
+      subscribeErrCountRef.current += 1;
+      const n = subscribeErrCountRef.current;
+      if (n >= 8) {
+        es.close();
+        setReconnecting(null);
+        setSubscribeDead(true);
+        return;
+      }
+      if (n >= 3) setReconnecting({ attempt: n });
     };
     return () => {
       es.close();
     };
-  }, [selectedAgent, sessionId, loadedSessionId]);
+  }, [selectedAgent, sessionId, loadedSessionId, subscribeRetryNonce]);
 
   // Reactively swap sessionId when the URL changes underneath us.
   // Three URL transitions matter, all handled by the same branch logic:
@@ -2024,8 +2072,13 @@ export function ChatScreen() {
         },
       ];
     });
-    setSending(true);
-    abortRef.current = new AbortController();
+    setSendingSessions((prev) => {
+      const next = new Set(prev);
+      next.add(sessionId);
+      return next;
+    });
+    const ac = new AbortController();
+    abortMapRef.current.set(sessionId, ac);
 
     // Snapshot the workspace before the turn so we can diff at `done` and
     // attach newly-created / modified files (PDFs, images, …) to the
@@ -2059,6 +2112,39 @@ export function ChatScreen() {
       streamingMsgIdRef.current = null;
     };
     startNewGroup();
+
+    // Flush accumulated content_delta chunks into the streaming bubble
+    // (or create the bubble on the first flush). The old path ran one
+    // setMessages full-array copy + string concat per streamed chunk and
+    // re-rendered the whole list — O(n²) string work and the main cause
+    // of streaming jank on long sessions. ~50ms throttle batches the
+    // updates; the trailing `content` event replaces the text wholesale.
+    const flushPendingDelta = () => {
+      if (deltaFlushTimerRef.current !== null) {
+        clearTimeout(deltaFlushTimerRef.current);
+        deltaFlushTimerRef.current = null;
+      }
+      const chunk = pendingDeltaRef.current;
+      if (!chunk) return;
+      pendingDeltaRef.current = "";
+      if (!streamingMsgIdRef.current) {
+        const id = `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        streamingMsgIdRef.current = id;
+        setMessages((prev) => [
+          ...prev,
+          { id, role: "agent", content: chunk, timestamp: Date.now() },
+        ]);
+        return;
+      }
+      const id = streamingMsgIdRef.current;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === id);
+        if (idx < 0) return prev;
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], content: (updated[idx].content || "") + chunk };
+        return updated;
+      });
+    };
 
     try {
       await sendChatStream(selectedAgent, sessionId, fullText, (evt: ChatStreamEvent) => {
@@ -2098,32 +2184,32 @@ export function ChatScreen() {
             const delta = evt.data?.delta || "";
             if (!delta) break;
             if (curCalls.length > 0 && !streamingMsgIdRef.current) {
-              // Content after tool calls = new round; reset state so
-              // the new bubble is its own message, not appended onto
-              // the previous tool-group's thinking text.
+              // Content after tool calls = new round; flush the previous
+              // bubble's pending text first, then reset state so the new
+              // bubble is its own message, not appended onto the
+              // previous tool-group's thinking text.
+              flushPendingDelta();
               startNewGroup();
             }
             curContent += delta;
+            pendingDeltaRef.current += delta;
             if (!streamingMsgIdRef.current) {
-              const id = `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-              streamingMsgIdRef.current = id;
-              setMessages((prev) => [
-                ...prev,
-                { id, role: "agent", content: delta, timestamp: Date.now() },
-              ]);
-            } else {
-              const id = streamingMsgIdRef.current;
-              setMessages((prev) => {
-                const idx = prev.findIndex((m) => m.id === id);
-                if (idx < 0) return prev;
-                const updated = [...prev];
-                updated[idx] = { ...updated[idx], content: (updated[idx].content || "") + delta };
-                return updated;
-              });
+              // First delta of a bubble: create it immediately so the
+              // typing indicator has an anchor; later chunks batch.
+              flushPendingDelta();
+            } else if (deltaFlushTimerRef.current === null) {
+              deltaFlushTimerRef.current = setTimeout(flushPendingDelta, 50);
             }
             break;
           }
           case "content": {
+            // Final full text: cancel any pending batched flush — the
+            // seal below writes the complete content directly.
+            if (deltaFlushTimerRef.current !== null) {
+              clearTimeout(deltaFlushTimerRef.current);
+              deltaFlushTimerRef.current = null;
+            }
+            pendingDeltaRef.current = "";
             const content = evt.data?.content || "";
             const meta = evt.data?.metadata;
             if (content === "__NEW_SESSION__") {
@@ -2400,7 +2486,7 @@ export function ChatScreen() {
             break;
           }
         }
-      }, abortRef.current.signal, imageDataUrls, projectIdHint, chatOnly ? { chatOnly: true } : undefined, rollbackPending);
+      }, ac.signal, imageDataUrls, projectIdHint, chatOnly ? { chatOnly: true } : undefined, rollbackPending);
       // The streamed turn's bubbles carry no seq (content_delta path), so
       // the message-space cursor lastMsgSeqRef is stale until re-anchored —
       // a scroll-to-bottom syncNewer right after would re-append the whole
@@ -2587,11 +2673,27 @@ export function ChatScreen() {
         });
       }
     } finally {
+      // Cancel a pending batched flush — the turn is over and the final
+      // `content` event (or the error path) already settled the text.
+      if (deltaFlushTimerRef.current !== null) {
+        clearTimeout(deltaFlushTimerRef.current);
+        deltaFlushTimerRef.current = null;
+      }
+      pendingDeltaRef.current = "";
       if (inFlightSendSessionRef.current === sessionId) {
         inFlightSendSessionRef.current = null;
       }
-      abortRef.current = null;
-      setSending(false);
+      // Per-session cleanup: only THIS session's controller and sending
+      // flag are retired — the old global reset let one session's turn
+      // end flip another session's Stop button and composer state. The
+      // map entry drop also releases the controller for GC.
+      abortMapRef.current.delete(sessionId);
+      setSendingSessions((prev) => {
+        if (!prev.has(sessionId)) return prev;
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
       // Belt-and-suspenders: the subagent's done event clears this on
       // the happy path, but if a network blip drops that event we don't
       // want a stale "iteration 5/20" sitting under a finished turn.
@@ -2620,7 +2722,7 @@ export function ChatScreen() {
     if (selectedAgent && sessionId) {
       stopChat(selectedAgent, sessionId, urlProjectId).catch(() => {});
     }
-    abortRef.current?.abort();
+    abortMapRef.current.get(sessionId)?.abort();
   }, [selectedAgent, sessionId, urlProjectId]);
 
   // handleSteer fires while a turn is streaming: it buffers the message
@@ -3057,6 +3159,24 @@ export function ChatScreen() {
                     <span className="text-xs text-muted-foreground bg-muted/40 rounded-full px-3 py-1 animate-pulse">
                       {t("chat.reconnecting", { attempt: reconnecting.attempt ?? "…" })}
                     </span>
+                  </div>,
+                );
+              }
+              // Terminal SSE offline: the subscribe connection gave up
+              // after repeated failures. Manual retry re-opens it.
+              if (subscribeDead) {
+                elements.push(
+                  <div key="subscribe-dead-pill" className="flex justify-center my-3">
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground bg-muted/40 hover:bg-muted/70 rounded-full px-3 py-1"
+                      onClick={() => {
+                        setSubscribeDead(false);
+                        setSubscribeRetryNonce((n) => n + 1);
+                      }}
+                    >
+                      Connection lost — click to reconnect
+                    </button>
                   </div>,
                 );
               }
