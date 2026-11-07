@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { load as yLoad, dump as yDump } from "js-yaml";
 import CodeMirror from "@uiw/react-codemirror";
 import { yaml as yamlLang } from "@codemirror/lang-yaml";
@@ -203,6 +203,22 @@ export function WorkflowEditor({
     };
   }, [agentId, wfID]);
 
+  // Topology fingerprint: nodes (name+kind) and edges (from/to/when).
+  // The vis-network effect rebuilds only when THIS changes — property-panel
+  // edits (params, when text on an edge label, output schemas) mutate `def`
+  // without altering the graph shape, and rebuilding per keystroke was the
+  // reported jank (viewport re-fit every keystroke).
+  const topologyKey = useMemo(
+    () =>
+      def
+        ? JSON.stringify({
+            n: def.nodes!.map((x) => [x.name, x.kind]),
+            e: def.edges!.map((x) => [x.from, x.to, x.when || ""]),
+          })
+        : "",
+    [def],
+  );
+
   useEffect(() => {
     if (!def || !containerRef.current) return;
     let cancelled = false;
@@ -332,7 +348,7 @@ export function WorkflowEditor({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def]);
+  }, [def, topologyKey]);
 
   // Switching back to the visual tab: the canvas container was display:none on
   // the other tabs, so vis-network drew it at size 0. Redraw now that it's
@@ -432,6 +448,25 @@ export function WorkflowEditor({
       if (x) {
         if (value === undefined || value === "") delete (x as Record<string, unknown>)[prop];
         else (x as Record<string, unknown>)[prop] = value;
+      }
+      // Renaming a node invalidates every reference to the old name:
+      // edges anchoring on it, and ${node.field} references in other
+      // nodes' code/params. Without the cascade the graph silently
+      // disconnects and downstream inputs go undefined.
+      if (prop === "name" && typeof value === "string" && value && value !== n) {
+        d.edges = d.edges!.map((e) => ({
+          ...e,
+          from: e.from === n ? value : e.from,
+          to: e.to === n ? value : e.to,
+        }));
+        for (const other of d.nodes!) {
+          if (other.name === n) continue;
+          if (typeof other.params === "string") {
+            other.params = other.params.split(`${n}.`).join(`${value}.`);
+          }
+        }
+        // Keep the property panel and canvas selection on the renamed node.
+        queueMicrotask(() => setSelNode(value));
       }
     });
   };
