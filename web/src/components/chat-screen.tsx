@@ -2922,7 +2922,24 @@ export function ChatScreen() {
   };
 
   const handleCopy = (msg: ChatMessage) => {
-    navigator.clipboard.writeText(msg.content);
+    // clipboard.writeText rejects on non-secure origins or when the
+    // permission is denied — an unhandled rejection used to surface as a
+    // console error with the UI still flashing "copied".
+    navigator.clipboard.writeText(msg.content).catch(() => {
+      // Non-secure origin fallback: the classic textarea+execCommand path.
+      const ta = document.createElement("textarea");
+      ta.value = msg.content;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        // Give up silently — the bubble stays readable either way.
+      }
+      document.body.removeChild(ta);
+    });
     setCopiedId(msg.id);
     setTimeout(() => setCopiedId(null), 1500);
   };
@@ -3877,6 +3894,17 @@ export function ChatScreen() {
             role="dialog"
             aria-modal="true"
             aria-label="Image preview"
+            tabIndex={-1}
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ref={(el) => {
+              // Focus the dialog so Escape reaches its key handler; restore
+              // focus to the triggering element on close is handled by the
+              // browser's natural focus return after the node unmounts.
+              (el as HTMLDivElement | null)?.focus();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setLightboxSrc(null);
+            }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
