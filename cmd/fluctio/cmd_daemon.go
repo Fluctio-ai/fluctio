@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -109,16 +110,69 @@ func daemonLogsCmd() *cobra.Command {
 				return fmt.Errorf("no log file found at %s", logFile)
 			}
 
-			tailArgs := []string{"-n", fmt.Sprintf("%d", lines)}
-			if follow {
-				tailArgs = append(tailArgs, "-f")
+			// Windows has no `tail`; the external-command approach failed
+			// outright on a supported platform. Implement read/follow
+			// in-process: print the last N lines, then (with -f) poll for
+			// appended lines until interrupted.
+			printLastLines := func() error {
+				data, err := os.ReadFile(logFile)
+				if err != nil {
+					return err
+				}
+				ls := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+				start := 0
+				if len(ls) > lines {
+					start = len(ls) - lines
+				}
+				for _, l := range ls[start:] {
+					fmt.Println(l)
+				}
+				return nil
 			}
-			tailArgs = append(tailArgs, logFile)
 
-			tailCmd := exec.Command("tail", tailArgs...)
-			tailCmd.Stdout = os.Stdout
-			tailCmd.Stderr = os.Stderr
-			return tailCmd.Run()
+			if !follow {
+				return printLastLines()
+			}
+
+			if err := printLastLines(); err != nil {
+				return err
+			}
+			info, err := os.Stat(logFile)
+			if err != nil {
+				return err
+			}
+			offset := info.Size()
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+			for range ticker.C {
+				info, err := os.Stat(logFile)
+				if err != nil {
+					continue
+				}
+				if info.Size() <= offset {
+					// Truncated (rotation) or unchanged — resync or wait.
+					if info.Size() < offset {
+						offset = 0
+					}
+					continue
+				}
+				f, err := os.Open(logFile)
+				if err != nil {
+					continue
+				}
+				if _, err := f.Seek(offset, io.SeekStart); err != nil {
+					f.Close()
+					continue
+				}
+				newData, err := io.ReadAll(f)
+				f.Close()
+				if err != nil {
+					continue
+				}
+				offset += int64(len(newData))
+				fmt.Print(string(newData))
+			}
+			return nil
 		},
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow log output")
