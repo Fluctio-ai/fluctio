@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"encoding/json"
 	"math"
 	"regexp"
 	"strings"
@@ -92,12 +93,33 @@ func ScrubWith(text string, opts Options) string {
 	return text
 }
 
-// ScrubMessages 批量脱敏消息内容（含多模态 text 部分）。
+// ScrubMessages 批量脱敏消息内容（含多模态 text 部分）。同时覆盖
+// ToolCalls 参数、Thinking 与 RawAssistant：这些字段是模型从历史消息
+// 复制的 PII 的常见落脚点，旧实现只脱敏 Content 等于在工具参数里留了
+// 一条绕过通道。
 func ScrubMessages(messages []provider.Message, opts Options) []provider.Message {
 	out := make([]provider.Message, len(messages))
 	for i, m := range messages {
 		out[i] = m
 		out[i].Content = ScrubWith(m.Content, opts)
+		if m.Thinking != "" {
+			out[i].Thinking = ScrubWith(m.Thinking, opts)
+		}
+		if len(m.ToolCalls) > 0 {
+			calls := make([]provider.ToolCall, len(m.ToolCalls))
+			copy(calls, m.ToolCalls)
+			for j, tc := range calls {
+				// Arguments 是 JSON 字符串：占位符是纯方括号 token，
+				// 写回字符串值内不会破坏 JSON 合法性。
+				calls[j].Function.Arguments = ScrubWith(tc.Function.Arguments, opts)
+			}
+			out[i].ToolCalls = calls
+		}
+		if len(m.RawAssistant) > 0 {
+			// RawAssistant 原样往返 provider 专有字段（reasoning_content
+			// 等）——对序列化后的整体脱敏。
+			out[i].RawAssistant = json.RawMessage(ScrubWith(string(m.RawAssistant), opts))
+		}
 		if len(m.ContentParts) > 0 {
 			parts := make([]provider.ContentPart, len(m.ContentParts))
 			copy(parts, m.ContentParts)
