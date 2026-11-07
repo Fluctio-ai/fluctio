@@ -124,11 +124,27 @@ func resolveSQLitePath(flag string) string {
 		flag = filepath.Join(home, "fluctio.db")
 	}
 	if strings.Contains(flag, "?") || strings.HasPrefix(flag, "file:") {
-		return flag
+		// Custom DSNs still get the WAL-concurrency pragmas the daemon
+		// uses — a bare DSN without busy_timeout made every rewash write
+		// transaction fail with SQLITE_BUSY the moment the daemon held
+		// the lock (kbtool rewash runs against the live database).
+		return appendSQLitePragmas(flag)
 	}
 	abs, err := filepath.Abs(flag)
 	if err != nil {
 		abs = flag
 	}
-	return "file:" + abs
+	return appendSQLitePragmas("file:" + abs)
+}
+
+// appendSQLitePragmas adds the daemon's connection tuning to a sqlite
+// DSN if the caller hasn't supplied their own. Mirrors the pragma set
+// openStoreFromEnv uses so CLI tools never contend harder than the
+// gateway does.
+func appendSQLitePragmas(dsn string) string {
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "_pragma=busy_timeout(5000)" + "&_pragma=foreign_keys(1)" + "&_pragma=journal_mode(WAL)"
 }

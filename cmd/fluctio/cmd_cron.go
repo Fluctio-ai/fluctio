@@ -98,6 +98,24 @@ func cronCreateCmd() *cobra.Command {
 				if err := cron.Validate(schedule); err != nil {
 					return fmt.Errorf("invalid cron schedule %q: %w", schedule, err)
 				}
+			} else if typ == "once" {
+				// Fail loudly instead of the silent 1-minute fallback: an
+				// unparseable RFC3339 value used to create a job firing
+				// within a minute of submission.
+				if _, err := time.Parse(time.RFC3339, schedule); err != nil {
+					return fmt.Errorf("invalid once schedule %q (want RFC3339, e.g. 2026-01-02T15:04:05Z): %w", schedule, err)
+				}
+			} else if typ == "interval" {
+				// Same for durations: garbage fell back to +1 minute.
+				d, err := time.ParseDuration(schedule)
+				if err != nil {
+					return fmt.Errorf("invalid interval schedule %q (want a Go duration, e.g. 30m): %w", schedule, err)
+				}
+				if d <= 0 {
+					return fmt.Errorf("interval schedule must be positive (got %s)", schedule)
+				}
+			} else {
+				return fmt.Errorf("unknown job type %q (want once, interval, or cron)", typ)
 			}
 			if timezone == "" {
 				timezone = time.Local.String()
