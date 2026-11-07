@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/agent"
 	"github.com/fluctio-ai/fluctio/internal/auth"
@@ -68,11 +69,17 @@ func NewServer(resolver UserResolver, authResolver *auth.Resolver, gatewayCfg *c
 	if gatewayCfg != nil {
 		rpm = gatewayCfg.RateLimit.RPM
 	}
+	rl := newRateLimiter(rpm)
+	if rpm > 0 {
+		// Process-lifetime janitor: without this, empty-window user keys
+		// accumulate forever (the map only prunes per-user on allow()).
+		go rl.cleanup(time.Minute, make(chan struct{}))
+	}
 	return &Server{
 		resolver:     resolver,
 		authResolver: authResolver,
 		gatewayCfg:   gatewayCfg,
-		limiter:      newRateLimiter(rpm),
+		limiter:      rl,
 	}
 }
 

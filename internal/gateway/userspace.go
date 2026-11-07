@@ -399,7 +399,12 @@ func (sp *UserSpace) EnsureAgent(ctx context.Context, st store.Store, mb *bus.Me
 	// pinned today — fields like MaxTokens / Temp / Thinking still
 	// fall through the owner/agent overlays since the chatter doesn't
 	// have UI to set them per-agent.
+	// Inline of setup.agentShareModelConfig (package-cycle avoidance):
+	// default true, owner opts out via rec.Config["shareModelConfig"]=false.
 	applyOwnerOverlays := true
+	if v, ok := rec.Config["shareModelConfig"].(bool); ok {
+		applyOwnerOverlays = v
+	}
 	if applyOwnerOverlays {
 		if cfgRec, err := st.GetConfigByName(ctx, store.KindSetting, rc.ID, "agents.defaults"); err == nil && cfgRec != nil {
 			var ovr config.AgentDefaults

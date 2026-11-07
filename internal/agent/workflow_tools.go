@@ -443,7 +443,10 @@ func (a *Agent) registerWorkflowTools() {
 			if !ok || dbs == nil {
 				return "", fmt.Errorf("workflow_schedule_delete: store unavailable")
 			}
-			if err := dbs.DeleteWorkflowSchedule(ctx, req.ID); err != nil {
+			// Agent-scoped delete: the store filters on agent_id so a
+			// schedule from another agent is reported as unknown instead
+			// of being removed by id alone.
+			if err := dbs.DeleteWorkflowScheduleForAgent(ctx, req.ID, a.ID()); err != nil {
 				return "", fmt.Errorf("workflow_schedule_delete: %w", err)
 			}
 			return fmt.Sprintf("schedule %s deleted", req.ID), nil

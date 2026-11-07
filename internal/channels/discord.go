@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
 
@@ -269,15 +270,10 @@ func (d *Discord) onInteractionCreate(s *discordgo.Session, i *discordgo.Interac
 
 // Send sends a message to a Discord channel.
 func (d *Discord) Send(chatID string, text string) error {
-	// Discord has a 2000 char limit; split if needed
-	for len(text) > 0 {
-		chunk := text
-		if len(chunk) > 2000 {
-			chunk = text[:2000]
-			text = text[2000:]
-		} else {
-			text = ""
-		}
+	// Discord's 2000 CHAR limit — split via the same rune-safe splitter
+	// the SendMessage path uses (a raw byte cut could tear a multi-byte
+	// rune and emit invalid UTF-8).
+	for _, chunk := range splitDiscordMessage(text) {
 		if _, err := d.session.ChannelMessageSend(chatID, chunk); err != nil {
 			return err
 		}
@@ -436,25 +432,29 @@ func (d *Discord) sendWithFiles(chatID, text string, items []bus.MediaItem, ref 
 }
 
 func splitDiscordMessage(text string) []string {
-	if len(text) <= 2000 {
+	if utf8.RuneCountInString(text) <= 2000 {
 		return []string{text}
 	}
 	var out []string
-	for len(text) > 0 {
-		if len(text) <= 2000 {
-			out = append(out, text)
-			break
-		}
+	for utf8.RuneCountInString(text) > 2000 {
+		// Byte offset of the 2000th rune — a raw text[:2000] here could
+		// tear a multi-byte rune mid-sequence and emit invalid UTF-8.
+		r2000 := runeFloor(text, 2000)
+		r1000 := runeFloor(text, 1000)
+		budget := text[:r2000]
 		// Prefer a paragraph break so we don't tear sentences apart.
-		cut := strings.LastIndex(text[:2000], "\n\n")
-		if cut < 1000 {
-			cut = strings.LastIndex(text[:2000], "\n")
+		cut := strings.LastIndex(budget, "\n\n")
+		if cut < r1000 {
+			cut = strings.LastIndex(budget, "\n")
 		}
-		if cut < 1000 {
-			cut = 2000
+		if cut < r1000 {
+			cut = r2000
 		}
 		out = append(out, text[:cut])
 		text = strings.TrimLeft(text[cut:], "\n")
+	}
+	if text != "" {
+		out = append(out, text)
 	}
 	return out
 }
@@ -462,6 +462,19 @@ func splitDiscordMessage(text string) []string {
 // SendTyping sends a typing indicator to the Discord channel.
 func (d *Discord) SendTyping(chatID string) error {
 	return d.session.ChannelTyping(chatID)
+}
+
+// runeFloor returns the byte offset of the n-th rune of s (len(s) when
+// s holds fewer than n runes).
+func runeFloor(s string, n int) int {
+	count := 0
+	for idx := range s {
+		if count == n {
+			return idx
+		}
+		count++
+	}
+	return len(s)
 }
 
 func (d *Discord) onMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {

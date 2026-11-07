@@ -200,7 +200,17 @@ func (g *Gateway) runWikiAutoGenCycle(ctx context.Context) {
 			continue
 		}
 		_ = g.store.SetWikiAutoGenLastRun(ctx, ar.ID, time.Now())
-		go runWikiAutoGenForAgent(context.Background(), g.store, ar.ID, cfg)
+		go func(ar store.AgentRecord) {
+			// Bare goroutine: a panic in wiki.Generate would otherwise
+			// take down the whole process (mirrors the diary/cards
+			// generation guards).
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Warn("wiki autogen panic", "agent", ar.ID, "error", r)
+				}
+			}()
+			runWikiAutoGenForAgent(context.Background(), g.store, ar.ID, cfg)
+		}(ar)
 	}
 }
 

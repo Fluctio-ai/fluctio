@@ -71,7 +71,11 @@ const (
 	qqFastDisconnectWindow    = 5 * time.Second
 	qqFastDisconnectPenalty   = 60 * time.Second
 	qqFastDisconnectThreshold = 3
-	qqRateLimitWait           = 60 * time.Second
+	// A connection that lived this long counts as recovered: the
+	// reconnect budget resets so months of occasional drops can't
+	// exhaust qqMaxReconnectAttempts and permanently stop the adapter.
+	qqStableConnThreshold = 5 * time.Minute
+	qqRateLimitWait       = 60 * time.Second
 )
 
 // QQ OP codes (contract §1.3, source gateway.ts:1896-2163).
@@ -317,6 +321,9 @@ func (q *QQChannel) Start(ctx context.Context) error {
 		q.connEstablishedAt = time.Now()
 		connErr := q.dialAndRun(ctx, url, token)
 		connDuration := time.Since(q.connEstablishedAt)
+		if connDuration >= qqStableConnThreshold {
+			q.attempts = 0
+		}
 
 		if connErr == nil {
 			continue // ctx cancelled inside dialAndRun → loop will re-check ctx

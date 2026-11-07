@@ -386,6 +386,9 @@ func (r *redisBridge) consumeOutbound(ctx context.Context) {
 	})
 }
 
+// redisRetryBackoff throttles reconnect attempts while Redis is unreachable.
+const redisRetryBackoff = 2 * time.Second
+
 func (r *redisBridge) consume(ctx context.Context, stream string, handle func([]byte) error) {
 	for ctx.Err() == nil {
 		res, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
@@ -400,6 +403,15 @@ func (r *redisBridge) consume(ctx context.Context, stream string, handle func([]
 				continue
 			}
 			slog.Warn("redis stream read failed", "stream", stream, "error", err)
+			// Back off before retrying — XReadGroup's 5s Block only
+			// applies while connected; when Redis is down the call
+			// returns immediately and an unthrottled retry would busy-
+			// loop the CPU and flood the logs.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(redisRetryBackoff):
+			}
 			continue
 		}
 		for _, xs := range res {

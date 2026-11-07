@@ -115,6 +115,15 @@ func (d *DBStore) DeleteWorkflowSchedule(ctx context.Context, id string) error {
 	return err
 }
 
+// DeleteWorkflowScheduleForAgent removes a schedule only when it belongs
+// to the given agent — the agent tool path uses this so one agent's LLM
+// cannot delete another agent's schedule by guessing its global id.
+func (d *DBStore) DeleteWorkflowScheduleForAgent(ctx context.Context, id, agentID string) error {
+	_, err := d.db.ExecContext(ctx, fmt.Sprintf(
+		`DELETE FROM workflow_schedules WHERE id = %s AND agent_id = %s`, d.ph(1), d.ph(2)), id, agentID)
+	return err
+}
+
 func scanWorkflowSchedules(rows *sql.Rows) ([]WorkflowScheduleRow, error) {
 	var out []WorkflowScheduleRow
 	for rows.Next() {

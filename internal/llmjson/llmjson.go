@@ -16,12 +16,31 @@ import (
 
 // StripFence removes a surrounding markdown code fence (```json … ```),
 // which tuned models add reflexively even when the prompt says "no fences".
+// Tolerates the fence appearing after leading prose ("Here you go:" on its
+// own line, then a fence) and case variants of the language tag: when the
+// trimmed input starts with prose, the first fenced block anywhere in the
+// string is extracted.
 func StripFence(s string) string {
 	s = strings.TrimSpace(s)
+	// Locate the first fenced block when the text doesn't START with one —
+	// covers leading explanation before the fence.
+	if !strings.HasPrefix(s, "```") {
+		if i := strings.Index(s, "```"); i >= 0 {
+			// Only treat it as a fence when its line starts there (a lone
+			// fence inside prose mid-line is more likely literal text).
+			if i == 0 || s[i-1] == '\n' {
+				s = s[i:]
+			}
+		}
+	}
 	s = strings.TrimPrefix(s, "```json")
 	s = strings.TrimPrefix(s, "```JSON")
 	s = strings.TrimPrefix(s, "```")
-	s = strings.TrimSuffix(s, "```")
+	// Drop a trailing fence and anything after it (trailing prose like
+	// "hope that helps" would otherwise break the JSON parse).
+	if i := strings.LastIndex(s, "```"); i >= 0 {
+		s = s[:i]
+	}
 	return strings.TrimSpace(s)
 }
 
