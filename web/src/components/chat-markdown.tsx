@@ -9,6 +9,11 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { Streamdown, defaultUrlTransform, type Components, type UrlTransform } from "streamdown";
+
+// Link protocols a chat bubble may render as clickable/embeddable.
+// Everything else (javascript:, vbscript:, file:, app:, chrome:, …) is
+// dropped at the url transform — see the whitelist check in urlTransform.
+const ALLOWED_URL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
 import { createCodePlugin } from "@streamdown/code";
 import { cjk } from "@streamdown/cjk";
 import remarkBreaks from "remark-breaks";
@@ -250,6 +255,17 @@ export function ChatMarkdown({
         const rel = url.slice("/workspace/".length);
         const base = workspaceRoot || (sessionId ? `sessions/${sessionId}/` : "");
         return fileUrl(agentId, base + rel);
+      }
+      // Link protocol whitelist — the last transform before render.
+      // streamdown 2.5's harden ships allowedProtocols:["*"] (four
+      // dangerous schemes blocked, everything else clickable), and its
+      // defaultUrlTransform is an identity function, so an LLM- or
+      // tool-emitted "app:…" / "vbscript:"-style link survives to the DOM
+      // without this check. Root-relative and scheme-less URLs pass (they
+      // resolve against the app origin); data: images were allowed above.
+      if (key === "href" || key === "src") {
+        const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase();
+        if (scheme && !ALLOWED_URL_PROTOCOLS.has(scheme)) return null;
       }
       // NOTE: bare relative URLs (e.g. "cover.png") CANNOT be handled here.
       // Streamdown runs rehype-harden BEFORE urlTransform, and harden's
