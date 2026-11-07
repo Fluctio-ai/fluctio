@@ -82,6 +82,71 @@ function splitReplyOptionsCached(s: string): ReturnType<typeof splitReplyOptions
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Shared event reducer — the auth_prompt / subagent_progress / steer /
+// error / compaction_notice / skill_pending cases used to be implemented
+// twice verbatim (subscribe switch + POST switch) and had already drifted
+// (claim timing, metadata handling). These helpers carry the RENDER
+// semantics once; the two call sites keep only their own seq/claim
+// bookkeeping and pass the event payload in. Returns the message-appends
+// as updater lists so callers feed them straight to setMessages.
+// ---------------------------------------------------------------------------
+
+function authPromptMessages(desc: string, options: { cmd: string; label_zh: string; label_en: string }[]): ChatMessage[] {
+  return [
+    {
+      id: `auth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      role: "agent" as const,
+      content: desc,
+      timestamp: Date.now(),
+      authOptions: { description: desc, options },
+    },
+  ];
+}
+
+function errorMessage(message: string): ChatMessage[] {
+  // context-canceled means the user aborted — not an error worth a pill.
+  if (/\bcontext canceled\b/i.test(message)) return [];
+  return [
+    {
+      id: `e-${Date.now()}`,
+      role: "notice" as const,
+      kind: "turn_error_notice",
+      content: message || "Unknown error",
+      timestamp: Date.now(),
+    },
+  ];
+}
+
+function compactionMessage(content: unknown): ChatMessage[] {
+  if (!content || typeof content !== "string") return [];
+  return [
+    {
+      id: `cn-${Date.now()}`,
+      role: "notice" as const,
+      kind: "compaction_notice",
+      content,
+      timestamp: Date.now(),
+    },
+  ];
+}
+
+function skillPendingMessages(count: number, names: string[], t: (key: string, vars?: Record<string, string | number>) => string): ChatMessage[] {
+  if (!(count > 0)) return [];
+  const content = t("chat.skillPending", { count, names: names.join(", ") });
+  // Replace any prior skill_pending pill so consecutive turns don't
+  // stack duplicates — callers filter before appending.
+  return [
+    {
+      id: `sp-${Date.now()}`,
+      role: "notice" as const,
+      kind: "skill_pending",
+      content,
+      timestamp: Date.now(),
+    },
+  ];
+}
+
 // splitDataImagesCache memoizes the regex-heavy image scan across renders.
 // The render IIFE re-runs on every state change (each streamed flush, each
 // keystroke) but message content only changes for the message actually
@@ -1322,16 +1387,9 @@ export function ChatScreen() {
               ? data.data!.options!
               : [];
             claim();
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: `auth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                role: "agent" as const,
-                content: desc,
-                timestamp: Date.now(),
-                authOptions: { description: desc, options },
-              },
-            ]);
+            for (const m of authPromptMessages(desc, options)) {
+              setMessages((prev) => [...prev, m]);
+            }
             break;
           }
           case "subagent_progress": {
@@ -1419,13 +1477,12 @@ export function ChatScreen() {
             // Auto-compaction happened mid-turn — show a centered notice
             // bubble using the backend's pre-formatted content text so
             // the live display matches what history reload returns.
-            const content = data.data?.content;
-            if (content) {
+            const pills = compactionMessage(data.data?.content);
+            if (pills.length > 0) {
               claim();
-              setMessages((prev) => [
-                ...prev,
-                { id: `cn-${Date.now()}`, role: "notice", kind: "compaction_notice", content, timestamp: Date.now() },
-              ]);
+              for (const m of pills) {
+                setMessages((prev) => [...prev, m]);
+              }
             }
             break;
           }
@@ -1439,15 +1496,12 @@ export function ChatScreen() {
             // shape parity with the live switch.
             const count = data.data?.count ?? 0;
             const names = Array.isArray(data.data?.names) ? data.data!.names! : [];
-            if (count > 0) {
+            const pills = skillPendingMessages(count, names, t);
+            if (pills.length > 0) {
               claim();
-              const content = t("chat.skillPending", {
-                count,
-                names: names.join(", "),
-              });
               setMessages((prev) => [
                 ...prev.filter((m) => m.kind !== "skill_pending"),
-                { id: `sp-${Date.now()}`, role: "notice", kind: "skill_pending", content, timestamp: Date.now() },
+                ...pills,
               ]);
             }
             break;
@@ -2451,16 +2505,9 @@ export function ChatScreen() {
             // handleSend(opt.cmd) dispatches the slash reply on click.
             const desc = evt.data?.description || "";
             const options = evt.data?.options || [];
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: `auth-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                role: "agent" as const,
-                content: desc,
-                timestamp: Date.now(),
-                authOptions: { description: desc, options },
-              },
-            ]);
+            for (const m of authPromptMessages(desc, options)) {
+              setMessages((prev) => [...prev, m]);
+            }
             break;
           }
           case "subagent_progress": {
@@ -2494,23 +2541,16 @@ export function ChatScreen() {
             // gateway log line the user can't see. The backend persists the
             // same text as a turn_error notice, so a reload renders the
             // identical pill — live and reloaded views stay consistent.
-            const msg = evt.data?.message || "Unknown error";
-            if (/\bcontext canceled\b/i.test(msg)) break;
-            setMessages((prev) => [
-              ...prev,
-              { id: `e-${Date.now()}`, role: "notice", kind: "turn_error_notice", content: msg, timestamp: Date.now() },
-            ]);
+            for (const m of errorMessage(evt.data?.message || "Unknown error")) {
+              setMessages((prev) => [...prev, m]);
+            }
             break;
           }
           case "compaction_notice": {
             // Auto-compaction happened mid-turn — insert a centered
             // notice bubble using the backend's content text.
-            const content = evt.data?.content;
-            if (content) {
-              setMessages((prev) => [
-                ...prev,
-                { id: `cn-${Date.now()}`, role: "notice", kind: "compaction_notice", content, timestamp: Date.now() },
-              ]);
+            for (const m of compactionMessage(evt.data?.content)) {
+              setMessages((prev) => [...prev, m]);
             }
             break;
           }
@@ -2521,14 +2561,11 @@ export function ChatScreen() {
             // pill so consecutive turns don't stack duplicates.
             const count = evt.data?.count ?? 0;
             const names = Array.isArray(evt.data?.names) ? evt.data!.names! : [];
-            if (count > 0) {
-              const content = t("chat.skillPending", {
-                count,
-                names: names.join(", "),
-              });
+            const pills = skillPendingMessages(count, names, t);
+            if (pills.length > 0) {
               setMessages((prev) => [
                 ...prev.filter((m) => m.kind !== "skill_pending"),
-                { id: `sp-${Date.now()}`, role: "notice", kind: "skill_pending", content, timestamp: Date.now() },
+                ...pills,
               ]);
             }
             break;
