@@ -11,9 +11,14 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
+    ignore:
+      # windows/arm64 has no meaningful install base yet; keep the matrix tight
+      - goos: windows
+        goarch: arm64
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
@@ -25,6 +30,14 @@ archives:
     formats:
       - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+  # Windows ships as a zip — `fluctio upgrade` looks for
+  # fluctio_windows_<arch>.zip and expand-archive handles it natively.
+  - id: windows
+    formats:
+      - zip
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    builds:
+      - fluctio
 
 checksum:
   name_template: "checksums.txt"
