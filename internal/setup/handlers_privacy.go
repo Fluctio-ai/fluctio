@@ -39,7 +39,14 @@ func (s *Server) handleUpdateAgentPrivacy(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	priv, _ := body["privacy"].(map[string]any)
+	// Empty data means "delete row" in SaveSetting, so a `{}` body would
+	// silently reset the agent's PII-scrubbing override. Require the
+	// section explicitly.
+	priv, ok := body["privacy"].(map[string]any)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain a "privacy" object`})
+		return
+	}
 	if err := scope.SaveSetting(r.Context(), s.dataStore, "", id, "privacy", priv); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -72,7 +79,13 @@ func (s *Server) handleUpdateSystemPrivacy(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	priv, _ := body["privacy"].(map[string]any)
+	// Same guard as the agent-scope PUT: `{}` must not delete the
+	// system-wide privacy row.
+	priv, ok := body["privacy"].(map[string]any)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain a "privacy" object`})
+		return
+	}
 	if err := scope.SaveSetting(r.Context(), s.dataStore, "", "", "privacy", priv); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

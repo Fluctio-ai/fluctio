@@ -25,9 +25,12 @@ import (
 //	GET    /api/agents/{id}/projects/{pid}/preview        — {previewUrl, status}
 //	GET    /api/agents/{id}/projects/{pid}/runtime/logs   — dev-server log tail
 //
-// Ownership mirrors projects: a runtime is keyed (user_id, agent_id,
-// project_id), so a viewer on a shared agent only ever touches rows under
-// their own user_id. Mutating actions require write access; reads need
+// NOTE on keying: the runtime layer persists rows keyed
+// (agent_id, scope_id) — userID only disambiguates the in-memory live
+// map, it is NOT part of the stored key. Under single-user flatten
+// every authenticated caller is the owner, so the shared rows are the
+// intended semantics; a viewer on a shared agent sees the same runtime
+// as the owner. Mutating actions require write access; reads need
 // readable.
 
 // runtimeReady resolves the caller + guards that a runtime manager is

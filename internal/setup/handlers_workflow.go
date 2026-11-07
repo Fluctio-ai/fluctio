@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -601,6 +602,22 @@ func (s *Server) handleWorkflowScheduleList(w http.ResponseWriter, r *http.Reque
 
 // handleWorkflowScheduleToggle — PATCH /api/agents/{agentID}/workflows/{wfID}/schedules/{schedID}
 // Body: {"enabled": bool}. Enables/disables without deleting.
+// workflowScheduleBelongsTo verifies the schedule row is owned by the
+// path agent + workflow: SetWorkflowScheduleEnabled/DeleteWorkflowSchedule
+// key on the raw schedID alone, so without this check any resolved agent
+// route could toggle or delete another agent's schedule.
+func (s *Server) workflowScheduleBelongsTo(ctx context.Context, dbs *store.DBStore, agentID, wfID, schedID string) bool {
+	rows, err := dbs.ListWorkflowSchedules(ctx, agentID)
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.ID == schedID && row.AgentID == agentID && row.WorkflowID == wfID {
+			return true
+		}
+	}
+	return false
+}
 func (s *Server) handleWorkflowScheduleToggle(w http.ResponseWriter, r *http.Request) {
 	if s.resolveAgent(r, r.PathValue("agentID")) == nil {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "agent not found"})
@@ -619,6 +636,10 @@ func (s *Server) handleWorkflowScheduleToggle(w http.ResponseWriter, r *http.Req
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "enabled required"})
 		return
 	}
+	if !s.workflowScheduleBelongsTo(r.Context(), dbs, r.PathValue("agentID"), r.PathValue("wfID"), r.PathValue("schedID")) {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "schedule not found"})
+		return
+	}
 	if err := dbs.SetWorkflowScheduleEnabled(r.Context(), r.PathValue("schedID"), *body.Enabled); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -635,6 +656,10 @@ func (s *Server) handleWorkflowScheduleDelete(w http.ResponseWriter, r *http.Req
 	dbs, ok := s.dataStore.(*store.DBStore)
 	if !ok || dbs == nil {
 		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "workflow store unavailable"})
+		return
+	}
+	if !s.workflowScheduleBelongsTo(r.Context(), dbs, r.PathValue("agentID"), r.PathValue("wfID"), r.PathValue("schedID")) {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "schedule not found"})
 		return
 	}
 	if err := dbs.DeleteWorkflowSchedule(r.Context(), r.PathValue("schedID")); err != nil {

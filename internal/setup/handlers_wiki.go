@@ -49,6 +49,14 @@ func (s *Server) handleWikiReindexEmbed(w http.ResponseWriter, r *http.Request) 
 	// Detached so a full re-embed of many pages (one network call + 100ms
 	// pacing each) survives gateway timeouts; the client surfaces
 	// "continues in background" on 504.
+	// Per-agent dedup (same pattern as wikiGenLocks): overlapping
+	// force=true reindexes each clear all page embeddings first, then
+	// double-bill the embedding API and overwrite each other's vectors.
+	if _, loaded := wikiReindexLocks.LoadOrStore(id, true); loaded {
+		jsonResponse(w, http.StatusConflict, map[string]any{"ok": false, "error": "reindex already running"})
+		return
+	}
+	defer wikiReindexLocks.Delete(id)
 	ctx, cancel := detachedTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	force := r.URL.Query().Get("force") == "true"
@@ -150,16 +158,50 @@ func (s *Server) handleWikiDeletePage(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	pageID := r.PathValue("pageId")
 
+	if !s.requireWritable(w, r) {
+		return
+	}
+	if s.requireAgentOwner(w, r, agentID) == nil {
+		return
+	}
 	ws := s.wikiStoreFor(agentID)
 	if ws == nil {
 		http.Error(w, "not found", 404)
 		return
 	}
-	if err := ws.DeletePage(r.Context(), pageID); err != nil {
+	// Resolve the page first and verify it belongs to the path agent:
+	// DeletePage keys on the global page UUID, so without this check any
+	// caller could delete another agent's page through this route.
+	p, err := resolveWikiPage(r.Context(), ws, agentID, pageID)
+	if err != nil || p == nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	if err := ws.DeletePage(r.Context(), p.ID); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// resolveWikiPage resolves "type:slug" or UUID page ids and (for UUIDs)
+// verifies the page actually belongs to agentID, so a foreign page id
+// can't be read or written through this agent's route.
+func resolveWikiPage(ctx context.Context, ws *wiki.WikiStore, agentID, pageID string) (*wiki.WikiPage, error) {
+	var p *wiki.WikiPage
+	var err error
+	if idx := strings.Index(pageID, ":"); idx > 0 {
+		p, err = ws.GetPageBySlug(ctx, agentID, pageID[:idx], pageID[idx+1:])
+	} else {
+		p, err = ws.GetPage(ctx, pageID)
+	}
+	if err != nil || p == nil {
+		return nil, err
+	}
+	if p.AgentID != agentID {
+		return nil, nil
+	}
+	return p, nil
 }
 
 // handleWikiUpdatePage applies manual edits from the clients (wiki PUT,
@@ -197,7 +239,7 @@ func (s *Server) handleWikiUpdatePage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	if p == nil {
+	if p == nil || p.AgentID != agentID {
 		http.Error(w, "not found", 404)
 		return
 	}
@@ -220,13 +262,46 @@ func (s *Server) handleWikiUpdatePage(w http.ResponseWriter, r *http.Request) {
 // wikiGenLocks prevents concurrent generation for the same agent.
 var wikiGenLocks sync.Map // map[string]bool
 
+// wikiReindexLocks prevents concurrent reindex-embed runs for the same
+// agent: two overlapping force=true reindexes each clear the page
+// embeddings first, doubling the embedding API spend and repeatedly
+// overwriting each other's vectors.
+var wikiReindexLocks sync.Map // map[string]bool
+
 // wikiGenProgress tracks per-agent wiki generation progress for the UI.
+// The goroutine in runWikiGeneration mutates counters while
+// handleWikiProgress reads them concurrently, so all access goes through
+// the mutex — the sync.Map only protects the map itself.
 type wikiGenProgress struct {
+	mu        sync.Mutex
 	Total     int       `json:"total"`
 	Done      int       `json:"done"`
 	Failed    int       `json:"failed"`
-	Status    string    `json:"status"` // "running" | "done"
+	Status    string    `json:"status"` // "running" | "done" | "failed"
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// wikiGenProgressView is the JSON projection of wikiGenProgress — a
+// plain struct without the mutex so it can be copied for output.
+type wikiGenProgressView struct {
+	Total     int       `json:"total"`
+	Done      int       `json:"done"`
+	Failed    int       `json:"failed"`
+	Status    string    `json:"status"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// snapshot returns a consistent copy for JSON output.
+func (p *wikiGenProgress) snapshot() wikiGenProgressView {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return wikiGenProgressView{
+		Total:     p.Total,
+		Done:      p.Done,
+		Failed:    p.Failed,
+		Status:    p.Status,
+		UpdatedAt: p.UpdatedAt,
+	}
 }
 
 var wikiGenProgressMap sync.Map // agentID -> *wikiGenProgress
@@ -237,6 +312,8 @@ func bumpWikiProgress(agentID string, success bool) {
 		return
 	}
 	p := v.(*wikiGenProgress)
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if success {
 		p.Done++
 	} else {
@@ -252,6 +329,14 @@ type wikiGenerateRequest struct {
 
 func (s *Server) handleWikiGenerate(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
+	// Generation burns the agent owner's LLM quota — gate it behind the
+	// same writable+owner pair as the other mutating wiki endpoints.
+	if !s.requireWritable(w, r) {
+		return
+	}
+	if s.requireAgentOwner(w, r, agentID) == nil {
+		return
+	}
 
 	var req wikiGenerateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -270,16 +355,37 @@ func (s *Server) handleWikiGenerate(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer wikiGenLocks.Delete(agentID)
+		// A panic here would take the whole process down (background
+		// goroutines don't get net/http's per-request recovery); collapse
+		// it into a failed progress entry instead.
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("wiki generate panicked", "agent", agentID, "panic", rec)
+				finishWikiProgress(agentID, "failed")
+			}
+		}()
 		s.runWikiGeneration(agentID, req.SourceIDs, req.Force)
 	}()
 
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "started"})
 }
 
+// finishWikiProgress stamps the terminal status on the agent's progress
+// entry (done / failed).
+func finishWikiProgress(agentID, status string) {
+	if v, ok := wikiGenProgressMap.Load(agentID); ok {
+		p := v.(*wikiGenProgress)
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.Status = status
+		p.UpdatedAt = time.Now()
+	}
+}
+
 func (s *Server) handleWikiProgress(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	if v, ok := wikiGenProgressMap.Load(agentID); ok {
-		writeJSON(w, http.StatusOK, v)
+		writeJSON(w, http.StatusOK, v.(*wikiGenProgress).snapshot())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "idle"})
@@ -345,18 +451,24 @@ func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force boo
 	var toProcess []string
 	if !force && kbs != nil {
 		sources, err := kbs.ListSources(ctx, agentID, 100, 0)
-		if err == nil {
-			sourceMap := make(map[string]*kb.KBSource, len(sources))
-			for i := range sources {
-				sourceMap[sources[i].ID] = &sources[i]
-			}
-			for _, sid := range sourceIDs {
-				src, ok := sourceMap[sid]
-				if !ok || src.WikiGeneratedAt == nil {
-					toProcess = append(toProcess, sid)
-				} else {
-					slog.Info("wiki generate: skipping already processed source", "source", sid)
-				}
+		if err != nil {
+			// A transient DB error used to leave toProcess nil, so the
+			// run silently did nothing after the handler already said
+			// "started" — surface it as a failed progress entry instead.
+			slog.Warn("wiki generate: ListSources failed", "agent", agentID, "error", err)
+			wikiGenProgressMap.Store(agentID, &wikiGenProgress{Status: "failed", UpdatedAt: time.Now()})
+			return
+		}
+		sourceMap := make(map[string]*kb.KBSource, len(sources))
+		for i := range sources {
+			sourceMap[sources[i].ID] = &sources[i]
+		}
+		for _, sid := range sourceIDs {
+			src, ok := sourceMap[sid]
+			if !ok || src.WikiGeneratedAt == nil {
+				toProcess = append(toProcess, sid)
+			} else {
+				slog.Info("wiki generate: skipping already processed source", "source", sid)
 			}
 		}
 	}
@@ -432,11 +544,7 @@ func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force boo
 			}
 		}
 	}
-	if v, ok := wikiGenProgressMap.Load(agentID); ok {
-		p := v.(*wikiGenProgress)
-		p.Status = "done"
-		p.UpdatedAt = time.Now()
-	}
+	finishWikiProgress(agentID, "done")
 }
 
 // providerForAgent merges system → user(owner) → agent provider scopes

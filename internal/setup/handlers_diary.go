@@ -204,6 +204,18 @@ func (s *Server) handleDiaryGenerate(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer diaryGenLocks.Delete(key)
+		// Two hardening guards: (1) recover — a panic in this background
+		// goroutine would kill the whole process (no net/http recovery
+		// here); (2) a bounded context — with context.Background() a hung
+		// LLM call held the (agent,date) lock forever and every later
+		// manual generate for that day 409'd until process restart.
+		defer func() {
+			if rec := recover(); rec != nil {
+				slog.Error("diary gen panicked", "agent", agentID, "date", date, "panic", rec)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
 		dbs, ok := s.dataStore.(*store.DBStore)
 		if !ok || dbs == nil {
 			slog.Warn("diary gen: store is not DBStore", "agent", agentID)
@@ -214,7 +226,7 @@ func (s *Server) handleDiaryGenerate(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("diary gen: no provider/model resolvable", "agent", agentID)
 			return
 		}
-		entry, err := diary.Generate(context.Background(), dbs, agentID, date, prov, model, s.diaryThinkingMode(agentID), s.diaryShelvedEnabled(agentID))
+		entry, err := diary.Generate(ctx, dbs, agentID, date, prov, model, s.diaryThinkingMode(agentID), s.diaryShelvedEnabled(agentID))
 		if err != nil {
 			slog.Warn("diary gen failed", "agent", agentID, "date", date, "error", err)
 			return

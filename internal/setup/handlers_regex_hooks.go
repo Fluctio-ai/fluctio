@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/safename"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
@@ -79,6 +79,16 @@ func (s *Server) handleSaveRegexHook(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ID == "" {
 		req.ID = fmt.Sprintf("rh_%d", time.Now().UnixMilli())
+	} else {
+		// Save is an upsert on id, and ids are enumerable (rh_<millis>).
+		// A client-supplied id belonging to another agent would re-label
+		// and overwrite that agent's hook — treat both "missing" and
+		// "owned elsewhere" as not-found.
+		existing, err := s.dataStore.GetRegexHook(r.Context(), req.ID)
+		if err != nil || existing == nil || existing.AgentID != agentID {
+			jsonResponse(w, http.StatusNotFound, map[string]any{"error": "hook not found"})
+			return
+		}
 	}
 	hook := &store.RegexHookRecord{
 		ID:              req.ID,
@@ -220,8 +230,11 @@ func (s *Server) handleUploadHookScript(w http.ResponseWriter, r *http.Request) 
 	}
 	saved := make([]map[string]any, 0, len(headers))
 	for _, h := range headers {
-		name := filepath.Base(h.Filename)
-		if name == "" || strings.Contains(name, "..") {
+		// safename strips separators/drive prefixes/control chars and
+		// rejects "." / ".."; the old Base+Contains("..") blacklist let
+		// "." through (dir write error) and rejected benign "a..b" names.
+		name := safename.SanitizeFileName(h.Filename, 120)
+		if name == "" {
 			continue
 		}
 		fh, err := h.Open()
@@ -251,8 +264,10 @@ func (s *Server) handleDeleteHookScript(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	name := r.PathValue("name")
-	name = filepath.Base(name)
-	if name == "" || strings.Contains(name, "..") {
+	// Same safename containment as upload — Base + ".." blacklist was the
+	// weak link in this pair.
+	name = safename.SanitizeFileName(name, 120)
+	if name == "" {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid script name"})
 		return
 	}

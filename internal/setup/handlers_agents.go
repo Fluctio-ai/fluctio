@@ -635,6 +635,26 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			rec.Config["compactionThreshold"] = *req.CompactionThreshold
 		}
 	}
+	// Validate promptMode/guidance BEFORE the agent-row save below: these
+	// enum checks used to run after SaveAgent, so a request with an
+	// invalid promptMode + otherwise-valid fields persisted the row and
+	// THEN returned 400 — partial state the caller was told had failed.
+	if req.PromptMode != nil {
+		switch strings.TrimSpace(*req.PromptMode) {
+		case "", config.PromptModeAgent, config.PromptModeChatbot, config.PromptModeCustomize:
+		default:
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "promptMode must be one of: agent, chatbot, customize"})
+			return
+		}
+	}
+	if req.Guidance != nil {
+		switch strings.TrimSpace(*req.Guidance) {
+		case "", "autonomous", "guided":
+		default:
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "guidance must be one of: autonomous, guided"})
+			return
+		}
+	}
 	if err := s.dataStore.SaveAgent(r.Context(), rec); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -729,14 +749,36 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// SharedIdentity: batch-update all channels for this agent.
+	// SharedIdentity: batch-update all channels for this agent. Errors
+	// used to be dropped on the floor (list error → no channels updated
+	// but ok:true; per-row save errors silently swallowed) — surface a
+	// partial-success response so the caller knows something didn't land.
 	if req.SharedIdentity != nil {
-		chs, _ := s.dataStore.ListChannels(r.Context(), s.effectiveUserID(r), rec.ID)
+		chs, err := s.dataStore.ListChannels(r.Context(), s.effectiveUserID(r), rec.ID)
+		if err != nil {
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": "list channels: " + err.Error()})
+			return
+		}
+		updated, failed := 0, 0
 		for i := range chs {
 			if chs[i].SharedIdentity != *req.SharedIdentity {
 				chs[i].SharedIdentity = *req.SharedIdentity
-				_ = s.dataStore.SaveChannel(r.Context(), &chs[i])
+				if err := s.dataStore.SaveChannel(r.Context(), &chs[i]); err != nil {
+					slog.Warn("sharedIdentity channel update failed", "agent", rec.ID, "channel", chs[i].ID, "error", err)
+					failed++
+					continue
+				}
+				updated++
 			}
+		}
+		if failed > 0 {
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{
+				"ok":      false,
+				"error":   fmt.Sprintf("%d of %d channel rows failed to update", failed, updated+failed),
+				"updated": updated,
+				"failed":  failed,
+			})
+			return
 		}
 	}
 	// invalidateAgent (not invalidateUser) so super_admin / public-link
@@ -828,6 +870,23 @@ func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	rec := s.requireAgentOwner(w, r, id)
 	if rec == nil {
 		return
+	}
+	// Tear down the agent's IM channels first: the store-level DeleteAgent
+	// transaction doesn't clean the channels table, so skipping this left
+	// orphan rows whose bot adapters kept polling deleted credentials (and
+	// inbound routing kept targeting the deleted agent) until restart.
+	uid := s.effectiveUserID(r)
+	if chRows, err := s.dataStore.ListChannels(r.Context(), uid, id); err == nil {
+		for i := range chRows {
+			// Unregister before delete so the adapter stops polling the
+			// credential the moment its row goes away.
+			s.hotUnregisterChannel(chRows[i].Type, chRows[i].AccountID)
+			if err := s.dataStore.DeleteChannel(r.Context(), chRows[i].ID); err != nil {
+				slog.Warn("delete agent: channel row cleanup failed", "agent", id, "channel", chRows[i].ID, "error", err)
+			}
+		}
+	} else {
+		slog.Warn("delete agent: ListChannels failed; channel rows may be orphaned", "agent", id, "error", err)
 	}
 	if err := s.dataStore.DeleteAgent(r.Context(), id); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

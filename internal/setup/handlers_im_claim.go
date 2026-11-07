@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
@@ -92,23 +93,23 @@ func (s *Server) handleUnbindIM(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "channel + platformId required"})
 		return
 	}
-	cfg, err := s.loadAgentFileConfig(r, id)
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
+	// Load→filter→save runs under the per-agent config mutex: an unbind
+	// racing a concurrent claim/rebind would otherwise write a stale
+	// snapshot over the row and resurrect or drop admin ids.
 	var kept []string
-	for _, x := range cfg.Admins[req.Channel] {
-		if x != req.PlatformID {
-			kept = append(kept, x)
+	if err := s.mutateAgentFileConfig(r, id, func(cfg *config.AgentFileConfig) error {
+		for _, x := range cfg.Admins[req.Channel] {
+			if x != req.PlatformID {
+				kept = append(kept, x)
+			}
 		}
-	}
-	if len(kept) == 0 {
-		delete(cfg.Admins, req.Channel)
-	} else {
-		cfg.Admins[req.Channel] = kept
-	}
-	if err := s.saveAgentFileConfig(r, id, cfg); err != nil {
+		if len(kept) == 0 {
+			delete(cfg.Admins, req.Channel)
+		} else {
+			cfg.Admins[req.Channel] = kept
+		}
+		return nil
+	}); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -143,15 +144,14 @@ func (s *Server) handleRebindIM(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "IM channel required"})
 		return
 	}
-	cfg, err := s.loadAgentFileConfig(r, id)
-	if err != nil {
-		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	if cfg.Admins != nil {
-		delete(cfg.Admins, req.Channel)
-	}
-	if err := s.saveAgentFileConfig(r, id, cfg); err != nil {
+	// Same locked read-modify-write as unbind: clear the channel's admin
+	// list without clobbering concurrent config edits.
+	if err := s.mutateAgentFileConfig(r, id, func(cfg *config.AgentFileConfig) error {
+		if cfg.Admins != nil {
+			delete(cfg.Admins, req.Channel)
+		}
+		return nil
+	}); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}

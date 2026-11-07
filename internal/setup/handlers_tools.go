@@ -213,6 +213,10 @@ func (s *Server) handleSaveTools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// saveUserConfig sweeps every namespace, so the load-modify-save must
+	// be serialized against the other whole-config writers.
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	cfg, err := s.loadUserConfig(r)
 	if err != nil {
 		cfg = &config.Config{}

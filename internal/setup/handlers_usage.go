@@ -72,10 +72,15 @@ func (s *Server) handleGetUsage(w http.ResponseWriter, r *http.Request) {
 
 // handleGetAgentUsage returns per-session token rollups for one agent
 // — the data behind the "Token Usage" tab in the agent settings
-// dialog. Owner-gated via requireAgentOwner, so chat viewers of a
-// public agent don't get to see the owner's other sessions. The
-// `sessions` list is a Rank[] keyed by session_key (rendered with
-// session title client-side after a name lookup).
+// dialog. Gated via requireAgentOwner, which enforces the caller's
+// agent ACL (AllowedAgents) — session users and unrestricted apikeys
+// pass for every agent (single-user flatten: any authenticated caller
+// IS the owner), while a scoped apikey only sees its granted agents.
+// Usage is accounted per agent OWNER (RecordTokens stamps
+// a.ownerUserID), so the sessions list answers "what did this agent
+// burn", not "what did this caller burn". The `sessions` list is a
+// Rank[] keyed by session_key (rendered with session title
+// client-side after a name lookup).
 func (s *Server) handleGetAgentUsage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	rec := s.requireAgentOwner(w, r, id)

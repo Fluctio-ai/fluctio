@@ -491,6 +491,12 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	masked.Hooks = cfg.Hooks
 	masked.Hooks.Token = maskAPIKey(cfg.Hooks.Token)
+	// Memory (embedding/reranker) and object-store S3 keys are live
+	// credentials too — mask them like every other secret on the way out.
+	masked.Memory.Embedding.APIKey = maskAPIKey(cfg.Memory.Embedding.APIKey)
+	masked.Memory.Reranker.APIKey = maskAPIKey(cfg.Memory.Reranker.APIKey)
+	masked.ObjectStore.S3.AccessKey = maskAPIKey(cfg.ObjectStore.S3.AccessKey)
+	masked.ObjectStore.S3.SecretKey = maskAPIKey(cfg.ObjectStore.S3.SecretKey)
 	if len(cfg.Channels) > 0 {
 		mc := make(map[string]config.ChannelConfig, len(cfg.Channels))
 		for k, v := range cfg.Channels {
@@ -562,6 +568,11 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	// aren't present in the JSON untouched, so /settings POSTing just
 	// `{"sandbox":{...}}` no longer wipes agents.defaults / skills.* /
 	// every other namespace via saveUserConfig's namespace sweep.
+	// Serialize against other whole-config writers (tools/plugins) so
+	// two concurrent read-modify-writes can't drop each other's
+	// namespaces.
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	buf, err := io.ReadAll(r.Body)
 	if err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
@@ -594,9 +605,37 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	// through the namespace sweep, and re-writing them here would
 	// re-build the legacy shape we just split apart.
 	merged.Skills.AgentEntries = nil
+	// GET /api/config hands secrets back masked (hooks token, skill
+	// entries, memory embedding/reranker keys, S3 keys). A client that
+	// round-trips the whole config would otherwise persist the mask
+	// strings over the real values — snapshot the stored secrets and
+	// restore any masked field after the merge.
+	storedHooksToken := merged.Hooks.Token
+	storedSkillEntries := merged.Skills.Entries
+	storedMemoryEmbeddingKey := merged.Memory.Embedding.APIKey
+	storedMemoryRerankerKey := merged.Memory.Reranker.APIKey
+	storedS3 := merged.ObjectStore.S3
 	if err := json.Unmarshal(buf, merged); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
+	}
+	if isMaskedSecret(merged.Hooks.Token) {
+		merged.Hooks.Token = storedHooksToken
+	}
+	for name, in := range merged.Skills.Entries {
+		merged.Skills.Entries[name] = mergeSkillEntry(storedSkillEntries[name], in)
+	}
+	if isMaskedSecret(merged.Memory.Embedding.APIKey) {
+		merged.Memory.Embedding.APIKey = storedMemoryEmbeddingKey
+	}
+	if isMaskedSecret(merged.Memory.Reranker.APIKey) {
+		merged.Memory.Reranker.APIKey = storedMemoryRerankerKey
+	}
+	if isMaskedSecret(merged.ObjectStore.S3.AccessKey) {
+		merged.ObjectStore.S3.AccessKey = storedS3.AccessKey
+	}
+	if isMaskedSecret(merged.ObjectStore.S3.SecretKey) {
+		merged.ObjectStore.S3.SecretKey = storedS3.SecretKey
 	}
 	if err := s.saveUserConfig(r, merged); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
@@ -725,6 +764,12 @@ func (s *Server) handleBuiltinModels(w http.ResponseWriter, r *http.Request) {
 // has a side-effect flavor (network egress) that doesn't belong in GET.
 func (s *Server) handleFetchProviderModels(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
+	// This endpoint drives an upstream list-models call with the agent's
+	// stored provider key — gate it behind the caller's agent ACL so a
+	// scoped apikey can't spend another agent's credentials.
+	if s.requireAgentOwner(w, r, agentID) == nil {
+		return
+	}
 	prov, err := s.providerConfigForAgent(r.Context(), agentID)
 	if err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{
@@ -1889,11 +1934,16 @@ func (s *Server) handleChats(w http.ResponseWriter, r *http.Request) {
 		pageSize = 30
 	}
 
-	// Resolve which agent IDs the caller may see. Apikey callers (all
-	// owner-level in single-user mode) see every agent; session callers
-	// see their own.
+	// Resolve which agent IDs the caller may see. Session callers see
+	// their own; apikey callers are unrestricted in single-user mode
+	// EXCEPT when the key carries a non-empty AllowedAgents ACL — that
+	// list bounds the sessions it may enumerate.
 	var agentIDs []string // nil = all
-	if ident.AuthMethod != "apikey" {
+	if ident.AuthMethod == "apikey" {
+		if len(ident.AllowedAgents) > 0 {
+			agentIDs = append([]string(nil), ident.AllowedAgents...)
+		}
+	} else {
 		uid := ident.EffectiveUserID()
 		agents, agentsErr := s.dataStore.ListAgents(r.Context(), uid)
 		if agentsErr != nil {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/fluctio-ai/fluctio/internal/auth"
 	"github.com/fluctio-ai/fluctio/internal/buildinfo"
@@ -351,7 +352,16 @@ type onboardRequest struct {
 // handleOnboard creates the first super_admin + first system provider +
 // first agent, all in a single logical operation. Only callable when the
 // users table is empty; subsequent calls 409.
+// onboardMu serializes the unauthenticated onboard endpoint: the
+// "users table empty" check and accounts.Create are not atomic, so two
+// concurrent first requests could both pass the check and mint two
+// super_admins. In-process serialization closes that window (the
+// endpoint only matters before the first account exists anyway).
+var onboardMu sync.Mutex
+
 func (s *Server) handleOnboard(w http.ResponseWriter, r *http.Request) {
+	onboardMu.Lock()
+	defer onboardMu.Unlock()
 	if s.dataStore == nil || s.accounts == nil {
 		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "store not ready"})
 		return

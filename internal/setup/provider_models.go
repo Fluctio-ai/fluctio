@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -93,19 +92,22 @@ func fetchUpstreamModelIDs(ctx context.Context, prov config.ProviderConfig) ([]s
 		// Anthropic's list-models endpoint lives at /v1/models.
 		// NormalizeAPIBase strips any trailing /v1 for this apiType,
 		// so re-append it here.
-		return fetchIDs(ctx, base+"/v1/models", prov.APIKey, "2023-06-01")
+		return fetchIDs(ctx, base+"/v1/models", prov.APIKey, "2023-06-01", "")
 	case "gemini":
 		// Spec requires Gemini list-models support. No gemini provider
 		// preset exists in the codebase today, but a custom provider
 		// configured with apiType=gemini will hit this path.
-		// Gemini uses query-param auth, not a bearer header.
-		return fetchIDs(ctx, base+"/models?key="+url.QueryEscape(prov.APIKey), "", "")
+		// Auth goes in the x-goog-api-key HEADER, not the ?key= query
+		// param: http client error strings embed the full URL, so a
+		// failed dial used to echo the key back to the caller (and into
+		// logs) via "upstream request: Get \"...?key=SECRET\"".
+		return fetchIDs(ctx, base+"/models", "", "", prov.APIKey)
 	default:
 		// OpenAI-compatible (openai-chat, "", and any future apiType).
 		// Mirrors NewProvider: anything that isn't anthropic-messages is
 		// treated as OpenAI-compatible. NormalizeAPIBase already ensures
 		// /v1 is in the base for bare hosts, so we just append /models.
-		return fetchIDs(ctx, base+"/models", "Bearer "+prov.APIKey, "")
+		return fetchIDs(ctx, base+"/models", "Bearer "+prov.APIKey, "", "")
 	}
 }
 
@@ -115,20 +117,23 @@ func fetchUpstreamModelIDs(ctx context.Context, prov config.ProviderConfig) ([]s
 //
 // anthropicVersion, when non-empty, switches auth from `Authorization:
 // Bearer <k>` to `x-api-key: <k>` + `anthropic-version: <v>` (Anthropic
-// convention). bearerKey is expected to already include any "Bearer "
-// prefix for the openai path; the anthropic path strips it back off.
-func fetchIDs(ctx context.Context, url, bearerKey, anthropicVersion string) ([]string, error) {
+// convention). geminiKey, when non-empty, sends `x-goog-api-key: <k>`
+// (Gemini convention). bearerKey is expected to already include any
+// "Bearer " prefix for the openai path; the anthropic path strips it
+// back off.
+func fetchIDs(ctx context.Context, url, bearerKey, anthropicVersion, geminiKey string) ([]string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	if bearerKey != "" {
-		if anthropicVersion != "" {
-			req.Header.Set("x-api-key", strings.TrimPrefix(bearerKey, "Bearer "))
-			req.Header.Set("anthropic-version", anthropicVersion)
-		} else {
-			req.Header.Set("Authorization", bearerKey)
-		}
+	switch {
+	case geminiKey != "":
+		req.Header.Set("x-goog-api-key", geminiKey)
+	case bearerKey != "" && anthropicVersion != "":
+		req.Header.Set("x-api-key", strings.TrimPrefix(bearerKey, "Bearer "))
+		req.Header.Set("anthropic-version", anthropicVersion)
+	case bearerKey != "":
+		req.Header.Set("Authorization", bearerKey)
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -212,6 +217,13 @@ func (s *Server) handleFetchModelsByConfig(w http.ResponseWriter, r *http.Reques
 		// into the Edit dialog's key field before clicking Fetch.
 		prov.APIKey = body.APIKey
 	} else if body.ProviderID != "" {
+		// Nil-store guard: GetConfig below would panic on a deployment
+		// without a data store (providerConfigForAgent checks, this
+		// direct call didn't).
+		if s.dataStore == nil {
+			jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "store not available"})
+			return
+		}
 		// Stored-key path: the Edit dialog sends the saved provider's
 		// id when the key field was left untouched (useStoredKey mode).
 		// Resolve the row server-side — the unmasked key never reaches

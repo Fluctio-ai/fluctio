@@ -11,6 +11,14 @@ import (
 	"sync"
 	"time"
 
+	// Blank-import tzdata so handleUpdateConfig's prefs.timezone
+	// validation (time.LoadLocation) works on zoneinfo-less deployments:
+	// Windows binaries away from GOROOT and slim containers would
+	// otherwise reject every valid IANA name and the timezone setting
+	// would be unusable. Imported here because setup is linked into
+	// every server binary.
+	_ "time/tzdata"
+
 	"github.com/fluctio-ai/fluctio/internal/agent"
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
 	"github.com/fluctio-ai/fluctio/internal/api"
@@ -123,7 +131,8 @@ type Server struct {
 	// chatEvents fans live agent chat events out to subscribed SSE
 	// clients across browser tabs. Lazy-init on first use so older
 	// callers that didn't wire it explicitly still work.
-	chatEvents *agent.EventHub
+	chatEvents     *agent.EventHub
+	chatEventsOnce sync.Once
 	// turnCancels holds the cancel func of every in-flight web-chat turn
 	// (handleChatStream / runTeamAgentTurn) so POST /api/chat/stop can
 	// deliberately end one. Disconnects no longer kill turns — stop must
@@ -131,6 +140,12 @@ type Server struct {
 	// mutex because streams and stop calls race.
 	turnCancels   map[string]*turnCancelEntry
 	turnCancelsMu sync.Mutex
+	// configMu serializes the config read-modify-write handlers (PUT
+	// /api/config, /api/tools, /api/plugins/{id}). They load the whole
+	// namespaced config, patch it in memory, and sweep every namespace
+	// back — without the lock two concurrent writes interleave as
+	// last-writer-wins and silently drop each other's namespaces.
+	configMu sync.Mutex
 	// loginFails backs the /api/login brute-force limiter (see
 	// login_limit.go). Lazily created; guarded by loginMu.
 	loginMu    sync.Mutex
@@ -240,10 +255,13 @@ func (s *Server) SetWebChannel(wc *channels.WebChannel) {
 // chatEventHub returns the lazy-initialized hub. Centralized so every
 // chat handler reaches the same instance — without this, the streaming
 // handler's hub publish would never reach the subscribe handler.
+// sync.Once guards the init: two concurrent first-callers (stream POST
+// vs subscribe GET) would otherwise each build a hub, and the loser's
+// subscribers would silently attach to a hub nothing publishes to.
 func (s *Server) chatEventHub() *agent.EventHub {
-	if s.chatEvents == nil {
+	s.chatEventsOnce.Do(func() {
 		s.chatEvents = agent.NewEventHub()
-	}
+	})
 	return s.chatEvents
 }
 
@@ -283,6 +301,22 @@ func (s *Server) requireSuperAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return s.authMiddleware(auth.RequirePlatformAdmin(next))
 }
 
+// agentACL enforces the caller's per-agent ACL (auth.Identity.
+// CanAccessAgent) for /api/agents/{id}/* routes whose handlers don't
+// individually check it (kb / wiki / diary / cards). Session users and
+// unrestricted apikeys always pass — single-user flatten semantics are
+// unchanged; only an apikey scoped by AllowedAgents is restricted, and
+// it gets a 404 so the agent's existence isn't disclosed.
+func (s *Server) agentACL(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if ident, ok := authIdentity(r); ok && !ident.CanAccessAgent(r.PathValue("id")) {
+			jsonResponse(w, http.StatusNotFound, map[string]any{"error": "not found"})
+			return
+		}
+		next(w, r)
+	}
+}
+
 // Run starts the HTTP server and blocks until the context is canceled.
 func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
@@ -304,6 +338,12 @@ func (s *Server) Run(ctx context.Context) error {
 	auth := s.authMiddleware
 	opt := s.optionalAuth
 	admin := s.requireSuperAdmin
+	// agentAuth = auth + per-agent ACL for the kb/wiki/diary/cards config
+	// surfaces (their handlers read/write per-agent rows without an
+	// individual ACL check).
+	agentAuth := func(next http.HandlerFunc) http.HandlerFunc {
+		return auth(s.agentACL(next))
+	}
 
 	// Bootstrap / login.
 	mux.HandleFunc("GET /api/status", opt(s.handleStatus))
@@ -451,63 +491,63 @@ func (s *Server) Run(ctx context.Context) error {
 	// Knowledge base: per-agent corpus of chunked text sources used for
 	// retrieval (knowledgebase_search tool + wiki generation pipeline).
 	mux.HandleFunc("GET /api/agents/{id}/kb/sources", auth(s.handleListKBSources))
-	mux.HandleFunc("POST /api/agents/{id}/kb/ingest/text", auth(s.handleKBIngestText))
-	mux.HandleFunc("POST /api/agents/{id}/kb/ingest/url", auth(s.handleKBIngestURL))
+	mux.HandleFunc("POST /api/agents/{id}/kb/ingest/text", agentAuth(s.handleKBIngestText))
+	mux.HandleFunc("POST /api/agents/{id}/kb/ingest/url", agentAuth(s.handleKBIngestURL))
 	mux.HandleFunc("DELETE /api/agents/{id}/kb/sources/{sourceId}", auth(s.handleDeleteKBSource))
 	mux.HandleFunc("GET /api/agents/{id}/kb/sources/{sourceId}/entries", auth(s.handleListKBEntries))
-	mux.HandleFunc("GET /api/agents/{id}/kb/sources/{sourceId}/insights", auth(s.handleKBGetInsights))
-	mux.HandleFunc("POST /api/agents/{id}/kb/sources/{sourceId}/insights/generate", auth(s.handleKBGenerateInsights))
+	mux.HandleFunc("GET /api/agents/{id}/kb/sources/{sourceId}/insights", agentAuth(s.handleKBGetInsights))
+	mux.HandleFunc("POST /api/agents/{id}/kb/sources/{sourceId}/insights/generate", agentAuth(s.handleKBGenerateInsights))
 	mux.HandleFunc("GET /api/agents/{id}/kb/stats", auth(s.handleGetKBStats))
-	mux.HandleFunc("POST /api/agents/{id}/kb/search", auth(s.handleKBSearch))
-	mux.HandleFunc("POST /api/agents/{id}/kb/mcp", auth(s.handleKBMCP))
-	mux.HandleFunc("POST /api/agents/{id}/kb/flash", auth(s.handleKBSaveFlash))
-	mux.HandleFunc("PATCH /api/agents/{id}/kb/flash/{sourceId}", auth(s.handleKBUpdateFlash))
-	mux.HandleFunc("POST /api/agents/{id}/kb/todo", auth(s.handleKBSaveTodo))
-	mux.HandleFunc("PATCH /api/agents/{id}/kb/todos/{sourceId}", auth(s.handleKBUpdateTodo))
-	mux.HandleFunc("GET /api/agents/{id}/kb/todos", auth(s.handleKBListTodos))
-	mux.HandleFunc("GET /api/agents/{id}/kb/bookmarks", auth(s.handleKBListBookmarks))
-	mux.HandleFunc("POST /api/agents/{id}/kb/bookmarks", auth(s.handleKBSaveBookmark))
-	mux.HandleFunc("DELETE /api/agents/{id}/kb/bookmarks/{bookmarkId}", auth(s.handleKBDeleteBookmark))
-	mux.HandleFunc("PATCH /api/agents/{id}/kb/bookmarks/{bookmarkId}", auth(s.handleKBUpdateBookmark))
-	mux.HandleFunc("POST /api/agents/{id}/kb/bookmarks/{bookmarkId}/promote", auth(s.handleKBPromoteBookmark))
-	mux.HandleFunc("GET /api/agents/{id}/kb/notes", auth(s.handleKBListNotes))
-	mux.HandleFunc("POST /api/agents/{id}/kb/notes", auth(s.handleKBSaveNote))
-	mux.HandleFunc("DELETE /api/agents/{id}/kb/notes/{noteId}", auth(s.handleKBDeleteNote))
-	mux.HandleFunc("GET /api/agents/{id}/kb/notes/{noteId}/attachments", auth(s.handleKBNoteAttachments))
-	mux.HandleFunc("POST /api/agents/{id}/kb/notes/{noteId}/attachments", auth(s.handleKBNoteUpload))
-	mux.HandleFunc("DELETE /api/agents/{id}/kb/notes/{noteId}/attachments/{attId}", auth(s.handleKBNoteDeleteAttachment))
-	mux.HandleFunc("GET /api/agents/{id}/kb/cards", auth(s.handleKBListCards))
-	mux.HandleFunc("GET /api/agents/{id}/kb/cards/stats", auth(s.handleKBCardStats))
-	mux.HandleFunc("POST /api/agents/{id}/kb/cards", auth(s.handleKBSaveCard))
-	mux.HandleFunc("GET /api/agents/{id}/kb/cards/{cardId}", auth(s.handleKBGetCard))
-	mux.HandleFunc("PATCH /api/agents/{id}/kb/cards/{cardId}", auth(s.handleKBUpdateCard))
-	mux.HandleFunc("DELETE /api/agents/{id}/kb/cards/{cardId}", auth(s.handleKBDeleteCard))
-	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/review", auth(s.handleKBReviewCard))
-	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/archive", auth(s.handleKBCardArchive))
-	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/restore", auth(s.handleKBCardRestore))
-	mux.HandleFunc("POST /api/agents/{id}/kb/cards/generate", auth(s.handleKBCardsGenerate))
-	mux.HandleFunc("GET /api/agents/{id}/kb/pending", auth(s.handleKBListPending))
-	mux.HandleFunc("POST /api/agents/{id}/kb/pending/{pendingId}/resolve", auth(s.handleKBResolvePending))
+	mux.HandleFunc("POST /api/agents/{id}/kb/search", agentAuth(s.handleKBSearch))
+	mux.HandleFunc("POST /api/agents/{id}/kb/mcp", agentAuth(s.handleKBMCP))
+	mux.HandleFunc("POST /api/agents/{id}/kb/flash", agentAuth(s.handleKBSaveFlash))
+	mux.HandleFunc("PATCH /api/agents/{id}/kb/flash/{sourceId}", agentAuth(s.handleKBUpdateFlash))
+	mux.HandleFunc("POST /api/agents/{id}/kb/todo", agentAuth(s.handleKBSaveTodo))
+	mux.HandleFunc("PATCH /api/agents/{id}/kb/todos/{sourceId}", agentAuth(s.handleKBUpdateTodo))
+	mux.HandleFunc("GET /api/agents/{id}/kb/todos", agentAuth(s.handleKBListTodos))
+	mux.HandleFunc("GET /api/agents/{id}/kb/bookmarks", agentAuth(s.handleKBListBookmarks))
+	mux.HandleFunc("POST /api/agents/{id}/kb/bookmarks", agentAuth(s.handleKBSaveBookmark))
+	mux.HandleFunc("DELETE /api/agents/{id}/kb/bookmarks/{bookmarkId}", agentAuth(s.handleKBDeleteBookmark))
+	mux.HandleFunc("PATCH /api/agents/{id}/kb/bookmarks/{bookmarkId}", agentAuth(s.handleKBUpdateBookmark))
+	mux.HandleFunc("POST /api/agents/{id}/kb/bookmarks/{bookmarkId}/promote", agentAuth(s.handleKBPromoteBookmark))
+	mux.HandleFunc("GET /api/agents/{id}/kb/notes", agentAuth(s.handleKBListNotes))
+	mux.HandleFunc("POST /api/agents/{id}/kb/notes", agentAuth(s.handleKBSaveNote))
+	mux.HandleFunc("DELETE /api/agents/{id}/kb/notes/{noteId}", agentAuth(s.handleKBDeleteNote))
+	mux.HandleFunc("GET /api/agents/{id}/kb/notes/{noteId}/attachments", agentAuth(s.handleKBNoteAttachments))
+	mux.HandleFunc("POST /api/agents/{id}/kb/notes/{noteId}/attachments", agentAuth(s.handleKBNoteUpload))
+	mux.HandleFunc("DELETE /api/agents/{id}/kb/notes/{noteId}/attachments/{attId}", agentAuth(s.handleKBNoteDeleteAttachment))
+	mux.HandleFunc("GET /api/agents/{id}/kb/cards", agentAuth(s.handleKBListCards))
+	mux.HandleFunc("GET /api/agents/{id}/kb/cards/stats", agentAuth(s.handleKBCardStats))
+	mux.HandleFunc("POST /api/agents/{id}/kb/cards", agentAuth(s.handleKBSaveCard))
+	mux.HandleFunc("GET /api/agents/{id}/kb/cards/{cardId}", agentAuth(s.handleKBGetCard))
+	mux.HandleFunc("PATCH /api/agents/{id}/kb/cards/{cardId}", agentAuth(s.handleKBUpdateCard))
+	mux.HandleFunc("DELETE /api/agents/{id}/kb/cards/{cardId}", agentAuth(s.handleKBDeleteCard))
+	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/review", agentAuth(s.handleKBReviewCard))
+	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/archive", agentAuth(s.handleKBCardArchive))
+	mux.HandleFunc("POST /api/agents/{id}/kb/cards/{cardId}/restore", agentAuth(s.handleKBCardRestore))
+	mux.HandleFunc("POST /api/agents/{id}/kb/cards/generate", agentAuth(s.handleKBCardsGenerate))
+	mux.HandleFunc("GET /api/agents/{id}/kb/pending", agentAuth(s.handleKBListPending))
+	mux.HandleFunc("POST /api/agents/{id}/kb/pending/{pendingId}/resolve", agentAuth(s.handleKBResolvePending))
 
 	// Wiki: LLM-generated structured pages derived from KB sources.
-	mux.HandleFunc("GET /api/agents/{id}/wiki/stats", auth(s.handleWikiStats))
-	mux.HandleFunc("GET /api/agents/{id}/wiki/pages", auth(s.handleWikiListPages))
-	mux.HandleFunc("GET /api/agents/{id}/wiki/pages/{pageId}", auth(s.handleWikiGetPage))
-	mux.HandleFunc("GET /api/agents/{id}/wiki/graph", auth(s.handleWikiGraph))
-	mux.HandleFunc("DELETE /api/agents/{id}/wiki/pages/{pageId}", auth(s.handleWikiDeletePage))
-	mux.HandleFunc("PUT /api/agents/{id}/wiki/pages/{pageId}", auth(s.handleWikiUpdatePage))
-	mux.HandleFunc("POST /api/agents/{id}/wiki/generate", auth(s.handleWikiGenerate))
-	mux.HandleFunc("POST /api/agents/{id}/wiki/reindex-embed", auth(s.handleWikiReindexEmbed))
-	mux.HandleFunc("GET /api/agents/{id}/wiki/progress", auth(s.handleWikiProgress))
-	mux.HandleFunc("GET /api/agents/{id}/wiki/autogen-status", auth(s.handleWikiAutogenStatus))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/stats", agentAuth(s.handleWikiStats))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/pages", agentAuth(s.handleWikiListPages))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/pages/{pageId}", agentAuth(s.handleWikiGetPage))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/graph", agentAuth(s.handleWikiGraph))
+	mux.HandleFunc("DELETE /api/agents/{id}/wiki/pages/{pageId}", agentAuth(s.handleWikiDeletePage))
+	mux.HandleFunc("PUT /api/agents/{id}/wiki/pages/{pageId}", agentAuth(s.handleWikiUpdatePage))
+	mux.HandleFunc("POST /api/agents/{id}/wiki/generate", agentAuth(s.handleWikiGenerate))
+	mux.HandleFunc("POST /api/agents/{id}/wiki/reindex-embed", agentAuth(s.handleWikiReindexEmbed))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/progress", agentAuth(s.handleWikiProgress))
+	mux.HandleFunc("GET /api/agents/{id}/wiki/autogen-status", agentAuth(s.handleWikiAutogenStatus))
 
 	// Daily diary: per-agent themed daily-diary entries distilled from
 	// conversation_summaries, with a "you might have missed" section.
-	mux.HandleFunc("GET /api/agents/{id}/diary", auth(s.handleDiaryList))
-	mux.HandleFunc("GET /api/agents/{id}/diary/shelved", auth(s.handleDiaryShelved))
-	mux.HandleFunc("GET /api/agents/{id}/diary/{date}", auth(s.handleDiaryGet))
-	mux.HandleFunc("DELETE /api/agents/{id}/diary/{date}", auth(s.handleDiaryDelete))
-	mux.HandleFunc("POST /api/agents/{id}/diary/generate", auth(s.handleDiaryGenerate))
+	mux.HandleFunc("GET /api/agents/{id}/diary", agentAuth(s.handleDiaryList))
+	mux.HandleFunc("GET /api/agents/{id}/diary/shelved", agentAuth(s.handleDiaryShelved))
+	mux.HandleFunc("GET /api/agents/{id}/diary/{date}", agentAuth(s.handleDiaryGet))
+	mux.HandleFunc("DELETE /api/agents/{id}/diary/{date}", agentAuth(s.handleDiaryDelete))
+	mux.HandleFunc("POST /api/agents/{id}/diary/generate", agentAuth(s.handleDiaryGenerate))
 
 	// Feishu (飞书) event webhook. UNAUTHENTICATED — Feishu posts here
 	// without a fluctio bearer token. Per-event security comes from
@@ -559,10 +599,13 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("POST /api/providers/{id}/test", auth(s.handleTestStoredProvider))
 	// Diagnostic error reports (manual trigger + download). See
 	// specs/2026-07-22-web-ui-llm-error-report.md.
-	mux.HandleFunc("POST /api/diag/reports", auth(s.handleDiagReportGenerate))
-	mux.HandleFunc("GET /api/diag/reports", auth(s.handleDiagReportList))
-	mux.HandleFunc("GET /api/diag/reports/{name}", auth(s.handleDiagReportDownload))
-	mux.HandleFunc("DELETE /api/diag/reports/{name}", auth(s.handleDiagReportDelete))
+	// Diag reports are written to one global directory and mix failure
+	// details from every agent/session — that's platform-admin data, so
+	// all four routes are gated like the other admin surfaces.
+	mux.HandleFunc("POST /api/diag/reports", admin(s.handleDiagReportGenerate))
+	mux.HandleFunc("GET /api/diag/reports", admin(s.handleDiagReportList))
+	mux.HandleFunc("GET /api/diag/reports/{name}", admin(s.handleDiagReportDownload))
+	mux.HandleFunc("DELETE /api/diag/reports/{name}", admin(s.handleDiagReportDelete))
 	mux.HandleFunc("GET /api/scoped-channels", auth(s.handleListScopedChannels))
 	mux.HandleFunc("POST /api/scoped-channels", auth(s.handleCreateScopedChannel))
 	mux.HandleFunc("PUT /api/scoped-channels/{id}", auth(s.handleUpdateScopedChannel))
@@ -675,6 +718,15 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("setup: embed sub: %w", err)
 	}
+	// Unknown /api/* and /v1/* paths must NOT fall through to the SPA
+	// handler below: it would answer 200 + index.html for any method,
+	// turning API typos, probes, and regressions into false-positive
+	// successes. Registered before the "/" catch-all.
+	apiNotFound := func(w http.ResponseWriter, r *http.Request) {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "not found"})
+	}
+	mux.HandleFunc("/api/", apiNotFound)
+	mux.HandleFunc("/v1/", apiNotFound)
 	mux.Handle("/", spaHandler{fs: webRoot})
 
 	var addr string

@@ -45,6 +45,13 @@ func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	// Same containment rule as the agent-scoped delete: the raw path
+	// segment decodes %2F, so an unvalidated ".." would join outside
+	// <home>/skills and RemoveAll an arbitrary directory.
+	if err := skills.IsValidSkillName(name); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
 	homeDir, err := config.HomeDir()
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})

@@ -65,6 +65,13 @@ func (s *Server) handleDiagReportGenerate(w http.ResponseWriter, r *http.Request
 	if body.Days <= 0 {
 		body.Days = 3 // align with llm_call_diag retention default
 	}
+	// An explicit agentId scopes the report to that agent's failures —
+	// an apikey scoped by AllowedAgents must not target agents outside
+	// its grant.
+	if body.AgentID != "" && !ident.CanAccessAgent(body.AgentID) {
+		jsonResponse(w, http.StatusForbidden, map[string]any{"error": "forbidden: agent not in caller's agent ACL"})
+		return
+	}
 	db, ok := s.dataStore.(*store.DBStore)
 	if !ok || db == nil {
 		jsonResponse(w, http.StatusServiceUnavailable,
@@ -103,7 +110,13 @@ func (s *Server) handleDiagReportList(w http.ResponseWriter, r *http.Request) {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".md" {
 			continue
 		}
-		fi, _ := e.Info()
+		// Info can fail (entry removed between ReadDir and Info, or a
+		// Windows sharing/permission error) — fi would be nil and the
+		// Size() deref below panics. Skip the entry instead.
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
 		reps = append(reps, report{
 			Name: e.Name(),
 			Size: fi.Size(),

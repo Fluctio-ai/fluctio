@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/cron"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
@@ -96,6 +97,11 @@ func (s *Server) handleToggleAgentCronJob(w http.ResponseWriter, r *http.Request
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	// Wake the DB-mode scheduler: pollStore sleeps until the MIN(next_run)
+	// of the enabled set it sampled earlier, so a freshly enabled job with
+	// a near next_run would otherwise starve for days (same notify the
+	// cron tool's create path sends).
+	cron.NotifyJobCreated()
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "job": job})
 }
 

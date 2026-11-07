@@ -44,7 +44,14 @@ func (s *Server) handleUpdateAgentVectorization(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	vec, _ := body["vectorization"].(map[string]any)
+	// A missing/non-object "vectorization" key must be a 400: SaveSetting
+	// treats empty data as a row delete, so `{"vectorization": null}`
+	// would silently wipe the agent's embedding config.
+	vec, ok := body["vectorization"].(map[string]any)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain a "vectorization" object`})
+		return
+	}
 	if s.dataStore != nil {
 		var stored config.VectorCfg
 		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", id, &stored)
@@ -80,7 +87,13 @@ func (s *Server) handleUpdateSystemVectorization(w http.ResponseWriter, r *http.
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	vec, _ := body["vectorization"].(map[string]any)
+	// Same guard as the agent-scope PUT: an absent/non-object section
+	// would delete the system vectorization row instead of erroring.
+	vec, ok := body["vectorization"].(map[string]any)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain a "vectorization" object`})
+		return
+	}
 	if s.dataStore != nil {
 		var stored config.VectorCfg
 		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", "", &stored)

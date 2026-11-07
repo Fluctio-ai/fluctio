@@ -152,6 +152,10 @@ func (s *Server) handleUpdatePlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// saveUserConfig sweeps every namespace, so the load-modify-save must
+	// be serialized against the other whole-config writers.
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	cfg, err := s.loadUserConfig(r)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})

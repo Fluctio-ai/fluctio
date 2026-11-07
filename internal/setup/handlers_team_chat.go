@@ -198,9 +198,13 @@ func (s *Server) runTeamAgentTurn(w http.ResponseWriter, flusher http.Flusher, r
 	agentCtx = agent.ContextWithStream(agentCtx, nil, s.dataStore, hub, uid, member.AgentID, member.SessionID)
 
 	agentDone := make(chan struct{})
+	// Captured so a failed turn (provider config error, quota rejection,
+	// agent crash) can surface as an error event instead of the stream
+	// just ending with no explanation. Non-empty string = failure.
+	var turnErr string
 	go func() {
 		defer close(agentDone)
-		_ = member.Handle.HandleWebChatStream(agentCtx, member.SessionID, req.TeamID, uid, msgText, imageURLs, req.Params, nil)
+		turnErr = member.Handle.HandleWebChatStream(agentCtx, member.SessionID, req.TeamID, uid, msgText, imageURLs, req.Params, nil)
 	}()
 
 	keepalive := time.NewTicker(30 * time.Second)
@@ -246,6 +250,18 @@ func (s *Server) runTeamAgentTurn(w http.ResponseWriter, flusher http.Flusher, r
 			if turnPending {
 				agentDone = nil
 				continue
+			}
+			// The turn goroutine ended without a done event — surface the
+			// failure to the client instead of a silent stream end (same
+			// contract as handleChatStream's synthetic error).
+			if turnErr != "" && !disconnected {
+				forwardSyntheticEvent(w, flusher, agent.ChatEvent{
+					Type: "error",
+					Data: map[string]any{
+						"agentId": member.AgentID,
+						"message": "team member turn failed: " + turnErr,
+					},
+				})
 			}
 			return !disconnected
 		case <-agentCtx.Done():

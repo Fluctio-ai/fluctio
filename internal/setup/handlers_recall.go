@@ -52,6 +52,12 @@ func (s *Server) handleRecallFeedback(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown recall_id"})
 		return
 	}
+	// The vote drives TryUpgradeLambda (a config write) on the resolved
+	// agent — enforce the caller's agent ACL before recording it.
+	if ident, ok := authIdentity(r); ok && !ident.CanAccessAgent(agentID) {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"ok": false, "error": "unknown recall_id"})
+		return
+	}
 
 	if err := db.InsertRecallFeedback(ctx, req.RecallID, req.Up); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})

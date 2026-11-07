@@ -7,11 +7,20 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
+
+// agentConfigMu serializes load→mutate→save cycles on the agents.config
+// column (im-claim bind/unbind/rebind, and any other caller of
+// loadAgentFileConfig + saveAgentFileConfig). The save rewrites the whole
+// row from the caller's snapshot, so two concurrent claim edits would
+// otherwise lose each other's changes (a freshly-claimed admin can be
+// wiped by a concurrent unbind).
+var agentConfigMu sync.Mutex
 
 // loadAgentFileConfig returns an agent's per-row override JSON from the
 // agents.config column.
@@ -31,7 +40,24 @@ func (s *Server) loadAgentFileConfig(r *http.Request, agentID string) (*config.A
 	return cfg, nil
 }
 
+// mutateAgentFileConfig runs load → mutate → save under agentConfigMu so
+// concurrent editors of one agent's config row can't clobber each other
+// with stale snapshots. The mutator returns an error to abort the save.
+func (s *Server) mutateAgentFileConfig(r *http.Request, agentID string, mutate func(cfg *config.AgentFileConfig) error) error {
+	agentConfigMu.Lock()
+	defer agentConfigMu.Unlock()
+	cfg, err := s.loadAgentFileConfig(r, agentID)
+	if err != nil {
+		return err
+	}
+	if err := mutate(cfg); err != nil {
+		return err
+	}
+	return s.saveAgentFileConfig(r, agentID, cfg)
+}
+
 // saveAgentFileConfig persists per-agent overrides into agents.config.
+// Callers that build on a loaded snapshot should prefer mutateAgentFileConfig.
 func (s *Server) saveAgentFileConfig(r *http.Request, agentID string, cfg *config.AgentFileConfig) error {
 	rec, err := s.dataStore.GetAgent(r.Context(), agentID)
 	if err != nil {

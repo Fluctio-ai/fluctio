@@ -104,10 +104,14 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	// Readable-not-owner is enough: projects are keyed on (user_id,
-	// agent_id, project_id), so a viewer creating a project on a shared
-	// agent only adds rows under THEIR user_id and can never touch the
-	// owner's project list. Same reasoning for update / delete below.
+	// NOTE on isolation: the store's projects table is keyed
+	// (agent_id, project_id) — ProjectRecord.UserID is a display-only
+	// field that is never persisted, so all callers read/write ONE
+	// shared row per (agent, project). Under single-user flatten that's
+	// the intended semantics (the authenticated caller IS the owner);
+	// if per-user project isolation is ever reintroduced, the user_id
+	// filter must be restored across Get/Save/Delete/List in the store
+	// layer too, not just here.
 	if !s.requireAgentReadable(w, r, id) {
 		return
 	}

@@ -17,10 +17,17 @@ import (
 //
 // Reads/writes the agent-scope "memory" override row (MemoryCfg JSON).
 // The web Wiki page uses these to persist memory.wikiAutoGen (the background
-// auto-generation toggle + interval). Single-user target: no owner check.
+// auto-generation toggle + interval). Gated by the caller's agent ACL via
+// requireAgentOwner (session users always pass; a scoped apikey must have
+// this agent in its AllowedAgents), matching the reindex endpoint below.
 
 func (s *Server) handleGetAgentMemory(w http.ResponseWriter, r *http.Request) {
+	// ACL-gate like the neighboring reindex endpoint: an apikey scoped to
+	// other agents must not read this agent's memory config.
 	id := r.PathValue("id")
+	if s.requireAgentOwner(w, r, id) == nil {
+		return
+	}
 	var mem config.MemoryCfg
 	if s.dataStore != nil {
 		_ = scope.SettingInto(r.Context(), s.dataStore, "memory", "", id, &mem)
@@ -30,12 +37,22 @@ func (s *Server) handleGetAgentMemory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateAgentMemory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if s.requireAgentOwner(w, r, id) == nil {
+		return
+	}
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
-	mem, _ := body["memory"].(map[string]any)
+	// A missing/non-object "memory" key must not reach SaveSetting: empty
+	// data is treated as a row delete there, so `{}` would silently wipe
+	// the agent's whole memory config. Require the section explicitly.
+	mem, ok := body["memory"].(map[string]any)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain a "memory" object`})
+		return
+	}
 	if err := scope.SaveSetting(r.Context(), s.dataStore, "", id, "memory", mem); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

@@ -391,6 +391,12 @@ func (s *Server) handleDisconnectAgentChannel(w http.ResponseWriter, r *http.Req
 		if ch.Type != channelType || ch.AccountID != accountID {
 			continue
 		}
+		// Stop the adapter BEFORE deleting its row: the old order left a
+		// window where the adapter kept polling an already-deleted
+		// credential. invalidateAgent (not invalidateOwner) per the
+		// agent-level cache-invalidation convention — other cached
+		// UserSpaces hold this agent's channel routing too.
+		s.hotUnregisterChannel(channelType, accountID)
 		if err := s.dataStore.DeleteChannel(r.Context(), ch.ID); err != nil {
 			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
@@ -400,8 +406,7 @@ func (s *Server) handleDisconnectAgentChannel(w http.ResponseWriter, r *http.Req
 			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
-		s.invalidateOwner(uid, aid)
-		s.hotUnregisterChannel(channelType, accountID)
+		s.invalidateAgent(id)
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
@@ -484,13 +489,21 @@ func (s *Server) removeBinding(r *http.Request, sc, scopeID, agentID, channelTyp
 	return nil
 }
 
+// platformVerifyClient bounds the token-verification round-trips
+// (telegram/discord/slack). http.Get / http.DefaultClient have no
+// timeout, so a hung platform endpoint used to block the handler
+// goroutine indefinitely. The wechat/ilink helpers keep their own
+// ctx-bounded DefaultClient calls — their 45s long-poll must not be
+// clipped by this client's shorter timeout.
+var platformVerifyClient = &http.Client{Timeout: 10 * time.Second}
+
 // telegramGetMe validates the bot token by hitting the Bot API. Returns
 // the bot's username on success. We avoid pulling tgbotapi here so this
 // handler doesn't drag in the full long-poll bot machinery for what's
 // just a HEAD-style validation.
 func telegramGetMe(token string) (string, error) {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/getMe", token)
-	resp, err := http.Get(url)
+	resp, err := platformVerifyClient.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("contact telegram: %w", err)
 	}
@@ -602,7 +615,7 @@ func discordGetMe(token string) (string, string, error) {
 		return "", "", err
 	}
 	req.Header.Set("Authorization", "Bot "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := platformVerifyClient.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("contact discord: %w", err)
 	}
@@ -737,7 +750,7 @@ func slackAuthTest(botToken string) (teamID, teamName, botUserID string, err err
 		return "", "", "", rerr
 	}
 	req.Header.Set("Authorization", "Bearer "+botToken)
-	resp, derr := http.DefaultClient.Do(req)
+	resp, derr := platformVerifyClient.Do(req)
 	if derr != nil {
 		return "", "", "", fmt.Errorf("contact slack: %w", derr)
 	}
