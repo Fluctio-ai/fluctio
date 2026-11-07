@@ -2812,7 +2812,12 @@ function CopyIconButton({
           await navigator.clipboard.writeText(text);
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
-        } catch {}
+        } catch {
+          // Non-secure origin or denied permission: show the failure state
+          // briefly instead of a false "copied" check (matches the
+          // chat-screen copy fallback pattern).
+          setCopied(false);
+        }
       }}
       aria-label={t("common.copy")}
       title={t("common.copy")}
