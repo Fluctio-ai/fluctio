@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback, memo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { Button } from "@/components/ui/button";
@@ -80,6 +80,318 @@ function splitReplyOptionsCached(s: string): ReturnType<typeof splitReplyOptions
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Memoized regular-message bubble. The original renderRegularBubble was an
+// inline closure in ChatScreen's render IIFE: every keystroke/delta flush
+// re-executed the whole bubble (markdown render, attachment mapping,
+// action-row wiring) for EVERY message. Hoisted here as a memo component
+// with an explicit prop contract — a delta flush touching one message now
+// re-renders only that message's subtree. The JSX and behavior are
+// byte-equivalent to the extracted closure.
+// ---------------------------------------------------------------------------
+
+// Memoized regular-message bubble. The original renderRegularBubble was an
+// inline closure in ChatScreen's render IIFE: every keystroke/delta flush
+// re-executed the whole bubble (markdown render, attachment mapping,
+// action-row wiring) for EVERY message. Hoisted here as a memo component
+// with an explicit prop contract — a delta flush touching one message now
+// re-renders only that message's subtree. The JSX and behavior are
+// byte-equivalent to the extracted closure.
+
+// Pure time formatters hoisted from ChatScreen so the memo component can
+// import-free reference them (they use no closure state).
+const formatTime = (ts: number) =>
+  new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+const formatDateTime = (ts: number) => {
+  const d = new Date(ts);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const RegularBubble = memo(function RegularBubble({
+  msg,
+  selectedAgent,
+  sessionId,
+  workspaceRoot,
+  sending,
+  copiedId,
+  liveAfter,
+  attachedImages,
+  surfacedSrcs,
+  suppressAllInlineImages,
+  pendingPlanId,
+  t,
+  onQuickReply,
+  onCopy,
+  onRetry,
+  onFork,
+  onOpenFile,
+  onOpenFilesSheet,
+  onPlanEdit,
+}: RegularBubbleCallbacks & { msg: ChatMessage }) {
+  // Quick-reply options: one split per render feeds both the bubble text
+  // (block stripped) and the button row below. Raw content stays
+  // untouched in msg.content so copy / export / replay keep the protocol
+  // text. Cached by input: unchanged agent bubbles skip the regex scan.
+  const replySplit = msg.role === "agent" && msg.content ? splitReplyOptionsCached(msg.content) : null;
+  const metadata = (msg.metadata ?? {}) as {
+    knowledgeSources?: KnowledgeSource[];
+    iterationCapReached?: boolean;
+    iterationCapValue?: string;
+    planMode?: boolean;
+  };
+  return (
+    <div
+      id={msg.seq != null ? `seq-${msg.seq}` : undefined}
+      className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} ${
+        // Rise-in only for messages that arrived after this render tree
+        // mounted (timestamp gate) — history and page-load never animate,
+        // live arrivals acknowledge themselves. See .msg-in in globals.css.
+        msg.timestamp > liveAfter ? "msg-in" : ""
+      }`}
+    >
+      <div
+        className={`group relative ${
+          msg.role === "user" ? "max-w-[80%] order-1" : "max-w-full"
+        }`}
+      >
+        <div
+          className={`rounded-2xl px-4 py-2.5 break-words ${
+            msg.role === "user"
+              ? "bg-primary/10 dark:bg-primary/15 text-foreground rounded-br-md"
+              : "bg-muted rounded-bl-md"
+          }`}
+        >
+          {(() => {
+            const attached = attachedImages.get(msg.id);
+            return attached && attached.length > 0 ? (
+              <div className="space-y-2 mb-2">
+                {attached.map((img, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={i}
+                    src={img.src}
+                    alt={img.alt}
+                    className="rounded-lg max-w-full h-auto"
+                  />
+                ))}
+              </div>
+            ) : null;
+          })()}
+          {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2 justify-end">
+              {msg.attachments.map((att, i) =>
+                att.isImage && att.previewUrl ? (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => onOpenFilesSheet()}
+                    className="block cursor-zoom-in"
+                    aria-label={`Preview ${att.name}`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={att.previewUrl}
+                      alt={att.name}
+                      className="rounded-lg max-h-48 max-w-[12rem] w-auto h-auto object-cover"
+                    />
+                  </button>
+                ) : (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2 rounded-md bg-sidebar-foreground/10 px-2 py-1.5 text-xs"
+                  >
+                    <Paperclip className="h-3 w-3 opacity-70" />
+                    <span className="truncate">{att.name}</span>
+                  </div>
+                ),
+              )}
+            </div>
+          )}
+          {msg.content &&
+            (renderContentWithDataImages(
+              replySplit?.text ?? msg.content,
+              surfacedSrcs,
+              (attachedImages.get(msg.id)?.length ?? 0) > 0,
+              selectedAgent,
+              sessionId,
+              metadata.knowledgeSources,
+              workspaceRoot,
+            ) ?? (
+              <ChatMarkdown text={replySplit?.text ?? msg.content} agentId={selectedAgent} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={metadata.knowledgeSources} />
+            ))}
+          {msg.role === "agent" && metadata.knowledgeSources && metadata.knowledgeSources.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-2xs text-muted-foreground">{t("knowledge.sourcesLabel")}</span>
+              {metadata.knowledgeSources.map((src) => (
+                <span
+                  key={src.id}
+                  className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary"
+                  title={knowledgeSourceLabel(src)}
+                >
+                  {src.id}
+                </span>
+              ))}
+            </div>
+          )}
+          {msg.role === "agent" && metadata.iterationCapReached && (
+            <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">
+              <span className="font-medium">{t("preview.iterationLimit")}</span>
+              <span className="opacity-80">
+                {t("preview.iterationLimitDesc", { value: metadata.iterationCapValue ?? "" })}
+              </span>
+            </div>
+          )}
+          {msg.role === "agent" && metadata.planMode && (
+            <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">
+              <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span className="font-medium">{t("preview.planOnly")}</span>
+              <span className="opacity-80">
+                {t("preview.planOnlyDesc")}
+              </span>
+            </div>
+          )}
+          {replySplit && replySplit.options.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {replySplit.options.map((opt) => (
+                <Button
+                  key={opt}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onQuickReply(opt)}
+                  className="h-8"
+                >
+                  {opt}
+                </Button>
+              ))}
+            </div>
+          )}
+          {msg.role === "agent" && msg.authOptions && msg.authOptions.options.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {msg.authOptions.options.map((opt) => (
+                <Button
+                  key={opt.cmd}
+                  size="sm"
+                  variant={opt.cmd === "/yes" ? "default" : "outline"}
+                  onClick={() => onQuickReply(opt.cmd)}
+                  className="h-8"
+                >
+                  <span>{opt.label_zh}</span>
+                  <span className="opacity-60 ml-1 text-2xs">{opt.label_en}</span>
+                </Button>
+              ))}
+            </div>
+          )}
+          {msg.role === "agent" && msg.id === pendingPlanId && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => onQuickReply("go")}
+                disabled={sending}
+                className="h-8 gap-1.5"
+              >
+                <Check className="h-3.5 w-3.5" />
+                {t("chatScreen.runPlan")}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onPlanEdit}
+                disabled={sending}
+                className="h-8 gap-1.5"
+              >
+                <X className="h-3.5 w-3.5" />
+                {t("chatScreen.editPlan")}
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {t("chatScreen.planHint")}
+              </span>
+            </div>
+          )}
+        </div>
+        {msg.files && msg.files.length > 0 && (
+          <FilesPanel agentId={selectedAgent} files={msg.files} onOpenFile={onOpenFile} />
+        )}
+        <div
+          className={`flex items-center gap-1.5 mt-1 ${
+            msg.role === "user" ? "justify-end" : "justify-start"
+          }`}
+        >
+          {msg.role === "user" ? (
+            <>
+              {msg.timestamp > 0 && (
+                <span
+                  className="opacity-0 group-hover:opacity-100 text-2xs text-muted-foreground/60 transition-all"
+                  title={formatDateTime(msg.timestamp)}
+                >
+                  {formatTime(msg.timestamp)}
+                </span>
+              )}
+              <button
+                onClick={() => onCopy(msg)}
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                title={t("chat.copy")}
+              >
+                {copiedId === msg.id ? (
+                  <Check className="h-3 w-3 text-success" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+              </button>
+              <button
+                onClick={() => onRetry(msg)}
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                title={t("chat.resend")}
+              >
+                <RotateCcw className="h-3 w-3" />
+              </button>
+            </>
+          ) : (
+            <>
+              {msg.timestamp > 0 && (
+                <span
+                  className="text-2xs text-muted-foreground/60"
+                  title={formatDateTime(msg.timestamp)}
+                >
+                  {formatTime(msg.timestamp)}
+                </span>
+              )}
+              <button
+                onClick={() => onCopy(msg)}
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                title={t("chat.copy")}
+              >
+                {copiedId === msg.id ? (
+                  <Check className="h-3 w-3 text-success" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+              </button>
+              <button
+                onClick={onOpenFilesSheet}
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                title={t("chat.viewTaskFiles")}
+              >
+                <FolderOpen className="h-3 w-3" />
+              </button>
+              {msg.seq != null && msg.seq >= 0 && (
+                <button
+                  onClick={() => onFork(msg)}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                  title={t("chat.fork")}
+                >
+                  <GitBranch className="h-3 w-3" />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Shared event reducer — the auth_prompt / subagent_progress / steer /
@@ -312,6 +624,32 @@ interface ChatMessage {
 // outbound text on this marker into separate platform messages; the
 // web UI renders one bubble per split chunk so the experience matches.
 const SPLIT_MARKER = "<|split|>";
+
+// Props for the memoized regular-message bubble. Callbacks arrive as a
+// flat signature set; ChatScreen passes them via a shallow-stable object
+// so memo's shallow compare skips re-renders when only an unrelated
+// bubble's content changed (the heavy path used to re-run the whole
+// render IIFE per keystroke/delta flush).
+interface RegularBubbleCallbacks {
+  selectedAgent: string;
+  sessionId: string;
+  workspaceRoot?: string;
+  sending: boolean;
+  copiedId: string | null;
+  liveAfter: number; // timestamps ≤ this are pre-mount history (no msg-in animation)
+  attachedImages: ReadonlyMap<string, Array<{ alt: string; src: string }>>;
+  surfacedSrcs?: ReadonlySet<string>;
+  suppressAllInlineImages?: boolean;
+  pendingPlanId: string | null;
+  t: (key: string, vars?: Record<string, string | number>) => string;
+  onQuickReply: (text: string) => void; // routes send vs steer like the inline buttons did
+  onCopy: (msg: ChatMessage) => void;
+  onRetry: (msg: ChatMessage) => void;
+  onFork: (msg: ChatMessage) => void;
+  onOpenFile: (file: ProducedFile) => void;
+  onOpenFilesSheet: () => void;
+  onPlanEdit: () => void;
+}
 
 // splitOnMarker breaks `s` on SPLIT_MARKER, trims each chunk, and
 // drops the empty ones. Used at render time so a streamed assistant
@@ -3017,15 +3355,6 @@ export function ChatScreen() {
     }
   };
 
-  const formatTime = (ts: number) =>
-    new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-  const formatDateTime = (ts: number) => {
-    const d = new Date(ts);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-
   // Day-divider label: relative word for today/yesterday, else a localized
   // long date ("8月12日 周三" / "Aug 12, Wed") for sessions spanning days.
   const formatDayDivider = (ts: number) => {
@@ -3245,18 +3574,68 @@ export function ChatScreen() {
                   parts.forEach((part, idx) => {
                     const isLast = idx === parts.length - 1;
                     elements.push(
-                      renderRegularBubble({
-                        ...msg,
-                        id: `${msg.id}-s${idx}`,
-                        content: part,
-                        files: isLast ? msg.files : undefined,
-                        metadata: isLast ? msg.metadata : undefined,
-                      }),
+                      <RegularBubble
+                        key={`${msg.id}-s${idx}`}
+                        msg={{ ...msg, id: `${msg.id}-s${idx}`, content: part }}
+                        selectedAgent={selectedAgent}
+                        sessionId={sessionId}
+                        workspaceRoot={workspaceRoot}
+                        sending={sending}
+                        copiedId={copiedId}
+                        liveAfter={liveAfterRef.current}
+                        attachedImages={attachedImages}
+                        surfacedSrcs={surfacedSrcs}
+                        suppressAllInlineImages={false}
+                        pendingPlanId={pendingPlanId}
+                        t={t}
+                        onQuickReply={(text) => (sending ? handleSteer(text) : handleSend(text))}
+                        onCopy={handleCopy}
+                        onRetry={handleRetry}
+                        onFork={handleFork}
+                        onOpenFile={(f) => {
+                          setPendingFile(f);
+                          setFilesSheetOpen(true);
+                        }}
+                        onOpenFilesSheet={() => setFilesSheetOpen(true)}
+                        onPlanEdit={() => {
+                          setInput("");
+                          textareaRef.current?.focus();
+                        }}
+                      />,
                     );
                   });
                   continue;
                 }
-                elements.push(renderRegularBubble(msg));
+                elements.push(
+                  <RegularBubble
+                    key={msg.id}
+                    msg={msg}
+                    selectedAgent={selectedAgent}
+                    sessionId={sessionId}
+                    workspaceRoot={workspaceRoot}
+                    sending={sending}
+                    copiedId={copiedId}
+                    liveAfter={liveAfterRef.current}
+                    attachedImages={attachedImages}
+                    surfacedSrcs={surfacedSrcs}
+                    suppressAllInlineImages={false}
+                    pendingPlanId={pendingPlanId}
+                    t={t}
+                    onQuickReply={(text) => (sending ? handleSteer(text) : handleSend(text))}
+                    onCopy={handleCopy}
+                    onRetry={handleRetry}
+                    onFork={handleFork}
+                    onOpenFile={(f) => {
+                      setPendingFile(f);
+                      setFilesSheetOpen(true);
+                    }}
+                    onOpenFilesSheet={() => setFilesSheetOpen(true)}
+                    onPlanEdit={() => {
+                      setInput("");
+                      textareaRef.current?.focus();
+                    }}
+                  />
+                );
               }
               // Transient reconnecting indicator: the backend's
               // unbounded connection-retry tier is riding out a network
@@ -3292,277 +3671,6 @@ export function ChatScreen() {
               }
               return elements;
 
-              function renderRegularBubble(msg: ChatMessage) {
-                // Quick-reply options: one split per render feeds both the
-                // bubble text (block stripped) and the button row below.
-                // Raw content stays untouched in msg.content so copy /
-                // export / replay keep the protocol text. Cached by input:
-                // unchanged agent bubbles skip the regex scan entirely.
-                const replySplit = msg.role === "agent" && msg.content ? splitReplyOptionsCached(msg.content) : null;
-                return (
-                <div
-                  key={msg.id}
-                  id={msg.seq != null ? `seq-${msg.seq}` : undefined}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} ${
-                    // Rise-in only for messages that arrived after this
-                    // render tree mounted (timestamp gate) — history and
-                    // page-load never animate, live arrivals acknowledge
-                    // themselves. See .msg-in in globals.css.
-                    msg.timestamp > liveAfterRef.current ? "msg-in" : ""
-                  }`}
-                >
-                  <div
-                    className={`group relative ${
-                      // Assistant content (tables, long markdown) uses the full
-                      // lane — capped only by the lane's max-w-2xl — so it stops
-                      // wrapping early and leaving a big empty gutter on narrow
-                      // panels. User bubbles stay hugged to the right.
-                      msg.role === "user" ? "max-w-[80%] order-1" : "max-w-full"
-                    }`}
-                  >
-                    <div
-                      className={`rounded-2xl px-4 py-2.5 break-words ${
-                        msg.role === "user"
-                          ? "bg-primary/10 dark:bg-primary/15 text-foreground rounded-br-md"
-                          : "bg-muted rounded-bl-md"
-                      }`}
-                    >
-                      {(() => {
-                        const attached = attachedImages.get(msg.id);
-                        return attached && attached.length > 0 ? (
-                          <div className="space-y-2 mb-2">
-                            {attached.map((img, i) => (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                key={i}
-                                src={img.src}
-                                alt={img.alt}
-                                className="rounded-lg max-w-full h-auto"
-                              />
-                            ))}
-                          </div>
-                        ) : null;
-                      })()}
-                      {msg.role === "user" && msg.attachments && msg.attachments.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mb-2 justify-end">
-                          {msg.attachments.map((att, i) =>
-                            att.isImage && att.previewUrl ? (
-                              <button
-                                key={i}
-                                type="button"
-                                onClick={() => setLightboxSrc(att.previewUrl!)}
-                                className="block cursor-zoom-in"
-                                aria-label={`Preview ${att.name}`}
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
-                                  src={att.previewUrl}
-                                  alt={att.name}
-                                  className="rounded-lg max-h-48 max-w-[12rem] w-auto h-auto object-cover"
-                                />
-                              </button>
-                            ) : (
-                              <div
-                                key={i}
-                                className="flex items-center gap-2 rounded-md bg-sidebar-foreground/10 px-2 py-1.5 text-xs"
-                              >
-                                <Paperclip className="h-3 w-3 opacity-70" />
-                                <span className="truncate">{att.name}</span>
-                              </div>
-                            ),
-                          )}
-                        </div>
-                      )}
-                      {msg.content &&
-                        (renderContentWithDataImages(
-                          replySplit?.text ?? msg.content,
-                          surfacedSrcs,
-                          (attachedImages.get(msg.id)?.length ?? 0) > 0,
-                          selectedAgent,
-                          sessionId,
-                          msg.metadata?.knowledgeSources,
-                          workspaceRoot,
-                        ) ?? (
-                          <ChatMarkdown text={replySplit?.text ?? msg.content} agentId={selectedAgent} sessionId={sessionId} workspaceRoot={workspaceRoot} knowledgeSources={msg.metadata?.knowledgeSources} />
-                        ))}
-                      {msg.role === "agent" && msg.metadata?.knowledgeSources && msg.metadata.knowledgeSources.length > 0 && (
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          <span className="text-2xs text-muted-foreground">{t("knowledge.sourcesLabel")}</span>
-                          {msg.metadata.knowledgeSources.map((src) => (
-                            <span
-                              key={src.id}
-                              className="rounded bg-primary/10 px-1.5 py-0.5 text-2xs font-medium text-primary"
-                              title={knowledgeSourceLabel(src)}
-                            >
-                              {src.id}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {msg.role === "agent" && msg.metadata?.iterationCapReached && (
-                        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">
-                          <span className="font-medium">{t("preview.iterationLimit")}</span>
-                          <span className="opacity-80">
-                            {t("preview.iterationLimitDesc", { value: msg.metadata.iterationCapValue ?? "" })}
-                          </span>
-                        </div>
-                      )}
-                      {msg.role === "agent" && msg.metadata?.planMode && (
-                        <div className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-warning dark:text-warning">
-                          <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                          <span className="font-medium">{t("preview.planOnly")}</span>
-                          <span className="opacity-80">
-                            {t("preview.planOnlyDesc")}
-                          </span>
-                        </div>
-                      )}
-                      {replySplit && replySplit.options.length > 0 && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {replySplit.options.map((opt) => (
-                            <Button
-                              key={opt}
-                              size="sm"
-                              variant="outline"
-                              onClick={() => (sending ? handleSteer(opt) : handleSend(opt))}
-                              className="h-8"
-                            >
-                              {opt}
-                            </Button>
-                          ))}
-                        </div>
-                      )}
-                      {msg.role === "agent" && msg.authOptions && msg.authOptions.options.length > 0 && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {msg.authOptions.options.map((opt) => (
-                            <Button
-                              key={opt.cmd}
-                              size="sm"
-                              variant={opt.cmd === "/yes" ? "default" : "outline"}
-                              onClick={() => (sending ? handleSteer(opt.cmd) : handleSend(opt.cmd))}
-                              className="h-8"
-                            >
-                              <span>{opt.label_zh}</span>
-                              <span className="opacity-60 ml-1 text-2xs">{opt.label_en}</span>
-                            </Button>
-                          ))}
-                        </div>
-                      )}
-                      {msg.role === "agent" && msg.id === pendingPlanId && (
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <Button
-                            size="sm"
-                            onClick={() => handleSend("go")}
-                            disabled={sending}
-                            className="h-8 gap-1.5"
-                          >
-                            <Check className="h-3.5 w-3.5" />
-                            {t("chatScreen.runPlan")}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              // No payload sent — user is rejecting the
-                              // plan. Focus the composer with a hint so
-                              // they type what to change; the buttons
-                              // re-render once the next assistant reply
-                              // matches the pending-plan signal again.
-                              setInput("");
-                              textareaRef.current?.focus();
-                            }}
-                            disabled={sending}
-                            className="h-8 gap-1.5"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                            {t("chatScreen.editPlan")}
-                          </Button>
-                          <span className="text-xs text-muted-foreground">
-                            {t("chatScreen.planHint")}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    {msg.files && msg.files.length > 0 && (
-                      <FilesPanel agentId={selectedAgent} files={msg.files} onOpenFile={(f) => { setPendingFile(f); setFilesSheetOpen(true); }} />
-                    )}
-                    <div
-                      className={`flex items-center gap-1.5 mt-1 ${
-                        msg.role === "user" ? "justify-end" : "justify-start"
-                      }`}
-                    >
-                      {msg.role === "user" ? (
-                        <>
-                          {msg.timestamp > 0 && (
-                            <span
-                              className="opacity-0 group-hover:opacity-100 text-2xs text-muted-foreground/60 transition-all"
-                              title={formatDateTime(msg.timestamp)}
-                            >
-                              {formatTime(msg.timestamp)}
-                            </span>
-                          )}
-                          <button
-                            onClick={() => handleCopy(msg)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                            title={t("chat.copy")}
-                          >
-                            {copiedId === msg.id ? (
-                              <Check className="h-3 w-3 text-success" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => handleRetry(msg)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                            title={t("chat.resend")}
-                          >
-                            <RotateCcw className="h-3 w-3" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          {msg.timestamp > 0 && (
-                            <span
-                              className="text-2xs text-muted-foreground/60"
-                              title={formatDateTime(msg.timestamp)}
-                            >
-                              {formatTime(msg.timestamp)}
-                            </span>
-                          )}
-                          <button
-                            onClick={() => handleCopy(msg)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                            title={t("chat.copy")}
-                          >
-                            {copiedId === msg.id ? (
-                              <Check className="h-3 w-3 text-success" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
-                          </button>
-                          <button
-                            onClick={() => setFilesSheetOpen(true)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                            title={t("chat.viewTaskFiles")}
-                          >
-                            <FolderOpen className="h-3 w-3" />
-                          </button>
-                          {msg.seq != null && msg.seq >= 0 && (
-                            <button
-                              onClick={() => handleFork(msg)}
-                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
-                              title={t("chat.fork")}
-                            >
-                              <GitBranch className="h-3 w-3" />
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-              }
             })()}
 
             {sending && (
