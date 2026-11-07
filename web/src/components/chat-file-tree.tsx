@@ -33,6 +33,17 @@ export type ProducedFile = {
   size?: number;
 };
 
+// Single-segment identity filenames that route to the agent's home dir
+// (not the workspace) — exclude from the "Your files" panel.
+const SYSTEM_FILES = new Set([
+  "SOUL.md", "IDENTITY.md", "USER.md", "BOOTSTRAP.md",
+  "MEMORY.md", "HEARTBEAT.md", "AGENTS.md", "TOOLS.md", "agent.json",
+]);
+
+export function isSystemFile(path: string): boolean {
+  return !path.includes("/") && SYSTEM_FILES.has(path);
+}
+
 export function fileKind(path: string): { icon: typeof File; preview: "image" | "pdf" | "markdown" | "html" | "text" | "none" } {
   const ext = path.toLowerCase().split(".").pop() || "";
   if (["png", "jpg", "jpeg", "jfif", "gif", "svg", "webp", "bmp", "ico", "avif", "apng"].includes(ext)) return { icon: ImageIcon, preview: "image" };
