@@ -47,7 +47,10 @@ func providerListCmd() *cobra.Command {
 				fmt.Println("\nDiscovered from environment:")
 				for _, e := range discovered {
 					for k, v := range e.Keys {
-						masked := v
+						// Match credentials.go's masking: short keys get
+						// full "****" — the old code only masked when
+						// len>8, printing short keys verbatim.
+						masked := "****"
 						if len(v) > 8 {
 							masked = v[:4] + "..." + v[len(v)-4:]
 						}
