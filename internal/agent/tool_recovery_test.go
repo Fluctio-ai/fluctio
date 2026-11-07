@@ -95,7 +95,10 @@ func TestRecoverToolCallsFromContent(t *testing.T) {
 		{
 			// The shape from a real DeepSeek/Qwen detokenization leak:
 			// special tokens like `<｜tool_calls｜>` get rendered as ASCII
-			// with extra spacing. Recovery must normalize them first.
+			// with extra spacing. Recovery must normalize them first, and
+			// decode the XML entities entity-accurate models emit — the
+			// old expectation pinned `&amp;&amp;` passing through to the
+			// shell verbatim (a background operator instead of `&&`).
 			name: "leaked DSML-pipe tokens — recovered",
 			in: `< | | DSML | | tool_calls>` +
 				`< | | DSML | | invoke name="exec">` +
@@ -105,8 +108,17 @@ func TestRecoverToolCallsFromContent(t *testing.T) {
 				`</ | | DSML | | tool_calls>`,
 			wantCalls:  1,
 			wantName:   "exec",
-			wantArgs:   map[string]any{"command": "which node &amp;&amp; which npx 2&gt;&amp;1", "timeout": float64(10)},
+			wantArgs:   map[string]any{"command": "which node && which npx 2>&1", "timeout": float64(10)},
 			wantResLen: 0,
+		},
+		{
+			// An invoke-shaped EXAMPLE inside a code fence is prose the
+			// model was asked to display, not a call to execute. Recovery
+			// must leave it (and the fence) untouched in the residual.
+			name: "fenced example invoke — not recovered",
+			in:   "Here is an example:\n```xml\n<invoke name=\"exec\"><parameter name=\"command\">echo hi</parameter></invoke>\n```\nUse this shape.",
+			wantCalls:  0,
+			wantResLen: -1,
 		},
 		{
 			name: "leaked fullwidth-pipe tokens — recovered",

@@ -141,6 +141,23 @@ func (a *Agent) drainApprovedPending(ctx context.Context, sess *session.Session,
 	if len(calls) == 0 {
 		return 0
 	}
+	// Dedup by (name, arguments) before executing: /yes drains EVERY
+	// parked entry, and a model that retried a call it had already parked
+	// (despite the holding "do not retry" result) left duplicate entries
+	// in the queue — running the batch verbatim executed the same side
+	// effect twice under a single approval.
+	seen := make(map[string]struct{}, len(calls))
+	deduped := make([]provider.ToolCall, 0, len(calls))
+	for _, tc := range calls {
+		sig := tc.Function.Name + "\x00" + tc.Function.Arguments
+		if _, dup := seen[sig]; dup {
+			slog.Info("dropping duplicate authorized call", "agent", a.name, "tool", tc.Function.Name)
+			continue
+		}
+		seen[sig] = struct{}{}
+		deduped = append(deduped, tc)
+	}
+	calls = deduped
 	results := a.engine.executeToolsConcurrently(ctx, a.registry, calls, a.workspacePath, builtinAllowForMode(a.promptMode))
 
 	// Synthesize a fresh tool_calls assistant message + per-call tool

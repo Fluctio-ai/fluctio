@@ -69,6 +69,14 @@ func ExtractReplyOptions(text string) (string, []string) {
 			if o == "" || seen[o] || len([]rune(o)) > replyOptionsMaxRunes {
 				continue
 			}
+			// Gateway consumers treat a tapped option as literal user
+			// input, and inbound slash commands are processed before the
+			// LLM — a model-generated (injectable) label starting with "/"
+			// would execute that command as the chatter. Refuse such
+			// labels outright.
+			if strings.HasPrefix(o, "/") {
+				continue
+			}
 			seen[o] = true
 			opts = append(opts, o)
 		}

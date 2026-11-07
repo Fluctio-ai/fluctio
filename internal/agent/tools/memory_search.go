@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/rand"
 	"os"
@@ -152,7 +153,12 @@ func RegisterMemorySearch(r *Registry, workspace string, fts ...FTSSearcher) {
 		searcher = fts[0]
 	}
 
-	r.Register("memory_search",
+	// Serial registration: the tool writes the turn-shared
+	// citedSummaries/consumedRecallIDs collections handed in via ctx
+	// (plain map + slice). Two memory_search calls fanned out in the
+	// same round would write them concurrently — a process-fatal
+	// concurrent map write. RegisterSerial queues same-tool callers.
+	r.RegisterSerial("memory_search",
 		"Search through summaries of past conversations with this chatter across all sessions. "+
 			"Returns each summary + keywords + a (session_key, seq_start, seq_end) pointer; "+
 			"call fetch_messages() with the pointer to retrieve verbatim original messages. "+
@@ -1000,6 +1006,12 @@ func searchMemoryLogs(workspace, query string, limit int) []searchResult {
 	return results
 }
 
+// searchFileMaxBytes caps how much of each JSONL log one scan reads.
+// The legacy fallback walks every line of every log with
+// strings.Contains; without a budget an unbounded logs directory turns
+// the fallback into an unbounded linear scan on the turn's critical path.
+const searchFileMaxBytes = 8 << 20 // 8 MB per file
+
 func searchFile(filePath string, keywords []string, now time.Time) []searchResult {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -1014,10 +1026,17 @@ func searchFile(filePath string, keywords []string, now time.Time) []searchResul
 
 	var results []searchResult
 	lineNum := 0
+	budget := int64(searchFileMaxBytes)
 
 	for scanner.Scan() {
 		lineNum++
 		line := scanner.Text()
+		budget -= int64(len(line))
+		if budget <= 0 {
+			// Byte budget exhausted — stop scanning this file rather
+			// than reading it (and the rest of the directory) whole.
+			break
+		}
 		lower := strings.ToLower(line)
 
 		matchCount := 0
@@ -1044,6 +1063,11 @@ func searchFile(filePath string, keywords []string, now time.Time) []searchResul
 			Content: content,
 			Score:   score,
 		})
+	}
+	// A too-long line (>1MB buffer) aborts the scan with an error; the
+	// old code dropped it silently, hiding partial results. At least log.
+	if err := scanner.Err(); err != nil {
+		slog.Warn("memory_search: log scan aborted early", "file", filePath, "error", err)
 	}
 
 	return results

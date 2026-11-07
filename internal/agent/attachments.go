@@ -225,6 +225,12 @@ func (a *Agent) WriteSessionAttachments(ctx context.Context, sessionID, projectI
 		// current turn, so UserRoot() is stale (previous turn's scope or
 		// the agent root) and files would land in the wrong session dir —
 		// invisible inside a docker sandbox bind-mounted to this session.
+		// written tracks whether at least one backend accepted the bytes.
+		// Callers inject "[Attached: /workspace/<name>]" breadcrumbs from
+		// the returned path, so a name must never be reported for data that
+		// failed every write — the model would reference a file that does
+		// not exist anywhere.
+		written := false
 		hostDir := a.scopedHostDir(sessionID, projectID)
 		if hostDir == "" && a.registry != nil {
 			hostDir = a.registry.UserRoot()
@@ -234,10 +240,13 @@ func (a *Agent) WriteSessionAttachments(ctx context.Context, sessionID, projectI
 		}
 		if hostDir != "" {
 			full := filepath.Join(hostDir, name)
-			if mkErr := os.MkdirAll(hostDir, 0o755); mkErr == nil {
-				if wErr := os.WriteFile(full, data, 0o644); wErr != nil {
-					slog.Warn("attachment host write failed", "agent", a.name, "session", sessionID, "path", full, "error", wErr)
-				}
+			if mkErr := os.MkdirAll(hostDir, 0o755); mkErr != nil {
+				// Missing else previously silenced this failure entirely.
+				slog.Warn("attachment host mkdir failed", "agent", a.name, "session", sessionID, "dir", hostDir, "error", mkErr)
+			} else if wErr := os.WriteFile(full, data, 0o644); wErr != nil {
+				slog.Warn("attachment host write failed", "agent", a.name, "session", sessionID, "path", full, "error", wErr)
+			} else {
+				written = true
 			}
 		}
 
@@ -245,6 +254,8 @@ func (a *Agent) WriteSessionAttachments(ctx context.Context, sessionID, projectI
 		if a.workspaceStore != nil {
 			if pErr := a.workspaceStore.Put(ctx, a.agentID, projectID, sessionID, name, strings.NewReader(string(data)), int64(len(data)), contentTypeFromExt(ext)); pErr != nil {
 				slog.Warn("attachment store put failed", "agent", a.name, "session", sessionID, "path", name, "error", pErr)
+			} else {
+				written = true
 			}
 		}
 
@@ -262,10 +273,17 @@ func (a *Agent) WriteSessionAttachments(ctx context.Context, sessionID, projectI
 			if ex, gErr := a.sandboxPool.Get(ctx, a.name, projectID, sessionID); gErr == nil && ex != nil {
 				if _, wErr := ex.WriteFile(ctx, "/workspace/"+mountRel, string(data)); wErr != nil {
 					slog.Warn("attachment sandbox write failed", "agent", a.name, "session", sessionID, "path", mountRel, "error", wErr)
+				} else {
+					written = true
 				}
 			}
 		}
 
+		// Only report the path when some backend actually holds the bytes;
+		// otherwise the "[Attached: ...]" hint would point at nothing.
+		if !written {
+			continue
+		}
 		paths = append(paths, mountRel)
 	}
 	return paths
@@ -538,13 +556,18 @@ func (a *Agent) persistImageGenOutput(ctx context.Context, sessionID, projectID,
 		// project chats so the web client (which resolves /workspace/<p>
 		// against the project root) and the gateway (which folds a "<sid>/"
 		// prefix back into the session scope) both land on the same file.
-		ref := name
-		if projectID != "" && sessionID != "" {
-			ref = sessionID + "/" + name
-		}
-		a.writeWorkspaceBytes(ctx, sessionID, projectID, name, data)
-		urlToName[url] = ref
-		return fmt.Sprintf("![%s](/workspace/%s)", alt, ref)
+			ref := name
+			if projectID != "" && sessionID != "" {
+				ref = sessionID + "/" + name
+			}
+			if wErr := a.writeWorkspaceBytes(ctx, sessionID, projectID, name, data); wErr != nil {
+				// All backends failed — surface a failure notice instead of
+				// a /workspace ref that would point at a nonexistent file.
+				slog.Warn("image_gen persist: all workspace writes failed", "agent", a.name, "name", name, "error", wErr)
+				return "[图片生成失败：写入工作区失败，请重试或调整提示词]"
+			}
+			urlToName[url] = ref
+			return fmt.Sprintf("![%s](/workspace/%s)", alt, ref)
 	})
 }
 
@@ -553,15 +576,20 @@ func (a *Agent) persistImageGenOutput(ctx context.Context, sessionID, projectID,
 // Store (durable; the gateway reads /workspace/ refs and the turn-end
 // fallback from here), and the live sandbox (E2B mid-session). Best-effort
 // across backends; per-backend failures are logged, not fatal. Mirrors the
-// three-write loop in WriteSessionAttachments.
-func (a *Agent) writeWorkspaceBytes(ctx context.Context, sessionID, projectID, name string, data []byte) {
+// three-write loop in WriteSessionAttachments. Returns an error only when
+// every backend failed, so callers can avoid handing out a /workspace ref
+// that resolves to nothing.
+func (a *Agent) writeWorkspaceBytes(ctx context.Context, sessionID, projectID, name string, data []byte) error {
 	ext := filepath.Ext(name)
 	// Same scope whitelist as WriteSessionAttachments — image_gen runs on
 	// the same client-reachable session/project identifiers.
 	if err := validateScopeIDs(sessionID, projectID); err != nil {
 		slog.Warn("image_gen write skipped: invalid scope id", "agent", a.name, "session", sessionID, "project", projectID, "error", err)
-		return
+		return err
 	}
+	// written mirrors WriteSessionAttachments: at least one backend must
+	// accept the bytes before callers may reference the path.
+	written := false
 	// Same scoped-host-dir logic as WriteSessionAttachments step 1 — see
 	// the stale-UserRoot note there. writeWorkspaceBytes runs inside the
 	// agent loop (bindSession has set UserRoot for the current turn), so
@@ -577,15 +605,19 @@ func (a *Agent) writeWorkspaceBytes(ctx context.Context, sessionID, projectID, n
 	}
 	if hostDir != "" {
 		full := filepath.Join(hostDir, name)
-		if mkErr := os.MkdirAll(hostDir, 0o755); mkErr == nil {
-			if wErr := os.WriteFile(full, data, 0o644); wErr != nil {
-				slog.Warn("image_gen host write failed", "agent", a.name, "path", full, "error", wErr)
-			}
+		if mkErr := os.MkdirAll(hostDir, 0o755); mkErr != nil {
+			slog.Warn("image_gen host mkdir failed", "agent", a.name, "dir", hostDir, "error", mkErr)
+		} else if wErr := os.WriteFile(full, data, 0o644); wErr != nil {
+			slog.Warn("image_gen host write failed", "agent", a.name, "path", full, "error", wErr)
+		} else {
+			written = true
 		}
 	}
 	if a.workspaceStore != nil {
 		if pErr := a.workspaceStore.Put(ctx, a.agentID, projectID, sessionID, name, strings.NewReader(string(data)), int64(len(data)), contentTypeFromExt(ext)); pErr != nil {
 			slog.Warn("image_gen store put failed", "agent", a.name, "path", name, "error", pErr)
+		} else {
+			written = true
 		}
 	}
 	if a.sandboxPool != nil {
@@ -600,7 +632,13 @@ func (a *Agent) writeWorkspaceBytes(ctx context.Context, sessionID, projectID, n
 		if ex, gErr := a.sandboxPool.Get(ctx, a.name, projectID, sessionID); gErr == nil && ex != nil {
 			if _, wErr := ex.WriteFile(ctx, "/workspace/"+mountRel, string(data)); wErr != nil {
 				slog.Warn("image_gen sandbox write failed", "agent", a.name, "path", mountRel, "error", wErr)
+			} else {
+				written = true
 			}
 		}
 	}
+	if !written {
+		return fmt.Errorf("all workspace backends failed for %s", name)
+	}
+	return nil
 }

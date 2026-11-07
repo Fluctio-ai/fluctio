@@ -3,8 +3,10 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -103,10 +105,16 @@ func recoverToolCallsFromContent(content string) ([]provider.ToolCall, string) {
 	if !strings.Contains(content, "<invoke") && !tagLeakHintRE.MatchString(content) {
 		return nil, content
 	}
+	// Mask fenced code blocks before matching: a model asked to SHOW an
+	// example tool call puts the XML inside ``` fences — that is prose to
+	// execute-never, and the pre-mask behavior recovered it into a real
+	// call, executed it, and cut it out of the visible answer. Fences are
+	// masked for parsing and restored verbatim in the residual.
+	masked, fences := maskFencedBlocks(content)
 	// Collapse leaked-token noise (`<｜tool_calls｜>`, `< | | DSML | |
 	// invoke …>`, closing variants) into plain `<tag …>` shapes the
 	// parser already understands. No-op when the content is clean.
-	normalized := leakedTagRE.ReplaceAllString(content, `<${1}${2}${3}>`)
+	normalized := leakedTagRE.ReplaceAllString(masked, `<${1}${2}${3}>`)
 
 	matches := invokeRE.FindAllStringSubmatchIndex(normalized, -1)
 	if len(matches) == 0 {
@@ -118,7 +126,7 @@ func recoverToolCallsFromContent(content string) ([]provider.ToolCall, string) {
 			return nil, content
 		}
 		scrubbed := strings.TrimSpace(stripRE.ReplaceAllString(normalized, ""))
-		return nil, scrubbed
+		return nil, unmaskFencedBlocks(scrubbed, fences)
 	}
 	calls := make([]provider.ToolCall, 0, len(matches))
 	for i, m := range matches {
@@ -151,7 +159,7 @@ func recoverToolCallsFromContent(content string) ([]provider.ToolCall, string) {
 			return nil, content
 		}
 		scrubbed := strings.TrimSpace(stripRE.ReplaceAllString(normalized, ""))
-		return nil, scrubbed
+		return nil, unmaskFencedBlocks(scrubbed, fences)
 	}
 	// Strip the recovered XML out of the content. We pull every
 	// <invoke> block, plus the common outer wrappers (tool_calls,
@@ -159,7 +167,41 @@ func recoverToolCallsFromContent(content string) ([]provider.ToolCall, string) {
 	// human-readable preamble — if any — without dangling tags.
 	stripped := stripRE.ReplaceAllString(normalized, "")
 	stripped = strings.TrimSpace(stripped)
-	return calls, stripped
+	return calls, unmaskFencedBlocks(stripped, fences)
+}
+
+// fenceMaskRE matches a complete ``` fenced code block (any info string,
+// any body). Only complete fences are masked; an unterminated fence tail
+// stays in play for the parser.
+var fenceMaskRE = regexp.MustCompile("(?s)`{3,}.*?`{3,}")
+
+// maskFencedBlocks replaces every fenced block with a \x00<idx>\x00
+// placeholder so the recovery parser can't see invoke-shaped examples the
+// model was asked to display. Returns the masked text plus the original
+// blocks for unmaskFencedBlocks.
+func maskFencedBlocks(content string) (string, []string) {
+	idx := 0
+	var fences []string
+	masked := fenceMaskRE.ReplaceAllStringFunc(content, func(m string) string {
+		fences = append(fences, m)
+		token := "\x00" + strconv.Itoa(idx) + "\x00"
+		idx++
+		return token
+	})
+	return masked, fences
+}
+
+// unmaskFencedBlocks puts the original fenced blocks back. Placeholders
+// that lost their fence (regexes can't drop them — they contain no
+// backticks or XML tags) simply don't occur.
+func unmaskFencedBlocks(s string, fences []string) string {
+	if len(fences) == 0 {
+		return s
+	}
+	for i, f := range fences {
+		s = strings.ReplaceAll(s, "\x00"+strconv.Itoa(i)+"\x00", f)
+	}
+	return s
 }
 
 // invokeRE pulls one <invoke name="..."> ... </invoke> block at a time.
@@ -231,7 +273,11 @@ func parseInvokeParameters(body string) map[string]any {
 		// p[1]=name, p[2]="true"/"false"/"", p[3]=raw VALUE
 		name := p[1]
 		typeHint := p[2]
-		raw := p[3]
+		// XML-escape decoding: entity-accurate models emit `&amp;&amp;`
+		// for `&&` inside parameter text — handed to a shell verbatim
+		// that's a background-operator, not the intended command. Decode
+		// the predefined XML entities before use.
+		raw := html.UnescapeString(p[3])
 		if typeHint == "false" {
 			// Raw JSON value. If it doesn't parse, fall back to string —
 			// better to ship a wrong-typed arg than drop the parameter

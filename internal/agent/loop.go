@@ -2754,9 +2754,8 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
 		sessionMsgs = append(prefix, sessionMsgs...)
 	}
-	if prefix := sess.ParentPrefixMessages(); len(prefix) > 0 {
-		sessionMsgs = append(prefix, sessionMsgs...)
-	}
+	// (duplicate append removed — the second identical block below sent
+	// the parent fork prefix twice, doubling plan-turn tokens)
 	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 	if a.piiScrubEnabled {
 		messages = privacy.ScrubMessages(messages, privacy.Options{Entropy: a.piiEntropyEnabled})
@@ -3221,7 +3220,12 @@ func llmRetry(ctx context.Context, label string, fn func(context.Context) (*prov
 // recovery fires at most once — a second PTL on the compressed payload means
 // even the summary won't fit, and there's nothing more useful to do than
 // surface the error.
-func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.Message, tools []provider.Tool, callLLM func(context.Context, []provider.Message, []provider.Tool) (*provider.Response, error)) (*provider.Response, []provider.Message, error) {
+//
+// The returned bool reports whether PTL compaction actually shrank the
+// history; callers persist the shrunken messages onto the session then
+// (see persistPTLCompaction), otherwise the next turn reloads the full
+// oversized history and re-pays the compaction every round.
+func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.Message, tools []provider.Tool, callLLM func(context.Context, []provider.Message, []provider.Tool) (*provider.Response, error)) (*provider.Response, []provider.Message, bool, error) {
 	// Quota breaker gate: while the provider's quota is known-exhausted,
 	// short-circuit BEFORE contacting the provider — every message during
 	// the outage would otherwise re-burn the retry ladder for the same
@@ -3229,7 +3233,7 @@ func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.
 	// real call (half-open probe): success clears the breaker, a repeat
 	// quota error re-arms it below.
 	if blocked, reason, retryAt := a.quota.gate(time.Now()); blocked {
-		return nil, messages, &quotaOpenError{reason: reason, retryAt: retryAt}
+		return nil, messages, false, &quotaOpenError{reason: reason, retryAt: retryAt}
 	}
 	// llmRetry keeps the transient-error backoff (network/5xx/429) and
 	// routes terminal + context-length errors immediately, so the PTL
@@ -3240,29 +3244,32 @@ func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.
 	})
 	if err == nil {
 		a.quota.clear() // any success (probe or normal) means quota is back
-		return resp, messages, nil
+		return resp, messages, false, nil
 	}
 	if classifyLLMError(err) == "quota_exhausted" {
 		a.quota.trip(err.Error(), time.Now(), a.quotaProbeInterval(ctx))
 	}
 	if !errors.Is(err, ErrContextTooLong) {
-		return nil, messages, err
+		return nil, messages, false, err
 	}
 
 	// PTL: compress the history portion and retry once. Find the split
 	// point — the system messages live at the front (role=="system");
-	// everything after the last system message is conversation history
-	// safe to compact. Guard against an all-system edge case (no history
-	// to compress → nothing we can do).
-	split := len(messages)
-	for split > 0 && messages[split-1].Role == "system" {
-		split--
+	// everything after the leading system block is conversation history
+	// safe to compact. (The previous backward walk matched only a
+	// TRAILING system run: with the standard [system…, user, assistant…]
+	// layout it left history empty, CompactMessages returned Pruned=false,
+	// and PTL recovery silently never fired.) Guard against an all-system
+	// edge case (no history to compress → nothing we can do).
+	split := 0
+	for split < len(messages) && messages[split].Role == "system" {
+		split++
 	}
-	if split == 0 {
+	if split == len(messages) {
 		// No history to compact — the system prompt alone overflows.
 		slog.Error("PTL recovery: system prompt alone exceeds context window",
 			"agent", a.name, "msg_count", len(messages))
-		return nil, messages, err
+		return nil, messages, false, err
 	}
 	sysPrefix := messages[:split]
 	history := messages[split:]
@@ -3271,10 +3278,10 @@ func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.
 	threshold := a.compactionThresholdNow("")
 	forceThreshold := max(threshold/2, 1000)
 	compactResult, cerr := CompactMessages(history, a.homePath, a.bgProvider(), a.model, forceThreshold)
-	if cerr != nil || compactResult == nil || !compactResult.Pruned {
+	if cerr != nil || compactResult == nil || !compactResult.Pruned || len(compactResult.Messages) >= len(history) {
 		slog.Warn("PTL recovery: compaction did not reduce history",
 			"agent", a.name, "error", cerr)
-		return nil, messages, err
+		return nil, messages, false, err
 	}
 	slog.Info("PTL recovery: compacted history, retrying LLM call",
 		"agent", a.name,
@@ -3284,7 +3291,43 @@ func (a *Agent) callLLMWithPTLRecovery(ctx context.Context, messages []provider.
 	resp, err = llmRetry(ctx, a.name, func(ctx context.Context) (*provider.Response, error) {
 		return callLLM(ctx, messages, tools)
 	})
-	return resp, messages, err
+	return resp, messages, true, err
+}
+
+// persistPTLCompaction writes the PTL recovery's compacted history back
+// onto the session so the next turn doesn't reload the oversized history
+// and re-trigger (and re-pay, with an LLM summary call) compaction every
+// round. The session's share of the compacted result is recovered by
+// anchoring on the longest common suffix with the session's current
+// messages: compaction preserves the recent tail verbatim, so everything
+// before that anchor is replaced by the summary message. Transient
+// turn-local nudges (present in the compacted list but never appended to
+// the session) simply shorten the anchor instead of leaking into history.
+func persistPTLCompaction(sess *session.Session, compacted []provider.Message) {
+	if sess == nil || len(compacted) < 2 {
+		return
+	}
+	sessNow := sess.GetMessages()
+	i, j := len(compacted), len(sessNow)
+	for i > 0 && j > 0 &&
+		compacted[i-1].Role == sessNow[j-1].Role &&
+		compacted[i-1].Content == sessNow[j-1].Content &&
+		compacted[i-1].ToolCallID == sessNow[j-1].ToolCallID {
+		i--
+		j--
+	}
+	if j == len(sessNow) {
+		return // no overlap — cannot anchor, refuse to guess
+	}
+	merged := make([]provider.Message, 0, 1+len(sessNow)-j)
+	merged = append(merged, compacted[0]) // the [Conversation Summary] message
+	merged = append(merged, sessNow[j:]...)
+	if len(merged) >= len(sessNow) {
+		return // nothing to gain — don't rewrite the session
+	}
+	slog.Info("PTL recovery: persisted compacted history onto session",
+		"before_msgs", len(sessNow), "after_msgs", len(merged))
+	sess.ReplaceMessages(merged)
 }
 
 // HandleMessage processes an inbound message through the ReAct loop.
@@ -3745,6 +3788,12 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// so their results are in `messages` when the LLM picks up the turn.
 	totalToolCalls += a.drainApprovedPending(ctx, sess, &messages)
 
+	// Snapshot of the pre-turn message count — everything appended after
+	// this index is this turn's new content, which is all runPostTurn
+	// should FTS-index (the old full-working-set scan re-indexed the
+	// entire history every turn; FTSStore.Index is a blind INSERT).
+	turnBase := len(messages)
+
 	// ReAct loop
 	for i := 0; i < a.maxToolIterations; i++ {
 		slog.Info("agent loop iteration",
@@ -3842,7 +3891,8 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// long-running task survives a context-window overflow mid-turn
 		// instead of dying with "processing_failed".
 		var resp *provider.Response
-		resp, messages, err = a.callLLMWithPTLRecovery(ctx, messages, callTools, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
+		var ptlCompacted bool
+		resp, messages, ptlCompacted, err = a.callLLMWithPTLRecovery(ctx, messages, callTools, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
 			llm := msgs
 			if a.piiScrubEnabled {
 				llm = privacy.ScrubMessages(msgs, privacy.Options{Entropy: a.piiEntropyEnabled})
@@ -3860,6 +3910,17 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			// handles it (and the persisted notice) for both loops.
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
 			return a.failTurn(ctx, sess, msg.Lang, err, totalToolCalls)
+		}
+		if ptlCompacted {
+			// The PTL shrinkage must survive this turn — otherwise every
+			// subsequent turn reloads the oversized session and re-pays
+			// the compaction LLM call.
+			persistPTLCompaction(sess, messages)
+			// messages was replaced with the compacted slice; the old
+			// turnBase offset no longer refers into it. Treat the whole
+			// compacted set as this turn's new content (it gets indexed
+			// once instead of every subsequent turn).
+			turnBase = 0
 		}
 		a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 		a.maybeRecoverToolCalls(resp)
@@ -3939,7 +4000,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 				continue
 			}
 			emitEvent(ctx, ChatEvent{Type: "done"})
-			a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
+			a.runPostTurn(ctx, msg, messages, messages[turnBase:], totalToolCalls, chatterMem)
 			return joinReplyParts(replyParts)
 		}
 
@@ -3996,6 +4057,9 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 			}
 		}
 		if loopDetected {
+			// Pad the orphan tool_use before leaving the loop — see
+			// padLoopBreakOrphans for why the 400 otherwise eats the turn.
+			messages = padLoopBreakOrphans(sess, messages, resp.ToolCalls)
 			break
 		}
 
@@ -4216,7 +4280,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// in context.
 		if authPrompted {
 			emitEvent(ctx, ChatEvent{Type: "done"})
-			a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
+			a.runPostTurn(ctx, msg, messages, messages[turnBase:], totalToolCalls, chatterMem)
 			return joinReplyParts(replyParts)
 		}
 
@@ -4264,8 +4328,28 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		replyParts = append(replyParts, finalContent)
 	}
 	emitEvent(ctx, ChatEvent{Type: "done"})
-	a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
+	a.runPostTurn(ctx, msg, messages, messages[turnBase:], totalToolCalls, chatterMem)
 	return joinReplyParts(replyParts)
+}
+
+// padLoopBreakOrphans synthesizes placeholder tool results for a round
+// whose tool calls will never execute because loop detection broke out
+// of the ReAct loop. Without this, the just-appended assistant(tool_calls)
+// has no matching tool_result, and the forced final-delivery LLM call is
+// rejected with 400 by strict providers (Anthropic / OpenAI-compatible)
+// — the whole turn's work was lost to a canned error line.
+func padLoopBreakOrphans(sess *session.Session, messages []provider.Message, calls []provider.ToolCall) []provider.Message {
+	for _, tc := range calls {
+		res := provider.Message{
+			Role:       "tool",
+			ToolCallID: tc.ID,
+			Name:       tc.Function.Name,
+			Content:    "not executed: loop detection stopped the turn (same tool called with identical arguments repeatedly)",
+		}
+		sess.Append(res)
+		messages = append(messages, res)
+	}
+	return messages
 }
 
 // joinReplyParts joins accumulated assistant text segments with
@@ -4395,17 +4479,25 @@ func hideTrippedTools(toolDefs []provider.Tool, streak map[string]int, limit int
 // goroutine that drains the SSE stream, after the final assistant
 // message has been appended to the session — i.e. after the user's
 // reply is fully on-record.
-func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, messages []provider.Message, toolCallCount int, chatterMem *Memory) {
+// runPostTurn runs the post-turn pipeline (FTS indexing, hooks, pending
+// notices, auto-persist, summary extraction). newMsgs is the slice of
+// messages this turn added to the working set — FTS indexes only those,
+// never the full history.
+func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, messages, newMsgs []provider.Message, toolCallCount int, chatterMem *Memory) {
 	if chatterMem == nil {
 		chatterMem = a.memory
 	}
 	a.turnCount.Add(1)
 
-	// Index user/assistant messages in FTS. Skip runtime-injected
-	// messages (e.g. goal_context continuations) — they're synthetic
-	// audit prompts, not searchable conversation content.
+	// Index user/assistant messages in FTS. Only the turn's new messages:
+	// the previous full-working-set scan re-INSERTed every historical
+	// OriginUser message on every turn (FTSStore.Index is a blind INSERT
+	// with no dedup), so index rows grew with the square of the
+	// conversation length. Skip runtime-injected messages (e.g.
+	// goal_context continuations) — they're synthetic audit prompts, not
+	// searchable conversation content.
 	if a.ftsStore != nil {
-		for _, m := range messages {
+		for _, m := range newMsgs {
 			if m.Origin != provider.OriginUser {
 				continue
 			}
@@ -4500,7 +4592,15 @@ func (a *Agent) runPostTurn(ctx context.Context, msg bus.InboundMessage, message
 	// Skills learner
 	if a.skillsLearner != nil {
 		go func() {
-			if err := a.skillsLearner.MaybeExtract(ctx, messages, toolCallCount); err != nil {
+			// Detach from the caller's ctx (request / taskTimeout) — the
+			// turn ends right after this goroutine is launched, so the raw
+			// ctx is cancelled within milliseconds and the extraction
+			// silently died every time. Mirrors AutoPersistMemory's
+			// WithoutCancel pattern (and maybeExtractSummary's 3-minute
+			// cap since no parent deadline remains).
+			c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
+			defer cancel()
+			if err := a.skillsLearner.MaybeExtract(c, messages, toolCallCount); err != nil {
 				slog.Debug("skills learner error", "error", err)
 			}
 		}()
@@ -4588,6 +4688,27 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// like DeepSeek's /anthropic — then 400s with "tool_use ids were found
 	// without tool_result blocks immediately after".
 	defer sess.PadOrphanToolResultsAndMarkAborted(session.ToolResultStoppedNote)
+
+	// Turn lifecycle, mirroring HandleMessage: without BeginTurn the
+	// streaming turn never looks in-flight, so SteerWeb/SteerInbound's
+	// PushSteerIfActive always failed (steer degraded into a queued
+	// second turn) and the failure-sweep's TryBeginTurn probe could
+	// interleave a replay with this running turn.
+	if msg.Source == bus.SourceFailureRetry {
+		if !sess.TryBeginTurn() {
+			slog.Info("failure replay skipped — user turn in flight",
+				"agent", a.name, "session", sess.SessionKey())
+			return a.stringStream("")
+		}
+	} else {
+		sess.BeginTurn()
+	}
+	defer a.flushLeftoverSteer(sess)
+
+	// Reset per-turn tool failure tracking — see the StartTurn note in
+	// HandleMessage: without it, PriorFailure short-circuits leak across
+	// turns on the streaming path too.
+	a.registry.StartTurn()
 
 	a.hooks.Run(ctx, &HookContext{AgentName: a.name, Point: BeforeSystemPrompt, UserID: a.ownerUserID})
 	chatterMem := a.memory
@@ -4708,6 +4829,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 	// Drain user-authorized pending calls (/yes, /yolo) BEFORE the loop.
 	totalToolCalls += a.drainApprovedPending(ctx, sess, &messages)
 
+	// Same turnBase snapshot as HandleMessage — see the comment there.
+	turnBase := len(messages)
+
 	// ReAct loop - use Chat for tool iterations
 	for i := 0; i < a.maxToolIterations; i++ {
 		hcBefore := &HookContext{AgentName: a.name, Point: BeforeModelCall, Messages: messages, Source: msg.Source, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, ChatOnly: chatOnly}
@@ -4727,12 +4851,25 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		}
 		messages = hcBefore.Messages
 
-		dumpLLMRequest(a.name, a.model, messages, toolDefs)
+		// PII scrub snapshot for the dump only — the actual call's scrub
+		// happens inside the callLLMWithPTLRecovery callback. Mirrors the
+		// non-streaming path: without it the OpenAI-compatible streaming
+		// endpoint silently bypassed the piiScrubbing privacy switch.
+		dumpMessages := messages
+		if a.piiScrubEnabled {
+			dumpMessages = privacy.ScrubMessages(messages, privacy.Options{Entropy: a.piiEntropyEnabled})
+		}
+		dumpLLMRequest(a.name, a.model, dumpMessages, toolDefs)
 		// Same PTL recovery as the non-streaming path: compact + retry on
 		// context-length overflow so a long task survives instead of dying.
 		var resp *provider.Response
-		resp, messages, err = a.callLLMWithPTLRecovery(ctx, messages, toolDefs, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
-			return a.provider.Chat(ctx, msgs, tools, a.model, a.maxTokens, a.temperature)
+		var ptlCompacted bool
+		resp, messages, ptlCompacted, err = a.callLLMWithPTLRecovery(ctx, messages, toolDefs, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
+			llm := msgs
+			if a.piiScrubEnabled {
+				llm = privacy.ScrubMessages(msgs, privacy.Options{Entropy: a.piiEntropyEnabled})
+			}
+			return a.provider.Chat(ctx, llm, tools, a.model, a.maxTokens, a.temperature)
 		})
 
 		hcAfter := &HookContext{AgentName: a.name, Point: AfterModelCall, Messages: messages, Response: resp, Error: err, StartTime: hcBefore.StartTime, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, GoalSessionKey: a.registry.GoalSessionKey()}
@@ -4742,20 +4879,29 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			slog.Error("LLM chat failed after retries", "agent", a.name, "error", err)
 			return a.stringStream(a.failTurn(ctx, sess, msg.Lang, err, totalToolCalls))
 		}
+		if ptlCompacted {
+			// The PTL shrinkage must survive this turn — otherwise every
+			// subsequent turn reloads the oversized session and re-pays
+			// the compaction LLM call.
+			persistPTLCompaction(sess, messages)
+			// messages was replaced with the compacted slice; see the
+			// matching turnBase reset in HandleMessage.
+			turnBase = 0
+		}
 		a.meterTokens(ctx, sess.Key(), resp.Usage, 0)
 		a.maybeRecoverToolCalls(resp)
 
 		if !resp.HasToolCalls() {
-			// Final response - use streaming
-			sr, err := a.provider.ChatStream(ctx, messages, toolDefs, a.model, a.maxTokens, a.temperature)
-			if err != nil {
-				slog.Error("LLM stream failed, falling back", "agent", a.name, "error", err)
-				sess.Append(provider.Message{Role: "assistant", Content: resp.Content})
-				a.runPostTurn(ctx, msg, append(messages, provider.Message{Role: "assistant", Content: resp.Content}), totalToolCalls, chatterMem)
-				return a.stringStream(resp.Content)
-			}
-
-			// Collect content in background for session storage.
+			// Final response. The answer was ALREADY fully generated by
+			// the pre-call Chat above — feeding the same messages through
+			// ChatStream regenerated the entire answer a second time,
+			// wasting the full output and billing it twice. Emit the
+			// existing answer as a single delta instead (trade-off: no
+			// incremental token streaming on this endpoint's final
+			// answers; correctness, persistence and metering unchanged —
+			// resp.RawAssistant also replays byte-identically next turn,
+			// which the stream-chunk path could not guarantee for
+			// DeepSeek thinking mode).
 			// Capture inbound msg + per-turn state out here — the goroutine
 			// below shadows `msg` with the local assistant Message, and
 			// runPostTurn needs the inbound (channel / chat_id / source).
@@ -4763,68 +4909,27 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			messagesAtTurnStart := messages
 			capturedToolCalls := totalToolCalls
 			capturedChatterMem := chatterMem
-			outCh := make(chan provider.StreamChunk, 64)
+			outCh := make(chan provider.StreamChunk, 2)
 			outReader := provider.NewStreamReader(outCh)
 			go func() {
 				defer close(outCh)
-				var full strings.Builder
-				var thinking, thinkingSig string
-				var rawAssistant json.RawMessage
-				var streamUsage provider.Usage
-				for {
-					chunk, ok := sr.Next()
-					if !ok {
-						break
-					}
-					if chunk.Content != "" {
-						full.WriteString(chunk.Content)
-					}
-					if chunk.Thinking != "" {
-						thinking = chunk.Thinking
-					}
-					if chunk.ThinkingSignature != "" {
-						thinkingSig = chunk.ThinkingSignature
-					}
-					if len(chunk.RawAssistant) > 0 {
-						rawAssistant = chunk.RawAssistant
-					}
-					if chunk.Usage.InputTokens > 0 || chunk.Usage.OutputTokens > 0 ||
-						chunk.Usage.CacheReadTokens > 0 || chunk.Usage.CacheCreationTokens > 0 {
-						streamUsage = chunk.Usage
-					}
-					select {
-					case outCh <- chunk:
-					case <-ctx.Done():
-						return
-					}
+				msg := provider.Message{Role: "assistant", Content: resp.Content, Thinking: resp.Thinking, Metadata: kbSourcesMetadata(kbSources), Timestamp: time.Now().UnixMilli(), RawAssistant: resp.RawAssistant}
+				select {
+				case outCh <- provider.StreamChunk{Content: resp.Content}:
+				case <-ctx.Done():
+					return
 				}
-				a.meterTokens(ctx, sess.Key(), streamUsage, 0)
-				msg := provider.Message{Role: "assistant", Content: full.String(), Thinking: thinking, Metadata: kbSourcesMetadata(kbSources)}
-				switch {
-				case len(rawAssistant) > 0:
-					// Provider already serialized the assistant message
-					// in its wire format (e.g. OpenAI/DeepSeek with
-					// reasoning_content). Persist verbatim so the next
-					// turn replays it byte-identically — required for
-					// DeepSeek thinking mode.
-					msg.RawAssistant = rawAssistant
-				case thinking != "":
-					// Anthropic extended thinking: pack {thinking, signature}
-					// as a content-block so the next turn can echo it back.
-					if raw, err := json.Marshal(map[string]string{
-						"type":      "thinking",
-						"thinking":  thinking,
-						"signature": thinkingSig,
-					}); err == nil {
-						msg.RawAssistant = raw
-					}
+				select {
+				case outCh <- provider.StreamChunk{Done: true}:
+				case <-ctx.Done():
+					return
 				}
 				sess.Append(msg)
 				// Fire PostTurn now that the assistant message is
 				// persisted. Auto-persist (memory.go) lives behind
 				// runPostTurn; without this call the streaming path
 				// silently skipped it — see the FIXME at runPostTurn.
-				a.runPostTurn(ctx, inboundMsg, append(messagesAtTurnStart, msg), capturedToolCalls, capturedChatterMem)
+				a.runPostTurn(ctx, inboundMsg, append(messagesAtTurnStart, msg), []provider.Message{msg}, capturedToolCalls, capturedChatterMem)
 			}()
 			return outReader
 		}
@@ -4868,6 +4973,9 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			}
 		}
 		if loopDetected {
+			// Pad the orphan tool_use before leaving the loop — see
+			// padLoopBreakOrphans for why the 400 otherwise eats the turn.
+			messages = padLoopBreakOrphans(sess, messages, resp.ToolCalls)
 			break
 		}
 
@@ -4949,13 +5057,13 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		// a redundant agent bubble. Mirrors the HandleMessage fix.
 		if authPrompted {
 			emitEvent(ctx, ChatEvent{Type: "done"})
-			a.runPostTurn(ctx, msg, messages, totalToolCalls, chatterMem)
+			a.runPostTurn(ctx, msg, messages, messages[turnBase:], totalToolCalls, chatterMem)
 			return a.stringStream("")
 		}
 	}
 
 	slog.Warn("max tool iterations reached — streaming forced final delivery", "agent", a.name, "max", a.maxToolIterations)
-	return a.streamFinalDeliveryAfterCap(ctx, msg, messages, sess, totalToolCalls, chatterMem)
+	return a.streamFinalDeliveryAfterCap(ctx, msg, messages, messages[turnBase:], sess, totalToolCalls, chatterMem)
 }
 
 // streamFinalDeliveryAfterCap runs one extra ChatStream with tools
@@ -4963,7 +5071,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 // with iteration-cap metadata so the chat UI can badge the bubble.
 // Returned StreamReader matches the contract of the normal "final
 // response" branch above so callers don't need a special case.
-func (a *Agent) streamFinalDeliveryAfterCap(ctx context.Context, inboundMsg bus.InboundMessage, messages []provider.Message, sess *session.Session, toolCallCount int, chatterMem *Memory) *provider.StreamReader {
+func (a *Agent) streamFinalDeliveryAfterCap(ctx context.Context, inboundMsg bus.InboundMessage, messages, newMsgs []provider.Message, sess *session.Session, toolCallCount int, chatterMem *Memory) *provider.StreamReader {
 	capMeta := iterationCapMetadata(a.maxToolIterations)
 	finalMessages := append(messages, capReachedNudge(a.maxToolIterations))
 	sr, err := a.provider.ChatStream(ctx, finalMessages, nil, a.model, a.maxTokens, a.temperature)
@@ -4974,7 +5082,7 @@ func (a *Agent) streamFinalDeliveryAfterCap(ctx context.Context, inboundMsg bus.
 		fallbackMsg := provider.Message{Role: "assistant", Content: fallback, Metadata: capMeta, Timestamp: time.Now().UnixMilli()}
 		sess.Append(fallbackMsg)
 		emitEvent(ctx, ChatEvent{Type: "content", Data: map[string]any{"content": fallback, "metadata": capMeta}})
-		a.runPostTurn(ctx, inboundMsg, append(messages, fallbackMsg), toolCallCount, chatterMem)
+		a.runPostTurn(ctx, inboundMsg, append(messages, fallbackMsg), append(newMsgs, fallbackMsg), toolCallCount, chatterMem)
 		return a.stringStream(fallback)
 	}
 
@@ -5048,7 +5156,7 @@ func (a *Agent) streamFinalDeliveryAfterCap(ctx context.Context, inboundMsg bus.
 		// Fire PostTurn so AutoPersist (and any future PostTurn hook)
 		// runs on the streaming path too — see the no-tool-calls
 		// branch in HandleMessageStream for the rationale.
-		a.runPostTurn(ctx, inboundMsg, append(messages, finalMsg), toolCallCount, chatterMem)
+		a.runPostTurn(ctx, inboundMsg, append(messages, finalMsg), append(newMsgs, finalMsg), toolCallCount, chatterMem)
 	}()
 	return outReader
 }

@@ -178,13 +178,21 @@ func NewManager(resolved []config.ResolvedAgent, prov provider.Provider, mb *bus
 // AddAgent's hot-reload path so a freshly-onboarded agent picks up the
 // same DB-backed identity / memory / workspace plumbing.
 func (m *Manager) buildAgent(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus) *Agent {
+	return m.buildAgentWithSkillsCfg(rc, prov, mb, m.opts.globalSkillsCfg)
+}
+
+// buildAgentWithSkillsCfg is buildAgent with an explicit skills cfg —
+// the override is a parameter, never a temporary swap of m.opts, so
+// concurrent builds can't observe (or keep) another agent's one-shot
+// override.
+func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus, skillsCfg config.SkillsCfg) *Agent {
 	homeDir, _ := config.HomeDir()
-	// Pass the global SkillsCfg through so SkillsLoader sees the
+	// Pass the SkillsCfg through so SkillsLoader sees the
 	// admin-UI-configured per-skill apiKey + env (and the per-agent
 	// override map). Plain NewAgent constructs the loader with a
 	// zero-value SkillsCfg, which is why FAL_KEY / REPLICATE_API_TOKEN
 	// were never reaching the sandbox.
-	ag := NewAgentWithSkillsCfg(rc, providerForAgent(rc, prov), mb, homeDir, m.opts.globalSkillsCfg)
+	ag := NewAgentWithSkillsCfg(rc, providerForAgent(rc, prov), mb, homeDir, skillsCfg)
 	ag.id = rc.ID
 	// Inject Phase 2 compaction fields onto the agent so
 	// compactionThresholdNow can compute a model-aware threshold.
@@ -576,28 +584,25 @@ func (m *Manager) AddAgent(rc config.ResolvedAgent, prov provider.Provider, mb *
 }
 
 // AddAgentWithSkillsCfg is AddAgent + a one-shot skills cfg override that
-// replaces m.opts.globalSkillsCfg for just this build. EnsureAgent (which
+// replaces the manager-level cfg for just this build. EnsureAgent (which
 // injects a foreign agent into a different user's UserSpace) uses this so
 // the SkillsLoader closure baked into the new agent picks up the agent's
 // own agent-scope skill env (e.g. image-tool's REPLICATE_API_TOKEN) — the
 // caller's UserSpace cfg doesn't carry it because the agent isn't owned
 // by the caller.
 //
-// The override is local: m.opts.globalSkillsCfg is restored before
-// returning so the next AddAgent on the same manager goes back to the
-// caller's own cfg. The agents-map access is guarded by m.mu (same as
-// AddAgent); the sp.mu callers (UserSpace.EnsureAgent) take additionally
-// serializes the m.opts swap against concurrent builds on this manager.
+// The override is passed to buildAgent as a parameter (no temporary swap
+// of m.opts.globalSkillsCfg): any new caller entering without the UserSpace
+// lock used to leak the override into every other agent's build, mismatching
+// their skill apiKey/env. The agents-map access is guarded by m.mu (same as
+// AddAgent).
 func (m *Manager) AddAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus, cfg config.SkillsCfg) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, exists := m.agents[rc.ID]; exists {
 		return fmt.Errorf("agent %q already exists", rc.ID)
 	}
-	prev := m.opts.globalSkillsCfg
-	m.opts.globalSkillsCfg = cfg
-	m.agents[rc.ID] = m.buildAgent(rc, prov, mb)
-	m.opts.globalSkillsCfg = prev
+	m.agents[rc.ID] = m.buildAgentWithSkillsCfg(rc, prov, mb, cfg)
 	slog.Info("agent added dynamically with override skills cfg", "id", rc.ID, "model", rc.Model)
 	return nil
 }

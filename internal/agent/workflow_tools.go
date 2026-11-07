@@ -263,6 +263,13 @@ func (a *Agent) registerWorkflowTools() {
 			if err := json.Unmarshal(raw, &req); err != nil || req.ID == "" {
 				return "", fmt.Errorf("workflow_get: bad args (want id)")
 			}
+			// Same id gate as workflow_save: "../x" joined into the
+			// workflows dir would read any host .yaml and hand it to the
+			// model. The save side already validated; the read side was
+			// the missing half of the same gate.
+			if err := workflow.ValidateID(req.ID); err != nil {
+				return "", fmt.Errorf("workflow_get: %w", err)
+			}
 			b, err := os.ReadFile(filepath.Join(a.WorkflowsDir(), req.ID+".yaml"))
 			if err != nil {
 				return "", fmt.Errorf("workflow_get: %w", err)

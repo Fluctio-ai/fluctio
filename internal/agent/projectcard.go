@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -48,6 +49,15 @@ const (
 	// holds more rows, the oldest spill into 会话归档.
 	projectCardMaxLiveRows = 30
 )
+
+// projectCardMu serializes PROJECT.md read-modify-write cycles
+// (ensureProjectCardEntry / reconcileProjectCard) within this process.
+// Both are Get-full-file → rewrite → Put-full-file and workspace.Store
+// has no versioning, so concurrent writers (session-create ensure vs the
+// hourly sweep vs an immediate post-delete reconcile) would last-write-
+// win and silently drop each other's index rows. Coarse (all projects,
+// all agents) but both paths are low-frequency file IO.
+var projectCardMu sync.Mutex
 
 // projectCardTemplate seeds the card on first touch.
 const projectCardTemplate = `# PROJECT.md（项目卡）
@@ -91,6 +101,12 @@ func projectCardPreview(text string) string {
 // no-op read. Returns the card content after the update so the caller
 // can snapshot it without a second read.
 func ensureProjectCardEntry(ctx context.Context, ws workspace.Store, agentID, projectID, sessionKey, preview string, now time.Time) (string, error) {
+	// Same read-modify-write lock as reconcileProjectCard — without it a
+	// concurrent ensure/sweep interleave loses index rows via last-write-
+	// wins full-file Puts.
+	projectCardMu.Lock()
+	defer projectCardMu.Unlock()
+
 	var content string
 	if rc, err := ws.Get(ctx, agentID, projectID, "", projectCardFilename); err == nil {
 		b, readErr := io.ReadAll(rc)
@@ -255,19 +271,27 @@ func (a *Agent) injectProjectCard(ctx context.Context, sess *session.Session, pr
 	})
 }
 
-// readProjectCard fetches the shared card, "" when absent or
-// unreadable (callers treat that as "no card yet").
-func readProjectCard(ctx context.Context, ws workspace.Store, agentID, projectID string) string {
+// readProjectCard fetches the shared card. Returns ("", nil) when the
+// card is absent (ErrNotFound); any other read error is returned to the
+// caller. Collapsing transient IO/permission/object-store failures into
+// "" previously let reconcileProjectCard rebuild from the blank template
+// and Put-overwrite a real card — the narrative sections (关于/决策与结论)
+// are not recoverable from the DB, so one bad read must never trigger a
+// rewrite.
+func readProjectCard(ctx context.Context, ws workspace.Store, agentID, projectID string) (string, error) {
 	rc, err := ws.Get(ctx, agentID, projectID, "", projectCardFilename)
 	if err != nil {
-		return ""
+		if errors.Is(err, workspace.ErrNotFound) {
+			return "", nil
+		}
+		return "", err
 	}
 	defer rc.Close()
 	b, err := io.ReadAll(rc)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return string(b)
+	return string(b), nil
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -349,6 +373,13 @@ type projectCardSessionLister interface {
 // structure the operator deleted. Returns true when the card changed;
 // a no-op pass writes nothing.
 func reconcileProjectCard(ctx context.Context, ws workspace.Store, st projectCardSessionLister, agentID, projectID string) (bool, error) {
+	// projectCardMu guards the read-modify-write below (and ensure's):
+	// full-file Get → rewrite → Put with no versioning in workspace.Store,
+	// so two concurrent writers would last-write-win and silently drop
+	// each other's index rows.
+	projectCardMu.Lock()
+	defer projectCardMu.Unlock()
+
 	metas, err := st.ListSessions(ctx, agentID)
 	if err != nil {
 		return false, err
@@ -359,7 +390,12 @@ func reconcileProjectCard(ctx context.Context, ws workspace.Store, st projectCar
 			live = append(live, m)
 		}
 	}
-	content := readProjectCard(ctx, ws, agentID, projectID)
+	content, err := readProjectCard(ctx, ws, agentID, projectID)
+	if err != nil {
+		// Transient read failure: abort this pass (the sweep retries
+		// later) instead of rebuilding from the template over a real card.
+		return false, fmt.Errorf("read project card: %w", err)
+	}
 	if content == "" {
 		if len(live) == 0 {
 			return false, nil

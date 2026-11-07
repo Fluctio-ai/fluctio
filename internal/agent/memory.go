@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -454,7 +455,41 @@ Empty arrays when nothing survives.`,
 	}, nil
 }
 
+// persistLocks serializes AutoPersistMemory's Load→extract→Save
+// read-modify-write cycles, keyed by (agentID, userID). Each round
+// full-file-overwrites MEMORY.md / USER.md, and rounds run as
+// fire-and-forget goroutines that can overlap (a turn's post-turn
+// persist vs the next turn's, or a rebound Memory copy sharing the same
+// identity) — without the lock the last writer clobbers the first
+// writer's verified entries. Keyed by identity rather than held on the
+// Memory struct because WithUserID returns shallow copies. One entry
+// per (agent, user) identity; bounded in practice by deployment size.
+var (
+	persistLocksMu sync.Mutex
+	persistLocks   = map[string]*sync.Mutex{}
+)
+
+func persistLock(agentID, userID string) *sync.Mutex {
+	key := agentID + "\x00" + userID
+	persistLocksMu.Lock()
+	defer persistLocksMu.Unlock()
+	if l, ok := persistLocks[key]; ok {
+		return l
+	}
+	l := &sync.Mutex{}
+	persistLocks[key] = l
+	return l
+}
+
 func AutoPersistMemory(ctx context.Context, mem *Memory, prov provider.Provider, model string, messages []provider.Message) {
+	// Hold the read-modify-write lock for the whole round — including the
+	// extract LLM call — so two overlapping rounds cannot interleave
+	// Load and Save. Serializing background persists (worst case a few
+	// minutes of waiting) is preferable to silently losing entries.
+	lock := persistLock(mem.agentID, mem.userID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	// Detach from the turn's lifecycle: every call site launches this as a
 	// fire-and-forget goroutine from runPostTurn, and both parent paths get
 	// cancelled within milliseconds of that — the taskqueue's WithTimeout

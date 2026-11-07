@@ -128,6 +128,11 @@ type streamCtx struct {
 	userID     string
 	agentID    string
 	sessionKey string
+
+	// publishMu serializes persist(seq allocation)→publish for persisted
+	// events so hub subscribers receive envelopes in seq order — see
+	// emitEvent.
+	publishMu sync.Mutex
 }
 
 type streamCtxKey struct{}

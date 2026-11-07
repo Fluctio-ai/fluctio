@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/fluctio-ai/fluctio/internal/skills"
 )
 
 // SkillGate is the load_skill-side view of a parsed skill's gating state.
@@ -54,6 +56,13 @@ func makeLoadSkill(skillDirs []string, gate map[string]SkillGate) ToolFunc {
 
 		if args.Name == "" {
 			return "", fmt.Errorf("skill name is required")
+		}
+		// args.Name is model-controlled and joined into a filesystem path;
+		// "../x" (or a backslash variant on Windows) would read a SKILL.md
+		// from outside the skills dirs and inject it into context, bypassing
+		// the manifest gate. Enforce the shared skill-name whitelist first.
+		if err := skills.IsValidSkillName(args.Name); err != nil {
+			return "", fmt.Errorf("invalid skill name: %w", err)
 		}
 
 		// Search through directories in priority order

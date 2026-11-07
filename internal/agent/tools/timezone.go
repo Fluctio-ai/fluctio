@@ -3,12 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/store"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 type setTimezoneArgs struct {
@@ -68,14 +70,29 @@ func makeSetTimezone(st store.Store, r *Registry) ToolFunc {
 		// 1. Write to USER.md — primary persistence path.
 		// chatterLocation() reads USER.md first, so this guarantees the
 		// date line shows the correct timezone on every future session.
+		var userMDErr error
 		if r.systemFileStore != nil {
 			userMDUID := r.systemFileUserID("USER.md")
-			upsertUserMDTimezone(ctx, r, userMDUID, args.Timezone)
+			userMDErr = upsertUserMDTimezone(ctx, r, userMDUID, args.Timezone)
 		}
 
 		// 2. Write to scope prefs (database) — secondary path for cron.
+		var dbErr error
 		if st != nil {
-			_ = scope.SaveUserTimezone(ctx, st, chatterUID, args.Timezone)
+			dbErr = scope.SaveUserTimezone(ctx, st, chatterUID, args.Timezone)
+		}
+
+		// Both persistence paths used to swallow their errors while the
+		// tool unconditionally replied "Timezone saved" — a broken store
+		// or full disk reported success and the schedule silently kept
+		// firing in UTC. Report what actually landed.
+		switch {
+		case userMDErr != nil && dbErr != nil:
+			return "", fmt.Errorf("saving timezone failed — USER.md: %v; database: %w", userMDErr, dbErr)
+		case userMDErr != nil:
+			return "", fmt.Errorf("timezone saved to database but writing USER.md failed: %w", userMDErr)
+		case dbErr != nil:
+			return "", fmt.Errorf("timezone saved to USER.md but database write failed (cron jobs stay on their old timezone): %w", dbErr)
 		}
 
 		return fmt.Sprintf("Timezone saved: %s. The chatter's local time is now %s.",
@@ -85,14 +102,21 @@ func makeSetTimezone(st store.Store, r *Registry) ToolFunc {
 
 // upsertUserMDTimezone reads the current USER.md, adds or updates a
 // "Timezone: <tz>" line, and writes it back. If USER.md doesn't exist
-// yet, it creates a minimal one with just the timezone.
-func upsertUserMDTimezone(ctx context.Context, r *Registry, userID, tz string) {
+// yet, it creates a minimal one with just the timezone. Any read/write
+// error is returned: collapsing a transient store failure into "file is
+// empty" used to overwrite the whole profile with the minimal template.
+func upsertUserMDTimezone(ctx context.Context, r *Registry, userID, tz string) error {
 	const filename = "USER.md"
 	const tzPrefix = "- Timezone: "
 
 	content := ""
 	if data, err := r.readSystemFileForUser(ctx, userID, filename); err == nil {
 		content = strings.TrimSpace(string(data))
+	} else if !errors.Is(err, workspace.ErrNotFound) {
+		// ErrNotFound = no profile yet, seed the minimal one; anything
+		// else means we can't see the current profile and must NOT
+		// overwrite it.
+		return fmt.Errorf("read USER.md: %w", err)
 	}
 
 	// Check if there's already a Timezone line and update it.
@@ -111,5 +135,8 @@ func upsertUserMDTimezone(ctx context.Context, r *Registry, userID, tz string) {
 		content = "# Current Chatter\n" + tzPrefix + tz
 	}
 
-	_ = r.systemFileStore.SaveWorkspaceFile(ctx, r.agentID, userID, filename, []byte(content))
+	if err := r.systemFileStore.SaveWorkspaceFile(ctx, r.agentID, userID, filename, []byte(content)); err != nil {
+		return fmt.Errorf("save USER.md: %w", err)
+	}
+	return nil
 }

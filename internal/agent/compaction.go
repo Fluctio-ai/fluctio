@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
@@ -84,11 +85,27 @@ func computeThreshold(manual, contextWindow, sysTokens, maxTokens int, mode stri
 	return DefaultTokenThreshold
 }
 
+// estimateImageTokens is the fixed token estimate charged for one image
+// content part. Vision payloads are data URLs / https refs, not plain text,
+// so chars/4 would count them as ~0; a mid-range constant keeps multimodal
+// sessions from silently lagging compaction until PTL recovery trips.
+const estimateImageTokens = 1200
+
 // EstimateTokens provides a rough token estimate: chars/4.
+// ContentParts are included — text parts by the same chars/4 ratio, image
+// parts at a fixed per-image estimate — so multimodal messages (whose
+// Content is emptied by buildUserMessage) still register their size.
 func EstimateTokens(messages []provider.Message) int {
 	total := 0
 	for _, m := range messages {
 		total += len(m.Content) / 4
+		for _, part := range m.ContentParts {
+			if part.Type == "image_url" {
+				total += estimateImageTokens
+				continue
+			}
+			total += len(part.Text) / 4
+		}
 		for _, tc := range m.ToolCalls {
 			total += len(tc.Function.Arguments) / 4
 			total += len(tc.Function.Name) / 4
@@ -182,6 +199,13 @@ func CompactMessages(messages []provider.Message, workspace string, prov provide
 
 	compressedTokens := EstimateTokens(compressed)
 	slog.Info("after compression", "tokens_before", prunedTokens, "tokens_after", compressedTokens)
+
+	// Still over threshold after both phases ("short but fat" histories:
+	// few messages, one huge non-tool payload). Say so instead of failing
+	// silently every turn until the PTL backstop errors out.
+	if compressedTokens >= threshold {
+		slog.Warn("compaction could not bring context under threshold", "tokens_after", compressedTokens, "threshold", threshold)
+	}
 
 	return &CompactResult{
 		Messages:     compressed,
@@ -305,6 +329,14 @@ func compressOlderMessages(messages []provider.Message, prov provider.Provider, 
 
 	cutoff := safeCompactionCutoff(messages, userAwareCutoff(messages, len(messages)-PruneTurnAge))
 	olderMessages := messages[:cutoff]
+	// userAwareCutoff can push cutoff back to 0 (goal/audit-style sessions
+	// with few real user messages). With nothing older than the tail there
+	// is nothing to summarize — calling the LLM anyway would insert an
+	// empty-summary message, GROW the context, and re-trigger compaction
+	// every turn in a loop of wasted LLM calls.
+	if cutoff == 0 {
+		return messages, nil
+	}
 
 	// Build a text representation of older messages for summarization.
 	// Skip runtime-injected messages (currently only goal_context
@@ -315,12 +347,18 @@ func compressOlderMessages(messages []provider.Message, prov provider.Provider, 
 	// pinned-head protection design §5.3 (b) calls for: old
 	// goal_context messages are dropped entirely from the
 	// compaction output; the live one rides through unchanged.
-	var text string
+	var sb strings.Builder
 	for _, m := range olderMessages {
 		if m.Origin != provider.OriginUser {
 			continue
 		}
-		text += fmt.Sprintf("[%s] %s\n", m.Role, m.Content)
+		sb.WriteString(fmt.Sprintf("[%s] %s\n", m.Role, m.Content))
+	}
+	text := sb.String()
+	// Nothing summarizable (all runtime-injected scaffolding): skip the
+	// LLM call rather than summarize an empty transcript.
+	if strings.TrimSpace(text) == "" {
+		return messages, nil
 	}
 
 	summaryPrompt := []provider.Message{
@@ -337,6 +375,13 @@ func compressOlderMessages(messages []provider.Message, prov provider.Provider, 
 	resp, err := prov.Chat(context.Background(), summaryPrompt, nil, model, 2048, 0.3)
 	if err != nil {
 		return nil, fmt.Errorf("summarize conversation: %w", err)
+	}
+	// An empty (or whitespace-only) summary — content filter, abnormal
+	// truncation — must never replace the entire pre-cutoff history with
+	// an "[Conversation Summary]" stub. Fail so the caller keeps the
+	// pruned messages instead of silently losing the context.
+	if strings.TrimSpace(resp.Content) == "" {
+		return nil, fmt.Errorf("summarizer returned empty content, refusing to replace history")
 	}
 
 	// Build new message list: summary + recent messages

@@ -273,19 +273,23 @@ func (r *Registry) skillStoreOwner() string {
 // store — the source of truth on hosted deployments. Every turn's
 // HydrateSkillsDown reconcile prunes local skill dirs missing from the
 // store, so an FS-only write would vanish on the next turn. Best-effort:
-// failures warn and never unwrite the local files.
-func (r *Registry) mirrorSkillToStore(ctx context.Context, skillName, skillsDir string) {
+// failures warn and never unwrite the local files. The error is returned
+// so success-reporting callers (install_skill) can surface a "may not
+// persist" caveat instead of a false success.
+func (r *Registry) mirrorSkillToStore(ctx context.Context, skillName, skillsDir string) error {
 	if r.workspaceStore == nil {
-		return
+		return nil
 	}
 	owner := r.skillStoreOwner()
 	if owner == "" {
-		return
+		return nil
 	}
 	if err := skills.SyncSkillUp(ctx, r.workspaceStore, owner, skillName, skillsDir); err != nil {
 		slog.Warn("skill mirror to store failed",
 			"owner", owner, "skill", skillName, "error", err)
+		return err
 	}
+	return nil
 }
 
 // writeSkillToHost lands a chat-created `skills/<name>/<rel>` file on
@@ -318,7 +322,7 @@ func (r *Registry) writeSkillToHost(ctx context.Context, path, content string) (
 	rel := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(path)), "skills/")
 	parts := strings.SplitN(rel, "/", 2)
 	if len(parts) >= 1 && parts[0] != "" {
-		r.mirrorSkillToStore(ctx, parts[0], filepath.Join(root, "skills"))
+		_ = r.mirrorSkillToStore(ctx, parts[0], filepath.Join(root, "skills"))
 	}
 	return full, nil
 }

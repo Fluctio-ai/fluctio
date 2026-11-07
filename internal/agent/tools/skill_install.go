@@ -96,6 +96,23 @@ func RegisterSkillInstall(r *Registry, agentSkillsDir string, onReload func()) {
 			if agentSkillsDir == "" {
 				return "", fmt.Errorf("agent skills directory not configured")
 			}
+			// Name/repo reach install target paths via string concatenation
+			// inside the skills package; a name containing ".." or separators
+			// could install outside agentSkillsDir. Both fields are
+			// model-controlled, so gate them on the shared skill-name
+			// whitelist before anything hits the filesystem.
+			if params.Name != "" {
+				if err := skills.IsValidSkillName(params.Name); err != nil {
+					return "", fmt.Errorf("invalid skill name: %w", err)
+				}
+			}
+			if params.Repo != "" {
+				owner, repo, ok := strings.Cut(params.Repo, "/")
+				if !ok || owner == "" || repo == "" ||
+					skills.IsValidSkillName(owner) != nil || skills.IsValidSkillName(repo) != nil {
+					return "", fmt.Errorf("invalid repo %q: expected 'owner/repo' with plain names", params.Repo)
+				}
+			}
 
 			var (
 				result *skills.Result
@@ -112,17 +129,21 @@ func RegisterSkillInstall(r *Registry, agentSkillsDir string, onReload func()) {
 			}
 
 			// Mirror to the workspace store (see mirrorSkillToStore):
-			// hosted deployments prune FS-only skills on the next
-			// turn's hydrate reconcile, so an unmirrored install
-			// would report success and silently vanish.
-			r.mirrorSkillToStore(ctx, result.Name, agentSkillsDir)
-
-			if onReload != nil {
-				onReload()
-			}
+			// hosted deployments prune FS-only skills on the next turn's
+			// hydrate reconcile, so an unmirrored install would report
+			// success and silently vanish. Surface the failure instead of
+			// swallowing it — the previous void return made that failure
+			// mode invisible.
 			msg := fmt.Sprintf("Installed %q from %s to %s (%d files).", result.Name, result.Source, result.InstalledAt, result.FilesWritten)
 			if result.Version != "" {
 				msg += fmt.Sprintf(" Version/ref: %s.", result.Version)
+			}
+			if mErr := r.mirrorSkillToStore(ctx, result.Name, agentSkillsDir); mErr != nil {
+				msg += " WARNING: mirroring the skill to the durable store failed (" + mErr.Error() + ") — it may be pruned on the next turn; reinstall or investigate the store."
+			}
+
+			if onReload != nil {
+				onReload()
 			}
 			msg += " The skill is now available in this agent only; it will be picked up on the next turn."
 			return msg, nil

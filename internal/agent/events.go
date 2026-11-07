@@ -47,7 +47,6 @@ func ContextWithChatEvents(ctx context.Context, ch chan<- ChatEvent) context.Con
 func emitEvent(ctx context.Context, evt ChatEvent) {
 	stream := streamFromContext(ctx)
 
-	var seq int64 = -1
 	// Skip persistence for high-volume live-only events. content_delta
 	// streams ~one chunk per generated token (100+ rows per turn for a
 	// modest answer), which would dwarf the rest of session_events for
@@ -59,6 +58,20 @@ func emitEvent(ctx context.Context, evt ChatEvent) {
 	// indicator for no replay value.
 	persist := evt.Type != "content_delta" && evt.Type != "reconnecting"
 
+	// Hold the stream's publish lock from seq allocation through hub
+	// publish: the sink assigns seqs at append time while Publish fans
+	// out in caller-goroutine order, so without this a smaller-seq event
+	// from a slower goroutine could arrive AFTER a bigger one — and the
+	// subscriber's `Seq <= sinceSeq` dedup would silently drop it for
+	// the rest of the connection. Live-only events (no seq) bypass the
+	// lock so a stalled content_delta subscriber can't head-of-line
+	// block persisted events.
+	if persist && stream != nil {
+		stream.publishMu.Lock()
+		defer stream.publishMu.Unlock()
+	}
+
+	var seq int64 = -1
 	if persist && stream != nil && stream.sink != nil && stream.userID != "" && stream.sessionKey != "" {
 		blob, _ := json.Marshal(evt.Data)
 		s, err := stream.sink.AppendSessionEvent(ctx, stream.agentID, stream.sessionKey, evt.Type, blob)

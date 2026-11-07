@@ -81,12 +81,19 @@ func makeMessageTool(mb *bus.MessageBus, allowSplitFn func() bool) ToolFunc {
 			allowSplit = allowSplitFn()
 		}
 
-		mb.Outbound <- bus.OutboundMessage{
+		// Unbuffered blocking send: a stalled outbound consumer used to
+		// hang the tool call (and the whole turn) forever, immune to turn
+		// cancellation. Wait on ctx.Done so a cancelled turn unwinds.
+		select {
+		case mb.Outbound <- bus.OutboundMessage{
 			Channel:    args.Channel,
 			AccountID:  args.AccountID,
 			ChatID:     args.ChatID,
 			Text:       args.Text,
 			AllowSplit: allowSplit,
+		}:
+		case <-ctx.Done():
+			return "", fmt.Errorf("message send canceled: %w", ctx.Err())
 		}
 
 		return "Message sent", nil

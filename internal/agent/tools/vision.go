@@ -161,6 +161,17 @@ func isHTTP4xx(err error) bool {
 	return strings.Contains(err.Error(), "HTTP 4")
 }
 
+// visionMaxFileBytes caps the file size vision reads into memory. The
+// path is model-controlled; without a gate a multi-GB file (or a
+// decompression bomb compressed to a few MB) is fully read AND decoded
+// before any downscale, pushing host memory to GBs per call.
+const visionMaxFileBytes = 25 * 1024 * 1024
+
+// visionMaxPixels caps decoded image dimensions: a small-but-declared-
+// huge image (e.g. 100000x100000 PNG) would allocate ~40GB of pixels
+// during Decode even though the file itself is tiny.
+const visionMaxPixels = 20000
+
 // ReadImageAsDataURL reads the file at path, decodes it (any registered
 // format: PNG/JPEG/GIF/BMP/TIFF/WEBP), downscales if its longest side exceeds
 // visionMaxSide, and re-encodes as JPEG into a data: URL. Re-encoding to JPEG
@@ -168,9 +179,21 @@ func isHTTP4xx(err error) bool {
 // one format every vision endpoint accepts. Returns a clear error for formats
 // Go can't decode (HEIC/SVG/…).
 func ReadImageAsDataURL(path string) (string, error) {
+	if fi, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("vision: stat image %q: %w", path, err)
+	} else if fi.Size() > visionMaxFileBytes {
+		return "", fmt.Errorf("vision: image %q is %d bytes, over the %d byte limit — downscale or convert it first", path, fi.Size(), visionMaxFileBytes)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("vision: read image %q: %w", path, err)
+	}
+	// Cheap header-only probe before the full decode rejects
+	// dimension bombs without allocating their pixel buffers.
+	if cfg, _, dErr := image.DecodeConfig(bytes.NewReader(data)); dErr == nil {
+		if cfg.Width > visionMaxPixels || cfg.Height > visionMaxPixels {
+			return "", fmt.Errorf("vision: image %q is %dx%d, over the %dpx limit — downscale it first", path, cfg.Width, cfg.Height, visionMaxPixels)
+		}
 	}
 	img, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil {

@@ -714,14 +714,42 @@ func CheckGating(meta *SkillMetadata) (bool, string) {
 // through cmd /C.
 func binAvailable(bin string) bool {
 	if runtime.GOOS == "windows" {
-		// cmd /C where uses the SYSTEM PATH (what cmd.exe would see), matching
-		// the exec tool's `cmd /C <cmd>` resolution. Errors or non-zero exit
-		// both mean "not available"; we don't care about stdout.
-		cmd := exec.Command("cmd", "/C", "where", bin)
-		return cmd.Run() == nil
+		// bin comes from SKILL.md frontmatter (skill authors are third
+		// parties). Go's argument escaping does not escape cmd.exe
+		// metacharacters, so `cmd /C where <bin>` let `&`, `|`, `<`, `^`
+		// etc. through as command separators — a host-side command
+		// injection from a community skill's requires.bins. Only route
+		// vetted plain names through cmd; anything else falls back to
+		// LookPath, which never spawns a shell.
+		if safeBinName(bin) {
+			// cmd /C where uses the SYSTEM PATH (what cmd.exe would see),
+			// matching the exec tool's `cmd /C <cmd>` resolution. Errors or
+			// non-zero exit both mean "not available"; we don't care about
+			// stdout.
+			cmd := exec.Command("cmd", "/C", "where", bin)
+			return cmd.Run() == nil
+		}
 	}
 	_, err := exec.LookPath(bin)
 	return err == nil
+}
+
+// safeBinName reports whether s is a plain executable name (letters,
+// digits, dot, underscore, dash) that cmd.exe cannot reinterpret as
+// syntax.
+func safeBinName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // fluctioBaseDir returns $FLUCTIO_HOME or $HOME/.fluctio. Used as
