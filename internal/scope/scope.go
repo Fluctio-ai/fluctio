@@ -1,7 +1,7 @@
 // Package scope reads (user, agent)-keyed rows out of store.configs and
 // merges them into the flat shapes the runtime expects.
 //
-// Every row in configs carries a (kind, user_id, agent_id, name) tuple.
+// Every row in configs carries a (kind, user_id, agent_id) tuple.
 // Resolution walks ownership outer→inner, with inner rows shadowing outer
 // rows by `name`:
 //
@@ -16,6 +16,15 @@
 //   row erases the outer entry — lets a user opt out of a system-wide bot.
 // kind="setting":  name is the namespace ("agents.defaults", "sandbox", …).
 //   Top-level keys merge field-wise; inner-scope keys win.
+//
+// DEPLOYMENT SEMANTICS (single-user flatten): the four-level walk above is
+// the historical shape. Since the ownership flatten, every authenticated
+// caller IS the owner — the runtime merge (userspace/manager) only ever
+// resolves system + agent rows, and handlers write user-level rows that
+// nothing reads back. Known dead layers: the user and per-(user, agent)
+// rows persist for forward-compat but are outside the live merge chain
+// (see handlers_scoped.go / tools.go for the read asymmetry this caused).
+// New settings should target system or agent scope only.
 package scope
 
 import (
