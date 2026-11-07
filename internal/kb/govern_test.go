@@ -81,6 +81,24 @@ func TestGovernKeepsMentionsThatAreNotBoilerplate(t *testing.T) {
 	}
 }
 
+// follow_cta must only delete explicit CTA verb lines, never prose that
+// merely mentions 关注/公众号 mid-sentence. Regression for the review
+// finding where the loose window form deleted the whole body line
+// "建议关注公众号运营的三个误区".
+func TestGovernFollowCTAKeepsProseMentions(t *testing.T) {
+	in := strings.Join([]string{
+		"建议关注公众号运营的三个误区",
+		"最近公众号的推荐算法又调整了，值得研究。",
+	}, "\n")
+	out, hits := GovernContent(in, "url")
+	if out != in {
+		t.Errorf("prose mentioning 关注/公众号 was deleted:\n in=%q\nout=%q", in, out)
+	}
+	if hits["follow_cta"] != 0 {
+		t.Errorf("follow_cta fired on prose: %+v", hits)
+	}
+}
+
 // TestIngestTextAppliesGovernance verifies the cleaned content is what gets
 // chunked and stored — boilerplate must not reach kb_entries.
 func TestIngestTextAppliesGovernance(t *testing.T) {

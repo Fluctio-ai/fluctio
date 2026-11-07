@@ -18,27 +18,32 @@ import (
 // chunker-parameter or governance-rule change can be screened before a
 // RewashSources -apply commits it to the KB.
 
-// ChunkStat is one chunk's preview row.
+// ChunkStat is one chunk's preview row. All *Chars fields count RUNES
+// (true character counts — the old byte counts inflated CJK ~3x and
+// clashed with the rune-truncated head snippet). Start/End stay BYTE
+// offsets into the governed text, matching chunkOffsets' units.
 type ChunkStat struct {
-	Index       int    `json:"index"`
-	Chars       int    `json:"chars"`
-	Start       int    `json:"start"`
-	End         int    `json:"end"`
-	BoundaryOK  bool   `json:"boundary_ok"`
+	Index        int    `json:"index"`
+	Chars        int    `json:"chars"` // rune count of the chunk
+	Start        int    `json:"start"` // byte offset
+	End          int    `json:"end"`   // byte offset
+	BoundaryOK   bool   `json:"boundary_ok"`
 	First40Chars string `json:"head,omitempty"` // preview snippet (rune-safe)
 }
 
-// PreviewStats summarizes a would-be ingest.
+// PreviewStats summarizes a would-be ingest. SourceChars/GovernedChars
+// are rune counts; coverage/overlap ratios compare byte spans and are
+// unit-independent.
 type PreviewStats struct {
-	SourceChars     int     `json:"source_chars"`
-	GovernedChars   int     `json:"governed_chars"`
-	GovernHits      map[string]int `json:"govern_hits,omitempty"`
-	Chunks          int     `json:"chunks"`
-	CoverageRatio   float64 `json:"coverage_ratio"`    // union of spans / governed chars
-	OverlapWaste    float64 `json:"overlap_waste"`     // duplicated span / total span
-	TinyChunks      int     `json:"tiny_chunks"`       // < 100 chars: embedding noise
-	CliffChunks     int     `json:"cliff_chunks"`      // > 4000 chars: context cliff
-	BadBoundaries   int     `json:"bad_boundaries"`    // ends mid-sentence
+	SourceChars   int            `json:"source_chars"`   // rune count
+	GovernedChars int            `json:"governed_chars"` // rune count
+	GovernHits    map[string]int `json:"govern_hits,omitempty"`
+	Chunks        int            `json:"chunks"`
+	CoverageRatio float64        `json:"coverage_ratio"` // union of spans / governed bytes
+	OverlapWaste  float64        `json:"overlap_waste"`  // duplicated span / total span
+	TinyChunks    int            `json:"tiny_chunks"`    // < 100 chars: embedding noise
+	CliffChunks   int            `json:"cliff_chunks"`   // > 4000 chars: context cliff
+	BadBoundaries int            `json:"bad_boundaries"` // ends mid-sentence
 }
 
 // IngestPreview is the full preview result.
@@ -74,8 +79,10 @@ func PreviewIngest(content, sourceType string) IngestPreview {
 
 	p := IngestPreview{}
 	st := &p.Stats
-	st.SourceChars = len(content)
-	st.GovernedChars = len(governed)
+	// Char counts in runes so the "chars" fields mean characters for CJK
+	// content too (byte counts overstated them ~3x).
+	st.SourceChars = utf8.RuneCountInString(content)
+	st.GovernedChars = utf8.RuneCountInString(governed)
 	if len(hits) > 0 {
 		st.GovernHits = hits
 	}
@@ -109,26 +116,38 @@ func PreviewIngest(content, sourceType string) IngestPreview {
 		if !ok {
 			st.BadBoundaries++
 		}
-		switch n := len(c.Content); {
+		// Tiny/cliff gates in runes, same unit as the Chars fields and the
+		// comments ("< 100 chars" / "> 4000 chars") — not chunker bytes.
+		switch n := utf8.RuneCountInString(c.Content); {
 		case n < 100:
 			st.TinyChunks++
 		case n > 4000:
 			st.CliffChunks++
-		}
-		head := c.Content
-		if r := []rune(head); len(r) > 40 {
-			head = string(r[:40])
 		}
 		start, end := -1, -1
 		if i < len(offsets) {
 			start, end = offsets[i][0], offsets[i][1]
 		}
 		p.Chunks = append(p.Chunks, ChunkStat{
-			Index: i, Chars: len(c.Content), Start: start, End: end,
-			BoundaryOK: ok, First40Chars: head,
+			Index: i, Chars: utf8.RuneCountInString(c.Content), Start: start, End: end,
+			BoundaryOK: ok, First40Chars: truncateHeadRunes(c.Content, 40),
 		})
 	}
 	return p
+}
+
+// truncateHeadRunes returns the first n runes of s without allocating a
+// full rune slice for the whole string (chunk content can be kilobytes
+// while only the head is kept).
+func truncateHeadRunes(s string, n int) string {
+	count := 0
+	for idx := range s {
+		if count == n {
+			return s[:idx]
+		}
+		count++
+	}
+	return s
 }
 
 // mergeSpans unions spans (sorted by start).
@@ -150,4 +169,3 @@ func mergeSpans(spans [][2]int) [][2]int {
 	}
 	return out
 }
-

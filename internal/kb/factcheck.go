@@ -55,6 +55,7 @@ Returns a per-sentence breakdown: which sentences appear LITERALLY in a known so
 
 IMPORTANT — what this tool can and cannot do:
 - It checks whether a sentence appears LITERALLY in a known KB source. It does NOT search the live web and does NOT judge whether a factual claim is true or false.
+- Without source_id, the compared text comes from semantic search and may include wiki/summary pages (AI-generated content), so a hit there is a KEYWORD match, NOT a verbatim citation. For a true verbatim check, take the source_id from knowledgebase_search and call knowledgebase_search_raw to pull the raw source text first.
 - "not found" means the KB has no verbatim match — it does NOT mean the claim is false. The source may simply not cover it.
 - Report results to the user honestly: "this part I can source to X, this part I cannot find a source for." NEVER present "not found" as "false".
 - If the KB has no relevant source at all, say so and suggest ingesting one (knowledgebase_ingest_url) rather than guessing.
@@ -161,13 +162,36 @@ func runVerifyClaim(ctx context.Context, store *KBStore, agentID, claim, sourceI
 		}
 	}
 
+	// verbatim distinguishes the two grounding modes. With source_id the
+	// compared text is the source's raw kb_entries chunks — real verbatim
+	// grounding. Without it, store.Search returns wiki concept/summary
+	// pages (LLM-generated) plus flashes/todos/bookmarks, so a substring
+	// hit there is only a keyword match and must NOT be reported as a
+	// verbatim citation (that would manufacture false confidence for
+	// sentences no source text actually supports).
+	verbatim := strings.TrimSpace(sourceID) != ""
+
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "核查完成:共 %d 句,基于 %d 个已知源逐字比对。\n\n", len(verdicts), len(srcs))
+	if verbatim {
+		fmt.Fprintf(&sb, "核查完成:共 %d 句,基于 %d 个已知源逐字比对。\n\n", len(verdicts), len(srcs))
+	} else {
+		fmt.Fprintf(&sb, "核查完成:共 %d 句,基于 %d 个 KB 检索文本比对(未指定 source_id)。\n\n", len(verdicts), len(srcs))
+	}
 	if sourced > 0 {
-		sb.WriteString("✅ 已找到逐字出处:\n")
+		if verbatim {
+			sb.WriteString("✅ 已找到逐字出处:\n")
+		} else {
+			// Unnamed path: call it what it is — a keyword hit inside
+			// possibly-LLM-generated KB text, not a verbatim source.
+			sb.WriteString("⚠️ 关键词命中(仅关键词匹配,非逐字出处——命中文本可能为 wiki 摘要等生成内容):\n")
+		}
 		for _, v := range verdicts {
 			if v.sourced {
-				fmt.Fprintf(&sb, "  • %s\n    ← 来源:「%s」\n", v.sentence, v.title)
+				if verbatim {
+					fmt.Fprintf(&sb, "  • %s\n    ← 来源:「%s」\n", v.sentence, v.title)
+				} else {
+					fmt.Fprintf(&sb, "  • %s\n    ← 命中文本:「%s」\n", v.sentence, v.title)
+				}
 			}
 		}
 		sb.WriteString("\n")
@@ -179,6 +203,9 @@ func runVerifyClaim(ctx context.Context, store *KBStore, agentID, claim, sourceI
 				fmt.Fprintf(&sb, "  • %s\n", v.sentence)
 			}
 		}
+	}
+	if !verbatim {
+		sb.WriteString("\n注:本次未指定 source_id,比对的是语义检索命中的知识库页面文本,命中仅代表关键词关联,不构成逐字原始出处;如需逐字核查,请先用 knowledgebase_search 获取 source_id,再用 knowledgebase_search_raw 拉取原文后重试。\n")
 	}
 	return sb.String(), nil
 }

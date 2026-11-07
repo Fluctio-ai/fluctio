@@ -118,7 +118,9 @@ func (s *KBStore) SaveNote(ctx context.Context, agentID, id, title, contentMD, w
 	return id, nil
 }
 
-// DeleteNote removes a note and its attachment rows. Returns the deleted
+// DeleteNote removes a note and its attachment rows in ONE transaction —
+// the previous split deletes swallowed attachment-DELETE errors and could
+// strand rows for files the caller is about to remove. Returns the deleted
 // attachment file paths (workspace-relative) so the caller can drop the
 // bytes from the workspace store — file I/O stays out of the store layer.
 func (s *KBStore) DeleteNote(ctx context.Context, agentID, id string) ([]string, error) {
@@ -126,10 +128,12 @@ func (s *KBStore) DeleteNote(ctx context.Context, agentID, id string) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	_, _ = s.db.ExecContext(ctx,
-		fmt.Sprintf(`DELETE FROM kb_note_attachments WHERE note_id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
-		id, agentID)
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("delete note: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM kb_notes WHERE id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
 		id, agentID)
 	if err != nil {
@@ -137,6 +141,17 @@ func (s *KBStore) DeleteNote(ctx context.Context, agentID, id string) ([]string,
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil, fmt.Errorf("note not found")
+	}
+	if _, err := tx.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM kb_note_attachments WHERE note_id = %s AND agent_id = %s`, s.ph(1), s.ph(2)),
+		id, agentID); err != nil {
+		return nil, fmt.Errorf("delete note attachments: %w", err)
+	}
+	// Commit (not just defer) so a failed commit rolls the note row back
+	// too — otherwise paths would be returned for attachment rows that
+	// never got deleted.
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("delete note: commit: %w", err)
 	}
 	return paths, nil
 }

@@ -65,7 +65,7 @@ var agentBootstrapFiles = []string{
 	"IDENTITY.md",  // name / role / specialization
 	"BOOTSTRAP.md", // first-turn greeting / onboarding hook
 	"AGENTS.md",    // sub-agent orchestration patterns
-	"HEARTBEAT.md", // scheduled self-check conditions
+	"HEARTBEAT.md", // self-check scratchpad (not auto-reviewed; no runtime tick)
 	"TOOLS.md",     // tool-usage notes
 }
 
@@ -1084,11 +1084,11 @@ var workspaceUpdateContent = `# Workspace Self-Update
 You have the ability to update workspace files to maintain knowledge over time:
 - MEMORY.md: Update when you learn important facts, user preferences, or key decisions. This file is loaded into your context every conversation.
 - USER.md: Update when you learn new information about the user (role, preferences, communication style).
-- HEARTBEAT.md: Conditional self-checks reviewed at every heartbeat tick (e.g. "if MEMORY.md exceeds 500 lines, compress it"). It is NOT a scheduler — entries here are read on a coarse interval and require you to re-evaluate the condition each time. Do not put time-bound reminders here.
+- HEARTBEAT.md: a scratchpad for conditional self-checks that you re-evaluate yourself when relevant (e.g. "if MEMORY.md exceeds 500 lines, compress it"). It is NOT a scheduler and there is NO automatic tick — nothing in it runs unless you happen to re-check the condition during a conversation. Do not put time-bound reminders here.
 - TOOLS.md: Update if you discover new tool usage patterns worth documenting.
 Use edit_file to update these files (write_file only for a new file or a full rewrite) — that's the same rule as the file-routing section above, and it avoids accidentally dropping earlier entries. Keep entries concise and useful.
 
 # Scheduling Time-Bound Tasks
-When the user asks you to do something at a specific moment, after a delay, or on a recurring schedule (e.g. "5 分钟后提醒我", "每天 9 点", "every Monday morning"), call the create_cron_job tool. The scheduler fires precisely at the scheduled time and replays the message to you as a fresh inbound prompt. See the create_cron_job tool description for how delivery is targeted (push to a chat vs. run in the background with no delivery). NEVER write timed reminders into HEARTBEAT.md: that file is reviewed only on a coarse heartbeat tick and is wrong for any short-fuse or precise-timing request.
+When the user asks you to do something at a specific moment, after a delay, or on a recurring schedule (e.g. "5 分钟后提醒我", "每天 9 点", "every Monday morning"), call the create_cron_job tool. The scheduler fires precisely at the scheduled time and replays the message to you as a fresh inbound prompt. See the create_cron_job tool description for how delivery is targeted (push to a chat vs. run in the background with no delivery). NEVER write timed reminders into HEARTBEAT.md: that file is never automatically reviewed and is wrong for any short-fuse or precise-timing request.
 
 Schedules are interpreted in the CHATTER'S local timezone — the same one your "Current date/time" line above is rendered in. Write "每天 9 点" as '0 9 * * *' directly; do NOT convert to UTC. If the chatter mentions being in a different timezone or city, call set_timezone first so both your clock and their schedules follow it.`

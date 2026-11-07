@@ -98,10 +98,10 @@ func (m *Memory) memoryPath() string {
 	return filepath.Join(m.workspace, "MEMORY.md")
 }
 
-// historyPath returns the path to HISTORY.md.
-func (m *Memory) historyPath() string {
-	return filepath.Join(m.workspace, "HISTORY.md")
-}
+// (HISTORY.md support was removed: AppendHistory/LoadHistory had no
+// writer or caller anywhere, so the keyword-freshness pipeline that read
+// them could never fire. The dead link is deleted rather than wired —
+// auto-persist below is the maintained memory-freshness path.)
 
 // LoadMemory reads the long-term memory for this Memory's user. When a
 // store is configured we never fall back to the on-disk workspace
@@ -138,99 +138,9 @@ func (m *Memory) SaveMemory(content string) error {
 	return os.WriteFile(m.memoryPath(), []byte(content), 0o644)
 }
 
-// AppendHistory adds an entry to the history log.
-func (m *Memory) AppendHistory(entry string) error {
-	os.MkdirAll(m.workspace, 0o755)
-	f, err := os.OpenFile(m.historyPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	_, err = fmt.Fprintf(f, "- [%s] %s\n", timestamp, entry)
-	return err
-}
-
-// LoadHistory reads the history log.
-func (m *Memory) LoadHistory() string {
-	data, err := os.ReadFile(m.historyPath())
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-// ReviewAndUpdateMemory scans recent history entries and appends new key facts
-// to MEMORY.md. This is called by the heartbeat to keep long-term memory fresh.
-func (m *Memory) ReviewAndUpdateMemory(workspace string) {
-	history := m.LoadHistory()
-	if history == "" {
-		return
-	}
-
-	// Get the last N lines of history to review
-	lines := strings.Split(strings.TrimSpace(history), "\n")
-	reviewCount := 50
-	if len(lines) < reviewCount {
-		reviewCount = len(lines)
-	}
-	recentLines := lines[len(lines)-reviewCount:]
-
-	// Extract key facts from recent history (simple keyword-based extraction)
-	currentMemory := m.LoadMemory()
-	var newFacts []string
-
-	for _, line := range recentLines {
-		lower := strings.ToLower(line)
-		// Look for lines that contain important keywords
-		if containsAny(lower, []string{
-			"learned", "discovered", "user prefers", "important",
-			"remember", "note:", "key fact", "decision",
-			"preference", "configured", "set up",
-		}) {
-			// Extract the content after the timestamp
-			if idx := strings.Index(line, "] "); idx >= 0 {
-				fact := strings.TrimSpace(line[idx+2:])
-				if fact != "" && !strings.Contains(currentMemory, fact) {
-					newFacts = append(newFacts, fact)
-				}
-			}
-		}
-	}
-
-	if len(newFacts) == 0 {
-		slog.Debug("memory review: no new facts to add")
-		return
-	}
-
-	// Append new facts to MEMORY.md
-	var sb strings.Builder
-	sb.WriteString(currentMemory)
-	if currentMemory != "" && !strings.HasSuffix(currentMemory, "\n") {
-		sb.WriteString("\n")
-	}
-	sb.WriteString(fmt.Sprintf("\n## Auto-updated: %s\n", time.Now().Format("2006-01-02 15:04")))
-	for _, fact := range newFacts {
-		sb.WriteString(fmt.Sprintf("- %s\n", fact))
-	}
-
-	if err := m.SaveMemory(sb.String()); err != nil {
-		slog.Warn("failed to update memory", "error", err)
-		return
-	}
-
-	slog.Info("memory updated", "new_facts", len(newFacts))
-}
-
-func containsAny(s string, keywords []string) bool {
-	for _, kw := range keywords {
-		if strings.Contains(s, kw) {
-			return true
-		}
-	}
-	return false
-}
+// (ReviewAndUpdateMemory removed with the heartbeat: it scanned HISTORY.md,
+// which nothing ever wrote — see the note at the top of this file. The
+// maintained freshness path is AutoPersistMemory below.)
 
 // SaveMemoryWithScan scans content for threats before writing to MEMORY.md.
 // Logs warnings for any detected threats but still writes (to avoid data loss).
@@ -544,12 +454,12 @@ restating the material verbatim.
 Output JSON only (no markdown fences):
 {"memory_facts": ["fact1", "fact2"], "user_notes": ["note1"], "memory_updates": [{"target": "old entry substring", "new": "rewritten entry"}], "user_updates": []}
 If nothing worth saving, output: {"memory_facts": [], "user_notes": [], "memory_updates": [], "user_updates": []}`,
-	// Feed a wide window of the current files (not the old 500 chars):
-	// the extractor can only skip facts it can see are already stored,
-	// and a blind window is what kept duplicates accumulating. The daily
-	// tidy sweep keeps the files bounded so this window stays affordable.
-	truncateStr(currentMemory, 4000),
-	truncateStr(currentUser, 4000),
+		// Feed a wide window of the current files (not the old 500 chars):
+		// the extractor can only skip facts it can see are already stored,
+		// and a blind window is what kept duplicates accumulating. The daily
+		// tidy sweep keeps the files bounded so this window stays affordable.
+		truncateStr(currentMemory, 4000),
+		truncateStr(currentUser, 4000),
 		sb.String(),
 	)
 

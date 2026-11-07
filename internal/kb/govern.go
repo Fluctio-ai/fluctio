@@ -49,7 +49,14 @@ var govWebRules = []govRule{
 	govLine("read_time", `本文约.{0,12}?字.{0,20}?分钟.{0,8}?`),
 	govLine("read_original", `.{0,6}阅读原文.{0,10}?`),
 	govLine("qr_cta", `.{0,8}?(?:长按|扫描|扫码).{0,6}?二维码.{0,20}?`),
-	govLine("follow_cta", `.{0,10}?关注.{0,12}?(?:公众号|订阅号).{0,10}?`),
+	// follow_cta is line-SHAPE anchored, not window-anchored: the line must
+	// OPEN with a CTA action verb (or 关注 itself) and stay short, and the
+	// tail may not contain sentence punctuation. The old loose
+	// any-prefix/windows form deleted real body lines like
+	// "建议关注公众号运营的三个误区" (关注/公众号 merely mentioned
+	// mid-sentence); that wording now survives. Deletion is irreversible
+	// at ingest, so the rule errs toward under-matching.
+	govLine("follow_cta", `(?:点击|长按|扫描|扫码|立即|马上|顺手|快|请)?(?:上方)?(?:蓝字|二维码)?关注(?:公众号|订阅号)[^。\n]{0,10}`),
 	govLine("share_cta", `.{0,8}?(?:分享到朋友圈|点击在看|点个在看|点下在看|分享朋友圈).{0,10}?`),
 	// Generic consent banners readability leaves at the top or bottom.
 	govLine("cookie_banner", `.{0,4}?(?:This site uses cookies|We use cookies|本网站?使用 Cookie).{0,60}?`),
