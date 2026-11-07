@@ -1306,6 +1306,11 @@ export interface ChatStreamEvent {
     | "auth_prompt"
     | "compaction_notice"
     | "skill_pending"
+    // Emitted by the agent loop when a slash command queued a
+    // continuation turn: the composer's own SSE stream closes with
+    // turn_pending instead of done so the panel stays open ("stay
+    // open, the real reply is coming on the next bus-fired turn").
+    | "turn_pending"
     | "reconnecting";
   // Per-session monotonic sequence assigned by chat_events. Lets the
   // chat page dedupe events arriving on both the active POST stream

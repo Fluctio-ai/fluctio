@@ -1221,6 +1221,15 @@ export function ChatScreen() {
         // when already null, so content_delta storms stay cheap).
         if (data.type !== "reconnecting") setReconnecting(null);
         switch (data.type) {
+          case "turn_pending": {
+            // A slash command queued a continuation turn: the composer's
+            // own stream closes with turn_pending instead of done, and
+            // the real reply arrives on the next bus-fired turn. Show
+            // the same transient pill the backend reconnecting tier uses
+            // so the user knows the agent is still coming back.
+            setReconnecting({ attempt: -1 });
+            break;
+          }
           case "reconnecting": {
             // Unbounded connection-retry tier is riding out a network
             // outage (attempt ≥ 2 — the 1st retry is usually a silent
@@ -2205,6 +2214,10 @@ export function ChatScreen() {
         }
         if (evt.type !== "reconnecting") setReconnecting(null);
         switch (evt.type) {
+          case "turn_pending": {
+            setReconnecting({ attempt: -1 });
+            break;
+          }
           case "reconnecting": {
             setReconnecting({ attempt: evt.data?.attempt });
             break;
@@ -2772,6 +2785,12 @@ export function ChatScreen() {
     // Within one render React state is snapshot-consistent, so `sending`
     // is necessarily true here.
     if (!text || !selectedAgent || !sending) return;
+    // Read-only views (actAs viewer, IM read-only) must not steer: the
+    // composer sends would have been blocked by the same isReadOnlyView
+    // check handleSend applies, but the mid-stream path (Enter while
+    // streaming, approval buttons) skipped it — users got a raw
+    // "Steer failed: 403" from the server middleware instead.
+    if (isReadOnlyView) return;
     if (!overrideText) setInput("");
     const optimisticId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     setMessages((prev) => [
@@ -2792,7 +2811,7 @@ export function ChatScreen() {
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
       await handleSend(text, true);
     }
-  }, [input, selectedAgent, sending, sessionId, urlProjectId, handleSend]);
+  }, [input, selectedAgent, sending, sessionId, urlProjectId, handleSend, isReadOnlyView]);
 
   const handleFilePick = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = e.target.files;
