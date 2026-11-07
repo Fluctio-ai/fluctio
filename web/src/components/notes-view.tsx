@@ -23,6 +23,40 @@ import {
   XIcon,
 } from "lucide-react";
 import { useT } from "@/lib/i18n";
+
+// sanitizeSvgHtml strips script-execution vectors from an exported
+// Excalidraw SVG string before it goes through dangerouslySetInnerHTML:
+// removes <script> and <foreignObject> subtrees, event-handler
+// attributes (on*), and javascript:/data: hrefs. The SVG comes from the
+// local exportToSvg of user-editable whiteboard JSON — normally benign,
+// but hand-edited fences (the JSON is a plain markdown code block) make
+// this the injection boundary.
+export function sanitizeSvgHtml(html: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(html, "image/svg+xml");
+    if (doc.querySelector("parsererror")) return "";
+    const root = doc.documentElement;
+    for (const el of Array.from(root.querySelectorAll("script, foreignObject, iframe, object, embed"))) {
+      el.remove();
+    }
+    for (const el of Array.from(root.querySelectorAll("*"))) {
+      for (const attr of Array.from(el.attributes)) {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith("on")) {
+          el.attributes.removeNamedItem(attr.name);
+          continue;
+        }
+        const v = attr.value.trim().toLowerCase();
+        if ((name === "href" || name === "xlink:href") && /^(javascript|data|vbscript):/.test(v)) {
+          el.attributes.removeNamedItem(attr.name);
+        }
+      }
+    }
+    return root.outerHTML;
+  } catch {
+    return "";
+  }
+}
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import {
   deleteNote,
@@ -751,7 +785,12 @@ function BoardCard({
           files: scene.files,
           appState: { exportWithDarkMode: dark } as never,
         } as never);
-        if (alive) setSvgHTML(svg.outerHTML);
+        // Sanitize before it reaches dangerouslySetInnerHTML: strip
+        // <script>/<foreignObject>/event-handler attributes/JS-URL hrefs.
+        // exportToSvg output is normally benign, but the whiteboard JSON
+        // is user-editable — defense in depth at the injection boundary.
+        const cleaned = sanitizeSvgHtml(svg.outerHTML);
+        if (alive) setSvgHTML(cleaned);
       } catch { setSvgHTML(null); }
     })();
     return () => { alive = false; };
