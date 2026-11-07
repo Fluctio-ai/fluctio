@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fluctio-ai/fluctio/internal/config"
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
@@ -130,17 +131,20 @@ func parseChatURL(raw string) (string, string, error) {
 	return m[1], m[2], nil
 }
 
-// openStoreAt opens a DBStore at an explicit sqlite path. Empty
-// dbPath defaults to ~/.fluctio/fluctio.db with the same pragma
-// tuning the daemon uses, so a CLI export against a live db doesn't
-// hit lock contention.
+// openStoreAt opens a DBStore at an explicit sqlite path. Empty dbPath
+// resolves through config.HomeDir — honoring FLUCTIO_HOME like every
+// other entry point, instead of the raw os.UserHomeDir join that made
+// `fluctio session export` read a different database than the daemon
+// whenever FLUCTIO_HOME was set. The pragma tuning matches the daemon
+// (busy_timeout keeps the export from erroring against a live db).
+// An explicit --db always wins.
 func openStoreAt(dbPath string) (*store.DBStore, func(), error) {
 	if dbPath == "" {
-		home, err := os.UserHomeDir()
+		home, err := config.HomeDir()
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve home dir: %w", err)
 		}
-		dbPath = filepath.Join(home, ".fluctio", "fluctio.db")
+		dbPath = filepath.Join(home, "fluctio.db")
 	}
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil, nil, fmt.Errorf("db file: %w", err)
