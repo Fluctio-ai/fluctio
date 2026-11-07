@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
@@ -59,14 +60,19 @@ func ValidName(name string) bool {
 	return false
 }
 
-// Dir returns <home>/backups, creating it on first call.
+// Dir returns <home>/backups, creating it on first call. The directory is
+// 0700: snapshots contain provider API keys, chat transcripts and the user
+// table, so a world-readable backups dir made every local account able to
+// read the full store off disk.
+var backupMu sync.Mutex // serializes Create — the stat/loop naming and the snapshot itself aren't atomic together
+
 func Dir() (string, error) {
 	home, err := config.HomeDir()
 	if err != nil {
 		return "", err
 	}
 	dir := filepath.Join(home, "backups")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -98,6 +104,12 @@ func Create(ctx context.Context, st store.Store, ts time.Time) (string, int64, e
 	if err != nil {
 		return "", 0, err
 	}
+	// Serialize Create: the stat-then-act name collision check and the
+	// snapshot itself aren't atomic together, so a scheduled backup and a
+	// manual "back up now" racing the same second produced a TOCTOU where
+	// one write clobbered the other's file.
+	backupMu.Lock()
+	defer backupMu.Unlock()
 	base := ts.Format("20060102-150405")
 	name := filePrefix + base + suffix
 	path := filepath.Join(dir, name)
@@ -123,6 +135,12 @@ func Create(ctx context.Context, st store.Store, ts time.Time) (string, int64, e
 		if err := dumpPostgres(ctx, dbs.Source(), path); err != nil {
 			return "", 0, err
 		}
+	}
+	// Snapshot = the whole store (keys, transcripts, users). VACUUM INTO
+	// inherits the process umask, which can leave the file group/world
+	// readable — pin it to owner-only.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", 0, fmt.Errorf("chmod snapshot: %w", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
