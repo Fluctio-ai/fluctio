@@ -2489,8 +2489,12 @@ export async function listWikiPages(agentId: string, type?: string): Promise<{ p
   return res.json().catch(() => ({ pages: [], total: 0 }));
 }
 export async function getWikiPage(agentId: string, pageId: string): Promise<WikiPage> {
-  const res = await apiFetch(`/api/agents/${agentId}/wiki/pages/${encodeURIComponent(pageId)}`);
-  return res.json();
+  // Deduped: wiki cards mount one hook per page, all resolving the same
+  // page id at once — collapse the burst into one network request.
+  return dedupGet(`wiki-page:${agentId}:${pageId}`, async () => {
+    const res = await apiFetch(`/api/agents/${agentId}/wiki/pages/${encodeURIComponent(pageId)}`);
+    return res.json();
+  });
 }
 export async function deleteWikiPage(agentId: string, pageId: string): Promise<{ status?: string; error?: string }> {
   const res = await apiFetch(`/api/agents/${agentId}/wiki/pages/${encodeURIComponent(pageId)}`, { method: "DELETE" });
