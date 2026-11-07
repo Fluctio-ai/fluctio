@@ -71,8 +71,8 @@ func makeDeliverFile(r *Registry) ToolFunc {
 		if err != nil {
 			return "", fmt.Errorf("deliver_file: dest must stay within the visible workspace")
 		}
-		r := filepath.ToSlash(rel)
-		if r == ".." || strings.HasPrefix(r, "../") {
+		relSlash := filepath.ToSlash(rel)
+		if relSlash == ".." || strings.HasPrefix(relSlash, "../") {
 			return "", fmt.Errorf("deliver_file: dest must stay within the visible workspace")
 		}
 
@@ -81,11 +81,38 @@ func makeDeliverFile(r *Registry) ToolFunc {
 		// deliver_file 跑在宿主机 gateway 进程，没有 /workspace 顶层目录，
 		// 必须把 /workspace 前缀映射回 visibleRoot 才能读到。其它绝对路径
 		// （如 /www/fluctio/agents/...）维持原样直传 os.Open。
+		//
+		// Trust gate on the raw absolute path: the src is LLM-controlled,
+		// and an injected model can point it at operator secrets
+		// (~/.ssh/id_rsa, .env) to copy them into the publicly-visible
+		// workspace. Host-trusted callers (web owner / allowlisted admin —
+		// see SetCallerHostTrusted) keep the unrestricted read that the
+		// "surface exec outputs" flow needs; everyone else (IM guests) is
+		// limited to the temp directories those tool flows actually write
+		// to, which breaks the exfiltration chain without breaking the
+		// feature.
 		src := args.Src
 		if src == "/workspace" {
 			src = visibleRoot
 		} else if strings.HasPrefix(src, "/workspace/") {
 			src = filepath.Join(visibleRoot, strings.TrimPrefix(src, "/workspace"))
+		} else if filepath.IsAbs(src) && !r.callerHostTrusted {
+			// Host-untrusted callers may only deliver files from the system
+			// temp directory — the area exec/screenshot flows actually write
+			// to. Anything else (operator home, dotfiles, system dirs) is
+			// refused: an injected model must not copy operator secrets
+			// (~/.ssh/id_rsa, .env) into the publicly-visible workspace.
+			absSrc, absErr := filepath.Abs(src)
+			tmpRoot, tmpErr := filepath.Abs(os.TempDir())
+			inside := false
+			if absErr == nil && tmpErr == nil {
+				if relT, relE := filepath.Rel(tmpRoot, absSrc); relE == nil {
+					inside = relT != ".." && !strings.HasPrefix(filepath.ToSlash(relT), "../")
+				}
+			}
+			if !inside {
+				return "", fmt.Errorf("deliver_file: host-untrusted callers may only deliver files from the system temp directory")
+			}
 		}
 		// 若 src 映射后已等于 dst（典型：image_gen 产物由 writeWorkspaceBytes
 		// 直接写到 visibleRoot，agent 拿 /workspace/<name> 调 deliver_file，映射后
