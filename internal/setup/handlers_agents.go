@@ -1716,13 +1716,50 @@ func (s *Server) handleAgentFileUpload(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
-		if err := s.workspaceStore.Put(r.Context(), id, projectID, sessionID, h.Filename, strings.NewReader(string(data)), int64(len(data)), ""); err != nil {
+		// Sanitize the stored filename to match the client's breadcrumb
+		// sanitizer: the chat bubble renders `[Attached:
+		// /workspace/<name>]` markdown from this exact name, and a name
+		// carrying markdown-significant characters (`](`, backticks) let
+		// an uploaded file forge arbitrary links in the rendered bubble.
+		// Both sides strip the same character set so the reference still
+		// resolves to the stored file.
+		safeName := sanitizeUploadedFilename(h.Filename)
+		if safeName == "" {
+			jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "file name is empty after sanitization"})
+			return
+		}
+		if err := s.workspaceStore.Put(r.Context(), id, projectID, sessionID, safeName, strings.NewReader(string(data)), int64(len(data)), ""); err != nil {
 			jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 			return
 		}
-		saved = append(saved, map[string]any{"name": h.Filename, "size": len(data)})
+		saved = append(saved, map[string]any{"name": safeName, "size": len(data)})
 	}
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "files": saved})
+}
+
+// sanitizeUploadedFilename strips markdown-significant characters from an
+// uploaded filename, mirroring the client-side sanitizer in
+// chat-screen.tsx (handleSend's breadcrumb builder). Keeps letters,
+// digits, spaces, dots, dashes, underscores; collapses runs of spaces and
+// trims trailing dots/spaces so the markdown link/image suffix parsing
+// stays unambiguous.
+func sanitizeUploadedFilename(name string) string {
+	name = strings.TrimSpace(filepath.Base(name))
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_', r == ' ':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	cleaned := strings.TrimSpace(b.String())
+	for strings.Contains(cleaned, "  ") {
+		cleaned = strings.ReplaceAll(cleaned, "  ", " ")
+	}
+	return strings.TrimRight(cleaned, ". ")
 }
 
 func defaultIfEmpty(v, fallback string) string {

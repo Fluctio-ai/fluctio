@@ -2128,7 +2128,15 @@ export function ChatScreen() {
     // We prepend `[Attached: /workspace/<name>]` lines for that — the
     // server's StripAttachedPrefix removes them on history read so user
     // bubbles, page titles, and sidebar previews stay clean.
-    const attachedPaths = filesToUpload.map((f) => `/workspace/${f.name}`);
+    //
+    // Filenames are client-controlled (user upload) and land in markdown
+    // that gets rendered back into the bubble — a name containing `](``
+    // could close the breadcrumb and open an arbitrary markdown link.
+    // Strip markdown-significant characters from the path segment; the
+    // server-side path uses the same sanitized name, so the reference
+    // still resolves.
+    const sanitizeUploadedName = (name: string) => name.replace(/[[\]()#`*_[!]/g, "_");
+    const attachedPaths = filesToUpload.map((f) => `/workspace/${sanitizeUploadedName(f.name)}`);
     const breadcrumb = attachedPaths
       .map((p) => `[Attached: ${p}]`)
       .join("\n");
