@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 
@@ -307,12 +308,19 @@ func (m *Manager) routeOutbound(ctx context.Context) {
 				// multiple accounts are registered on the same channel the
 				// caller must supply AccountID (first registered wins).
 				prefix := msg.Channel + ":"
-				for k, c := range m.channels {
+				// Go map iteration order is random — picking the first
+				// prefix hit made multi-account routing nondeterministic.
+				// Sort the matches so the fallback is stable.
+				var matches []string
+				for k := range m.channels {
 					if strings.HasPrefix(k, prefix) {
-						ch, ok = c, true
-						key = k
-						break
+						matches = append(matches, k)
 					}
+				}
+				if len(matches) > 0 {
+					sort.Strings(matches)
+					ch, ok = m.channels[matches[0]], true
+					key = matches[0]
 				}
 			}
 			m.mu.Unlock()

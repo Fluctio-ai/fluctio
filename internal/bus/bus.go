@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -244,7 +245,16 @@ func NewRedis(cfg RedisConfig) *MessageBus {
 	}
 	consumer := cfg.Consumer
 	if consumer == "" {
-		consumer = fmt.Sprintf("consumer-%d", time.Now().UnixNano())
+		// Stable per-host name: UnixNano renamed the consumer on every
+		// restart, so messages delivered-but-unacked by the previous
+		// process sat in the PEL forever (">" only reads NEW entries and
+		// never matches the old consumer name again). Same host + same
+		// group keeps the identity; reclaimPending drains the leftover.
+		host, herr := os.Hostname()
+		if herr != nil || host == "" {
+			host = "localhost"
+		}
+		consumer = "consumer-" + sanitizeConsumerHost(host)
 	}
 	return &MessageBus{
 		Inbound:         inbound,
@@ -389,7 +399,66 @@ func (r *redisBridge) consumeOutbound(ctx context.Context) {
 // redisRetryBackoff throttles reconnect attempts while Redis is unreachable.
 const redisRetryBackoff = 2 * time.Second
 
+// reclaimPending drains messages stranded in the group's PEL: delivered
+// to a consumer that died before acking (crash, pre-stable-name restart).
+// Claims anything idle for >= 10 minutes and processes it like fresh
+// mail — 10 minutes keeps us clear of legitimately slow handlers that
+// are still mid-delivery on a live consumer.
+func (r *redisBridge) reclaimPending(ctx context.Context, stream string, handle func([]byte) error) {
+	start := "0"
+	for ctx.Err() == nil {
+		msgs, next, err := r.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+			Stream:   stream,
+			Group:    r.group,
+			Consumer: r.consumer,
+			MinIdle:  10 * time.Minute,
+			Start:    start,
+			Count:    50,
+		}).Result()
+		if err != nil {
+			slog.Warn("redis stream reclaim failed", "stream", stream, "error", err)
+			return
+		}
+		for _, xm := range msgs {
+			raw, ok := xm.Values["payload"]
+			if !ok {
+				_ = r.client.XAck(ctx, stream, r.group, xm.ID).Err()
+				continue
+			}
+			payload, ok := raw.(string)
+			if !ok {
+				_ = r.client.XAck(ctx, stream, r.group, xm.ID).Err()
+				continue
+			}
+			if err := handle([]byte(payload)); err != nil {
+				slog.Error("redis stream reclaimed payload failed", "stream", stream, "id", xm.ID, "error", err)
+				continue
+			}
+			_ = r.client.XAck(ctx, stream, r.group, xm.ID).Err()
+		}
+		if next == "0" {
+			return
+		}
+		start = next
+	}
+}
+
+func sanitizeConsumerHost(host string) string {
+	out := make([]rune, 0, len(host))
+	for _, r := range host {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			out = append(out, r)
+		} else {
+			out = append(out, '_')
+		}
+	}
+	return string(out)
+}
+
 func (r *redisBridge) consume(ctx context.Context, stream string, handle func([]byte) error) {
+	// Recover mail stranded by a crashed predecessor before settling
+	// into the steady-state read loop.
+	r.reclaimPending(ctx, stream, handle)
 	for ctx.Err() == nil {
 		res, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    r.group,

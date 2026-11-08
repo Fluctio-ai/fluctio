@@ -442,6 +442,14 @@ func (q *QQChannel) dialAndRun(ctx context.Context, url, token string) error {
 	defer conn.Close()
 	defer q.stopHeartbeat()
 
+	// Unblock the blocking ReadMessage on shutdown: gorilla's read only
+	// wakes on close/error, so a ctx cancel alone would leave Start
+	// hanging and defeat graceful shutdown.
+	go func() {
+		<-connCtx.Done()
+		_ = conn.Close()
+	}()
+
 	slog.Info("qq ws connected",
 		"account", q.accountID, "url", url, "has_session", q.sessionID != "")
 

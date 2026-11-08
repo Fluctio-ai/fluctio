@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
@@ -62,10 +63,38 @@ func (d *Discord) BotUsername() string {
 	return d.botUsername
 }
 
+// discordDialRetries bounds the initial gateway dial retries.
+const discordDialRetries = 5
+
 // Start connects to Discord gateway and blocks until ctx is cancelled.
 func (d *Discord) Start(ctx context.Context) error {
-	if err := d.session.Open(); err != nil {
-		return err
+	// Bounded dial retry: a network blip (or a Discord gateway hiccup) at
+	// boot used to return immediately — the account stayed "enabled" in
+	// the UI while the bot sat silent forever. Five exponential attempts
+	// cover transient failures; a revoked token exhausts them and the
+	// failure surfaces to the caller.
+	var err error
+	for attempt := 0; attempt < discordDialRetries; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err = d.session.Open(); err == nil {
+			break
+		}
+		wait := time.Duration(1<<uint(attempt)) * 5 * time.Second // 5s..80s
+		if wait > time.Minute {
+			wait = time.Minute
+		}
+		slog.Warn("discord gateway dial failed, retrying",
+			"account", d.accountID, "attempt", attempt+1, "wait", wait, "error", err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("discord gateway dial: %w (after %d attempts)", err, discordDialRetries)
 	}
 	defer d.session.Close()
 
