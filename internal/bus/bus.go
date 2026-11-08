@@ -1,3 +1,30 @@
+// Package bus carries inbound/outbound chat messages between the channel
+// adapters and the gateway worker. With Redis configured, both streams
+// run through Redis Streams (consumer groups); without it, plain local
+// channels.
+//
+// # Known delivery windows (documented, not accidental)
+//
+// Publish side:
+//   - Source channels (Inbound/Outbound) have a 100-slot buffer. When the
+//     bridge can't publish (Redis outage), publishes retry in-process
+//     (3 retries, exponential backoff), then spool to the disk outbox
+//     (outbox.go) and replay once Redis recovers — so a Redis outage does
+//     NOT lose messages, but the producers (channel adapters) block while
+//     the buffer is full (backpressure).
+//   - Streams are capped with MaxLen 10000 (approximate). Under sustained
+//     overload Redis trims the OLDEST entries, possibly before any
+//     consumer reads them. The cap is deliberately not raised: it bounds
+//     Redis memory on a single-user deployment.
+//
+// Consume side:
+//   - The consumer channels handed to the gateway worker also buffer 100.
+//     A slow agent loop parks delivered entries in the consumer group's
+//     PEL (pending list) instead of dropping them; entries idle ≥ 10
+//     minutes are reclaimed via XAutoClaim (startup drain + a periodic
+//     sweep every claimEvery iterations). Net effect: at-least-once
+//     delivery — a message stranded > 10 min can be processed twice (the
+//     original handler may still be mid-delivery), never dropped.
 package bus
 
 import (
@@ -272,6 +299,8 @@ func NewRedis(cfg RedisConfig) *MessageBus {
 			outboundLocal:  outboundConsume,
 			inboundSource:  inbound,
 			outboundSource: outbound,
+			outbox:         newOutbox(""),
+			claimEvery:     defaultClaimEvery,
 		},
 	}
 }
@@ -298,7 +327,7 @@ func (b *MessageBus) Start(ctx context.Context) error {
 }
 
 type redisBridge struct {
-	client         *redis.Client
+	client streamClient
 	prefix         string
 	group          string
 	consumer       string
@@ -308,6 +337,24 @@ type redisBridge struct {
 	outboundLocal  chan OutboundMessage
 	inboundSource  chan InboundMessage
 	outboundSource chan OutboundMessage
+	outbox         *outbox
+	// claimEvery is how often the consume loop interleaves an XAutoClaim
+	// sweep (draining PEL entries stranded by slow handlers or a dead
+	// predecessor). 12 iterations ≈ once a minute while idle (5s
+	// XReadGroup blocks), faster under load.
+	claimEvery int
+}
+
+// streamClient is the slice of the go-redis API the bridge uses, as an
+// interface so tests can drive failure/repair sequences (publish retry,
+// outbox replay, PEL reclaim) without a live Redis. *redis.Client
+// satisfies it directly.
+type streamClient interface {
+	XAdd(ctx context.Context, a *redis.XAddArgs) *redis.StringCmd
+	XReadGroup(ctx context.Context, a *redis.XReadGroupArgs) *redis.XStreamSliceCmd
+	XAutoClaim(ctx context.Context, a *redis.XAutoClaimArgs) *redis.XAutoClaimCmd
+	XAck(ctx context.Context, stream, group string, ids ...string) *redis.IntCmd
+	XGroupCreateMkStream(ctx context.Context, stream, group, start string) *redis.StatusCmd
 }
 
 func (r *redisBridge) start(ctx context.Context) error {
@@ -323,9 +370,23 @@ func (r *redisBridge) start(ctx context.Context) error {
 	go r.publishOutbound(ctx)
 	go r.consumeInbound(ctx)
 	go r.consumeOutbound(ctx)
+	go r.replayOutbox(ctx)
 	slog.Info("redis message bus enabled", "prefix", r.prefix, "group", r.group, "consumer", r.consumer)
 	return nil
 }
+
+// Publish retry policy: the first XAdd attempt is immediate, then up to
+// xaddRetries retries with exponential backoff (xaddBackoff * 2^i).
+// Failures beyond that spool to the disk outbox — see outbox.go.
+const (
+	xaddRetries     = 3
+	xaddBackoff     = 200 * time.Millisecond
+	defaultClaimEvery = 12
+	// outboxReplayEvery paces the background replay loop; the first run
+	// happens immediately at bridge start (Redis was just reachable
+	// enough to create the groups).
+	outboxReplayEvery = 30 * time.Second
+)
 
 func (r *redisBridge) publishInbound(ctx context.Context) {
 	for {
@@ -337,9 +398,7 @@ func (r *redisBridge) publishInbound(ctx context.Context) {
 				deliver(ctx, r.inboundLocal, msg)
 				continue
 			}
-			if err := r.xadd(ctx, r.inboundKey, msg); err != nil {
-				slog.Error("redis inbound enqueue failed", "channel", msg.Channel, "account", msg.AccountID, "error", err)
-			}
+			r.publish(ctx, r.inboundKey, msg, "inbound", msg.Channel, msg.AccountID)
 		}
 	}
 }
@@ -354,18 +413,90 @@ func (r *redisBridge) publishOutbound(ctx context.Context) {
 				deliver(ctx, r.outboundLocal, msg)
 				continue
 			}
-			if err := r.xadd(ctx, r.outboundKey, msg); err != nil {
-				slog.Error("redis outbound enqueue failed", "channel", msg.Channel, "account", msg.AccountID, "error", err)
-			}
+			r.publish(ctx, r.outboundKey, msg, "outbound", msg.Channel, msg.AccountID)
 		}
 	}
 }
 
-func (r *redisBridge) xadd(ctx context.Context, key string, msg any) error {
+// publish marshals the message, retries XAdd through transient failures,
+// and spools to the disk outbox when Redis stays unreachable — so an
+// outage queues instead of dropping. Nothing here can block longer than
+// the retry window (~1.4s worst case), keeping the publish loops
+// responsive to ctx cancellation and the source channels draining.
+func (r *redisBridge) publish(ctx context.Context, key string, msg any, kind, channel, accountID string) {
 	payload, err := json.Marshal(msg)
 	if err != nil {
-		return err
+		// Unmarshalable messages can never be stored or replayed —
+		// dropping now is the only correct move; retrying or spooling
+		// would loop forever on the same marshal error.
+		slog.Error("redis message marshal failed; dropped", "kind", kind, "channel", channel, "error", err)
+		return
 	}
+	if err := r.publishPayload(ctx, key, payload); err != nil {
+		slog.Error("redis "+kind+" enqueue failed; spooling to outbox", "channel", channel, "account", accountID, "error", err)
+		if oerr := r.outbox.enqueue(key, payload); oerr != nil {
+			// Both Redis and the disk failed — the message is lost. Log
+			// loudly; there is nowhere further to send it.
+			slog.Error("redis "+kind+" outbox write failed; message lost", "channel", channel, "account", accountID, "error", oerr)
+		}
+	}
+}
+
+// publishPayload attempts XAdd, retrying up to xaddRetries times with
+// exponential backoff. It gives up (returning the last error) when the
+// context is cancelled — shutdown must not stall on a dead Redis.
+func (r *redisBridge) publishPayload(ctx context.Context, key string, payload []byte) error {
+	var lastErr error
+	for attempt := 0; attempt <= xaddRetries; attempt++ {
+		if attempt > 0 {
+			delay := xaddBackoff << (attempt - 1) // 200ms, 400ms, 800ms
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+		err := r.xaddPayload(ctx, key, payload)
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+	}
+	return lastErr
+}
+
+// replayOutbox re-publishes messages spooled during a Redis outage,
+// oldest first, until the spool is empty or Redis fails again. The first
+// pass runs immediately (start() only succeeds when Redis answered), then
+// a ticker picks up entries spooled while the bridge kept running.
+func (r *redisBridge) replayOutbox(ctx context.Context) {
+	sweep := func(reason string) {
+		n, err := r.outbox.replay(func(stream string, payload []byte) error {
+			return r.xaddPayload(ctx, stream, payload)
+		})
+		if err != nil {
+			slog.Warn("bus outbox replay incomplete; will retry", "replayed", n, "reason", reason, "error", err)
+		} else if n > 0 {
+			slog.Info("bus outbox replayed", "messages", n)
+		}
+	}
+	sweep("startup")
+	ticker := time.NewTicker(outboxReplayEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep("tick")
+		}
+	}
+}
+
+func (r *redisBridge) xaddPayload(ctx context.Context, key string, payload []byte) error {
 	return r.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: key,
 		MaxLen: 10000,
@@ -459,7 +590,23 @@ func (r *redisBridge) consume(ctx context.Context, stream string, handle func([]
 	// Recover mail stranded by a crashed predecessor before settling
 	// into the steady-state read loop.
 	r.reclaimPending(ctx, stream, handle)
+	claimEvery := r.claimEvery
+	if claimEvery <= 0 {
+		claimEvery = defaultClaimEvery
+	}
+	iterations := 0
 	for ctx.Err() == nil {
+		// Steady-state PEL sweep, counted per LOOP iteration (not per
+		// successful read — an idle stream's redis.Nil ticks are
+		// iterations too). The startup drain above only helps messages
+		// stranded BEFORE this process started; entries this process
+		// delivered-but-not-acked (agent loop slow, chan full) age into
+		// reclaim range while we're live. With 5s blocking reads this
+		// fires ~once a minute on an idle stream, faster under load.
+		iterations++
+		if iterations%claimEvery == 0 {
+			r.reclaimPending(ctx, stream, handle)
+		}
 		res, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group:    r.group,
 			Consumer: r.consumer,
