@@ -64,11 +64,22 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	ws := wiki.NewWikiStore(dbs.DB(), dbs.Dialect())
 	kbs := kb.NewKBStore(dbs.DB(), dbs.Dialect())
 
-	sources, err := kbs.ListSources(ctx, agentID, 500, 0)
-	if err != nil {
-		slog.Warn("wiki autogen: list sources failed", "agent", agentID, "error", err)
-		_ = st.SetWikiAutoGenResult(ctx, agentID, time.Now(), "error", err.Error(), 0)
-		return
+	// Page through ALL sources: a fixed 500-row first page silently
+	// stranded older pending sources once the agent's KB grew past the
+	// cap (they'd never see a wiki build, without any warning).
+	var sources []kb.KBSource
+	const pageSize = 500
+	for offset := 0; ; offset += pageSize {
+		page, err := kbs.ListSources(ctx, agentID, pageSize, offset)
+		if err != nil {
+			slog.Warn("wiki autogen: list sources failed", "agent", agentID, "error", err)
+			_ = st.SetWikiAutoGenResult(ctx, agentID, time.Now(), "error", err.Error(), 0)
+			return
+		}
+		sources = append(sources, page...)
+		if len(page) < pageSize {
+			break
+		}
 	}
 
 	var toProcess []kb.KBSource

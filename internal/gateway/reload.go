@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/channels"
 	"github.com/fluctio-ai/fluctio/internal/sandbox"
@@ -89,13 +90,26 @@ func (g *Gateway) ReloadSandbox() error {
 	g.mu.Unlock()
 
 	if prev != nil && prev != next {
-		prev.CloseAll()
+		// Grace-drain instead of an instant CloseAll: in-flight tool
+		// execs still hold executors from the old pool, and killing them
+		// mid-call aborted running tool invocations on every hot reload.
+		// The swap above is already effective (new requests take `next`),
+		// so give old-pool work one exec budget (~2 min, matching the
+		// exec tool ceiling) before reclaiming.
+		go func(p sandbox.ExecutorPool) {
+			time.Sleep(reloadDrainGrace)
+			p.CloseAll()
+		}(prev)
 	}
 	slog.Info("hot-reload: sandbox executor pool rebuilt",
 		"backend", sandboxPoolBackend(next),
 		"evictedUserSpaces", evicted)
 	return nil
 }
+
+// reloadDrainGrace is how long a retired sandbox executor pool stays
+// alive after a hot reload so in-flight tool execs on it can finish.
+const reloadDrainGrace = 130 * time.Second
 
 func sandboxPoolBackend(p sandbox.ExecutorPool) string {
 	if p == nil {

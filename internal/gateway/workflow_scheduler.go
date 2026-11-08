@@ -57,9 +57,24 @@ func (g *Gateway) processDueWorkflowSchedules(ctx context.Context, loc *time.Loc
 		if !locked {
 			continue // another instance / stale lock
 		}
-		g.fireWorkflowSchedule(ctx, dbs, s, now, loc)
+		// Fire off the polling loop: RunWorkflow includes the full LLM
+		// chain, and running it inline let one slow workflow stall every
+		// later due schedule (and the ticker itself). The row lock above
+		// already prevents double-fire, and next_run advances inside the
+		// goroutine when the run settles. The semaphore caps concurrent
+		// fires so a downtime backlog (100 due schedules) can't stampede
+		// the provider — later fires just wait for a slot while the
+		// polling loop keeps moving.
+		workflowFireSem <- struct{}{}
+		go func(s store.WorkflowScheduleRow) {
+			defer func() { <-workflowFireSem }()
+			g.fireWorkflowSchedule(ctx, dbs, s, now, loc)
+		}(s)
 	}
 }
+
+// workflowFireSem bounds how many scheduled workflows run at once.
+var workflowFireSem = make(chan struct{}, 8)
 
 // fireWorkflowSchedule runs one schedule's workflow and bumps next_run. The
 // next_run advance happens even if the agent/workflow is gone, so a broken
