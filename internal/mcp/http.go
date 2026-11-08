@@ -3,6 +3,7 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,7 +57,7 @@ func expandHeaders(headers map[string]string) map[string]string {
 	return expanded
 }
 
-func (c *HTTPClient) sendRequest(method string, params interface{}) (*jsonRPCResponse, error) {
+func (c *HTTPClient) sendRequest(ctx context.Context, method string, params interface{}) (*jsonRPCResponse, error) {
 	c.mu.Lock()
 	id := c.nextID
 	c.nextID++
@@ -74,7 +75,10 @@ func (c *HTTPClient) sendRequest(method string, params interface{}) (*jsonRPCRes
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", c.url, bytes.NewReader(body))
+	// The request carries the caller's ctx: a canceled turn aborts the
+	// in-flight HTTP call (and its SSE body read) immediately, on top of
+	// the client's fixed 120s timeout.
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -129,7 +133,8 @@ func (c *HTTPClient) sendRequest(method string, params interface{}) (*jsonRPCRes
 	// returns as soon as the response carrying our ID shows up, so a
 	// server that keeps the stream open for notifications doesn't pin the
 	// caller until the client timeout — which a ReadAll-first approach
-	// would do, since it blocks until EOF.
+	// would do, since it blocks until EOF. The SSE scanner reads a body
+	// bound to the request ctx, so cancellation aborts the scan too.
 	if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		return readSSEResponse(resp.Body, id)
 	}
@@ -188,8 +193,8 @@ func readSSEResponse(body io.Reader, id int) (*jsonRPCResponse, error) {
 }
 
 // Connect initializes the connection with the MCP server.
-func (c *HTTPClient) Connect() error {
-	_, err := c.sendRequest("initialize", initializeParams{
+func (c *HTTPClient) Connect(ctx context.Context) error {
+	_, err := c.sendRequest(ctx, "initialize", initializeParams{
 		ProtocolVersion: "2024-11-05",
 		ClientInfo:      clientInfo{Name: "fluctio", Version: "0.1.0"},
 	})
@@ -213,9 +218,10 @@ func isSessionExpired(err error) bool {
 // callWithSessionRetry runs a post-initialize RPC and recovers from
 // server-side session loss: clear the stale id, re-initialize once, and
 // retry — instead of leaving every tool of that server failing until the
-// session rebinds or the process restarts.
-func (c *HTTPClient) callWithSessionRetry(method string, params interface{}) (*jsonRPCResponse, error) {
-	resp, err := c.sendRequest(method, params)
+// session rebinds or the process restarts. The caller's ctx flows through
+// every leg, so cancellation aborts the whole chain.
+func (c *HTTPClient) callWithSessionRetry(ctx context.Context, method string, params interface{}) (*jsonRPCResponse, error) {
+	resp, err := c.sendRequest(ctx, method, params)
 	if err == nil {
 		return resp, nil
 	}
@@ -225,18 +231,18 @@ func (c *HTTPClient) callWithSessionRetry(method string, params interface{}) (*j
 	c.mu.Lock()
 	c.sessionID = ""
 	c.mu.Unlock()
-	if _, err := c.sendRequest("initialize", initializeParams{
+	if _, err := c.sendRequest(ctx, "initialize", initializeParams{
 		ProtocolVersion: "2024-11-05",
 		ClientInfo:      clientInfo{Name: "fluctio", Version: "0.1.0"},
 	}); err != nil {
 		return nil, fmt.Errorf("session re-initialize: %w", err)
 	}
-	return c.sendRequest(method, params)
+	return c.sendRequest(ctx, method, params)
 }
 
 // ListTools returns the list of tools available on the MCP server.
-func (c *HTTPClient) ListTools() ([]ToolDef, error) {
-	resp, err := c.callWithSessionRetry("tools/list", struct{}{})
+func (c *HTTPClient) ListTools(ctx context.Context) ([]ToolDef, error) {
+	resp, err := c.callWithSessionRetry(ctx, "tools/list", struct{}{})
 	if err != nil {
 		return nil, err
 	}
@@ -250,8 +256,8 @@ func (c *HTTPClient) ListTools() ([]ToolDef, error) {
 }
 
 // CallTool calls a tool on the MCP server.
-func (c *HTTPClient) CallTool(name string, args json.RawMessage) (string, error) {
-	resp, err := c.callWithSessionRetry("tools/call", toolCallParams{
+func (c *HTTPClient) CallTool(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	resp, err := c.callWithSessionRetry(ctx, "tools/call", toolCallParams{
 		Name:      name,
 		Arguments: args,
 	})

@@ -418,7 +418,7 @@ func (a *Agent) bindSession(ctx context.Context, channel, accountID, chatID, ses
 		// tool names. Iterating a.mcpServers (config map) keeps this stable
 		// even if the manager silently skipped a server that failed to
 		// connect — its prefix just won't match any tool.
-		for _, td := range a.mcpMgr.ToolDefs() {
+		for _, td := range a.mcpMgr.ToolDefs(ctx) {
 			toolName := td.Name
 			srvName, srvCfg := lookupMCPServer(toolName, a.mcpServers)
 			effect := mcpDefaultEffect(srvName, toolName, srvCfg)

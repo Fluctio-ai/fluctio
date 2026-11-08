@@ -1,12 +1,21 @@
 package mcp
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Client is the interface for communicating with an MCP server.
+//
+// Every RPC carries a context: the agent turn's ctx flows down here so a
+// user cancel (Stop) or a turn-level deadline aborts an in-flight MCP
+// call instead of pinning it to the client's internal timer bound. The
+// per-request timer inside each transport stays as a floor for hung
+// servers; the ctx is the tighter, caller-controlled bound on top.
 type Client interface {
-	Connect() error
-	ListTools() ([]ToolDef, error)
-	CallTool(name string, args json.RawMessage) (string, error)
+	Connect(ctx context.Context) error
+	ListTools(ctx context.Context) ([]ToolDef, error)
+	CallTool(ctx context.Context, name string, args json.RawMessage) (string, error)
 	Close() error
 }
 

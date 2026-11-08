@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,6 +33,22 @@ type StdioClient struct {
 	scanner *bufio.Scanner
 	mu      sync.Mutex
 	nextID  int
+	// lines is the persistent stdout feed: ONE reader goroutine (started
+	// at Connect) pushes every stdout line here, and each sendRequest
+	// consumes from the shared channel. Before the ctx work, every
+	// request spawned its own reader on the same scanner — after a
+	// context-cancel return that skipped teardown, a second reader would
+	// race the stale one on scanner reads. One reader for the process
+	// lifetime removes the race: stale responses (for canceled requests)
+	// are drained by whichever request reads them and dropped on the ID
+	// mismatch check, and a cancel now leaves the server running for
+	// later turns instead of killing it.
+	lines chan stdioLine
+}
+
+type stdioLine struct {
+	text string
+	err  error
 }
 
 // NewStdioClient creates a new stdio MCP client. dir is the subprocess's
@@ -45,6 +62,7 @@ func NewStdioClient(command string, args []string, env map[string]string, dir st
 		env:     env,
 		dir:     dir,
 		nextID:  1,
+		lines:   make(chan stdioLine, 16),
 	}
 }
 
@@ -81,8 +99,11 @@ func scrubbedEnv() []string {
 	return env
 }
 
-// Connect starts the subprocess and initializes the MCP session.
-func (c *StdioClient) Connect() error {
+// Connect starts the subprocess and initializes the MCP session. The ctx
+// bounds the initialize handshake: a canceled context (turn aborted
+// mid-bind) fails Connect, and the caller's error path tears the child
+// down.
+func (c *StdioClient) Connect(ctx context.Context) error {
 	c.cmd = exec.Command(c.command, c.args...)
 	// cwd into the session/project scope dir so MCP tools write into the
 	// agent's workspace (sessions/<sid>/ or projects/<pid>/), not the
@@ -123,9 +144,22 @@ func (c *StdioClient) Connect() error {
 		return fmt.Errorf("start process: %w", err)
 	}
 
+	// One reader goroutine for the process's whole lifetime — see the
+	// lines field comment for why this must not be per-request. It closes
+	// the channel when the stream ends so callers learn about EOF
+	// immediately instead of waiting out the request timer (a clean EOF
+	// carries no scanner error — the closed channel IS the signal).
+	go func() {
+		for c.scanner.Scan() {
+			c.lines <- stdioLine{text: c.scanner.Text()}
+		}
+		c.lines <- stdioLine{err: c.scanner.Err()}
+		close(c.lines)
+	}()
+
 	// Send initialize. On failure the subprocess is already alive — tear
 	// it down here or every scope rebuild leaks an orphan child.
-	_, initErr := c.sendRequest("initialize", initializeParams{
+	_, initErr := c.sendRequest(ctx, "initialize", initializeParams{
 		ProtocolVersion: "2024-11-05",
 		ClientInfo:      clientInfo{Name: "fluctio", Version: "0.1.0"},
 	})
@@ -140,7 +174,7 @@ func (c *StdioClient) Connect() error {
 	return nil
 }
 
-func (c *StdioClient) sendRequest(method string, params interface{}) (*jsonRPCResponse, error) {
+func (c *StdioClient) sendRequest(ctx context.Context, method string, params interface{}) (*jsonRPCResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -164,31 +198,29 @@ func (c *StdioClient) sendRequest(method string, params interface{}) (*jsonRPCRe
 		return nil, fmt.Errorf("write to stdin: %w", err)
 	}
 
-	// The scanner has no deadline support, so the read loop runs in a
-	// helper goroutine and the caller bounds it with a timer. On timeout
-	// the subprocess is killed: that unblocks the helper (Scan returns
-	// false once the pipe dies) and marks the client dead for future
-	// calls instead of leaving a hung server to pin the agent turn.
-	type lineOut struct {
-		text string
-		err  error
-	}
-	lines := make(chan lineOut, 16)
-	go func() {
-		for c.scanner.Scan() {
-			lines <- lineOut{text: c.scanner.Text()}
-		}
-		lines <- lineOut{err: c.scanner.Err()}
-	}()
-
+	// The scanner has no deadline support, so the (single, persistent)
+	// reader goroutine feeds the lines channel and the caller selects
+	// over it, the per-request timer, and the caller's context. The timer
+	// is the hung-server floor that tears the subprocess down; the ctx is
+	// the caller-controlled bound — a canceled request returns
+	// immediately WITHOUT tearing the server down (it stays usable for
+	// later turns), and its late response is dropped harmlessly on the ID
+	// mismatch check by whichever request drains the channel next.
 	timer := time.NewTimer(mcpRequestTimeout)
 	defer timer.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("MCP request %q canceled: %w", method, ctx.Err())
 		case <-timer.C:
 			_ = c.Close()
 			return nil, fmt.Errorf("MCP request %q timed out after %s — server torn down", method, mcpRequestTimeout)
-		case lo := <-lines:
+		case lo, ok := <-c.lines:
+			if !ok {
+				// Stream ended (server exited / pipe closed): fail now,
+				// don't pin the caller until the timer.
+				return nil, fmt.Errorf("read stdout: server stream closed during %q", method)
+			}
 			if lo.err != nil {
 				return nil, fmt.Errorf("read stdout: %w", lo.err)
 			}
@@ -213,8 +245,8 @@ func (c *StdioClient) sendRequest(method string, params interface{}) (*jsonRPCRe
 }
 
 // ListTools returns the list of tools available on the MCP server.
-func (c *StdioClient) ListTools() ([]ToolDef, error) {
-	resp, err := c.sendRequest("tools/list", struct{}{})
+func (c *StdioClient) ListTools(ctx context.Context) ([]ToolDef, error) {
+	resp, err := c.sendRequest(ctx, "tools/list", struct{}{})
 	if err != nil {
 		return nil, err
 	}
@@ -228,8 +260,8 @@ func (c *StdioClient) ListTools() ([]ToolDef, error) {
 }
 
 // CallTool calls a tool on the MCP server.
-func (c *StdioClient) CallTool(name string, args json.RawMessage) (string, error) {
-	resp, err := c.sendRequest("tools/call", toolCallParams{
+func (c *StdioClient) CallTool(ctx context.Context, name string, args json.RawMessage) (string, error) {
+	resp, err := c.sendRequest(ctx, "tools/call", toolCallParams{
 		Name:      name,
 		Arguments: args,
 	})

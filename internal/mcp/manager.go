@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
 )
@@ -28,6 +29,14 @@ type toolRoute struct {
 // connect are logged as warnings but don't block startup. Connections run
 // in PARALLEL: serial dialing let N unreachable servers (each up to its
 // client timeout) stall session binding by N × timeout.
+//
+// Dialing uses context.Background() on purpose: the manager is a
+// session-lifetime resource and NewManager runs at session bind, where
+// the binding turn's ctx may already be ending. Canceling a turn must not
+// leave the session's MCP servers half-dialed and unreachable for every
+// later turn (the manager is only rebuilt when the session's scope dir
+// changes). Each dial is still bounded by the transports' own 120s
+// request timer.
 func NewManager(servers map[string]config.MCPServerConfig, dir string) *Manager {
 	m := &Manager{
 		servers: make(map[string]Client),
@@ -54,7 +63,9 @@ func NewManager(servers map[string]config.MCPServerConfig, dir string) *Manager 
 		}
 		pending++
 		go func(name string, client Client) {
-			if err := client.Connect(); err != nil {
+			dialCtx, cancel := context.WithTimeout(context.Background(), mcpDialTimeout)
+			defer cancel()
+			if err := client.Connect(dialCtx); err != nil {
 				slog.Warn("failed to connect to MCP server, skipping", "server", name, "error", err)
 				// Release whatever the client did acquire (a stdio child
 				// started before a failed initialize, sockets, …).
@@ -62,7 +73,7 @@ func NewManager(servers map[string]config.MCPServerConfig, dir string) *Manager 
 				conns <- serverConn{name: name}
 				return
 			}
-			tools, err := client.ListTools()
+			tools, err := client.ListTools(dialCtx)
 			if err != nil {
 				slog.Warn("failed to list MCP tools, skipping", "server", name, "error", err)
 				client.Close()
@@ -101,11 +112,16 @@ func NewManager(servers map[string]config.MCPServerConfig, dir string) *Manager 
 	return m
 }
 
+// mcpDialTimeout bounds the session-bind dial (Connect + ListTools) per
+// server — independent of the per-request timer so a slow handshake
+// can't stretch bind beyond this budget.
+const mcpDialTimeout = 120 * time.Second
+
 // ToolDefs returns tool definitions for all MCP tools, with prefixed names.
-func (m *Manager) ToolDefs() []ToolDef {
+func (m *Manager) ToolDefs(ctx context.Context) []ToolDef {
 	var defs []ToolDef
 	for name, cfg := range m.servers {
-		tools, err := cfg.ListTools()
+		tools, err := cfg.ListTools(ctx)
 		if err != nil {
 			slog.Warn("failed to list tools from MCP server", "server", name, "error", err)
 			continue
@@ -121,8 +137,11 @@ func (m *Manager) ToolDefs() []ToolDef {
 	return defs
 }
 
-// CallTool routes a prefixed tool call to the correct MCP server.
-func (m *Manager) CallTool(_ context.Context, prefixedName string, args json.RawMessage) (string, error) {
+// CallTool routes a prefixed tool call to the correct MCP server. The
+// turn's ctx flows down to the transport: a user Stop or turn deadline
+// cancels the in-flight MCP call instead of pinning it to the transport's
+// internal timer.
+func (m *Manager) CallTool(ctx context.Context, prefixedName string, args json.RawMessage) (string, error) {
 	route, ok := m.toolMap[prefixedName]
 	if !ok {
 		return "", fmt.Errorf("unknown MCP tool: %s", prefixedName)
@@ -133,7 +152,7 @@ func (m *Manager) CallTool(_ context.Context, prefixedName string, args json.Raw
 		return "", fmt.Errorf("MCP server not connected: %s", route.serverName)
 	}
 
-	return client.CallTool(route.originalName, args)
+	return client.CallTool(ctx, route.originalName, args)
 }
 
 // HasTools returns true if any MCP tools are available.

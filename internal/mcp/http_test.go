@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,7 +24,7 @@ func TestHTTPClientDualAcceptHeader(t *testing.T) {
 	defer srv.Close()
 
 	c := NewHTTPClient(srv.URL, nil)
-	if err := c.Connect(); err != nil {
+	if err := c.Connect(context.Background()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
 	for _, want := range []string{"application/json", "text/event-stream"} {
@@ -57,10 +58,10 @@ func TestHTTPClientStreamableSession(t *testing.T) {
 	defer srv.Close()
 
 	c := NewHTTPClient(srv.URL, nil)
-	if err := c.Connect(); err != nil {
+	if err := c.Connect(context.Background()); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	tools, err := c.ListTools()
+	tools, err := c.ListTools(context.Background())
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
@@ -89,7 +90,7 @@ func TestHTTPClientSSEReturnsBeforeStreamClose(t *testing.T) {
 
 	c := NewHTTPClient(srv.URL, nil)
 	done := make(chan error, 1)
-	go func() { done <- c.Connect() }()
+	go func() { done <- c.Connect(context.Background()) }()
 	select {
 	case err := <-done:
 		if err != nil {
