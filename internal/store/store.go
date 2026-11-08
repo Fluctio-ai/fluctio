@@ -257,6 +257,7 @@ type Store interface {
 	// Flattened to one row per (agentID, filename) — the per-user overlay
 	// was removed when agent_files was collapsed onto the agent dimension.
 	GetAgentFile(ctx context.Context, agentID, filename string) ([]byte, error)
+	CompareAndSwapAgentFile(ctx context.Context, agentID, filename string, expect, next []byte) (bool, error)
 	SaveAgentFile(ctx context.Context, agentID, filename string, data []byte) error
 	DeleteAgentFile(ctx context.Context, agentID, filename string) error
 	ListAgentFiles(ctx context.Context, agentID string) ([]string, error)
@@ -572,15 +573,15 @@ type SessionOwnerPair struct {
 
 // SessionMeta is summary info for a session (for listing).
 type SessionMeta struct {
-	Key          string    `json:"key"`
-	UserID       string    `json:"userId,omitempty"`  // session owner (may differ from the listing caller when child app_users are included)
-	AgentID      string    `json:"agentId,omitempty"` // populated by ListSessionsPaginated
-	Channel      string    `json:"channel,omitempty"`
-	AccountID    string    `json:"accountId,omitempty"`
-	ChatID       string    `json:"chatId,omitempty"`
-	ProjectID    string    `json:"projectId,omitempty"`
-	Title        string    `json:"title,omitempty"`
-	MessageCount int       `json:"messageCount"`
+	Key          string `json:"key"`
+	UserID       string `json:"userId,omitempty"`  // session owner (may differ from the listing caller when child app_users are included)
+	AgentID      string `json:"agentId,omitempty"` // populated by ListSessionsPaginated
+	Channel      string `json:"channel,omitempty"`
+	AccountID    string `json:"accountId,omitempty"`
+	ChatID       string `json:"chatId,omitempty"`
+	ProjectID    string `json:"projectId,omitempty"`
+	Title        string `json:"title,omitempty"`
+	MessageCount int    `json:"messageCount"`
 	// ChatOnly mirrors sessions.chat_only — true when this session runs
 	// in pure-conversation mode (no tools sent to the LLM). Surfaced so
 	// the chat UI can render its toggle in the right state on reload.

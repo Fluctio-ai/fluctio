@@ -1,6 +1,8 @@
 package store
 
 import (
+	"sync"
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
@@ -4865,6 +4867,37 @@ func (d *DBStore) GetAgentFile(ctx context.Context, agentID, filename string) ([
 		return nil, scanErr(err)
 	}
 	return []byte(content), nil
+}
+
+var agentFileLocks sync.Map // agentID\x00filename -> *sync.Mutex
+
+// AgentFileLock serializes read-modify-write cycles on one agent file
+// within this process (memory tidy vs itself).
+func AgentFileLock(agentID, filename string) *sync.Mutex {
+	key := agentID + "\x00" + filename
+	mu, _ := agentFileLocks.LoadOrStore(key, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+// CompareAndSwapAgentFile atomically replaces the file when its content
+// still matches expect. Under the per-file process lock the read-compare-
+// write window is closed, so a concurrent writer between the check and
+// the save can no longer silently lose (or lose) either side's bytes.
+func (d *DBStore) CompareAndSwapAgentFile(ctx context.Context, agentID, filename string, expect, next []byte) (bool, error) {
+	mu := AgentFileLock(agentID, filename)
+	mu.Lock()
+	defer mu.Unlock()
+	current, err := d.GetAgentFile(ctx, agentID, filename)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return false, err
+	}
+	if !bytes.Equal(current, expect) {
+		return false, nil
+	}
+	if err := d.SaveAgentFile(ctx, agentID, filename, next); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // SaveAgentFile writes the (agent_id, filename) row (upsert).

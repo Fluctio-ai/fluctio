@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -213,20 +212,22 @@ Output STRICT JSON only — no markdown fences, no commentary:
 	// Re-read before writing: if a concurrent auto-persist appended to the
 	// file during the LLM call, give up this round instead of dropping the
 	// fresh facts (they'll ride the next sweep).
-	current, err := st.GetAgentFile(ctx, agentID, "MEMORY.md")
-	if err != nil || !bytes.Equal(current, original) {
-		slog.Info("memory tidy: file changed during tidy, deferring to next sweep", "agent", agentID)
-		return
-	}
-
 	if threats := privacy.Scan(tidied); len(threats) > 0 {
 		for _, t := range threats {
 			slog.Warn("memory tidy: safety threat in tidied output",
 				"agent", agentID, "type", t.Type, "pattern", t.Pattern)
 		}
 	}
-	if err := st.SaveAgentFile(ctx, agentID, "MEMORY.md", []byte(tidied)); err != nil {
+	// CAS instead of read-then-save: a concurrent auto-persist appending
+	// between the check and the write used to silently overwrite one
+	// side's bytes. The store-side per-file lock closes the window.
+	swapped, err := st.CompareAndSwapAgentFile(ctx, agentID, "MEMORY.md", original, []byte(tidied))
+	if err != nil {
 		slog.Warn("memory tidy: save failed", "agent", agentID, "error", err)
+		return
+	}
+	if !swapped {
+		slog.Info("memory tidy: file changed during tidy, deferring to next sweep", "agent", agentID)
 		return
 	}
 	archiveMemoryTidy(ctx, st, agentID, archived)

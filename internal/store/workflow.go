@@ -83,7 +83,7 @@ func (d *DBStore) migrateWorkflowTables(ctx context.Context) error {
 	// M6 form columns: retrofit onto installs created before the form feature
 	// (CREATE IF NOT EXISTS won't add them). Same guard pattern as
 	// migrateAgentGoalsAddRouting.
-	for _, col := range []string{"pending_form_node", "pending_form_schema"} {
+	for _, col := range []string{"pending_form_node", "pending_form_schema", "waiting_since"} {
 		has, err := d.tableHasColumn(ctx, "workflow_runs", col)
 		if err != nil {
 			return err
@@ -212,7 +212,7 @@ func (d *DBStore) GetWorkflowRunInput(ctx context.Context, id string) (map[strin
 // an already-running/succeeded one.
 func (d *DBStore) MarkRunRunning(ctx context.Context, id string) error {
 	res, err := d.db.ExecContext(ctx, fmt.Sprintf(
-		`UPDATE workflow_runs SET status = 'running', finished_at = NULL, pending_form_node = '', pending_form_schema = ''
+		`UPDATE workflow_runs SET status = 'running', finished_at = NULL, pending_form_node = '', pending_form_schema = '', waiting_since = ''
 		 WHERE id = %s AND status IN ('failed','waiting','needs_intervention')`,
 		d.ph(1)), id)
 	if err != nil {
@@ -248,20 +248,25 @@ func (d *DBStore) SetRunWaiting(ctx context.Context, id, formNode string, schema
 		return fmt.Errorf("marshal form schema: %w", err)
 	}
 	_, err = d.db.ExecContext(ctx, fmt.Sprintf(
-		`UPDATE workflow_runs SET status = 'waiting', pending_form_node = %s, pending_form_schema = %s, error = '', finished_at = NULL WHERE id = %s`,
-		d.ph(1), d.ph(2), d.ph(3)),
-		formNode, string(b), id)
+		`UPDATE workflow_runs SET status = 'waiting', pending_form_node = %s, pending_form_schema = %s, error = '', finished_at = NULL, waiting_since = %s WHERE id = %s`,
+		d.ph(1), d.ph(2), d.ph(3), d.ph(4)),
+		formNode, string(b), nowRFC3339(), id)
 	return err
 }
 
-// TimeoutWaitingRuns flips waiting runs started before cutoff to
+// TimeoutWaitingRuns flips waiting runs parked before cutoff to
 // needs_intervention (M6 form timeout): a form nobody answers doesn't linger
 // as waiting forever, and needs_intervention (not failed) keeps it visible as
-// a human decision. Returns the rows flipped.
+// a human decision. Anchored on waiting_since (when the run ENTERED the
+// form wait), not started_at — a run started days earlier that reached its
+// form 5 minutes ago must not time out on arrival. Legacy rows parked
+// before the waiting_since column existed carry no stamp and are left
+// alone (fail-safe: a human can intervene manually).
+// Returns the rows flipped.
 func (d *DBStore) TimeoutWaitingRuns(ctx context.Context, before time.Time, msg string) (int64, error) {
 	res, err := d.db.ExecContext(ctx, fmt.Sprintf(
 		`UPDATE workflow_runs SET status = 'needs_intervention', error = %s, finished_at = %s
-		 WHERE status = 'waiting' AND started_at < %s`,
+		 WHERE status = 'waiting' AND waiting_since != '' AND waiting_since < %s`,
 		d.ph(1), d.ph(2), d.ph(3)),
 		msg, nowRFC3339(), before.UTC().Format(time.RFC3339))
 	if err != nil {
