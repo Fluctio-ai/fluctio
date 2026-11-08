@@ -15,7 +15,7 @@ import (
 // Per-request bound: a hung MCP server must not pin the agent turn
 // forever. On timeout the subprocess is torn down so the reader
 // goroutine unblocks and every later request fails fast.
-const mcpRequestTimeout = 120 * time.Second
+var mcpRequestTimeout = 120 * time.Second
 
 // Large tool responses (screenshot base64, big exports) exceed the old
 // 1MB scanner cap; 16MB matches the HTTP path's tolerance.

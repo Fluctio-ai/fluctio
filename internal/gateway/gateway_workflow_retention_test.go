@@ -19,6 +19,10 @@ func TestWorkflowRetentionHours(t *testing.T) {
 		{"both negative", "-1", "-5", -1, -5},
 		{"bogus disables", "garbage", "x", -1, -1},
 		{"mixed", "0", "", 0, 720},
+		// Overflow guard: a value beyond time.Duration's nanosecond range
+		// wraps the cutoff into the FUTURE and the sweep would wipe the
+		// whole table. Huge positives clamp to maxRetentionHours.
+		{"overflow clamps", "999999999999", "123456789012", 10 * 365 * 24, 10 * 365 * 24},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

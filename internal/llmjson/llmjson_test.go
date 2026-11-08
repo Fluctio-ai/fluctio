@@ -132,3 +132,21 @@ func TestUnmarshalLLMCoversAllTolerancePaths(t *testing.T) {
 		t.Errorf("want the original strict error, got %v", err)
 	}
 }
+
+// StripFence tolerates the fence appearing after leading prose and drops
+// trailing prose after the closing fence — the old three-TrimPrefix
+// implementation only matched fences flush with the start.
+func TestStripFenceToleratesProseAroundFence(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"```json\n{\"a\":1}\n```", `{"a":1}`},
+		{"Here you go:\n```json\n{\"a\":1}\n```", `{"a":1}`},
+		{"```JSON\n{\"a\":1}\n```", `{"a":1}`},
+		{"```json\n{\"a\":1}\n```\nhope that helps", `{"a":1}`},
+		{"Sure:\n```\n[1,2]\n```\nbye", `[1,2]`},
+	}
+	for _, c := range cases {
+		if got := StripFence(c.in); got != c.want {
+			t.Errorf("StripFence(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

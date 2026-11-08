@@ -31,7 +31,7 @@ const elevenLabsDefaultVoice = "21m00Tcm4TlvDq8ikWAM"
 // path verbatim and is LLM-controlled, so anything outside letters,
 // digits and underscore is rejected rather than risk path/query rewrite
 // while the xi-api-key rides along.
-var elevenVoiceRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+var elevenVoiceRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 func (e *ElevenLabs) Execute(ctx context.Context, req toolproviders.Request) (toolproviders.Response, error) {
 	a, err := parseArgs(req.Args)
