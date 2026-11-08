@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+func TestOutboxRapidEnqueueNoCollisions(t *testing.T) {
+	dir := t.TempDir()
+	o := newOutbox(dir)
+	// Back-to-back enqueues: UnixNano alone collided on Windows timer
+	// granularity and the rename-commit overwrote earlier entries.
+	for i := 0; i < 20; i++ {
+		if err := o.enqueue("stream", []byte{byte(i)}); err != nil {
+			t.Fatalf("enqueue %d: %v", i, err)
+		}
+	}
+	if n, err := o.count(); err != nil || n != 20 {
+		t.Fatalf("count = %d, %v; want 20 (no filename collisions)", n, err)
+	}
+}
+
 func TestOutboxEnqueueReplayRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	o := newOutbox(dir)

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -64,6 +65,12 @@ func newOutbox(dir string) *outbox {
 // enqueue spools one failed publish. The write is atomic (temp file +
 // rename) so the replay loop never sees a half-written entry as a valid
 // one; a crash mid-write leaves the "*.tmp" behind, which replay ignores.
+// outboxSeq disambiguates filenames: time.Now().UnixNano() alone is NOT
+// unique on every platform (Windows timer granularity let back-to-back
+// enqueues produce identical names, and the rename-to-commit step
+// silently overwrote the earlier spooled message).
+var outboxSeq atomic.Uint64
+
 func (o *outbox) enqueue(stream string, payload []byte) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -79,7 +86,7 @@ func (o *outbox) enqueue(stream string, payload []byte) error {
 	if err != nil {
 		return fmt.Errorf("marshal outbox entry: %w", err)
 	}
-	name := fmt.Sprintf("msg-%d.json", time.Now().UnixNano())
+	name := fmt.Sprintf("msg-%d-%06d.json", time.Now().UnixNano(), outboxSeq.Add(1))
 	tmp := filepath.Join(o.dir, "."+name+".tmp")
 	if err := os.WriteFile(tmp, blob, 0o644); err != nil {
 		return fmt.Errorf("write outbox tmp: %w", err)
