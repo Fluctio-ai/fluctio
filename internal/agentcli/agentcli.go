@@ -279,16 +279,6 @@ func writeAgent(ctx context.Context, st store.Store, existing *store.AgentRecord
 	return rec, true, nil
 }
 
-// loadAccount reads the user account for an existing agent. Used on
-// re-init so we can preserve the owner without going through ensureOwner.
-func loadAccount(ctx context.Context, st store.Store, userID string) (*users.Account, error) {
-	accts, err := users.NewAccounts(st)
-	if err != nil {
-		return nil, err
-	}
-	return accts.Get(ctx, userID)
-}
-
 // Resolve looks an agent up by exact id and by display name. Agent names
 // can legitimately start with "agt_", so the prefix alone is not enough
 // to classify a user-supplied reference.
@@ -397,10 +387,22 @@ func SetConfig(ctx context.Context, st store.Store, agentID, key, rawValue strin
 	}
 	aid := ""
 	if isAgentScope {
+		if agentID == "" {
+			// Without it the write silently lands in USER scope instead
+			// of the intended agent scope.
+			return fmt.Errorf("config key %q is agent-scoped: pass an agent id (fluctio agents config <id> ...)", key)
+		}
 		aid = agentID
 	}
+	pv := parseValue(rawValue)
+	if pv == nil {
+		// `set model null` would persist a JSON null and blow up at
+		// runtime when the config is consumed. Clearing a key isn't
+		// supported by the CLI yet — say so instead of writing garbage.
+		return fmt.Errorf("config key %q: null values are not supported; set an explicit value", key)
+	}
 	if len(path) == 0 {
-		obj, ok := parseValue(rawValue).(map[string]interface{})
+		obj, ok := pv.(map[string]interface{})
 		if !ok {
 			return fmt.Errorf("config key %q expects a JSON object value", key)
 		}
@@ -412,7 +414,7 @@ func SetConfig(ctx context.Context, st store.Store, agentID, key, rawValue strin
 	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
-	setNested(data, path, parseValue(rawValue))
+	setNested(data, path, pv)
 	if namespace == "sandbox" && len(path) > 0 && path[0] == "enabled" {
 		if enabled, _ := data["enabled"].(bool); enabled {
 			if _, ok := data["backend"].(string); !ok {

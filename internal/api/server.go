@@ -149,7 +149,14 @@ func buildAgentList(space *UserSpaceView, ident auth.Identity) []map[string]stri
 	all := space.Agents.All()
 	modelMap := make(map[string]string)
 	if space.Config != nil {
-		for _, ra := range config.ResolveAgents(space.Config, nil) {
+		// Feed the live agents in as entries: passing nil made
+		// ResolveAgents return an empty slice, so this fallback map was
+		// permanently empty and every /v1/agents row showed no model.
+		entries := make([]config.AgentEntry, 0, len(all))
+		for _, ag := range all {
+			entries = append(entries, config.AgentEntry{ID: ag.ID(), Name: ag.Name()})
+		}
+		for _, ra := range config.ResolveAgents(space.Config, entries) {
 			modelMap[ra.ID] = ra.Model
 		}
 	}
@@ -160,7 +167,7 @@ func buildAgentList(space *UserSpaceView, ident auth.Identity) []map[string]stri
 		}
 		model := ag.Model()
 		if model == "" {
-			model = modelMap[ag.Name()]
+			model = modelMap[ag.ID()]
 		}
 		agents = append(agents, map[string]string{
 			"id":    ag.Name(),

@@ -113,6 +113,15 @@ func (r chatCompletionRequest) inlineImageURLs() []string {
 	return out
 }
 
+// Request ceiling for /v1/chat/completions: the JSON body carries the
+// full conversation plus inline base64 images, so this is generous, but
+// an unbounded read would let a bad client balloon gateway memory.
+const maxChatCompletionsBody = 64 << 20 // 64 MiB
+
+// Per-request attachment cap — each attachment is fetched and
+// materialized into the workspace before the turn runs.
+const maxChatCompletionsAttachments = 32
+
 type chatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -191,6 +200,9 @@ func safeSessionKey(s string) (string, error) {
 
 // HandleChatCompletions handles POST /v1/chat/completions.
 func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	// Bound the request body: a caller (or compromised api_key) could
+	// otherwise stream an unbounded payload into memory.
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatCompletionsBody)
 	var req chatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -202,6 +214,19 @@ func (s *Server) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if len(req.Messages) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"error": map[string]string{"message": "messages is required", "type": "invalid_request_error"},
+		})
+		return
+	}
+
+	// Attachment count cap: each one is fetched + materialized into the
+	// workspace, so an unbounded array multiplies into slow provider
+	// calls and workspace churn.
+	if n := len(req.Images) + len(req.ImageURLs) + len(req.Attachments); n > maxChatCompletionsAttachments {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": map[string]string{
+				"message": fmt.Sprintf("too many attachments (%d; max %d)", n, maxChatCompletionsAttachments),
+				"type":    "invalid_request_error",
+			},
 		})
 		return
 	}
