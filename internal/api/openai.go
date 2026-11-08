@@ -451,13 +451,17 @@ func (s *Server) fullResponse(w http.ResponseWriter, reply, chatID, model string
 
 // resolveAgent picks an agent out of the caller's user space, preferring an
 // explicit agent ID from the x-fluctio-agent-id header and falling back to
-// the default / first agent.
+// the default / first agent. The fallback stays for OpenAI-compat clients
+// that pin stale ids — but it is logged, so "why is this hitting the wrong
+// agent" is answerable from the gateway log.
 func resolveAgent(space *UserSpaceView, agentID string) *agent.Agent {
 	mgr := space.Agents
 	if agentID != "" {
 		if ag := mgr.AgentByID(agentID); ag != nil {
 			return ag
 		}
+		slog.Warn("openai endpoint: requested agent id not found, falling back to default",
+			"requested", agentID)
 	}
 	if def := mgr.DefaultAgent(); def != nil {
 		return def
