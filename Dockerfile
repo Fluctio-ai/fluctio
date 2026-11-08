@@ -10,7 +10,11 @@ RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ .
-RUN pnpm build
+# STATIC_EXPORT=1 is required: next.config.ts only sets output: "export"
+# when this is on (it's off for `next dev` so dynamic chat routes work).
+# Without it no web/out is produced and the COPY below fails. Makefile's
+# build-web and scripts/dev-build.sh set the same flag.
+RUN STATIC_EXPORT=1 pnpm build
 
 # --- Stage 2: Build Go binary ---
 FROM golang:1.25-alpine AS go-builder
