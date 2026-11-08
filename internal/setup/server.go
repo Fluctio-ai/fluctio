@@ -35,8 +35,8 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/taskqueue"
 	"github.com/fluctio-ai/fluctio/internal/usage"
 	"github.com/fluctio-ai/fluctio/internal/users"
-	"github.com/fluctio-ai/fluctio/internal/workspace"
 	"github.com/fluctio-ai/fluctio/internal/workflow"
+	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
 // AgentHandle is the surface the web UI uses to talk to a running agent.
@@ -574,6 +574,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/skills/{name}/manifest", auth(s.handleGetAgentSkillManifest))
 	mux.HandleFunc("DELETE /api/agents/{id}/skills/{name}", auth(s.handleDeleteAgentSkill))
 	mux.HandleFunc("POST /api/agents/{id}/skills/reload", auth(s.handleReloadAgentSkills))
+
+	// Cross-platform hot reload for the CLI: agent/provider/channel/cron
+	// CRUD writes the store directly and can't deliver SIGHUP on Windows,
+	// so the CLI posts here with a temporary admin API key.
+	mux.HandleFunc("POST /api/admin/reload", admin(s.handleAdminReload))
 
 	// Plugins (super_admin only).
 	mux.HandleFunc("GET /api/plugins", admin(s.handleListPlugins))

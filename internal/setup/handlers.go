@@ -23,6 +23,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/buildinfo"
 	"github.com/fluctio-ai/fluctio/internal/bus"
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/cron"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/session"
@@ -2339,6 +2340,23 @@ func (s *Server) handleLINEWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- Helpers ---
+
+// handleAdminReload forces a hot reload of every cached UserSpace and the
+// cron schedule poll — the HTTP equivalent of the SIGHUP reload path. The
+// CLI's agent/provider/channel/cron CRUD writes the store directly and
+// Windows cannot deliver SIGHUP, so the CLI posts here (super_admin only)
+// with a temporary admin API key instead of losing cache invalidation.
+func (s *Server) handleAdminReload(w http.ResponseWriter, r *http.Request) {
+	type globalInvalidator interface{ ReloadAgents() error }
+	if inv, ok := s.userResolver.(globalInvalidator); ok {
+		if err := inv.ReloadAgents(); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+	}
+	cron.NotifyJobCreated()
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
 
 func jsonResponse(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")

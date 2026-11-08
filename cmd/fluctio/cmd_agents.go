@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -46,13 +47,19 @@ func silenceTree(cmd *cobra.Command) {
 }
 
 // notifyGatewayReload signals the running gateway (if any) so it picks
-// up store mutations the CLI just made. On Unix it sends SIGHUP to the
-// daemon PID; the gateway's reload handler invalidates every cached
-// UserSpace. On Windows it falls back to a hint, since SIGHUP isn't
-// delivered there.
+// up store mutations the CLI just made. The cross-platform path posts
+// /api/admin/reload with a temporary admin key — Windows can't deliver
+// SIGHUP, and without invalidation these store writes would silently
+// not take effect on the running gateway. SIGHUP stays as the fallback
+// (and the only path when no super_admin account exists to mint a key).
 func notifyGatewayReload() {
 	st, err := daemon.GetStatus()
 	if err != nil || st == nil || !st.Running {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if notifyGatewayReloadHTTPAdmin(ctx) {
 		return
 	}
 	if err := daemon.SignalReload(st.PID); err != nil {

@@ -307,6 +307,87 @@ func runSkillDiff(agentHome, name string, w io.Writer) error {
 	return nil
 }
 
+// notifyGatewayReloadHTTPAdmin hot-reloads the whole gateway (all cached
+// UserSpaces + the cron poll) via POST /api/admin/reload, authenticating
+// with a temporary admin API key minted for the first super_admin user.
+// Cross-platform fallback for CLI writes on Windows, where the SIGHUP
+// path is unavailable. Best-effort: any failure logs to stderr and
+// returns false so the caller can fall back to SIGHUP / restart hint.
+func notifyGatewayReloadHTTPAdmin(ctx context.Context) bool {
+	daemonSt, _ := daemon.GetStatus()
+	if daemonSt == nil || !daemonSt.Running {
+		return false
+	}
+	st, err := openStoreFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: couldn't open store for admin reload: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	defer st.Close()
+
+	// Mint the temp key for an existing super_admin — the reload endpoint
+	// is admin-gated.
+	var adminID string
+	list, err := st.ListUsers(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: couldn't list users for admin reload: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	for _, u := range list {
+		if u.Role == users.RoleSuperAdmin {
+			adminID = u.ID
+			break
+		}
+	}
+	if adminID == "" {
+		return false
+	}
+
+	port := config.LoadEnv().Gateway.Port
+	if port <= 0 {
+		port = 18953
+	}
+	ak, err := users.NewAPIKeys(st)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: couldn't open API keys to mint temp reload token: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	keyRec, token, err := ak.Create(ctx, adminID, "admin-reload-tmp", users.APIKeyTypeAdmin, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: couldn't mint temp reload API key: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	defer func(id string) {
+		delCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := ak.Delete(delCtx, id); err != nil {
+			fmt.Fprintf(os.Stderr, "Note: failed to clean up temp reload API key %s: %v\n", id, err)
+		}
+	}(keyRec.ID)
+
+	url := fmt.Sprintf("http://localhost:%d/api/admin/reload", port)
+	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(nil))
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: admin/reload HTTP request failed: %v. Falling back to SIGHUP/restart hint.\n", err)
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		fmt.Fprintf(os.Stderr, "Note: admin/reload HTTP returned %d (%s). Falling back to SIGHUP/restart hint.\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "Reloaded gateway via HTTP (PID %d).\n", daemonSt.PID)
+	return true
+}
+
 // notifyGatewayReloadHTTP mints a temporary admin API key for the agent's
 // owner, POSTs to /api/agents/<id>/skills/reload, then deletes the key.
 // Cross-platform — works on Windows where SIGHUP isn't deliverable.
