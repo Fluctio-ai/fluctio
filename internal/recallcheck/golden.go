@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -64,23 +65,42 @@ func LoadGolden(path string) ([]GoldenCase, error) {
 	return out, sc.Err()
 }
 
-// SaveGolden writes cases as JSONL (one case per line, comments stripped).
+// SaveGolden writes cases as JSONL (one case per line, comments stripped)
+// via a temp file + rename: a crash mid-write with a direct os.Create
+// truncation would silently destroy the golden baseline.
 func SaveGolden(path string, cases []GoldenCase) error {
-	f, err := os.Create(path)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".golden-*")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	w := bufio.NewWriter(f)
+	tmpName := tmp.Name()
+	w := bufio.NewWriter(tmp)
 	for _, c := range cases {
 		c.Schema = GoldenCaseSchema
 		b, err := json.Marshal(c)
 		if err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
 			return err
 		}
 		if _, err := w.WriteString(string(b) + "\n"); err != nil {
+			tmp.Close()
+			os.Remove(tmpName)
 			return err
 		}
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }

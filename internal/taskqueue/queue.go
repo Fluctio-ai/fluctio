@@ -51,14 +51,14 @@ type Queue struct {
 	taskTimeout   time.Duration
 	idleTimeout   time.Duration
 
-	mu        sync.Mutex
-	tasks     map[string]*Task      // taskID -> Task
+	mu         sync.Mutex
+	tasks      map[string]*Task      // taskID -> Task
 	chatQueues map[string]*chatQueue // chatKey -> chatQueue
-	sem       chan struct{}          // counting semaphore for global concurrency
-	handler   TaskHandler
-	seq       uint64 // task ID sequence
-	ctx       context.Context
-	cancel    context.CancelFunc
+	sem        chan struct{}         // counting semaphore for global concurrency
+	handler    TaskHandler
+	seq        uint64 // task ID sequence
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // NewQueue creates a new task queue.
@@ -160,6 +160,21 @@ func (q *Queue) processChatQueue(chatKey string, cq *chatQueue) {
 
 // executeTask runs a single task with concurrency control and timeout.
 func (q *Queue) executeTask(task *Task) {
+	// The handler chain (message assembly + adapter.HandleMessage) is
+	// third-party extensible — a panic here would take down the whole
+	// process goroutine tree. Recover, mark the task failed, keep the
+	// queue alive.
+	defer func() {
+		if r := recover(); r != nil {
+			q.mu.Lock()
+			task.Status = TaskFailed
+			task.Error = fmt.Errorf("panic: %v", r)
+			now := time.Now()
+			task.DoneAt = &now
+			q.mu.Unlock()
+			slog.Error("task queue: handler panic", "task", task.ID, "panic", r)
+		}
+	}()
 	// Acquire global semaphore
 	select {
 	case q.sem <- struct{}{}:

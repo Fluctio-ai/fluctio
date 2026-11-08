@@ -44,6 +44,16 @@ func SanitizeFileName(raw string, maxLen int) string {
 	}
 	out := strings.TrimSpace(b.String())
 	out = strings.TrimLeft(out, ".") // hidden-dotfile prefix is rarely intended
+	// Windows reserved device names (CON, NUL, COM1, …, including
+	// "CON.txt" variants) pass every filter above; creating them on a
+	// Windows host FS either fails or writes the console device. Also
+	// drop trailing dots/spaces, which Windows silently strips (a
+	// "file." and "file" then collide). The deployment can be a Windows
+	// host, so this is not a POSIX-only concern.
+	if isWindowsReservedName(out) {
+		return ""
+	}
+	out = strings.TrimRight(out, ". ")
 	if len(out) > maxLen {
 		// Truncate from the stem so we preserve the extension. Byte-
 		// slicing on UTF-8 would chop multi-byte runes (CJK filenames
@@ -64,4 +74,25 @@ func SanitizeFileName(raw string, maxLen int) string {
 		out = stem + ext
 	}
 	return out
+}
+
+// windowsReserved lists device names Windows reserves in ANY directory,
+// matched case-insensitively against the stem (before the extension).
+var windowsReserved = map[string]bool{
+	"con": true, "prn": true, "aux": true, "nul": true,
+	"com1": true, "com2": true, "com3": true, "com4": true,
+	"com5": true, "com6": true, "com7": true, "com8": true, "com9": true,
+	"lpt1": true, "lpt2": true, "lpt3": true, "lpt4": true,
+	"lpt5": true, "lpt6": true, "lpt7": true, "lpt8": true, "lpt9": true,
+}
+
+func isWindowsReservedName(name string) bool {
+	if name == "" {
+		return false
+	}
+	stem := name
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		stem = name[:i]
+	}
+	return windowsReserved[strings.ToLower(stem)]
 }

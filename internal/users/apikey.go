@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -67,6 +68,12 @@ func NewAPIKeys(st store.Store) (*APIKeys, error) {
 func (k *APIKeys) Create(ctx context.Context, userID, name, keyType string, agentIDs []string) (*APIKey, string, error) {
 	if userID == "" {
 		return nil, "", errors.New("users.APIKeys.Create: userID is required")
+	}
+	// keyType lands in the auth path — an arbitrary string would mint a
+	// token whose permission semantics are undefined. Only admin keys
+	// exist today.
+	if keyType != APIKeyTypeAdmin {
+		return nil, "", fmt.Errorf("users.APIKeys.Create: unknown key type %q", keyType)
 	}
 	id, err := newID("k_")
 	if err != nil {

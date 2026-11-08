@@ -130,15 +130,29 @@ func (f *LocalFS) Put(ctx context.Context, agentID, projectID, sessionID, path s
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(full, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	// Write to a sibling temp file and rename into place: a direct
+	// O_TRUNC write exposed a truncated / half-written file to concurrent
+	// Get readers on any io.Copy hiccup, with no way to tell it apart
+	// from a complete artifact. Rename is atomic on the same volume.
+	tmp, err := os.CreateTemp(filepath.Dir(full), ".put-*")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, r); err != nil {
-		out.Close()
+	tmpName := tmp.Name()
+	if _, err := io.Copy(tmp, r); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
 		return err
 	}
-	return out.Close()
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, full); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func (f *LocalFS) Get(ctx context.Context, agentID, projectID, sessionID, path string) (io.ReadCloser, error) {

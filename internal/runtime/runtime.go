@@ -195,6 +195,11 @@ func (m *Manager) SetSandboxPool(backend string, pool sandbox.ExecutorPool) {
 // docker path even if the backend string says otherwise (and that path
 // will fail loudly if docker is absent, which is the honest signal).
 func (m *Manager) usesPool() bool {
+	// SetSandboxPool swaps backend+pool under mu — read them under the
+	// same lock or a concurrent settings save could pair a new pool with
+	// a stale backend string.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.pool != nil && m.backend != "" && m.backend != "docker"
 }
 
