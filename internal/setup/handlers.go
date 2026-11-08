@@ -472,10 +472,13 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	masked := *cfg
+	// Every credential-bearing namespace is masked through the shared
+	// config-package Redacted() methods — the field lists live next to
+	// the struct definitions in internal/config/redact.go. Storage keeps
+	// plaintext; only this response view is masked.
 	masked.Providers = make(map[string]config.ProviderConfig)
 	for k, v := range cfg.Providers {
-		v.APIKey = maskAPIKey(v.APIKey)
-		masked.Providers[k] = v
+		masked.Providers[k] = v.Redacted()
 	}
 	// Channels / toolProviders / hooks hold live credentials too (IM bot
 	// tokens, QQ app secrets, webhook bearer token) — same treatment as
@@ -487,33 +490,22 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	// updateAgent, which would persist the mask.
 	masked.ToolProviders = make(map[string]config.ToolProviderCfg, len(cfg.ToolProviders))
 	for k, v := range cfg.ToolProviders {
-		v.APIKey = maskAPIKey(v.APIKey)
-		masked.ToolProviders[k] = v
+		masked.ToolProviders[k] = v.Redacted()
 	}
-	masked.Hooks = cfg.Hooks
-	masked.Hooks.Token = maskAPIKey(cfg.Hooks.Token)
+	masked.Hooks = cfg.Hooks.Redacted()
 	// Memory (embedding/reranker) and object-store S3 keys are live
 	// credentials too — mask them like every other secret on the way out.
-	masked.Memory.Embedding.APIKey = maskAPIKey(cfg.Memory.Embedding.APIKey)
-	masked.Memory.Reranker.APIKey = maskAPIKey(cfg.Memory.Reranker.APIKey)
-	masked.ObjectStore.S3.AccessKey = maskAPIKey(cfg.ObjectStore.S3.AccessKey)
-	masked.ObjectStore.S3.SecretKey = maskAPIKey(cfg.ObjectStore.S3.SecretKey)
+	masked.Memory.Embedding = cfg.Memory.Embedding.Redacted()
+	masked.Memory.Reranker = cfg.Memory.Reranker.Redacted()
+	masked.ObjectStore.S3 = cfg.ObjectStore.S3.Redacted()
+	// Sandbox provider keys (E2B / Boxlite) round-trip through POST
+	// /api/config (the runtime settings page) — handleUpdateConfig
+	// restores masked echoes from storage, same as hooks/S3 below.
+	masked.Sandbox = cfg.Sandbox.Redacted()
 	if len(cfg.Channels) > 0 {
 		mc := make(map[string]config.ChannelConfig, len(cfg.Channels))
 		for k, v := range cfg.Channels {
-			v.BotToken = maskAPIKey(v.BotToken)
-			v.AppToken = maskAPIKey(v.AppToken)
-			if len(v.Accounts) > 0 {
-				ac := make(map[string]config.AccountConfig, len(v.Accounts))
-				for ak, av := range v.Accounts {
-					av.BotToken = maskAPIKey(av.BotToken)
-					av.ClientSecret = maskAPIKey(av.ClientSecret)
-					av.EncryptKey = maskAPIKey(av.EncryptKey)
-					ac[ak] = av
-				}
-				v.Accounts = ac
-			}
-			mc[k] = v
+			mc[k] = v.Redacted()
 		}
 		masked.Channels = mc
 	}
@@ -616,6 +608,7 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	storedMemoryEmbeddingKey := merged.Memory.Embedding.APIKey
 	storedMemoryRerankerKey := merged.Memory.Reranker.APIKey
 	storedS3 := merged.ObjectStore.S3
+	storedSandbox := merged.Sandbox
 	if err := json.Unmarshal(buf, merged); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -637,6 +630,12 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if isMaskedSecret(merged.ObjectStore.S3.SecretKey) {
 		merged.ObjectStore.S3.SecretKey = storedS3.SecretKey
+	}
+	if isMaskedSecret(merged.Sandbox.E2BKey) {
+		merged.Sandbox.E2BKey = storedSandbox.E2BKey
+	}
+	if isMaskedSecret(merged.Sandbox.BoxliteKey) {
+		merged.Sandbox.BoxliteKey = storedSandbox.BoxliteKey
 	}
 	if err := s.saveUserConfig(r, merged); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
@@ -2364,11 +2363,21 @@ func jsonResponse(w http.ResponseWriter, status int, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
+// maskAPIKey delegates to the shared config-package redaction helper so
+// every response path uses one masking implementation (and one sentinel
+// shape, which isMaskedSecret relies on for round-trip detection).
 func maskAPIKey(key string) string {
-	if len(key) <= 8 {
-		return "****"
+	return config.MaskSecret(key)
+}
+
+// isMaskedSecret reports whether a value came back from a masked GET
+// response (rather than being freshly typed by the operator) — callers
+// restore the stored secret instead of persisting the mask.
+func isMaskedSecret(s string) bool {
+	if s == "" {
+		return false
 	}
-	return key[:4] + "****" + key[len(key)-4:]
+	return s == "****" || strings.Contains(s, "****")
 }
 
 func formatDuration(d time.Duration) string {
@@ -2388,36 +2397,8 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd %dh", days, hours)
 }
 
-func looksLikeSecret(name string) bool {
-	upper := strings.ToUpper(name)
-	for _, marker := range []string{"KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL"} {
-		if strings.Contains(upper, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func isMaskedSecret(s string) bool {
-	if s == "" {
-		return false
-	}
-	return s == "****" || strings.Contains(s, "****")
-}
-
 func maskSkillEntry(v config.SkillEntryCfg) config.SkillEntryCfg {
-	out := config.SkillEntryCfg{Enabled: v.Enabled, APIKey: maskAPIKey(v.APIKey)}
-	if len(v.Env) > 0 {
-		out.Env = make(map[string]string, len(v.Env))
-		for ek, ev := range v.Env {
-			if looksLikeSecret(ek) {
-				out.Env[ek] = maskAPIKey(ev)
-			} else {
-				out.Env[ek] = ev
-			}
-		}
-	}
-	return out
+	return v.Redacted()
 }
 
 func mergeSkillEntry(existing, in config.SkillEntryCfg) config.SkillEntryCfg {

@@ -174,13 +174,14 @@ func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
 		if blob, err := json.Marshal(r.Data); err == nil {
 			_ = json.Unmarshal(blob, &pc)
 		}
+		pc = pc.Redacted()
 		out = append(out, map[string]any{
 			"id":        r.ID,
 			"scope":     r.LegacyScope(),
 			"scopeId":   r.LegacyScopeID(),
 			"name":      r.Name,
 			"apiBase":   pc.APIBase,
-			"apiKey":    maskAPIKey(pc.APIKey),
+			"apiKey":    pc.APIKey,
 			"apiType":   pc.APIType,
 			"authType":  pc.AuthType,
 			"models":    pc.Models,
