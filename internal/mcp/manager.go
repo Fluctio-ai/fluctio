@@ -25,13 +25,22 @@ type toolRoute struct {
 // NewManager creates an MCP manager and connects to all configured servers.
 // dir is passed as the working directory for stdio subprocesses so MCP
 // tools land in the agent's session/project scope. Servers that fail to
-// connect are logged as warnings but don't block startup.
+// connect are logged as warnings but don't block startup. Connections run
+// in PARALLEL: serial dialing let N unreachable servers (each up to its
+// client timeout) stall session binding by N × timeout.
 func NewManager(servers map[string]config.MCPServerConfig, dir string) *Manager {
 	m := &Manager{
 		servers: make(map[string]Client),
 		toolMap: make(map[string]toolRoute),
 	}
 
+	type serverConn struct {
+		name   string
+		client Client
+		tools  []ToolDef
+	}
+	conns := make(chan serverConn, len(servers))
+	pending := 0
 	for name, cfg := range servers {
 		var client Client
 		switch cfg.Type {
@@ -43,30 +52,50 @@ func NewManager(servers map[string]config.MCPServerConfig, dir string) *Manager 
 			slog.Warn("unknown MCP server type, skipping", "server", name, "type", cfg.Type)
 			continue
 		}
+		pending++
+		go func(name string, client Client) {
+			if err := client.Connect(); err != nil {
+				slog.Warn("failed to connect to MCP server, skipping", "server", name, "error", err)
+				// Release whatever the client did acquire (a stdio child
+				// started before a failed initialize, sockets, …).
+				_ = client.Close()
+				conns <- serverConn{name: name}
+				return
+			}
+			tools, err := client.ListTools()
+			if err != nil {
+				slog.Warn("failed to list MCP tools, skipping", "server", name, "error", err)
+				client.Close()
+				conns <- serverConn{name: name}
+				return
+			}
+			conns <- serverConn{name: name, client: client, tools: tools}
+		}(name, client)
+	}
 
-		if err := client.Connect(); err != nil {
-			slog.Warn("failed to connect to MCP server, skipping", "server", name, "error", err)
+	for i := 0; i < pending; i++ {
+		sc := <-conns
+		if sc.client == nil {
 			continue
 		}
+		m.servers[sc.name] = sc.client
 
-		tools, err := client.ListTools()
-		if err != nil {
-			slog.Warn("failed to list MCP tools, skipping", "server", name, "error", err)
-			client.Close()
-			continue
-		}
-
-		m.servers[name] = client
-
-		for _, t := range tools {
-			prefixed := prefixToolName(name, t.Name)
+		for _, t := range sc.tools {
+			prefixed := prefixToolName(sc.name, t.Name)
+			if _, clash := m.toolMap[prefixed]; clash {
+				// Sanitization is asymmetric (server names are mapped,
+				// tool names are not), so "a_b"+"c" and "a"+"b_c" can
+				// collide; surface it instead of silently overwriting.
+				slog.Warn("MCP tool name collision — later server overwrites earlier registration",
+					"tool", prefixed, "server", sc.name)
+			}
 			m.toolMap[prefixed] = toolRoute{
-				serverName:   name,
+				serverName:   sc.name,
 				originalName: t.Name,
 			}
 		}
 
-		slog.Info("connected to MCP server", "server", name, "tools", len(tools))
+		slog.Info("connected to MCP server", "server", sc.name, "tools", len(sc.tools))
 	}
 
 	return m

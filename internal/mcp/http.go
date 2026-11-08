@@ -196,9 +196,47 @@ func (c *HTTPClient) Connect() error {
 	return err
 }
 
+// isSessionExpired reports whether an RPC failure looks like the server
+// rejected our negotiated Mcp-Session-Id — a server restart or session-TTL
+// expiry answers 404/400 (SDK wording varies) instead of serving the call.
+func isSessionExpired(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "HTTP 404") ||
+		strings.Contains(msg, "HTTP 400") ||
+		strings.Contains(msg, "Session not found") ||
+		strings.Contains(msg, "session expired")
+}
+
+// callWithSessionRetry runs a post-initialize RPC and recovers from
+// server-side session loss: clear the stale id, re-initialize once, and
+// retry — instead of leaving every tool of that server failing until the
+// session rebinds or the process restarts.
+func (c *HTTPClient) callWithSessionRetry(method string, params interface{}) (*jsonRPCResponse, error) {
+	resp, err := c.sendRequest(method, params)
+	if err == nil {
+		return resp, nil
+	}
+	if !isSessionExpired(err) {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.sessionID = ""
+	c.mu.Unlock()
+	if _, err := c.sendRequest("initialize", initializeParams{
+		ProtocolVersion: "2024-11-05",
+		ClientInfo:      clientInfo{Name: "fluctio", Version: "0.1.0"},
+	}); err != nil {
+		return nil, fmt.Errorf("session re-initialize: %w", err)
+	}
+	return c.sendRequest(method, params)
+}
+
 // ListTools returns the list of tools available on the MCP server.
 func (c *HTTPClient) ListTools() ([]ToolDef, error) {
-	resp, err := c.sendRequest("tools/list", struct{}{})
+	resp, err := c.callWithSessionRetry("tools/list", struct{}{})
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +251,7 @@ func (c *HTTPClient) ListTools() ([]ToolDef, error) {
 
 // CallTool calls a tool on the MCP server.
 func (c *HTTPClient) CallTool(name string, args json.RawMessage) (string, error) {
-	resp, err := c.sendRequest("tools/call", toolCallParams{
+	resp, err := c.callWithSessionRetry("tools/call", toolCallParams{
 		Name:      name,
 		Arguments: args,
 	})

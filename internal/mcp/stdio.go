@@ -9,7 +9,17 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
+
+// Per-request bound: a hung MCP server must not pin the agent turn
+// forever. On timeout the subprocess is torn down so the reader
+// goroutine unblocks and every later request fails fast.
+const mcpRequestTimeout = 120 * time.Second
+
+// Large tool responses (screenshot base64, big exports) exceed the old
+// 1MB scanner cap; 16MB matches the HTTP path's tolerance.
+const mcpScanBufferMax = 16 * 1024 * 1024
 
 // StdioClient implements the MCP client for stdio-based servers.
 type StdioClient struct {
@@ -107,18 +117,27 @@ func (c *StdioClient) Connect() error {
 
 	c.cmd.Stderr = os.Stderr
 	c.scanner = bufio.NewScanner(stdout)
-	c.scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer
+	c.scanner.Buffer(make([]byte, 0, 64*1024), mcpScanBufferMax)
 
 	if err := c.cmd.Start(); err != nil {
 		return fmt.Errorf("start process: %w", err)
 	}
 
-	// Send initialize
-	_, err = c.sendRequest("initialize", initializeParams{
+	// Send initialize. On failure the subprocess is already alive — tear
+	// it down here or every scope rebuild leaks an orphan child.
+	_, initErr := c.sendRequest("initialize", initializeParams{
 		ProtocolVersion: "2024-11-05",
 		ClientInfo:      clientInfo{Name: "fluctio", Version: "0.1.0"},
 	})
-	return err
+	if initErr != nil {
+		_ = c.stdin.Close()
+		if c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+			_, _ = c.cmd.Process.Wait()
+		}
+		return fmt.Errorf("initialize: %w", initErr)
+	}
+	return nil
 }
 
 func (c *StdioClient) sendRequest(method string, params interface{}) (*jsonRPCResponse, error) {
@@ -145,30 +164,52 @@ func (c *StdioClient) sendRequest(method string, params interface{}) (*jsonRPCRe
 		return nil, fmt.Errorf("write to stdin: %w", err)
 	}
 
-	// Read response lines until we get a JSON-RPC response with matching ID
-	for c.scanner.Scan() {
-		line := c.scanner.Bytes()
-		if len(line) == 0 {
-			continue
+	// The scanner has no deadline support, so the read loop runs in a
+	// helper goroutine and the caller bounds it with a timer. On timeout
+	// the subprocess is killed: that unblocks the helper (Scan returns
+	// false once the pipe dies) and marks the client dead for future
+	// calls instead of leaving a hung server to pin the agent turn.
+	type lineOut struct {
+		text string
+		err  error
+	}
+	lines := make(chan lineOut, 16)
+	go func() {
+		for c.scanner.Scan() {
+			lines <- lineOut{text: c.scanner.Text()}
 		}
+		lines <- lineOut{err: c.scanner.Err()}
+	}()
 
-		var resp jsonRPCResponse
-		if err := json.Unmarshal(line, &resp); err != nil {
-			continue // skip non-JSON lines (e.g. stderr leaking)
-		}
-
-		if resp.ID == id {
-			if resp.Error != nil {
-				return nil, fmt.Errorf("RPC error %d: %s", resp.Error.Code, resp.Error.Message)
+	timer := time.NewTimer(mcpRequestTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-timer.C:
+			_ = c.Close()
+			return nil, fmt.Errorf("MCP request %q timed out after %s — server torn down", method, mcpRequestTimeout)
+		case lo := <-lines:
+			if lo.err != nil {
+				return nil, fmt.Errorf("read stdout: %w", lo.err)
 			}
-			return &resp, nil
+			line := lo.text
+			if len(line) == 0 {
+				continue
+			}
+
+			var resp jsonRPCResponse
+			if err := json.Unmarshal([]byte(line), &resp); err != nil {
+				continue // skip non-JSON lines (e.g. stderr leaking)
+			}
+
+			if resp.ID == id {
+				if resp.Error != nil {
+					return nil, fmt.Errorf("RPC error %d: %s", resp.Error.Code, resp.Error.Message)
+				}
+				return &resp, nil
+			}
 		}
 	}
-
-	if err := c.scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read stdout: %w", err)
-	}
-	return nil, fmt.Errorf("process exited without response")
 }
 
 // ListTools returns the list of tools available on the MCP server.
