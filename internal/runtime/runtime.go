@@ -342,6 +342,15 @@ func (m *Manager) Up(ctx context.Context, userID, agentID, projectID, sessionID,
 	if err != nil {
 		return nil, err
 	}
+	// Serialize concurrent Up for the same scope: two callers racing the
+	// "already live?" check each created a container and the second
+	// overwrote m.live, orphaning the first (leaked container + lost
+	// handle).
+	key := rtKey(userID, agentID, scopeID)
+	upMu, _ := upKeyMu.LoadOrStore(key, &sync.Mutex{})
+	mu := upMu.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
 	rec, err := m.store.GetProjectRuntime(ctx, agentID, scopeID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
@@ -457,8 +466,24 @@ func (m *Manager) Up(ctx context.Context, userID, agentID, projectID, sessionID,
 	rec.ContainerID = sb.ContainerID()
 
 	m.mu.Lock()
-	m.live[rtKey(userID, agentID, scopeID)] = sb
+	m.live[key] = sb
 	m.mu.Unlock()
+
+	// From here the container is registered: on any failure below, evict
+	// it and stop the (possibly half-started) sandbox so the next Up
+	// rebuilds cleanly instead of treating the residue as healthy.
+	upOK := false
+	defer func() {
+		if upOK {
+			return
+		}
+		m.mu.Lock()
+		cur := m.live[key]
+		m.mu.Unlock()
+		if cur == sb {
+			m.evict(userID, agentID, scopeID)
+		}
+	}()
 
 	// Scaffold on an empty workspace. Output streams to the dev log so the
 	// preview panel can tail the live pnpm-install progress (scaffoldToLog).
@@ -510,6 +535,7 @@ func (m *Manager) Up(ctx context.Context, userID, agentID, projectID, sessionID,
 	rec.PreviewURL = m.previewURL(scopeID, hp)
 	rec.Status = StatusRunning
 	rec.LastError = ""
+	upOK = true // container is up; a persistence error must not stop it
 	if err := m.store.SaveProjectRuntime(ctx, rec); err != nil {
 		return nil, err
 	}
@@ -961,3 +987,6 @@ func tail(s string, n int) string {
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
+
+// upKeyMu serializes concurrent Up calls per scope key.
+var upKeyMu sync.Map // rtKey -> *sync.Mutex
