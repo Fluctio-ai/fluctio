@@ -1,4 +1,4 @@
-.PHONY: build build-web bundle-skills clean release-local install test dev
+.PHONY: build build-web bundle-skills clean release-local install test dev check-linux
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -51,6 +51,18 @@ install: build
 
 test:
 	go test ./...
+
+# check-linux compiles + vets the whole repo for linux/amd64 with CGO off —
+# the same constraints as the Dockerfile's go-builder stage. A Windows dev
+# machine's plain `go build ./...` never compiles unix-only files
+# (//go:build !windows), so a broken unix file (unused var, missing import,
+# platform syscall misuse) passes every local gate and only explodes in the
+# docker.yml image build. Run this before pushing when touching
+# //go:build-tagged code. Cheap: build cache makes it seconds after the
+# first run.
+check-linux:
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./...
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go vet ./...
 
 dev: build-web
 	air

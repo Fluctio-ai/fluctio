@@ -40,11 +40,11 @@ func signalProcess(proc *os.Process, sig string) error {
 // group leader whose pgid equals its pid — so a negative-pid signal
 // reaches the wrapper AND every gateway child it spawned, instead of
 // orphaning the gateway the way a single-process TERM did.
+//
+// No os.FindProcess here on purpose: on Linux it is a name lookup that
+// cannot meaningfully fail for a live pid (existence is checked by the
+// Kill itself), and the group signal targets -pid, not a process handle.
 func signalProcessGroup(pid int, sig string) error {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return err
-	}
 	switch sig {
 	case "TERM":
 		return syscall.Kill(-pid, syscall.SIGTERM)
