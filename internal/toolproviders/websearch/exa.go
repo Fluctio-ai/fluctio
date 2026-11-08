@@ -39,6 +39,11 @@ func (e *Exa) Execute(ctx context.Context, req toolproviders.Request) (toolprovi
 		"query":      a.Query,
 		"numResults": a.Count,
 		"type":       mode,
+		// Exa returns bare metadata (title/url) unless contents is asked
+		// for explicitly — without this the snippet parsed from
+		// results[].text was permanently empty and search quality
+		// degraded silently.
+		"contents": map[string]any{"text": true},
 	}
 	buf, _ := json.Marshal(body)
 	// Default Exa endpoint. Override via Config.Endpoint with the full URL
@@ -69,9 +74,11 @@ func (e *Exa) Execute(ctx context.Context, req toolproviders.Request) (toolprovi
 	}
 	var out struct {
 		Results []struct {
-			Title string `json:"title"`
-			URL   string `json:"url"`
-			Text  string `json:"text"`
+			Title     string `json:"title"`
+			URL       string `json:"url"`
+			Text      string `json:"text"`
+			Summary   string `json:"summary"`
+			Published string `json:"publishedDate"`
 		} `json:"results"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -79,7 +86,14 @@ func (e *Exa) Execute(ctx context.Context, req toolproviders.Request) (toolprovi
 	}
 	items := make([]resultItem, 0, len(out.Results))
 	for _, r := range out.Results {
-		items = append(items, resultItem{Title: r.Title, URL: r.URL, Snippet: truncate(r.Text, 280)})
+		// Prefer the requested text body; fall back to summary so a
+		// results shape change degrades loudly (non-empty snippet) rather
+		// than rendering bare title/url rows.
+		snippet := r.Text
+		if snippet == "" {
+			snippet = r.Summary
+		}
+		items = append(items, resultItem{Title: r.Title, URL: r.URL, Snippet: truncate(snippet, 280)})
 	}
 	if len(items) == 0 {
 		return toolproviders.Response{}, toolproviders.ErrNoResults
