@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
@@ -46,6 +47,9 @@ func (e *Exa) Execute(ctx context.Context, req toolproviders.Request) (toolprovi
 	// Endpoint as the complete request URL.
 	endpoint := "https://api.exa.ai/search"
 	if req.Config.Endpoint != "" {
+		if !strings.HasPrefix(req.Config.Endpoint, "https://") {
+			return toolproviders.Response{}, fmt.Errorf("exa: endpoint must be https")
+		}
 		endpoint = req.Config.Endpoint
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(buf))
@@ -55,7 +59,7 @@ func (e *Exa) Execute(ctx context.Context, req toolproviders.Request) (toolprovi
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", req.Config.APIKey)
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := safeWebsearchClient.Do(httpReq)
 	if err != nil {
 		return toolproviders.Response{}, toolproviders.Retry(fmt.Errorf("exa request: %w", err))
 	}

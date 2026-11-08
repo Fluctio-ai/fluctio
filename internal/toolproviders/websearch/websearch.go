@@ -8,9 +8,18 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
+
+	"github.com/fluctio-ai/fluctio/internal/httpclient"
 )
+
+// safeWebsearchClient bounds egress for every search provider: the
+// request Endpoint can be set at user/agent config scope, so a plain
+// http.DefaultClient would let it target internal addresses while
+// carrying the provider API key (SSRF + credential exfil).
+var safeWebsearchClient = httpclient.SafeClient(20 * time.Second)
 
 // Category is the tool category these providers plug into.
 const Category = "web_search"

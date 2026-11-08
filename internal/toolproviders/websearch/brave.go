@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
@@ -29,9 +30,15 @@ func (b *Brave) Execute(ctx context.Context, req toolproviders.Request) (toolpro
 	defer cancel()
 
 	// Default Brave endpoint. Override via Config.Endpoint with the full
-	// URL. Used verbatim — same convention as image_gen/tts.
+	// URL. Only https is accepted, and egress goes through the shared
+	// SafeClient: the endpoint can be set at user/agent scope, and a
+	// plain DefaultClient would let it point at internal addresses with
+	// the subscription token attached (SSRF + credential exfil).
 	endpoint := "https://api.search.brave.com/res/v1/web/search"
 	if req.Config.Endpoint != "" {
+		if !strings.HasPrefix(req.Config.Endpoint, "https://") {
+			return toolproviders.Response{}, fmt.Errorf("brave: endpoint must be https")
+		}
 		endpoint = req.Config.Endpoint
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
@@ -45,7 +52,7 @@ func (b *Brave) Execute(ctx context.Context, req toolproviders.Request) (toolpro
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("X-Subscription-Token", req.Config.APIKey)
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := safeWebsearchClient.Do(httpReq)
 	if err != nil {
 		return toolproviders.Response{}, toolproviders.Retry(fmt.Errorf("brave request: %w", err))
 	}

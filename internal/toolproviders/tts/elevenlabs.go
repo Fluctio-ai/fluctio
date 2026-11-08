@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/toolproviders"
@@ -26,6 +27,12 @@ func (ElevenLabs) Name() string     { return "elevenlabs" }
 // every account tier.
 const elevenLabsDefaultVoice = "21m00Tcm4TlvDq8ikWAM"
 
+// elevenVoiceRe allowlists the voice id: it goes into the request URL
+// path verbatim and is LLM-controlled, so anything outside letters,
+// digits and underscore is rejected rather than risk path/query rewrite
+// while the xi-api-key rides along.
+var elevenVoiceRe = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+
 func (e *ElevenLabs) Execute(ctx context.Context, req toolproviders.Request) (toolproviders.Response, error) {
 	a, err := parseArgs(req.Args)
 	if err != nil {
@@ -41,6 +48,13 @@ func (e *ElevenLabs) Execute(ctx context.Context, req toolproviders.Request) (to
 	voice := a.Voice
 	if voice == "" {
 		voice = elevenLabsDefaultVoice
+	}
+	// The voice id goes into the URL path verbatim, and it is
+	// LLM-controlled — a crafted value ("../v1/…", "?x=", "#…") could
+	// rewrite the target endpoint path/query while the xi-api-key rides
+	// along. Allowlist it.
+	if !elevenVoiceRe.MatchString(voice) {
+		return toolproviders.Response{}, fmt.Errorf("elevenlabs: invalid voice id")
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
