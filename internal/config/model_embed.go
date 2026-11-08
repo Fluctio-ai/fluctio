@@ -73,6 +73,33 @@ func MergedMetaTablePublic() map[string]ModelMeta {
 // map is returned as-is (read-only); only when overrides exist is a fresh
 // merged copy built. Used by LookupModelMeta.
 func mergedMetaTable(localPath string) map[string]ModelMeta {
+	// mtime cache: the local override file is read at most once per
+	// modification, instead of a ReadFile+Unmarshal on every model
+	// lookup (LLM call frequency).
+	if ent, ok := metaCache[localPath]; ok && ent.mtime == modTime(localPath) {
+		return ent.table
+	}
+	table := buildMergedMetaTable(localPath)
+	metaCache[localPath] = metaEntry{mtime: modTime(localPath), table: table}
+	return table
+}
+
+type metaEntry struct {
+	mtime int64 // unix nanos, 0 = missing/unreadable
+	table map[string]ModelMeta
+}
+
+var metaCache = map[string]metaEntry{}
+
+func modTime(path string) int64 {
+	if fi, err := os.Stat(path); err == nil {
+		return fi.ModTime().UnixNano()
+	}
+	return 0
+}
+
+// buildMergedMetaTable is mergedMetaTable without the cache.
+func buildMergedMetaTable(localPath string) map[string]ModelMeta {
 	builtin := builtinMetaTable()
 	if builtin == nil {
 		builtin = map[string]ModelMeta{}

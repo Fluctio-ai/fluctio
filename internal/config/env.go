@@ -234,6 +234,13 @@ func ScrubBootSecrets() {
 		"FLUCTIO_REDIS_PASSWORD",
 		"BOXLITE_API_KEY",
 		"E2B_API_KEY",
+		// Owner bootstrap credentials (config/owner.go) — same one-time
+		// bootstrap semantics, same leak profile if left in the env.
+		"FLUCTIO_OWNER_JSON",
+		"FLUCTIO_USERNAME",
+		"FLUCTIO_PASSWORD",
+		"FLUCTIO_EMAIL",
+		"FLUCTIO_DISPLAY_NAME",
 	}
 	for _, k := range keys {
 		_ = os.Unsetenv(k)
