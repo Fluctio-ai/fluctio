@@ -301,18 +301,33 @@ func (s *WikiStore) DeletePagesBySource(ctx context.Context, agentID, sourceID s
 	var ids []string
 	for rows.Next() {
 		var id string
-		rows.Scan(&id)
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
 		ids = append(ids, id)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
 
 	var deleted int64
 	for _, id := range ids {
-		tx.Exec(`DELETE FROM wiki_links WHERE src_page_id = `+s.ph(1)+` OR dst_page_id = `+s.ph(2), id, id)
-		if res, err := tx.Exec(`DELETE FROM wiki_pages WHERE id = `+s.ph(1), id); err == nil {
-			if n, _ := res.RowsAffected(); n > 0 {
-				deleted += n
-			}
+		// Check every statement: swallowed errors here would leave links,
+		// cards, or embeddings orphaned while reporting success.
+		if _, err := tx.Exec(`DELETE FROM wiki_links WHERE src_page_id = `+s.ph(1)+` OR dst_page_id = `+s.ph(2), id, id); err != nil {
+			return 0, fmt.Errorf("delete wiki links for page %s: %w", id, err)
+		}
+		if _, err := tx.Exec(`DELETE FROM wiki_page_embeddings WHERE page_id = `+s.ph(1), id); err != nil {
+			return 0, fmt.Errorf("delete wiki embeddings for page %s: %w", id, err)
+		}
+		res, err := tx.Exec(`DELETE FROM wiki_pages WHERE id = `+s.ph(1), id)
+		if err != nil {
+			return 0, fmt.Errorf("delete wiki page %s: %w", id, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			deleted += n
 		}
 	}
 	// Cascade the pages' cards in one batched pass on the same tx.
@@ -320,7 +335,9 @@ func (s *WikiStore) DeletePagesBySource(ctx context.Context, agentID, sourceID s
 		return 0, fmt.Errorf("delete cards for pages: %w", err)
 	}
 
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
 	return deleted, nil
 }
 
