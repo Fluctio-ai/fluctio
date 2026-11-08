@@ -42,7 +42,11 @@ func (f *LocalFS) Root() string {
 // implementations of Store don't implement LocalScoper, so handlers
 // that probe via type-assertion get ok=false and 503 the request.
 func (f *LocalFS) LocalScopeDir(agentID, projectID, sessionID string) (string, bool) {
-	return f.scopeDir(agentID, projectID, sessionID), true
+	dir, err := f.scopeDir(agentID, projectID, sessionID)
+	if err != nil {
+		return "", false
+	}
+	return dir, true
 }
 
 // scopeDir returns the on-disk directory for a (agent, project, session)
@@ -60,17 +64,46 @@ func (f *LocalFS) LocalScopeDir(agentID, projectID, sessionID string) (string, b
 // at `/workspace/<other-sid>/...`) but cwd into the chat's subdir
 // so relative writes default to the chat's own files — see
 // docker_executor.go's pool.Get.
-func (f *LocalFS) scopeDir(agentID, projectID, sessionID string) string {
+func (f *LocalFS) scopeDir(agentID, projectID, sessionID string) (string, error) {
+	// Defense in depth: the IDs normally come from the store
+	// (agt_/proj_/s- prefixes), but sessionID also arrives via URL
+	// params. A hostile segment (".." or separators) must never steer
+	// the scope dir outside the storage root before resolvePath's own
+	// containment check runs — reject the request outright.
+	if !safeScopeSegment(agentID) || !safeScopeSegment(projectID) || !safeScopeSegment(sessionID) {
+		return "", fmt.Errorf("workspace: invalid scope segment (agentID=%q projectID=%q sessionID=%q)", agentID, projectID, sessionID)
+	}
 	switch {
 	case projectID != "" && sessionID != "":
-		return filepath.Join(f.root, agentID, "projects", projectID, sessionID)
+		return filepath.Join(f.root, agentID, "projects", projectID, sessionID), nil
 	case projectID != "":
-		return filepath.Join(f.root, agentID, "projects", projectID)
+		return filepath.Join(f.root, agentID, "projects", projectID), nil
 	case sessionID != "":
-		return filepath.Join(f.root, agentID, "sessions", sessionID)
+		return filepath.Join(f.root, agentID, "sessions", sessionID), nil
 	default:
-		return filepath.Join(f.root, agentID)
+		return filepath.Join(f.root, agentID), nil
 	}
+}
+
+// safeScopeSegment allows only the charset the store-generated ids use
+// (agt_/proj_/s- prefixes plus alphanumerics, dash, underscore). Anything
+// containing separators, dots, whitespace, or empty-with-content intent
+// is rejected.
+func safeScopeSegment(id string) bool {
+	if id == "" {
+		return true // absent segments are legal (project-only / session-only scopes)
+	}
+	if len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // resolvePath joins scopeDir with path and rejects attempts to escape via
@@ -84,7 +117,10 @@ func (f *LocalFS) scopeDir(agentID, projectID, sessionID string) string {
 // the link itself, not its target); containment is enforced on the
 // symlink-resolved path.
 func (f *LocalFS) resolvePath(agentID, projectID, sessionID, path string) (string, error) {
-	dir := f.scopeDir(agentID, projectID, sessionID)
+	dir, err := f.scopeDir(agentID, projectID, sessionID)
+	if err != nil {
+		return "", err
+	}
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
@@ -215,9 +251,12 @@ var buildArtifactDirs = map[string]bool{
 func IsBuildArtifactDir(name string) bool { return buildArtifactDirs[name] }
 
 func (f *LocalFS) List(ctx context.Context, agentID, projectID, sessionID string) ([]ObjectInfo, error) {
-	dir := f.scopeDir(agentID, projectID, sessionID)
+	dir, err := f.scopeDir(agentID, projectID, sessionID)
+	if err != nil {
+		return nil, err
+	}
 	var out []ObjectInfo
-	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(dir, func(p string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if errors.Is(walkErr, os.ErrNotExist) {
 				return filepath.SkipAll
@@ -271,8 +310,14 @@ func (f *LocalFS) List(ctx context.Context, agentID, projectID, sessionID string
 // destination dirs are removed first so MkdirAll-style placeholders
 // from earlier code paths don't trip the conflict check.
 func (f *LocalFS) Move(ctx context.Context, agentID, fromProjectID, fromSessionID, toProjectID, toSessionID string) error {
-	src := f.scopeDir(agentID, fromProjectID, fromSessionID)
-	dst := f.scopeDir(agentID, toProjectID, toSessionID)
+	src, err := f.scopeDir(agentID, fromProjectID, fromSessionID)
+	if err != nil {
+		return err
+	}
+	dst, err2 := f.scopeDir(agentID, toProjectID, toSessionID)
+	if err2 != nil {
+		return err2
+	}
 	if src == dst {
 		return nil
 	}
