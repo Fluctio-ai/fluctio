@@ -66,13 +66,15 @@ func NewStdioClient(command string, args []string, env map[string]string, dir st
 	}
 }
 
-// scrubbedEnv returns the minimal child environment for an MCP stdio
-// subprocess: only the system variables the OS and language runtimes need
-// (binary lookup, temp dirs, Windows loader paths, locale), covering both
-// Windows and POSIX. Everything else the host inherited is dropped — MCP
-// servers are low-trust and must not receive host credentials through the
-// environment.
-func scrubbedEnv() []string {
+// ScrubbedEnv returns the minimal child environment for a low-trust
+// subprocess (MCP stdio servers, plugin bridges): only the system
+// variables the OS and language runtimes need (binary lookup, temp dirs,
+// Windows loader paths, locale), covering both Windows and POSIX.
+// Everything else the host inherited is dropped — third-party child
+// processes must not receive host credentials through the environment.
+// Per-child config travels explicitly: MCP servers get their per-server
+// env on top, plugins their initialize params.
+func ScrubbedEnv() []string {
 	keep := map[string]bool{
 		"PATH":        true, // binary lookup (POSIX and Windows launchers)
 		"PATHEXT":     true, // Windows: executable extensions for resolution
@@ -98,6 +100,9 @@ func scrubbedEnv() []string {
 	}
 	return env
 }
+
+// scrubbedEnv is the internal alias kept so call sites read as before.
+func scrubbedEnv() []string { return ScrubbedEnv() }
 
 // Connect starts the subprocess and initializes the MCP session. The ctx
 // bounds the initialize handshake: a canceled context (turn aborted

@@ -12,6 +12,7 @@
 
 import { createInterface } from "readline";
 import * as path from "path";
+import { pathToFileURL } from "url";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -187,14 +188,30 @@ async function handleRequest(req: JsonRpcRequest): Promise<void> {
           return;
         }
         // OpenClaw tools have two signatures:
-        //   1. execute(args)                         — simple
-        //   2. execute(toolCallId, params, signal)   — OpenClaw standard
-        // Try OpenClaw standard first, fall back to simple
+        //   1. execute(args)                         — simple (arity 1)
+        //   2. execute(toolCallId, params, signal)   — OpenClaw standard (arity 2+)
+        // Dispatch by DECLARED ARITY, not by try/catch probing: the old
+        // probe called every tool as execute(id, args) first, so a
+        // simple-signature tool that doesn't throw (most don't) silently
+        // received the toolCallId string as its args and lost the real
+        // parameters. Arity is reliable for normally-declared functions;
+        // arity 0 (rest args / arguments-object styles) is genuinely
+        // ambiguous and keeps a probe fallback, logged per call so the
+        // double execution is diagnosable.
+        const arity = typeof tool.execute === "function" ? tool.execute.length : 0;
         let rawResult: any;
-        try {
-          rawResult = await tool.execute(String(req.id), args);
-        } catch {
+        if (arity === 1) {
           rawResult = await tool.execute(args);
+        } else if (arity >= 2) {
+          rawResult = await tool.execute(String(req.id), args);
+        } else {
+          log(`tool ${toolName}: declared arity 0 — signature shape unknown, probing standard-shape call first`);
+          try {
+            rawResult = await tool.execute(String(req.id), args);
+          } catch (firstErr: any) {
+            log(`tool ${toolName}: standard-signature call threw (${firstErr?.message || "unknown"}) — retrying as simple execute(args)`);
+            rawResult = await tool.execute(args);
+          }
         }
         // Normalize result — OpenClaw tools may return { content: [{ text }] }
         let result: string;
@@ -233,6 +250,17 @@ async function handleRequest(req: JsonRpcRequest): Promise<void> {
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
+// dynamicImport loads a module as TRUE ESM regardless of this file's own
+// module format. tsc's commonjs downcompile rewrites a literal
+// `await import(...)` into a require()-based shim (that's how the old
+// proxy.js ended up with a fake "Try as ESM" branch), so the call goes
+// through eval to survive into the emitted JS as a real dynamic import.
+// The specifier is a file URL: bare Windows paths (C:\…) are not valid
+// ESM specifiers.
+function dynamicImport(specifier: string): Promise<any> {
+  return eval(`import(${JSON.stringify(pathToFileURL(specifier).href)})`);
+}
+
 async function main() {
   const pluginPath = process.argv[2];
   if (!pluginPath) {
@@ -249,11 +277,18 @@ async function main() {
   try {
     pluginModule = require(resolved);
   } catch (err: any) {
-    // Try as ESM
+    // Genuine ESM fallback. dynamicImport (below) keeps a real `import()`
+    // in the compiled proxy.js — a bare `await import(...)` here gets
+    // downcompiled by tsc (module: commonjs) into a require() shim, which
+    // fails for .mjs / "type": "module" plugins exactly like the first
+    // require did. Both failure reasons are reported so an operator can
+    // tell a broken CJS plugin from a broken ESM one.
     try {
-      pluginModule = await import(resolved);
-    } catch {
-      process.stderr.write(`Failed to load plugin: ${err.message}\n`);
+      pluginModule = await dynamicImport(resolved);
+    } catch (esmErr: any) {
+      process.stderr.write(
+        `Failed to load plugin — require: ${err.message}; import: ${esmErr.message}\n`,
+      );
       process.exit(1);
     }
   }

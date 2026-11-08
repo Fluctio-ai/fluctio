@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/fluctio-ai/fluctio/internal/mcp"
 )
 
 // Process manages a plugin subprocess and its JSON-RPC communication.
@@ -67,6 +69,13 @@ func (p *Process) Start(ctx context.Context) error {
 
 	cmd := exec.CommandContext(childCtx, parts[0], parts[1:]...)
 	cmd.Dir = p.manifest.Dir
+	// Same environment policy as MCP stdio children (mcp.ScrubbedEnv is
+	// the shared whitelist): plugins are third-party code and must not
+	// inherit host credentials through os.Environ(). Plugin config
+	// reaches the child via the initialize JSON-RPC params, not env —
+	// the manifest carries no env field, so nothing legitimate is lost
+	// by the scrub.
+	cmd.Env = mcp.ScrubbedEnv()
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
