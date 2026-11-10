@@ -394,8 +394,9 @@ function ProjectRow({
   agentId: string;
   onMoved: () => void;
   // onChanged is the plain refetch callback (parent refetches sessions +
-  // projects) — used by the pin toggle, which must NOT trigger the
-  // auto-expand side effect that onMoved carries.
+  // projects): the project pin toggle AND the nested chats' row menus all
+  // re-render off it, in server order (pinned first). onMoved stays the
+  // drop-specific path — it additionally auto-expands the destination.
   onChanged: () => void;
 }) {
   const { isMobile } = useSidebar();
@@ -506,7 +507,7 @@ function ProjectRow({
             ) : (
               <PinIcon className="text-muted-foreground" />
             )}
-            <span>{project.pinned ? t("projects.unpin") : t("projects.pin")}</span>
+            <span>{project.pinned ? t("common.unpin") : t("common.pin")}</span>
           </DropdownMenuItem>
           <DropdownMenuItem onClick={onNewChat}>
             <PlusIcon className="text-muted-foreground" />
@@ -562,7 +563,7 @@ function ProjectRow({
                 <ChatRowActions
                   agentId={agentId}
                   session={{ id: s.id, title: s.title, pinned: s.pinned }}
-                  onChanged={onMoved}
+                  onChanged={onChanged}
                   variant="menu-sub-item"
                 />
               </SidebarMenuSubItem>

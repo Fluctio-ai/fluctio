@@ -111,32 +111,14 @@ func TestProjectPinnedRoundTrip(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	if len(projects) != 2 || projects[0].ID != "proj_b" {
-		t.Fatalf("baseline order = [%v]; want proj_b first", projectIDs(projects))
+		t.Fatalf("baseline order = [%s %s]; want proj_b first", projects[0].ID, projects[1].ID)
 	}
 
-	// Pin the older project via read-modify-write (the PATCH handler's
-	// shape), then rename it in a second write — both must preserve the
-	// flag, and the pinned row must lead the listing.
-	existing, err := db.GetProject(ctx, agentID, "proj_a")
-	if err != nil {
-		t.Fatalf("get A: %v", err)
-	}
-	existing.Pinned = true
-	if err := db.SaveProject(ctx, existing); err != nil {
+	// Pin the older project via the pin-only path — it must lead the
+	// listing without touching its updated_at.
+	if err := db.SetProjectPinned(ctx, agentID, "proj_a", true); err != nil {
 		t.Fatalf("pin A: %v", err)
 	}
-	existing, err = db.GetProject(ctx, agentID, "proj_a")
-	if err != nil {
-		t.Fatalf("re-get A: %v", err)
-	}
-	if !existing.Pinned {
-		t.Fatal("pinned flag lost after read-back")
-	}
-	existing.Name = "A renamed"
-	if err := db.SaveProject(ctx, existing); err != nil {
-		t.Fatalf("rename A: %v", err)
-	}
-
 	projects, err = db.ListProjects(ctx, agentID)
 	if err != nil {
 		t.Fatalf("list after pin: %v", err)
@@ -144,39 +126,45 @@ func TestProjectPinnedRoundTrip(t *testing.T) {
 	if projects[0].ID != "proj_a" || !projects[0].Pinned {
 		t.Fatalf("first = (%s, pinned=%v); want (proj_a, true)", projects[0].ID, projects[0].Pinned)
 	}
-	if projects[0].Name != "A renamed" {
-		t.Fatalf("name = %q; want %q", projects[0].Name, "A renamed")
-	}
-	if projects[1].ID != "proj_b" || projects[1].Pinned {
-		t.Fatalf("second = (%s, pinned=%v); want (proj_b, false)", projects[1].ID, projects[1].Pinned)
-	}
 
-	// Unpin. SaveProject bumps updated_at on every write, so the just-
-	// unpinned A now leads the unpinned group (same bump a rename gets —
-	// pre-existing semantics). Assert flags, not order.
-	existing, err = db.GetProject(ctx, agentID, "proj_a")
-	if err != nil {
-		t.Fatalf("get A before unpin: %v", err)
-	}
-	existing.Pinned = false
-	if err := db.SaveProject(ctx, existing); err != nil {
+	// Unpin via the same path: no updated_at bump, so the listing drops
+	// straight back to plain recency (B is newer and returns to first).
+	if err := db.SetProjectPinned(ctx, agentID, "proj_a", false); err != nil {
 		t.Fatalf("unpin A: %v", err)
 	}
 	projects, err = db.ListProjects(ctx, agentID)
 	if err != nil {
 		t.Fatalf("list after unpin: %v", err)
 	}
-	for _, p := range projects {
-		if p.Pinned {
-			t.Errorf("%s still pinned after unpin", p.ID)
-		}
+	if projects[0].ID != "proj_b" || projects[0].Pinned {
+		t.Fatalf("after unpin first = (%s, pinned=%v); want (proj_b, false)", projects[0].ID, projects[0].Pinned)
 	}
-}
 
-func projectIDs(ps []ProjectRecord) []string {
-	out := make([]string, len(ps))
-	for i, p := range ps {
-		out[i] = p.ID
+	// The rename read-modify-write (the PATCH shape for name/description)
+	// must PRESERVE a flag set earlier — GetProject reads pinned back.
+	if err := db.SetProjectPinned(ctx, agentID, "proj_a", true); err != nil {
+		t.Fatalf("re-pin A: %v", err)
 	}
-	return out
+	existing, err := db.GetProject(ctx, agentID, "proj_a")
+	if err != nil {
+		t.Fatalf("get A: %v", err)
+	}
+	if !existing.Pinned {
+		t.Fatal("pinned flag lost on GetProject read-back")
+	}
+	existing.Name = "A renamed"
+	if err := db.SaveProject(ctx, existing); err != nil {
+		t.Fatalf("rename A: %v", err)
+	}
+	projects, err = db.ListProjects(ctx, agentID)
+	if err != nil {
+		t.Fatalf("list after rename: %v", err)
+	}
+	if projects[0].ID != "proj_a" || !projects[0].Pinned || projects[0].Name != "A renamed" {
+		t.Fatalf("after rename first = (%s, pinned=%v, name=%q); want (proj_a, true, A renamed)",
+			projects[0].ID, projects[0].Pinned, projects[0].Name)
+	}
+	if projects[1].ID != "proj_b" || projects[1].Pinned {
+		t.Fatalf("second = (%s, pinned=%v); want (proj_b, false)", projects[1].ID, projects[1].Pinned)
+	}
 }

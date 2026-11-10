@@ -192,6 +192,22 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 		existing.Description = trimProjectDescription(*req.Description)
 	}
 	if req.Pinned != nil {
+		// Pin-only PATCH takes the single-column UPDATE (SetProjectPinned)
+		// so SaveProject's documented updated_at bump can't float the
+		// just-unpinned project to the top of the unpinned group.
+		if req.Name == nil && req.Description == nil {
+			if err := s.dataStore.SetProjectPinned(r.Context(), id, pid, *req.Pinned); err != nil {
+				jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+			saved, _ := s.dataStore.GetProject(r.Context(), id, pid)
+			if saved == nil {
+				existing.Pinned = *req.Pinned
+				saved = existing
+			}
+			jsonResponse(w, http.StatusOK, projectToJSON(saved))
+			return
+		}
 		existing.Pinned = *req.Pinned
 	}
 	if err := s.dataStore.SaveProject(r.Context(), existing); err != nil {

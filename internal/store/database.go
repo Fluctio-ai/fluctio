@@ -4055,6 +4055,10 @@ func (d *DBStore) SaveSession(ctx context.Context, agentID, sessionKey string, s
 	return err
 }
 
+// ListSessions returns session metadata for one agent. Ordering is
+// DISPLAY order (pinned first, then updated_at DESC) — not pure recency.
+// Every non-UI consumer today is order-insensitive; if you need strict
+// time order, use ListSessionsPaginated.
 func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMeta, error) {
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT session_key, '' AS user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, COALESCE(chat_only,0), COALESCE(pinned,0) FROM sessions
@@ -4817,6 +4821,22 @@ func (d *DBStore) SetSessionPinned(ctx context.Context, agentID, sessionKey stri
 		fmt.Sprintf(`UPDATE sessions SET pinned = %s WHERE agent_id = %s AND session_key = %s`,
 			d.ph(1), d.ph(2), d.ph(3)),
 		v, agentID, sessionKey)
+	return err
+}
+
+// SetProjectPinned flips a project's sidebar keep-at-top flag. Unlike
+// SaveProject it writes only the pinned column — no updated_at bump — so
+// unpinning drops the project back to its pre-pin recency position
+// instead of floating it to the top of the unpinned group.
+func (d *DBStore) SetProjectPinned(ctx context.Context, agentID, projectID string, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE projects SET pinned = %s WHERE agent_id = %s AND project_id = %s`,
+			d.ph(1), d.ph(2), d.ph(3)),
+		v, agentID, projectID)
 	return err
 }
 

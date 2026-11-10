@@ -1153,8 +1153,13 @@ export async function setChatSessionChatOnly(
 }
 
 // pinChatSession flips a chat's sidebar keep-at-top flag. Same PATCH
-// sub-resource shape as setChatSessionChatOnly; server orders pinned
-// sessions first, so no client-side re-sort is needed.
+// sub-resource shape as setChatSessionChatOnly. The server orders pinned
+// sessions first; the sidebar consumes that order directly, while the
+// /chats page re-sorts locally (pinned first) for deterministic paging.
+// Unlike the {error}-returning siblings above, this one THROWS on
+// failure (the deleteDiagReport convention) so every caller is a flat
+// .then(update state).catch(alert) — callers can't forget the error
+// payload check.
 export async function pinChatSession(
   agentId: string,
   sessionId: string,
@@ -1168,6 +1173,10 @@ export async function pinChatSession(
       body: JSON.stringify({ agentId, pinned }),
     },
   );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || res.statusText);
+  }
   return res.json();
 }
 

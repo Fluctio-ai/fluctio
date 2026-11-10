@@ -79,19 +79,17 @@ export function ChatRowActions({
   const [deleteOpen, setDeleteOpen] = React.useState(false);
 
   const onTogglePin = async () => {
+    // pinChatSession throws on failure (api.ts convention) — alert and
+    // keep the menu state as-is; on success refetch re-orders the list
+    // server-side (pinned first).
     try {
-      const res = await pinChatSession(agentId, session.id, !session.pinned);
-      if (res && res.error) {
-        window.alert(`Failed to pin chat: ${res.error}`);
-        return;
-      }
+      await pinChatSession(agentId, session.id, !session.pinned);
     } catch (err) {
       window.alert(
         `Failed to pin chat: ${err instanceof Error ? err.message : String(err)}`,
       );
       return;
     }
-    // Refetch re-orders the list server-side (pinned first).
     onChanged();
   };
 
@@ -165,7 +163,7 @@ export function ChatRowActions({
             ) : (
               <PinIcon className="text-muted-foreground" />
             )}
-            <span>{session.pinned ? tt("chatActions.unpin") : tt("chatActions.pin")}</span>
+            <span>{session.pinned ? tt("common.unpin") : tt("common.pin")}</span>
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setEditOpen(true)}>
             <PencilIcon className="text-muted-foreground" />

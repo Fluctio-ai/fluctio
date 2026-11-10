@@ -344,8 +344,6 @@ const zhCN: Record<string, string> = {
 
   // Chat row actions (shared sidebar "..." menu)
   "chatActions.menuLabel": "聊天操作",
-  "chatActions.pin": "置顶",
-  "chatActions.unpin": "取消置顶",
   "chatActions.deleteTitle": "删除聊天",
   "chatActions.deleteConfirm": "删除 {title}？此聊天的完整消息历史将被移除，且无法恢复。",
   "chatActions.editTitle": "编辑聊天标题",
@@ -422,6 +420,8 @@ const zhCN: Record<string, string> = {
   "common.testFailed": "测试失败",
   "common.cancel": "取消",
   "common.delete": "删除",
+  "common.pin": "置顶",
+  "common.unpin": "取消置顶",
   "common.deleteConfirmTitle": "确认删除",
   "common.deleteConfirmBody": "确定删除「{name}」？此操作无法撤销。",
   "common.dismiss": "关闭",
@@ -2108,8 +2108,6 @@ const zhCN: Record<string, string> = {
   "projects.noProjects": "暂无项目",
   "projects.newProject": "新建项目",
   "projects.actions": "项目操作",
-  "projects.pin": "置顶",
-  "projects.unpin": "取消置顶",
   "projects.newChatInProject": "在项目中新建对话",
   "projects.create.title": "新建项目",
   "projects.create.desc": "将共享资料、文件或上下文的对话分组。同一项目下的对话共享工作区文件夹。",

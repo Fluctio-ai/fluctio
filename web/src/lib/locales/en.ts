@@ -344,8 +344,6 @@ const en: Record<string, string> = {
 
   // Chat row actions (shared sidebar "..." menu)
   "chatActions.menuLabel": "Chat actions",
-  "chatActions.pin": "Pin to top",
-  "chatActions.unpin": "Unpin",
   "chatActions.deleteTitle": "Delete chat",
   "chatActions.deleteConfirm": "Delete {title}? The full message history for this chat will be removed and cannot be recovered.",
   "chatActions.editTitle": "Edit chat title",
@@ -422,6 +420,8 @@ const en: Record<string, string> = {
   "common.testFailed": "Test failed",
   "common.cancel": "Cancel",
   "common.delete": "Delete",
+  "common.pin": "Pin to top",
+  "common.unpin": "Unpin",
   "common.deleteConfirmTitle": "Confirm delete",
   "common.deleteConfirmBody": "Delete \"{name}\"? This cannot be undone.",
   "common.dismiss": "Dismiss",
@@ -2108,8 +2108,6 @@ Info
   "projects.noProjects": "No projects yet",
   "projects.newProject": "New project",
   "projects.actions": "Project actions",
-  "projects.pin": "Pin to top",
-  "projects.unpin": "Unpin",
   "projects.newChatInProject": "New chat in project",
   "projects.create.title": "New project",
   "projects.create.desc": "Group chats that share research, files, or context. Every chat in a project sees the same workspace folder.",

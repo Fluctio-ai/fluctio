@@ -168,6 +168,10 @@ type Store interface {
 	// SetSessionPinned flips a session's sidebar keep-at-top flag
 	// (pinned). Pure display metadata — never read by the agent loop.
 	SetSessionPinned(ctx context.Context, agentID, sessionKey string, on bool) error
+	// SetProjectPinned flips a project's sidebar keep-at-top flag without
+	// touching name/description or bumping updated_at — a pin-only PATCH
+	// must stay position-neutral in the unpinned group's recency order.
+	SetProjectPinned(ctx context.Context, agentID, projectID string, on bool) error
 	// SessionChatOnly reads a session's chat-only flag. False for rows
 	// created before the column existed (DEFAULT 0).
 	SessionChatOnly(ctx context.Context, agentID, sessionKey string) (bool, error)

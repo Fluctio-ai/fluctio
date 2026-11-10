@@ -228,14 +228,20 @@ export default function AgentChatsPage() {
                           variant="ghost"
                           onClick={() => {
                             pinChatSession(agentId, s.id, !s.pinned)
-                              .then(refresh)
+                              .then(() =>
+                                setSessions((list) =>
+                                  list.map((x) =>
+                                    x.id === s.id ? { ...x, pinned: !s.pinned } : x,
+                                  ),
+                                ),
+                              )
                               .catch((err) =>
                                 window.alert(
                                   `Failed to pin chat: ${err instanceof Error ? err.message : String(err)}`,
                                 ),
                               );
                           }}
-                          title={s.pinned ? tt("chatActions.unpin") : tt("chatActions.pin")}
+                          title={s.pinned ? tt("common.unpin") : tt("common.pin")}
                         >
                           {s.pinned ? (
                             <PinOffIcon className="size-4" />
