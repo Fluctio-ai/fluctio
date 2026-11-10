@@ -62,6 +62,8 @@ type AgentHandle interface {
 	// SetWebChatSessionChatOnly flips the chat's pure-conversation mode
 	// (no tools sent to the LLM for turns in that session).
 	SetWebChatSessionChatOnly(sessionId string, on bool) error
+	// SetWebChatSessionPinned flips the chat's sidebar keep-at-top flag.
+	SetWebChatSessionPinned(sessionId string, on bool) error
 	// MoveWebChatSession reassigns the chat to a different project (or
 	// detaches when projectID==""). Migrates workspace files between
 	// the old and new scope dirs and releases any active sandbox so
@@ -400,6 +402,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("DELETE /api/chat/sessions/{key}", auth(s.handleDeleteSession))
 	mux.HandleFunc("PATCH /api/chat/sessions/{key}/project", auth(s.handleMoveSessionProject))
 	mux.HandleFunc("PATCH /api/chat/sessions/{key}/chat-only", auth(s.handleSetSessionChatOnly))
+	mux.HandleFunc("PATCH /api/chat/sessions/{key}/pin", auth(s.handleSetSessionPinned))
 	mux.HandleFunc("POST /api/chat/sessions/fork", auth(s.handleForkSession))
 	// Raw session_events dump (debugging: "record exists but UI didn't
 	// render it" vs "record gone"). Reads the same store the chat page

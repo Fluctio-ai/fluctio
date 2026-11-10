@@ -332,6 +332,16 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	if err := d.migrateNotifications(ctx); err != nil {
 		return fmt.Errorf("migrate notifications: %w", err)
 	}
+	// pinned columns must be added AFTER the drop-user_id table rebuilds
+	// above (migrateSessionsDropUserAndChatter / migrateProjectsDropUserID
+	// recreate the tables from an explicit column list that predates
+	// pinned — an ALTER run before them would be silently wiped).
+	if err := d.migrateSessionsAddPinned(ctx); err != nil {
+		return fmt.Errorf("migrate sessions pinned: %w", err)
+	}
+	if err := d.migrateProjectsAddPinned(ctx); err != nil {
+		return fmt.Errorf("migrate projects pinned: %w", err)
+	}
 	return nil
 }
 
@@ -2922,6 +2932,10 @@ func (d *DBStore) migrationSQL() []string {
 			-- accept tool-trace history without a tools param (verified
 			-- against z.ai anthropic-messages and DeepSeek responses APIs).
 			chat_only INTEGER NOT NULL DEFAULT 0,
+			-- pinned: user-marked "keep at top of the sidebar" flag. Pure
+			-- display metadata — the list endpoints order pinned DESC,
+			-- updated_at DESC; the agent loop never reads it.
+			pinned INTEGER NOT NULL DEFAULT 0,
 			-- chatter_user_id is the actual conversation participant. For
 			-- web / dashboard chats it equals user_id (= the logged-in
 			-- user). For IM channels with per-sender app_users it's the
@@ -3081,6 +3095,8 @@ func (d *DBStore) migrationSQL() []string {
 			description TEXT NOT NULL DEFAULT '',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			-- pinned: sidebar display flag, same meaning as sessions.pinned.
+			pinned INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (user_id, agent_id, project_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_projects_listing ON projects (agent_id, project_id, updated_at DESC)`,
@@ -4041,8 +4057,8 @@ func (d *DBStore) SaveSession(ctx context.Context, agentID, sessionKey string, s
 
 func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMeta, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT session_key, '' AS user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, COALESCE(chat_only,0) FROM sessions
-			WHERE agent_id = %s ORDER BY updated_at DESC`, d.ph(1)),
+		fmt.Sprintf(`SELECT session_key, '' AS user_id, channel, account_id, chat_id, project_id, title, message_count, updated_at, COALESCE(chat_only,0), COALESCE(pinned,0) FROM sessions
+			WHERE agent_id = %s ORDER BY COALESCE(pinned,0) DESC, updated_at DESC`, d.ph(1)),
 		agentID)
 	if err != nil {
 		return nil, err
@@ -4051,11 +4067,12 @@ func (d *DBStore) ListSessions(ctx context.Context, agentID string) ([]SessionMe
 	var metas []SessionMeta
 	for rows.Next() {
 		var m SessionMeta
-		var chatOnly int
-		if err := rows.Scan(&m.Key, &m.UserID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt, &chatOnly); err != nil {
+		var chatOnly, pinned int
+		if err := rows.Scan(&m.Key, &m.UserID, &m.Channel, &m.AccountID, &m.ChatID, &m.ProjectID, &m.Title, &m.MessageCount, &m.UpdatedAt, &chatOnly, &pinned); err != nil {
 			return nil, err
 		}
 		m.ChatOnly = chatOnly != 0
+		m.Pinned = pinned != 0
 		metas = append(metas, m)
 	}
 	return metas, rows.Err()
@@ -4785,6 +4802,19 @@ func (d *DBStore) SetSessionChatOnly(ctx context.Context, agentID, sessionKey st
 	}
 	_, err := d.db.ExecContext(ctx,
 		fmt.Sprintf(`UPDATE sessions SET chat_only = %s WHERE agent_id = %s AND session_key = %s`,
+			d.ph(1), d.ph(2), d.ph(3)),
+		v, agentID, sessionKey)
+	return err
+}
+
+// SetSessionPinned flips a session's sidebar keep-at-top flag.
+func (d *DBStore) SetSessionPinned(ctx context.Context, agentID, sessionKey string, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE sessions SET pinned = %s WHERE agent_id = %s AND session_key = %s`,
 			d.ph(1), d.ph(2), d.ph(3)),
 		v, agentID, sessionKey)
 	return err
@@ -5800,8 +5830,8 @@ func (d *DBStore) ReleaseChannelLease(ctx context.Context, channel, accountID, h
 
 func (d *DBStore) ListProjects(ctx context.Context, agentID string) ([]ProjectRecord, error) {
 	rows, err := d.db.QueryContext(ctx,
-		fmt.Sprintf(`SELECT project_id, name, description, created_at, updated_at FROM projects
-			WHERE agent_id = %s ORDER BY updated_at DESC`,
+		fmt.Sprintf(`SELECT project_id, name, description, created_at, updated_at, COALESCE(pinned,0) FROM projects
+			WHERE agent_id = %s ORDER BY COALESCE(pinned,0) DESC, updated_at DESC`,
 			d.ph(1)),
 		agentID)
 	if err != nil {
@@ -5811,9 +5841,11 @@ func (d *DBStore) ListProjects(ctx context.Context, agentID string) ([]ProjectRe
 	var out []ProjectRecord
 	for rows.Next() {
 		p := ProjectRecord{AgentID: agentID}
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		var pinned int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt, &pinned); err != nil {
 			return nil, err
 		}
+		p.Pinned = pinned != 0
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -5821,40 +5853,48 @@ func (d *DBStore) ListProjects(ctx context.Context, agentID string) ([]ProjectRe
 
 func (d *DBStore) GetProject(ctx context.Context, agentID, projectID string) (*ProjectRecord, error) {
 	row := d.db.QueryRowContext(ctx,
-		fmt.Sprintf(`SELECT name, description, created_at, updated_at FROM projects
+		fmt.Sprintf(`SELECT name, description, COALESCE(pinned,0), created_at, updated_at FROM projects
 			WHERE agent_id = %s AND project_id = %s`,
 			d.ph(1), d.ph(2)),
 		agentID, projectID)
 	p := ProjectRecord{AgentID: agentID, ID: projectID}
-	if err := row.Scan(&p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt); err != nil {
+	var pinned int
+	if err := row.Scan(&p.Name, &p.Description, &pinned, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, scanErr(err)
 	}
+	p.Pinned = pinned != 0
 	return &p, nil
 }
 
 // SaveProject upserts. created_at is preserved on update; updated_at
 // is bumped every write. Empty name is allowed at the row level — the
 // HTTP handler enforces non-empty so we don't double-validate here.
+// Pinned round-trips through the upsert so a read-modify-write (the
+// PATCH handler) preserves it, and the sidebar pin toggle can set it.
 func (d *DBStore) SaveProject(ctx context.Context, p *ProjectRecord) error {
 	if p.AgentID == "" || p.ID == "" {
 		return errors.New("store: SaveProject requires agent_id, project_id")
 	}
 	now := time.Now().UTC()
+	pin := 0
+	if p.Pinned {
+		pin = 1
+	}
 	if d.dialect == "postgres" {
 		_, err := d.db.ExecContext(ctx,
-			`INSERT INTO projects (agent_id, project_id, name, description, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $5)
+			`INSERT INTO projects (agent_id, project_id, name, description, pinned, created_at, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $6)
 				ON CONFLICT (agent_id, project_id) DO UPDATE
-				SET name=$3, description=$4, updated_at=$5`,
-			p.AgentID, p.ID, p.Name, p.Description, now)
+				SET name=$3, description=$4, pinned=$5, updated_at=$6`,
+			p.AgentID, p.ID, p.Name, p.Description, pin, now)
 		return err
 	}
 	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO projects (agent_id, project_id, name, description, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO projects (agent_id, project_id, name, description, pinned, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (agent_id, project_id) DO UPDATE SET
-			  name=excluded.name, description=excluded.description, updated_at=excluded.updated_at`,
-		p.AgentID, p.ID, p.Name, p.Description, now, now)
+			  name=excluded.name, description=excluded.description, pinned=excluded.pinned, updated_at=excluded.updated_at`,
+		p.AgentID, p.ID, p.Name, p.Description, pin, now, now)
 	return err
 }
 
@@ -6867,6 +6907,35 @@ func (d *DBStore) migrateSessionsAddChatOnly(ctx context.Context) error {
 		if _, err := d.db.ExecContext(ctx,
 			`ALTER TABLE sessions ADD COLUMN chat_only INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("add column chat_only: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateSessionsAddPinned retrofits the sessions.pinned column (sidebar
+// keep-at-top flag). Runs after the drop-user_id table rebuilds so the
+// rebuild's fixed column list can't wipe it — see the call site.
+func (d *DBStore) migrateSessionsAddPinned(ctx context.Context) error {
+	if has, err := d.tableHasColumn(ctx, "sessions", "pinned"); err != nil {
+		return err
+	} else if !has {
+		if _, err := d.db.ExecContext(ctx,
+			`ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add column pinned: %w", err)
+		}
+	}
+	return nil
+}
+
+// migrateProjectsAddPinned retrofits the projects.pinned column (sidebar
+// keep-at-top flag). Same placement constraint as migrateSessionsAddPinned.
+func (d *DBStore) migrateProjectsAddPinned(ctx context.Context) error {
+	if has, err := d.tableHasColumn(ctx, "projects", "pinned"); err != nil {
+		return err
+	} else if !has {
+		if _, err := d.db.ExecContext(ctx,
+			`ALTER TABLE projects ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add column pinned: %w", err)
 		}
 	}
 	return nil

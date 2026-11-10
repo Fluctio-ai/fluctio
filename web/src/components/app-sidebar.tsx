@@ -234,6 +234,7 @@ export function AppSidebar(props: React.ComponentProps<typeof Sidebar>) {
               thumbnailUrl: s.thumbnailUrl,
               channel: s.channel,
               projectId: s.projectId,
+              pinned: s.pinned,
             })),
           );
         })

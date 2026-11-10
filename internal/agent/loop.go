@@ -2143,6 +2143,11 @@ func (a *Agent) SetWebChatSessionChatOnly(sessionId string, on bool) error {
 	return a.sessions.SetChatOnlyByID(sessionId, on)
 }
 
+// SetWebChatSessionPinned flips a chat's sidebar keep-at-top flag.
+func (a *Agent) SetWebChatSessionPinned(sessionId string, on bool) error {
+	return a.sessions.SetPinnedByID(sessionId, on)
+}
+
 // MoveWebChatSession reassigns a chat to a different project (or
 // detaches it when projectID is "") and migrates its workspace files
 // from the old scope to the new one. Drives the sidebar drag-and-drop

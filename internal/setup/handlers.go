@@ -2109,6 +2109,44 @@ func (s *Server) handleSetSessionChatOnly(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleSetSessionPinned flips one chat's sidebar keep-at-top flag.
+// Same gates and body shape as handleSetSessionChatOnly — both are
+// per-session display-state mutations.
+func (s *Server) handleSetSessionPinned(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AgentID string `json:"agentId"`
+		Pinned  bool   `json:"pinned"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	agentID := r.URL.Query().Get("agentId")
+	if agentID == "" {
+		agentID = req.AgentID
+	}
+	if agentID == "" {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "agentId required"})
+		return
+	}
+	if rec := s.requireAgentOwner(w, r, agentID); rec == nil {
+		return
+	}
+	if !s.requireWritable(w, r) {
+		return
+	}
+	ag := s.resolveAgent(r, agentID)
+	if ag == nil {
+		jsonResponse(w, http.StatusNotFound, map[string]any{"error": "agent not found"})
+		return
+	}
+	if err := ag.SetWebChatSessionPinned(r.PathValue("key"), req.Pinned); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	agentID := r.URL.Query().Get("agentId")
 	ag := s.resolveAgent(r, agentID)

@@ -9,7 +9,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import { ChevronRightIcon, MoreHorizontal } from "lucide-react";
+import { ChevronRightIcon, MoreHorizontal, PinIcon } from "lucide-react";
 import { moveChatSessionToProject } from "@/lib/api";
 import { ChannelIcon, channelLabel } from "@/components/channel-icon";
 import { ChatRowActions } from "@/components/chat-row-actions";
@@ -39,6 +39,9 @@ export interface SessionItem {
   // NavSessions filters these out so they only appear nested under
   // their project (NavProjectsList renders them).
   projectId?: string;
+  // pinned mirrors sessions.pinned — the sidebar keep-at-top flag.
+  // The server orders pinned first; the sidebar keeps that order.
+  pinned?: boolean;
 }
 
 export function NavSessions({
@@ -243,10 +246,16 @@ function SessionRow({
           <ChannelIcon channel={session.channel} />
         )}
         <span className="truncate">{session.title || session.id}</span>
+        {/* Keep-at-top marker: after the title so it can't collide with
+            the hover "..." chip at the row's right edge. shrink-0 so a
+            truncated title never pushes it out of the row. */}
+        {session.pinned && (
+          <PinIcon className="size-3 shrink-0 fill-current text-muted-foreground" />
+        )}
       </SidebarMenuButton>
       <ChatRowActions
         agentId={agentId}
-        session={{ id: session.id, title: session.title }}
+        session={{ id: session.id, title: session.title, pinned: session.pinned }}
         onChanged={onChanged}
       />
     </SidebarMenuItem>

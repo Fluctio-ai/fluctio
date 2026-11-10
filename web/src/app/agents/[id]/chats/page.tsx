@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   MessagesSquare,
   PencilIcon,
+  PinIcon,
+  PinOffIcon,
   Trash2,
   ChevronLeft,
   ChevronRight,
@@ -42,6 +44,7 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import {
   getChatSessions,
+  pinChatSession,
   renameChatSession,
   deleteChatSession,
 } from "@/lib/api";
@@ -56,6 +59,8 @@ type Session = {
   title?: string;
   preview: string;
   thumbnailUrl?: string;
+  // keep-at-top flag — pinned rows lead the list, recency within group.
+  pinned?: boolean;
   createdAt?: number;
   updatedAt?: number;
 };
@@ -89,12 +94,15 @@ export default function AgentChatsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
 
-  // Server returns sessions in some order — sort by updatedAt desc here so
-  // the page is deterministic regardless of backend behavior.
+  // Server already orders pinned-first (sessions.pinned), but the local
+  // sort keeps the page deterministic — pinned rows lead, recency within
+  // each group.
   const sorted = useMemo(
     () =>
       [...sessions].sort(
-        (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+        (a, b) =>
+          (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) ||
+          (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
       ),
     [sessions],
   );
@@ -215,6 +223,26 @@ export default function AgentChatsPage() {
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => {
+                            pinChatSession(agentId, s.id, !s.pinned)
+                              .then(refresh)
+                              .catch((err) =>
+                                window.alert(
+                                  `Failed to pin chat: ${err instanceof Error ? err.message : String(err)}`,
+                                ),
+                              );
+                          }}
+                          title={s.pinned ? tt("chatActions.unpin") : tt("chatActions.pin")}
+                        >
+                          {s.pinned ? (
+                            <PinOffIcon className="size-4" />
+                          ) : (
+                            <PinIcon className="size-4 text-muted-foreground" />
+                          )}
+                        </Button>
                         <Button
                           size="icon"
                           variant="ghost"

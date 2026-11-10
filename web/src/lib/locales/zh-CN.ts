@@ -344,6 +344,8 @@ const zhCN: Record<string, string> = {
 
   // Chat row actions (shared sidebar "..." menu)
   "chatActions.menuLabel": "聊天操作",
+  "chatActions.pin": "置顶",
+  "chatActions.unpin": "取消置顶",
   "chatActions.deleteTitle": "删除聊天",
   "chatActions.deleteConfirm": "删除 {title}？此聊天的完整消息历史将被移除，且无法恢复。",
   "chatActions.editTitle": "编辑聊天标题",
@@ -2106,6 +2108,8 @@ const zhCN: Record<string, string> = {
   "projects.noProjects": "暂无项目",
   "projects.newProject": "新建项目",
   "projects.actions": "项目操作",
+  "projects.pin": "置顶",
+  "projects.unpin": "取消置顶",
   "projects.newChatInProject": "在项目中新建对话",
   "projects.create.title": "新建项目",
   "projects.create.desc": "将共享资料、文件或上下文的对话分组。同一项目下的对话共享工作区文件夹。",

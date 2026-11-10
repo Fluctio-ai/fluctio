@@ -1018,6 +1018,9 @@ export interface ChatSessionEntry {
   // send no tools to the LLM. Surfaced so the composer toggle re-renders
   // in the right state after a reload.
   chatOnly?: boolean;
+  // pinned mirrors sessions.pinned — the sidebar keep-at-top flag.
+  // Pinned sessions float to the top of the list (server-side order).
+  pinned?: boolean;
   thumbnailUrl?: string;
   createdAt?: number;
   updatedAt?: number;
@@ -1027,6 +1030,8 @@ export interface ProjectEntry {
   id: string;
   name: string;
   description?: string;
+  // pinned mirrors projects.pinned — the sidebar keep-at-top flag.
+  pinned?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -1058,7 +1063,7 @@ export async function createProject(
 export async function updateProject(
   agentId: string,
   projectId: string,
-  req: { name?: string; description?: string },
+  req: { name?: string; description?: string; pinned?: boolean },
 ): Promise<ProjectEntry | { error: string }> {
   const res = await apiFetch(
     `/api/agents/${encodeURIComponent(agentId)}/projects/${encodeURIComponent(projectId)}`,
@@ -1142,6 +1147,25 @@ export async function setChatSessionChatOnly(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ agentId, chatOnly: on }),
+    },
+  );
+  return res.json();
+}
+
+// pinChatSession flips a chat's sidebar keep-at-top flag. Same PATCH
+// sub-resource shape as setChatSessionChatOnly; server orders pinned
+// sessions first, so no client-side re-sort is needed.
+export async function pinChatSession(
+  agentId: string,
+  sessionId: string,
+  pinned: boolean,
+) {
+  const res = await apiFetch(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/pin`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId, pinned }),
     },
   );
   return res.json();

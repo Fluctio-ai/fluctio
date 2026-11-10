@@ -72,6 +72,7 @@ func projectToJSON(p *store.ProjectRecord) map[string]any {
 		"id":          p.ID,
 		"name":        p.Name,
 		"description": p.Description,
+		"pinned":      p.Pinned,
 		"createdAt":   p.CreatedAt,
 		"updatedAt":   p.UpdatedAt,
 	}
@@ -173,6 +174,7 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
+		Pinned      *bool   `json:"pinned"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
@@ -188,6 +190,9 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Description != nil {
 		existing.Description = trimProjectDescription(*req.Description)
+	}
+	if req.Pinned != nil {
+		existing.Pinned = *req.Pinned
 	}
 	if err := s.dataStore.SaveProject(r.Context(), existing); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

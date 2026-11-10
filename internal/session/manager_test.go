@@ -57,6 +57,9 @@ func (noopSessionStore) SetSessionChatOnly(context.Context, string, string, bool
 func (noopSessionStore) SessionChatOnly(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+func (noopSessionStore) SetSessionPinned(context.Context, string, string, bool) error {
+	return nil
+}
 
 func TestNewManagerWithStoreForUserEmptyUserIDDoesNotPanic(t *testing.T) {
 	mgr := NewManagerWithStoreForUser(t.TempDir(), noopSessionStore{}, "", "agent-1")

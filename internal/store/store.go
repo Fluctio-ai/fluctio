@@ -165,6 +165,9 @@ type Store interface {
 	// When on, turns in that session send no tools to the LLM — pure
 	// conversation mode for thinking/brainstorming without tool noise.
 	SetSessionChatOnly(ctx context.Context, agentID, sessionKey string, on bool) error
+	// SetSessionPinned flips a session's sidebar keep-at-top flag
+	// (pinned). Pure display metadata — never read by the agent loop.
+	SetSessionPinned(ctx context.Context, agentID, sessionKey string, on bool) error
 	// SessionChatOnly reads a session's chat-only flag. False for rows
 	// created before the column existed (DEFAULT 0).
 	SessionChatOnly(ctx context.Context, agentID, sessionKey string) (bool, error)
@@ -585,7 +588,10 @@ type SessionMeta struct {
 	// ChatOnly mirrors sessions.chat_only — true when this session runs
 	// in pure-conversation mode (no tools sent to the LLM). Surfaced so
 	// the chat UI can render its toggle in the right state on reload.
-	ChatOnly  bool      `json:"chatOnly,omitempty"`
+	ChatOnly bool `json:"chatOnly,omitempty"`
+	// Pinned mirrors sessions.pinned — the user's keep-at-top flag for
+	// the sidebar list. Pure display metadata.
+	Pinned    bool      `json:"pinned,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
@@ -599,13 +605,16 @@ type SessionMeta struct {
 // the same agent each have their own projects, never seeing each
 // other's.
 type ProjectRecord struct {
-	UserID      string    `json:"-"`
-	AgentID     string    `json:"-"`
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	UserID      string `json:"-"`
+	AgentID     string `json:"-"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Pinned is the sidebar keep-at-top flag. Pure display metadata —
+	// the projects listing orders pinned first, then updated_at DESC.
+	Pinned     bool      `json:"pinned,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 // ProjectRuntimeRecord is the live-app layer that sits ON TOP of a

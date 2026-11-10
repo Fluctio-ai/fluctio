@@ -314,6 +314,7 @@ func (a *StoreAdapter) buildWebSessionFast(ctx context.Context, dbs *store.DBSto
 		Preview:      preview,
 		ThumbnailURL: thumb,
 		ChatOnly:     m.ChatOnly,
+		Pinned:       m.Pinned,
 		CreatedAt:    m.UpdatedAt.UnixMilli(),
 		UpdatedAt:    m.UpdatedAt.UnixMilli(),
 	}
@@ -384,6 +385,7 @@ func (a *StoreAdapter) BuildWebSession(ctx context.Context, m store.SessionMeta)
 		Preview:       preview,
 		ThumbnailURL:  thumb,
 		ChatOnly:      m.ChatOnly,
+		Pinned:        m.Pinned,
 		CreatedAt:     m.UpdatedAt.UnixMilli(),
 		UpdatedAt:     m.UpdatedAt.UnixMilli(),
 	}
@@ -496,6 +498,10 @@ func (a *StoreAdapter) MoveSession(ctx context.Context, agentID, sessionKey, pro
 
 func (a *StoreAdapter) SetSessionChatOnly(ctx context.Context, agentID, sessionKey string, on bool) error {
 	return a.st.SetSessionChatOnly(ctx, agentID, sessionKey, on)
+}
+
+func (a *StoreAdapter) SetSessionPinned(ctx context.Context, agentID, sessionKey string, on bool) error {
+	return a.st.SetSessionPinned(ctx, agentID, sessionKey, on)
 }
 
 func (a *StoreAdapter) SessionChatOnly(ctx context.Context, agentID, sessionKey string) (bool, error) {

@@ -261,6 +261,9 @@ type SessionStore interface {
 	// no tools to the LLM. See Agent loop for the injection policy.
 	SetSessionChatOnly(ctx context.Context, agentID, sessionKey string, on bool) error
 	SessionChatOnly(ctx context.Context, agentID, sessionKey string) (bool, error)
+	// SetSessionPinned flips a session's sidebar keep-at-top flag
+	// (pinned). Pure display metadata — never read by the agent loop.
+	SetSessionPinned(ctx context.Context, agentID, sessionKey string, on bool) error
 }
 
 type Manager struct {
@@ -1187,7 +1190,10 @@ type WebSession struct {
 	// ChatOnly mirrors sessions.chat_only — pure-conversation mode
 	// (no tools sent to the LLM). Surfaced so the composer toggle
 	// renders in the right state after a reload.
-	ChatOnly     bool   `json:"chatOnly,omitempty"`
+	ChatOnly bool `json:"chatOnly,omitempty"`
+	// Pinned mirrors sessions.pinned — the user's keep-at-top flag for
+	// the sidebar list. Pure display metadata.
+	Pinned       bool   `json:"pinned,omitempty"`
 	CreatedAt    int64  `json:"createdAt"` // unix ms
 	UpdatedAt    int64  `json:"updatedAt"` // unix ms
 	// ThumbnailURL is the first image_url attached to the FIRST user
@@ -1400,6 +1406,19 @@ func (m *Manager) SetChatOnlyByID(sessionId string, on bool) error {
 	m.mu.Unlock()
 	if m.store != nil {
 		return m.store.SetSessionChatOnly(m.ctx(), m.agentID, key, on)
+	}
+	return nil
+}
+
+// SetPinnedByID flips a session's sidebar keep-at-top flag (resolve
+// either a session_key or a legacy web chat_id). No in-memory cache
+// entry to update — the flag is list-display metadata the agent loop
+// never reads; the next ListWebSessions re-reads the row. File-backed
+// mode is a no-op.
+func (m *Manager) SetPinnedByID(sessionId string, on bool) error {
+	key := m.ResolveSessionKey(sessionId)
+	if m.store != nil {
+		return m.store.SetSessionPinned(m.ctx(), m.agentID, key, on)
 	}
 	return nil
 }

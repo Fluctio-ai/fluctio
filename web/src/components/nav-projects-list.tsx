@@ -50,6 +50,8 @@ import {
   FolderOpenIcon,
   MoreHorizontalIcon,
   PencilIcon,
+  PinIcon,
+  PinOffIcon,
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -312,6 +314,7 @@ export function NavProjectsList({
                   });
                   onChanged();
                 }}
+                onChanged={onChanged}
               />
             );
           })}
@@ -362,6 +365,7 @@ function ProjectRow({
   allSessions,
   agentId,
   onMoved,
+  onChanged,
 }: {
   project: ProjectEntry;
   open: boolean;
@@ -389,6 +393,10 @@ function ProjectRow({
   allSessions: ProjectChatItem[];
   agentId: string;
   onMoved: () => void;
+  // onChanged is the plain refetch callback (parent refetches sessions +
+  // projects) — used by the pin toggle, which must NOT trigger the
+  // auto-expand side effect that onMoved carries.
+  onChanged: () => void;
 }) {
   const { isMobile } = useSidebar();
   const [dropActive, setDropActive] = React.useState(false);
@@ -419,6 +427,26 @@ function ProjectRow({
       return;
     }
     onMoved();
+  };
+  // Pin toggle: PATCH the project's keep-at-top flag, then refetch so the
+  // parent re-renders in server order (pinned first). Mirrors the failure
+  // surfacing of the move handler (alert on error, silent on success).
+  const onTogglePin = async () => {
+    try {
+      const res = await updateProject(agentId, project.id, {
+        pinned: !project.pinned,
+      });
+      if ("error" in res && res.error) {
+        window.alert(`Failed to pin project: ${res.error}`);
+        return;
+      }
+    } catch (err) {
+      window.alert(
+        `Failed to pin project: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    onChanged();
   };
   return (
     <SidebarMenuItem
@@ -452,6 +480,11 @@ function ProjectRow({
           </span>
         </span>
         <span className="truncate">{project.name}</span>
+        {/* Keep-at-top marker: after the name — shrink-0 so a truncated
+            name can't push it out of the row. */}
+        {project.pinned && (
+          <PinIcon className="size-3 shrink-0 fill-current text-muted-foreground" />
+        )}
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -467,6 +500,14 @@ function ProjectRow({
           side={isMobile ? "bottom" : "right"}
           align={isMobile ? "end" : "start"}
         >
+          <DropdownMenuItem onClick={onTogglePin}>
+            {project.pinned ? (
+              <PinOffIcon className="text-muted-foreground" />
+            ) : (
+              <PinIcon className="text-muted-foreground" />
+            )}
+            <span>{project.pinned ? t("projects.unpin") : t("projects.pin")}</span>
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={onNewChat}>
             <PlusIcon className="text-muted-foreground" />
             <span>{t("projects.newChatInProject")}</span>
@@ -514,10 +555,13 @@ function ProjectRow({
                   className="pr-7"
                 >
                   <span className="truncate">{s.title || s.id}</span>
+                  {s.pinned && (
+                    <PinIcon className="size-3 shrink-0 fill-current text-muted-foreground" />
+                  )}
                 </SidebarMenuSubButton>
                 <ChatRowActions
                   agentId={agentId}
-                  session={{ id: s.id, title: s.title }}
+                  session={{ id: s.id, title: s.title, pinned: s.pinned }}
                   onChanged={onMoved}
                   variant="menu-sub-item"
                 />

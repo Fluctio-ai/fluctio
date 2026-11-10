@@ -30,8 +30,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSidebar } from "@/components/ui/sidebar";
-import { MoreHorizontalIcon, PencilIcon, Trash2Icon } from "lucide-react";
-import { deleteChatSession, renameChatSession } from "@/lib/api";
+import {
+  MoreHorizontalIcon,
+  PencilIcon,
+  PinIcon,
+  PinOffIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { deleteChatSession, pinChatSession, renameChatSession } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 
 // ChatRowActions is the shared "..." dropdown attached to every chat
@@ -49,6 +55,10 @@ import { useT } from "@/lib/i18n";
 export interface ChatRowSession {
   id: string;
   title: string;
+  // pinned mirrors the session's keep-at-top flag — flips the menu item
+  // between "pin" and "unpin". Undefined (flag not loaded) renders the
+  // pin action targeting on.
+  pinned?: boolean;
 }
 
 export function ChatRowActions({
@@ -67,6 +77,23 @@ export function ChatRowActions({
   const { isMobile } = useSidebar();
   const [editOpen, setEditOpen] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
+
+  const onTogglePin = async () => {
+    try {
+      const res = await pinChatSession(agentId, session.id, !session.pinned);
+      if (res && res.error) {
+        window.alert(`Failed to pin chat: ${res.error}`);
+        return;
+      }
+    } catch (err) {
+      window.alert(
+        `Failed to pin chat: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    // Refetch re-orders the list server-side (pinned first).
+    onChanged();
+  };
 
   const onConfirmDelete = async () => {
     setDeleteOpen(false);
@@ -132,6 +159,14 @@ export function ChatRowActions({
           side={isMobile ? "bottom" : "right"}
           align={isMobile ? "end" : "start"}
         >
+          <DropdownMenuItem onClick={onTogglePin}>
+            {session.pinned ? (
+              <PinOffIcon className="text-muted-foreground" />
+            ) : (
+              <PinIcon className="text-muted-foreground" />
+            )}
+            <span>{session.pinned ? tt("chatActions.unpin") : tt("chatActions.pin")}</span>
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setEditOpen(true)}>
             <PencilIcon className="text-muted-foreground" />
             <span>{tt("common.edit")}</span>
