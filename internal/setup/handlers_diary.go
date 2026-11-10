@@ -216,6 +216,7 @@ func (s *Server) handleDiaryShelvedSettle(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	slog.Info("shelved settle", "agent", agentID, "cid", cid, "status", req.Status, "settled", settled)
 	writeJSON(w, http.StatusOK, map[string]any{"status": req.Status, "settled": settled})
 }
 
