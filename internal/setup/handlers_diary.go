@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -171,6 +172,51 @@ func (s *Server) handleDiaryShelved(w http.ResponseWriter, r *http.Request) {
 		ledger = []store.DiaryShelved{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "items": ledger})
+}
+
+// handleDiaryShelvedSettle PATCH /api/agents/{id}/diary/shelved/{cid}
+// {"status":"resolved"|"dropped"} — the owner settles one ledger row by
+// hand: resolved = the tap-through confirm (viewing counts, no real
+// conversation required), dropped = "stop reminding". resolution records
+// the human settlement; source keeps its creation value. Idempotent: the
+// UPDATE only matches open rows, so an already-settled (or unknown) id
+// answers 200 with settled:false — repeats and double-taps are no-ops.
+func (s *Server) handleDiaryShelvedSettle(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if s.requireAgentOwner(w, r, agentID) == nil {
+		return
+	}
+	if !s.requireWritable(w, r) {
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	switch req.Status {
+	case "resolved", "dropped":
+	default:
+		http.Error(w, "status must be resolved or dropped", http.StatusBadRequest)
+		return
+	}
+	cid, err := strconv.ParseInt(r.PathValue("cid"), 10, 64)
+	if err != nil || cid <= 0 {
+		http.Error(w, "bad candidate id", http.StatusBadRequest)
+		return
+	}
+	dbs, ok := s.dataStore.(*store.DBStore)
+	if !ok || dbs == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	settled, err := dbs.MarkShelvedCandidateStatus(r.Context(), agentID, cid, req.Status, "manual")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": req.Status, "settled": settled})
 }
 
 // handleDiaryGenerate POST /api/agents/{id}/diary/generate {"date":"..."} —

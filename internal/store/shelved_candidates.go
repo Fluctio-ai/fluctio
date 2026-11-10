@@ -237,6 +237,41 @@ func (d *DBStore) MarkShelvedCandidatesResolved(ctx context.Context, agentID str
 	return int(n), nil
 }
 
+// MarkShelvedCandidateStatus settles one row to resolved or dropped with
+// the settlement provenance in resolution ("manual" from a dashboard
+// action, "expired" from the retire sweep). source — who created the
+// candidate — is left untouched. Only open rows change; the bool reports
+// whether this call did the settling (false = already settled or unknown
+// id), making repeats idempotent.
+func (d *DBStore) MarkShelvedCandidateStatus(ctx context.Context, agentID string, id int64, status, resolution string) (bool, error) {
+	res, err := d.db.ExecContext(ctx, fmt.Sprintf(`UPDATE shelved_candidates
+		SET status=%s, resolved_at=%s, resolution=%s, updated_at=CURRENT_TIMESTAMP
+		WHERE agent_id=%s AND id=%s AND status='open'`,
+		d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5)),
+		status, time.Now(), resolution, agentID, id)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// RetireStaleShelvedCandidates drops every open candidate first seen
+// before the cutoff date (YYYY-MM-DD, string-compared) across all agents
+// — silence past the window reads as tacit acceptance. Rows are kept for
+// traceability with resolution='expired'; resolved_at doubles as the
+// settlement time. Idempotent: aged-out rows are gone, so a re-run
+// matches zero.
+func (d *DBStore) RetireStaleShelvedCandidates(ctx context.Context, cutoff string) (int64, error) {
+	res, err := d.db.ExecContext(ctx, fmt.Sprintf(`UPDATE shelved_candidates
+		SET status='dropped', resolved_at=%s, resolution='expired', updated_at=CURRENT_TIMESTAMP
+		WHERE status='open' AND since < %s`, d.ph(1), d.ph(2)), time.Now(), cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func scanShelvedCandidates(rows *sql.Rows) ([]ShelvedCandidate, error) {
 	var out []ShelvedCandidate
 	for rows.Next() {

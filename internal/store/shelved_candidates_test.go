@@ -103,6 +103,90 @@ func TestShelvedCandidatesLifecycle(t *testing.T) {
 	}
 }
 
+// TestShelvedSettleAndRetire covers the manual settlement endpoint's
+// store leg and the retire sweep: resolution records the settlement
+// provenance while source keeps its creation value, repeats are
+// no-ops, and the sweep drops only over-age open rows across agents.
+func TestShelvedSettleAndRetire(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	mk := func(agent, since string, seq int) ShelvedCandidate {
+		return ShelvedCandidate{
+			AgentID: agent, Kind: "deferred", Topic: "话题-" + since,
+			SessionKey: "sess-1", Seq: seq, Since: since,
+			LastSeenAt: time.Now(), Source: "summary", Extractor: "m1@v1",
+		}
+	}
+	rows := []ShelvedCandidate{
+		mk("agent-1", "2026-01-01", 1), // over-age
+		mk("agent-1", "2026-11-09", 2), // fresh
+		mk("agent-2", "2026-01-02", 3), // over-age, other agent
+	}
+	if err := db.UpsertShelvedCandidates(ctx, rows); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	open, _ := db.ListOpenShelvedCandidates(ctx, "agent-1", 20)
+	if len(open) != 2 {
+		t.Fatalf("open: %v", open)
+	}
+	var oldID, freshID int64
+	if open[0].Since == "2026-01-01" {
+		oldID, freshID = open[0].ID, open[1].ID
+	} else {
+		oldID, freshID = open[1].ID, open[0].ID
+	}
+
+	// Manual drop: settled once, idempotent after, provenance kept apart.
+	if settled, err := db.MarkShelvedCandidateStatus(ctx, "agent-1", oldID, "dropped", "manual"); err != nil || !settled {
+		t.Fatalf("drop: settled=%v err=%v", settled, err)
+	}
+	if settled, _ := db.MarkShelvedCandidateStatus(ctx, "agent-1", oldID, "dropped", "manual"); settled {
+		t.Errorf("second drop must be a no-op")
+	}
+	var status, resolution, source string
+	if err := db.db.QueryRow(`SELECT status, resolution, source FROM shelved_candidates WHERE id=?`, oldID).
+		Scan(&status, &resolution, &source); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if status != "dropped" || resolution != "manual" || source != "summary" {
+		t.Errorf("dropped row wrong: status=%s resolution=%s source=%s", status, resolution, source)
+	}
+
+	// Manual resolve lands in the picked-back-up window with the same
+	// provenance split.
+	if settled, err := db.MarkShelvedCandidateStatus(ctx, "agent-1", freshID, "resolved", "manual"); err != nil || !settled {
+		t.Fatalf("resolve: settled=%v err=%v", settled, err)
+	}
+	now := time.Now()
+	between, err := db.ListShelvedCandidatesResolvedBetween(ctx, "agent-1", now.Add(-time.Hour), now.Add(time.Hour))
+	if err != nil || len(between) != 1 || between[0].ID != freshID || between[0].Resolution != "manual" {
+		t.Fatalf("resolved between: err=%v rows=%+v", err, between)
+	}
+
+	// Retire sweep: over-age open rows go dropped/expired on every agent;
+	// fresh and already-settled rows are untouched. Rerun matches zero.
+	n, err := db.RetireStaleShelvedCandidates(ctx, "2026-06-01")
+	if err != nil || n != 1 {
+		t.Fatalf("retire: n=%d err=%v", n, err)
+	}
+	if n, _ = db.RetireStaleShelvedCandidates(ctx, "2026-06-01"); n != 0 {
+		t.Errorf("retire rerun matched %d rows", n)
+	}
+	other, _ := db.ListOpenShelvedCandidates(ctx, "agent-2", 20)
+	if len(other) != 0 {
+		t.Errorf("other agent's stale row must retire: %+v", other)
+	}
+	if err := db.db.QueryRow(`SELECT status, resolution FROM shelved_candidates WHERE agent_id='agent-2'`).
+		Scan(&status, &resolution); err != nil {
+		t.Fatalf("read back other: %v", err)
+	}
+	if status != "dropped" || resolution != "expired" {
+		t.Errorf("retired row wrong: status=%s resolution=%s", status, resolution)
+	}
+}
+
 // TestShelvedExtractRetryQueue covers the malformed-section queue:
 // one row per window, attempts counted only by real retries, drop on
 // settle.

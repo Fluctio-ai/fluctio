@@ -44,6 +44,17 @@ func (g *Gateway) shelvedPushCycle(ctx context.Context) {
 		return
 	}
 	nowCST := time.Now().In(diaryCST)
+	// Retire stale open rows before the walk (ticket #16): silence past
+	// the ledger window is tacit acceptance, so the rows leave the
+	// settlement prompt's 20-slot feed. Unconditional on purpose — agents
+	// with the shelved switch off (or pre-gating legacy_backfill rows)
+	// still have open rows to clean, so this must not sit behind the
+	// per-agent config gate below. Idempotent; matched-zero is the norm.
+	if n, err := dbs.RetireStaleShelvedCandidates(ctx, diary.ShelvedRetireCutoff(nowCST)); err != nil {
+		slog.Warn("shelved retire sweep", "error", err)
+	} else if n > 0 {
+		slog.Info("shelved candidates retired", "count", n)
+	}
 	for _, ag := range agents {
 		// Parse the config blob straight from the agent row we already
 		// hold — the config loader would re-scan the agents table per
@@ -112,7 +123,7 @@ func diaryCfgFromMap(cfg map[string]interface{}) *config.AgentDiaryCfg {
 //	📌 搁浅话题
 //	· 新搁浅: 想重构推送架构（10-24）
 //	· 仍在搁浅: 2 条
-//	✓ 捡起了: 周报模板
+//	✓ 已确认: 周报模板
 //	处理: <deep link to the diary page>
 //
 // Returns the body plus the open count (for the run stamp).
@@ -133,7 +144,9 @@ func formatShelvedNudge(agentID string, ledger []store.DiaryShelved, ledgerDate 
 	}
 	for _, e := range ledger {
 		if e.Status == "resolved" {
-			b.WriteString("\n✓ 捡起了: " + e.Topic)
+			// "已确认" rather than "捡起了": a settlement may be a mere
+			// tap-through confirm without any real conversation.
+			b.WriteString("\n✓ 已确认: " + e.Topic)
 		}
 	}
 	carried := open - listed

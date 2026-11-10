@@ -72,8 +72,10 @@ type llmBlindspot struct {
 }
 
 // shelvedWindowDays is how long an open shelved topic stays on the ledger
-// without being picked back up before it's treated as tacitly dropped.
-const shelvedWindowDays = 7
+// without being picked back up (or at least viewed) before it's treated
+// as tacitly dropped — ticket #16: silence past the window = the user's
+// default acceptance, the retire sweep then closes the row.
+const shelvedWindowDays = 3
 
 // Generate produces one day's diary for an agent. `date` is YYYY-MM-DD
 // (UTC+8). Returns the persisted entry, or (nil, nil) when the day had
@@ -433,6 +435,15 @@ func callLLM(ctx context.Context, prov provider.Provider, model, prompt string, 
 		return "", err
 	}
 	return resp.Content, nil
+}
+
+// ShelvedRetireCutoff returns the YYYY-MM-DD cutoff for the retire sweep:
+// open candidates first seen before this date have aged out of the ledger
+// window and get dropped as tacit acceptance. Exported so the gateway
+// sweep and the ledger projection share one window constant — the sweep
+// must never copy the day count.
+func ShelvedRetireCutoff(today time.Time) string {
+	return today.AddDate(0, 0, -shelvedWindowDays).Format("2006-01-02")
 }
 
 // shelvedWithinWindow reports whether an entry first shelved on `since`

@@ -548,6 +548,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// conversation_summaries, with a "you might have missed" section.
 	mux.HandleFunc("GET /api/agents/{id}/diary", agentAuth(s.handleDiaryList))
 	mux.HandleFunc("GET /api/agents/{id}/diary/shelved", agentAuth(s.handleDiaryShelved))
+	mux.HandleFunc("PATCH /api/agents/{id}/diary/shelved/{cid}", agentAuth(s.handleDiaryShelvedSettle))
 	mux.HandleFunc("GET /api/agents/{id}/diary/{date}", agentAuth(s.handleDiaryGet))
 	mux.HandleFunc("DELETE /api/agents/{id}/diary/{date}", agentAuth(s.handleDiaryDelete))
 	mux.HandleFunc("POST /api/agents/{id}/diary/generate", agentAuth(s.handleDiaryGenerate))
