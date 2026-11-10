@@ -6954,11 +6954,19 @@ func (d *DBStore) SetSessionLastSummarizedSeq(ctx context.Context, agentID, sess
 	return err
 }
 
+// ListIdleSessions returns summary-sweep candidates: quiet (updated_at
+// before cutoff), meaty enough (message_count >= minMessages), and not
+// fully summarized yet. The heartbeat exclusion skips background cron
+// sessions (channel=heartbeat, chat=cron_<jobID>) — the same job fires
+// the same template daily, so summarizing them yields near-identical
+// memory rows that pollute cross-session recall. Foreground cron jobs
+// run in the bound real conversation (its own channel) and stay in.
 func (d *DBStore) ListIdleSessions(ctx context.Context, agentID string, cutoff time.Time, minMessages int) ([]IdleSession, error) {
 	rows, err := d.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT session_key, message_count, updated_at FROM sessions
 			WHERE agent_id = %s AND updated_at < %s AND message_count >= %s
 			AND last_summarized_seq < message_count - 1
+			AND channel != 'heartbeat'
 			ORDER BY updated_at ASC`,
 			d.ph(1), d.ph(2), d.ph(3)),
 		agentID, cutoff, minMessages)
