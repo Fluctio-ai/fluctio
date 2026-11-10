@@ -497,7 +497,7 @@ func assembleShelvedLedger(open, resolved []store.ShelvedCandidate, day time.Tim
 
 func toDiaryShelved(c store.ShelvedCandidate, status string) store.DiaryShelved {
 	return store.DiaryShelved{
-		Topic: c.Topic, Context: c.Context, Since: c.Since,
+		ID: c.ID, Topic: c.Topic, Context: c.Context, Since: c.Since,
 		Session: c.SessionKey, Seq: c.Seq, Status: status,
 	}
 }

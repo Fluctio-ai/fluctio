@@ -42,6 +42,11 @@ type DiaryBlindspot struct {
 // than the shelved window. It flags, never acts — the entry's Session/Seq
 // deep link is the user's way back into the deferred context.
 type DiaryShelved struct {
+	// shelved_candidates row id — the manual-settle endpoint's address
+	// (PATCH /diary/shelved/{cid}). 0/absent on legacy snapshots written
+	// before the projection carried it: those render fine but cannot be
+	// settled from the client.
+	ID      int64  `json:"id,omitempty"`
 	Topic   string `json:"topic"`
 	Context string `json:"context"` // one line: the situation when deferred
 	Since   string `json:"since"`   // YYYY-MM-DD first shelved
