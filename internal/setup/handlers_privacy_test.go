@@ -67,7 +67,8 @@ func TestUpdateAgentPrivacyInvalidatesAgent(t *testing.T) {
 }
 
 // The system row shadows every agent, so flipping it must rebuild all
-// cached UserSpaces, not just one.
+// cached UserSpaces (via invalidateScope, the same entry point the
+// other settings writers use), not just one.
 func TestUpdateSystemPrivacyReloadsAllAgents(t *testing.T) {
 	s, res := newPrivacyTestServer(t)
 	r := httptest.NewRequest(http.MethodPut, "/api/privacy",
@@ -87,21 +88,8 @@ func TestUpdateSystemPrivacyReloadsAllAgents(t *testing.T) {
 // No resolver wired (misconfigured route / partial deployment): the
 // write must still land and the handler must not panic.
 func TestUpdateAgentPrivacyWithoutResolverStillSaves(t *testing.T) {
-	dbs, err := store.NewDBStore("sqlite", "file::memory:")
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	defer dbs.Close()
-	if err := dbs.Migrate(context.Background()); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	if err := dbs.CreateUser(context.Background(), &store.UserRecord{ID: "u1", Username: "owner", Email: "o@x", Role: "super_admin"}); err != nil {
-		t.Fatalf("create owner: %v", err)
-	}
-	if err := dbs.SaveAgent(context.Background(), &store.AgentRecord{ID: "agt_p", Name: "p"}); err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
-	s := &Server{dataStore: dbs}
+	s, _ := newPrivacyTestServer(t)
+	s.userResolver = nil
 	r := httptest.NewRequest(http.MethodPut, "/api/agents/agt_p/privacy",
 		strings.NewReader(`{"privacy":{"piiScrubbing":{"enabled":true}}}`))
 	r = r.WithContext(auth.WithIdentity(r.Context(), auth.Identity{UserID: "u1", Role: "super_admin", AuthMethod: "session"}))

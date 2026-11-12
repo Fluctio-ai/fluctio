@@ -264,9 +264,8 @@ export default function AgentContextPage() {
   };
 
   // Optimistic toggle for autoPersist. Same shape as splitReplies; on
-  // failure roll back. The runtime falls back to system default (off
-  // in practice today, since the dead-code NewAgentWithFullCfg path
-  // never gets called) when no per-agent override is saved.
+  // failure roll back. The runtime falls back to the system-scope
+  // row (off unless one exists) when no per-agent override is saved.
   const handleAutoPersistChange = async (next: boolean) => {
     const prev = autoPersist;
     setAutoPersist(next);

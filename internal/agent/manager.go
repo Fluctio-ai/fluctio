@@ -287,10 +287,10 @@ func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider
 			var mem config.MemoryCfg
 			if err := scope.SettingInto(context.Background(), db, "memory", m.uid, rc.ID, &mem); err == nil {
 				// Stamp the merged memory config onto the agent so PostTurn
-				// hooks read operator-set values. NewAgentWithSkillsCfg (the
-				// production path) never loads fullCfg.Memory — only the
-				// dead NewAgentWithFullCfg does — so without this stamp
-				// memoryCfg stays zero-valued and every gate (autoTitle,
+				// hooks read operator-set values. The build path
+				// (NewAgentWithSkillsCfg) never loads fullCfg.Memory, so
+				// without this stamp memoryCfg stays zero-valued and
+				// every gate (autoTitle,
 				// autoPersist default, ...) reads disabled. Re-apply
 				// rc.AutoPersist afterwards so the per-agent override still
 				// wins over the memory-config default.

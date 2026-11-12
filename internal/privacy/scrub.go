@@ -81,7 +81,9 @@ const fingerprintLen = 6
 // 时字节级稳定 —— 占位符不破坏前缀缓存。
 func fingerprintSuffix(value string) string {
 	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])[:fingerprintLen]
+	// 只编码前 fingerprintLen/2 字节：hex 前 6 位 = 前 3 字节的编码，
+	// 与整段编码后截断逐字节相同，省掉 58/64 的 hex 工作。
+	return hex.EncodeToString(sum[:fingerprintLen/2])
 }
 
 // tagged 生成 "[LABEL_xxxxxx]" 假名占位符。

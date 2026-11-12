@@ -204,8 +204,8 @@ func (sl *SkillsLearner) extractSkill(ctx context.Context, messages []provider.M
 	}
 
 	// The transcript embeds chatter conversation content — the provider is
-	// expected to arrive pre-wrapped by privacy.WrapProvider (see
-	// NewAgentWithFullCfg) so the scrub happens here for free.
+	// expected to arrive pre-wrapped by privacy.WrapProvider (the manager
+	// wraps at agent build time) so the scrub happens here for free.
 
 	resp, err := sl.provider.Chat(provider.WithJSONMode(provider.WithNoThinking(ctx)), extractMsgs, nil, sl.model, 1024, 0.3)
 	if err != nil {

@@ -20,18 +20,14 @@ import (
 // channel delivering is the caller's stamp gate.
 
 // sweepOwnerUID resolves the notification queue's addressee once per
-// sweep iteration: the AGENT's owner, not a deployment-global account.
-// LookupSessionOwner returned the FIRST super_admin (it ignores
-// agentID/sessionKey under the single-user flatten), which
-// cross-delivered proactive pushes carrying conversation bodies to the
-// wrong user whenever more than one super_admin exists. agents.user_id
-// was dropped in phase 4 and AgentRecord.UserID is never populated by
-// the store. Sessions carry no user_id column either (ownership is
-// runtime ctx state), so the old sessions.user_id lookup errored
-// for EVERY agent and every sweep silently skipped — the failure
-// watchdog has never fired in production because of it. Single-user
-// reality: the owner is agent-independent — the first super_admin,
-// same source push routing uses.
+// sweep iteration. The schema has no persistent agent→owner link
+// (agents and sessions carry no user_id; ownership is otherwise
+// runtime ctx state), so resolution is the first super_admin via
+// store.LookupSessionOwner — the documented single-user flatten.
+// Caveat: with MULTIPLE super_admins, proactive pushes may
+// cross-deliver to the wrong admin; a channels.user_id (agent's
+// binding owner) lookup ahead of the super_admin fallback would
+// fix that if multi-admin ever ships.
 // No resolvable owner → warn + "" (fail-closed); deliverSweepNudge
 // skips every leg and the sweeps retry on the next tick.
 func sweepOwnerUID(ctx context.Context, dbs *store.DBStore, ag store.AgentRecord) string {

@@ -668,7 +668,7 @@ func loadUserSpace(ctx context.Context, userID string, mb *bus.MessageBus, st st
 			// "absent" (no row, or row without the key) is distinct
 			// from "explicitly false". Non-nil from the row means the
 			// operator made a deliberate choice; nil falls through to
-			// system WeChatCfg.SplitReplies later in NewAgentWithFullCfg.
+			// system WeChatCfg.SplitReplies later in the manager build stamp.
 			if agentOverride.SplitReplies != nil {
 				v := *agentOverride.SplitReplies
 				rc.SplitReplies = &v

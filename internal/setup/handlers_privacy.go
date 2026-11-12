@@ -34,17 +34,8 @@ func (s *Server) handleUpdateAgentPrivacy(w http.ResponseWriter, r *http.Request
 	if s.requireAgentOwner(w, r, id) == nil {
 		return
 	}
-	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	// Empty data means "delete row" in SaveSetting, so a `{}` body would
-	// silently reset the agent's PII-scrubbing override. Require the
-	// section explicitly.
-	priv, ok := body["privacy"].(map[string]any)
+	priv, ok := s.decodePrivacyBody(w, r)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain a "privacy" object`})
 		return
 	}
 	if err := scope.SaveSetting(r.Context(), s.dataStore, "", id, "privacy", priv); err != nil {
@@ -79,31 +70,35 @@ func (s *Server) handleUpdateSystemPrivacy(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "platform admin required to change system privacy settings"})
 		return
 	}
-	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-	// Same guard as the agent-scope PUT: `{}` must not delete the
-	// system-wide privacy row.
-	priv, ok := body["privacy"].(map[string]any)
+	priv, ok := s.decodePrivacyBody(w, r)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain a "privacy" object`})
 		return
 	}
 	if err := scope.SaveSetting(r.Context(), s.dataStore, "", "", "privacy", priv); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	// The system row shadows every agent — rebuild all cached
-	// UserSpaces so the toggle takes effect without a daemon restart
-	// (same pattern as handleAdminReload).
-	type globalInvalidator interface{ ReloadAgents() error }
-	if inv, ok := s.userResolver.(globalInvalidator); ok {
-		if err := inv.ReloadAgents(); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
-			return
-		}
-	}
+	// The system row shadows every agent — drop every cached UserSpace
+	// (invalidateScope's System arm) so the toggle takes effect
+	// without a daemon restart.
+	s.invalidateScope(scope.System, "")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// decodePrivacyBody decodes a privacy PUT body and extracts the
+// "privacy" object. Empty data means "delete row" in SaveSetting, so a
+// `{}` body would silently reset the row — require the section
+// explicitly. Returns (nil, false) after writing the error response.
+func (s *Server) decodePrivacyBody(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return nil, false
+	}
+	priv, ok := body["privacy"].(map[string]any)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": `body must contain a "privacy" object`})
+		return nil, false
+	}
+	return priv, true
 }

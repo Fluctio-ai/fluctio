@@ -513,63 +513,6 @@ func NewAgent(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBu
 	return NewAgentWithSkillsCfg(rc, prov, mb, homeDir, config.SkillsCfg{})
 }
 
-// NewAgentWithFullCfg creates a new Agent with full config support (memory, privacy, skills learner).
-func NewAgentWithFullCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus, homeDir string, fullCfg *config.Config) *Agent {
-	ag := NewAgentWithSkillsCfg(rc, prov, mb, homeDir, fullCfg.Skills)
-	ag.memoryCfg = fullCfg.Memory
-	ag.piiScrubEnabled = fullCfg.Privacy.PIIScrubbing.Enabled
-	ag.piiEntropyEnabled = fullCfg.Privacy.PIIScrubbing.Entropy
-	// splitReplies is plumbed inside NewAgentWithSkillsCfg so foreign-
-	// attached agents also pick up the toggle; don't re-stamp here.
-
-	// Set up FTS store if configured
-	if fullCfg.Memory.FTS.Enabled {
-		dbPath := fullCfg.Memory.FTS.DBPath
-		if dbPath == "" {
-			dbPath = rc.Home + "/memory/fts.db"
-		}
-		if fts, err := store.NewFTSStore(dbPath); err == nil {
-			if err := fts.Init(); err == nil {
-				ag.ftsStore = fts
-				slog.Info("FTS5 search enabled", "agent", rc.ID, "db", dbPath)
-			} else {
-				slog.Warn("FTS5 init failed, falling back to file scan", "error", err)
-			}
-		} else {
-			slog.Warn("FTS5 store open failed, falling back to file scan", "error", err)
-		}
-	}
-
-	// Set up skills learner if configured
-	if fullCfg.SkillsLearner.Enabled {
-		model := fullCfg.SkillsLearner.Model
-		if model == "" {
-			model = rc.Model
-		}
-		learnerLoader := NewSkillsLoaderWithGlobal(homeDir, rc.Home, rc.Skills, fullCfg.Skills)
-		learnerLoader.agentID = rc.ID
-		// Wrap the learner's provider for PII scrubbing here (not via a
-		// flag on the learner): the extraction transcript embeds chatter
-		// conversation content, and a pre-wrapped provider can't be
-		// forgotten the way the old SetPIIScrub call could — the 484-line
-		// rebuild below used to drop it.
-		learnerProv := privacy.WrapProvider(prov, privacy.Options{Entropy: ag.piiEntropyEnabled}, ag.piiScrubEnabled)
-		ag.skillsLearner = NewSkillsLearner(rc.Home, rc.Home, learnerProv, model, learnerLoader.AllSkillDirs()...)
-		if fullCfg.SkillsLearner.MinToolCalls > 0 {
-			ag.skillsLearner.minToolCalls = fullCfg.SkillsLearner.MinToolCalls
-		}
-	}
-
-	// Set memory auto-persist defaults. Cadence is per-session user
-	// turns; 2 keeps short task conversations (where the user's final
-	// corrections land) inside the sampling window.
-	if ag.memoryCfg.AutoPersist.EveryNTurns == 0 {
-		ag.memoryCfg.AutoPersist.EveryNTurns = 2
-	}
-
-	return ag
-}
-
 // NewAgentWithSkillsCfg creates a new Agent with global skills config for env injection.
 func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus, homeDir string, globalSkillsCfg config.SkillsCfg) *Agent {
 	workspace := rc.Workspace
@@ -702,7 +645,7 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	// was removed since "every agent splits the same way" is rarely
 	// what an operator wants for a deployment running multiple personas.
 	// nil override = off (default); non-nil = explicit value. Plumbed at
-	// this layer (not just NewAgentWithFullCfg) so foreign-attached
+	// this layer so foreign-attached
 	// agents — chatters reaching an agent they don't own via a channel
 	// binding — also pick up the toggle. Without this the wechat
 	// dispatcher hint never reaches the LLM for non-owner chatters and
@@ -720,9 +663,9 @@ func NewAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider.Provider, mb *
 	ag.displayName = rc.DisplayName
 	ag.ctxBuilder.SetDisplayName(rc.DisplayName)
 	// Auto-persist memory toggle — per-agent override. The manager
-	// today only ever calls NewAgentWithSkillsCfg (not the unused
-	// NewAgentWithFullCfg), which means the system/user `memory`
-	// configs row is effectively dead in production — per-agent
+	// build path (NewAgentWithSkillsCfg) does not load the system/user
+	// `memory` configs row; the manager's memoryCfg stamp above covers
+	// it — so per-agent
 	// agents.defaults.autoPersist is the only working path. Set
 	// EveryNTurns default here too so the modulo check at the
 	// runPostTurn site doesn't panic when an operator enables

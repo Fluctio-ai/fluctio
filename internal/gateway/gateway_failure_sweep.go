@@ -368,10 +368,10 @@ func (g *Gateway) handleFailureSession(ctx context.Context, dbs *store.DBStore, 
 	if rec == nil {
 		return
 	}
-	// agents rows carry no user_id (ownership lives with the sessions) —
-	// resolve the owner the way the other sweeps do. rec.UserID is always
-	// empty here; using it directly made this sweep silently skip EVERY
-	// session (loadUserSpace: userID required).
+	// agents/sessions carry no user_id (ownership is runtime ctx state)
+	// and rec.UserID is never populated — using it directly made this
+	// sweep silently skip EVERY session (loadUserSpace: userID
+	// required). Owner resolves via sweepOwnerUID (first super_admin).
 	uid := sweepOwnerUID(ctx, dbs, *rec)
 	if uid == "" {
 		slog.Warn("failure sweep: no owner for agent", "agent", agentID)
