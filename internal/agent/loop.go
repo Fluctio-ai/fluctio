@@ -100,10 +100,8 @@ type Agent struct {
 	messageBus        *bus.MessageBus
 	subAgentSpawner   tools.SubAgentSpawner
 	ftsStore          *store.FTSStore
-	piiScrubEnabled   bool
-	piiEntropyEnabled bool
-	piiWords          []string
-	piiKey            []byte
+	piiScrubEnabled bool
+	piiOpts         privacy.Options
 	memoryCfg         config.MemoryCfg
 	// splitReplies is the per-agent multi-bubble toggle. Gates the
 	// per-turn system-prompt hint that advertises SplitMessageMarker
@@ -501,13 +499,6 @@ func summarizeMCPServers(servers map[string]config.MCPServerConfig, sessionDir s
 }
 
 // NewAgent creates a new Agent from a resolved config.
-// piiOptions 组装 scrub 选项: 高熵兜底 + 用户自定义敏感词 + agent 维度
-// 指纹密钥 (见 privacy/key.go)。所有 scrub 调用点统一走这里, 避免
-// 新选项漏接。
-func (a *Agent) piiOptions() privacy.Options {
-	return privacy.Options{Entropy: a.piiEntropyEnabled, Words: a.piiWords, Key: a.piiKey}
-}
-
 // bgProvider returns a provider whose outgoing messages are PII-scrubbed
 // when privacy scrubbing is enabled. For background LLM pipelines
 // (compaction, topic summaries, auto-persist, insights) that consume raw
@@ -515,7 +506,7 @@ func (a *Agent) piiOptions() privacy.Options {
 // without it they silently bypassed the privacy.piiScrubbing switch.
 // Returns the raw provider when scrubbing is off.
 func (a *Agent) bgProvider() provider.Provider {
-	return privacy.WrapProvider(a.provider, a.piiOptions(), a.piiScrubEnabled)
+	return privacy.WrapProvider(a.provider, a.piiOpts, a.piiScrubEnabled)
 }
 
 func NewAgent(rc config.ResolvedAgent, prov provider.Provider, mb *bus.MessageBus, homeDir string) *Agent {
@@ -2723,7 +2714,7 @@ func (a *Agent) handlePlanMode(ctx context.Context, msg bus.InboundMessage) stri
 	// the parent fork prefix twice, doubling plan-turn tokens)
 	messages = append(messages, withConversationGapContext(sessionMsgs)...)
 	if a.piiScrubEnabled {
-		messages = privacy.ScrubMessages(messages, a.piiOptions())
+		messages = privacy.ScrubMessages(messages, a.piiOpts)
 	}
 
 	resp, err := a.streamChatToResponse(ctx, messages, nil)
@@ -3847,7 +3838,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		// compaction (which shrinks the raw `messages`) stays consistent.
 		dumpMessages := messages
 		if a.piiScrubEnabled {
-			dumpMessages = privacy.ScrubMessages(messages, a.piiOptions())
+			dumpMessages = privacy.ScrubMessages(messages, a.piiOpts)
 		}
 		dumpLLMRequest(a.name, a.model, dumpMessages, callTools)
 		// callLLMWithPTLRecovery adds context-length (PTL) recovery on top
@@ -3860,7 +3851,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 		resp, messages, ptlCompacted, err = a.callLLMWithPTLRecovery(ctx, messages, callTools, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
 			llm := msgs
 			if a.piiScrubEnabled {
-				llm = privacy.ScrubMessages(msgs, a.piiOptions())
+				llm = privacy.ScrubMessages(msgs, a.piiOpts)
 			}
 			return a.streamChatToResponse(ctx, llm, tools)
 		})
@@ -4264,7 +4255,7 @@ func (a *Agent) HandleMessage(ctx context.Context, msg bus.InboundMessage) strin
 	// with zero deliverable after a full iteration budget got burned.
 	finalMessages := append(messages, capReachedNudge(a.maxToolIterations))
 	if a.piiScrubEnabled {
-		finalMessages = privacy.ScrubMessages(finalMessages, a.piiOptions())
+		finalMessages = privacy.ScrubMessages(finalMessages, a.piiOpts)
 	}
 	finalContent := ""
 	finalResp, finalErr := a.streamChatToResponseQuiet(ctx, finalMessages, nil)
@@ -4822,7 +4813,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		// endpoint silently bypassed the piiScrubbing privacy switch.
 		dumpMessages := messages
 		if a.piiScrubEnabled {
-			dumpMessages = privacy.ScrubMessages(messages, a.piiOptions())
+			dumpMessages = privacy.ScrubMessages(messages, a.piiOpts)
 		}
 		dumpLLMRequest(a.name, a.model, dumpMessages, toolDefs)
 		// Same PTL recovery as the non-streaming path: compact + retry on
@@ -4832,7 +4823,7 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		resp, messages, ptlCompacted, err = a.callLLMWithPTLRecovery(ctx, messages, toolDefs, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
 			llm := msgs
 			if a.piiScrubEnabled {
-				llm = privacy.ScrubMessages(msgs, a.piiOptions())
+				llm = privacy.ScrubMessages(msgs, a.piiOpts)
 			}
 			return a.provider.Chat(ctx, llm, tools, a.model, a.maxTokens, a.temperature)
 		})

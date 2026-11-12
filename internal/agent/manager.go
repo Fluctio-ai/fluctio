@@ -328,11 +328,9 @@ func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider
 			var priv config.PrivacyCfg
 			if err := scope.SettingInto(context.Background(), db, "privacy", m.uid, rc.ID, &priv); err == nil {
 				ag.piiScrubEnabled = priv.PIIScrubbing.Enabled
-				ag.piiEntropyEnabled = priv.PIIScrubbing.Entropy
-				ag.piiWords = priv.PIIScrubbing.Words
-				// agent 维度的指纹密钥: 同值跨 agent 指纹不同 (厂商无法跨
-				// agent 关联同一 PII), 跨重启稳定。见 privacy/key.go。
-				ag.piiKey = privacy.KeyFor(rc.ID)
+				// Options 由隐私包统一组装 (privacy.OptionsFor), 交互循环与
+				// 后台管线 (ScopedProvider) 共用同一构造函数, 新选项不会漏接。
+				ag.piiOpts = privacy.OptionsFor(rc.ID, priv)
 			}
 		}
 		// KB auto-query hook + knowledgebase_* tools: the hook searches the

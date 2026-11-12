@@ -51,8 +51,8 @@ func newPrivacyTestAgent(t *testing.T, uid, agID string, savePrivacyRow bool) *A
 // wiring — DB row said enabled, agent field stayed false).
 func TestBuildAgentAppliesPrivacyScrubCfg(t *testing.T) {
 	ag := newPrivacyTestAgent(t, "user-pii", "agt-privacy-test", true)
-	if !ag.piiScrubEnabled || !ag.piiEntropyEnabled {
-		t.Fatalf("privacy cfg not stamped: scrub=%v entropy=%v", ag.piiScrubEnabled, ag.piiEntropyEnabled)
+	if !ag.piiScrubEnabled || !ag.piiOpts.Entropy {
+		t.Fatalf("privacy cfg not stamped: scrub=%v entropy=%v", ag.piiScrubEnabled, ag.piiOpts.Entropy)
 	}
 	// Enabled → bgProvider must actually wrap; this is what KB insights
 	// and other background pipelines consume.

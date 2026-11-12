@@ -4,7 +4,8 @@ import { useEffect, useState, useCallback } from "react";
 import { useT } from "@/lib/i18n";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SaveButton } from "@/components/save-button";
-import { PageHeader, SettingsCard, ToggleRow } from "@/components/settings-ui";
+import { PageHeader, SettingsCard, ToggleRow, Field } from "@/components/settings-ui";
+import { Textarea } from "@/components/ui/textarea";
 import { getAgentPrivacy, setAgentPrivacy } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 
@@ -78,23 +79,22 @@ export default function AgentPrivacyPage() {
         />
       </SettingsCard>
 
-      <SettingsCard className="space-y-3">
-        <div>
-          <div className="text-sm font-medium">
-            {t("privacy.wordsTitle") || "自定义敏感词"}
-          </div>
-          <div className="text-xs text-muted-foreground mt-1">
-            {t("privacy.wordsHint") ||
-              "登记人名、项目代号、主机名等正则抓不到的词，命中即脱敏。每行一个或逗号分隔；中文按子串匹配，英文按整词匹配（大小写不敏感）。"}
-          </div>
-        </div>
-        <textarea
-          className="w-full min-h-28 rounded-md border border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
-          value={wordsText}
-          onChange={(e) => setWordsText(e.target.value)}
-          disabled={!enabled}
-          placeholder={"夜莺项目\nmumu-nas\nCAT"}
-        />
+      <SettingsCard>
+        <Field
+          label={t("privacy.wordsTitle") || "自定义敏感词"}
+          hint={
+            t("privacy.wordsHint") ||
+            "登记人名、项目代号、主机名等正则抓不到的词，命中即脱敏。每行一个或逗号分隔；中文按子串匹配，英文按整词匹配（大小写不敏感）。"
+          }
+        >
+          <Textarea
+            className="min-h-28 font-mono"
+            value={wordsText}
+            onChange={(e) => setWordsText(e.target.value)}
+            disabled={!enabled}
+            placeholder={"夜莺项目\nmumu-nas\nCAT"}
+          />
+        </Field>
       </SettingsCard>
     </div>
   );

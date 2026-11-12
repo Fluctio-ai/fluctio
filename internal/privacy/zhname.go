@@ -2,6 +2,7 @@ package privacy
 
 import (
 	_ "embed"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -131,8 +132,12 @@ var zhRoles = []string{"客户", "联系人", "作者", "提交者", "审核人"
 // a name after them is one where something after it says so too.
 var zhBefore = []string{"给", "找", "问", "让", "告诉", "通知", "联系", "抄送", "转给", "交给", "一下", "叫", "和", "与", "跟", "说", "请", "我是", "他是", "她是"}
 
-// zhAfter are words that follow a person ({{PERSON}}先生, {{PERSON}}说, {{PERSON}}反馈).
-var zhAfter = []string{"先生", "女士", "小姐", "老师", "同学", "同志", "经理", "总监", "主任", "师傅", "医生", "律师", "教授", "博士", "说", "讲", "表示", "认为", "反馈", "提到", "提交", "负责", "告诉", "回复", "发", "打", "明天", "今天", "昨天", "已经", "他", "她"}
+// zhTitles are what follows a name and isn't part of it.
+var zhTitles = []string{"先生", "女士", "小姐", "老师", "同学", "同志", "经理", "总监", "主任", "师傅", "医生", "律师", "教授", "博士"}
+
+// zhAfter are words that follow a person ({{PERSON}}先生, {{PERSON}}说, {{PERSON}}反馈)。
+// 前 14 项即称谓 (zhTitles), 派生而非手维护第二份拷贝。
+var zhAfter = append(slices.Clone(zhTitles), "说", "讲", "表示", "认为", "反馈", "提到", "提交", "负责", "告诉", "回复", "发", "打", "明天", "今天", "昨天", "已经", "他", "她")
 
 // zhAnyAfter are those of zhAfter that follow any subject, a thing as
 // well as a person (文案已经改好了, 文案明天给你, 文档提交): at a
@@ -144,9 +149,6 @@ var zhAnyAfter = []string{"提交", "负责", "回复", "明天", "今天", "昨
 // any other verb what 一下 is followed by is a thing (改一下文案,
 // 检查一下文档).
 var zhAskVerbs = []string{"问", "找", "叫", "喊", "催", "请", "联系", "通知", "告诉", "提醒", "回复", "答复", "拜访", "采访", "抄送", "转告", "感谢", "谢谢", "艾特", "@"}
-
-// zhTitles are what follows a name and isn't part of it.
-var zhTitles = []string{"先生", "女士", "小姐", "老师", "同学", "同志", "经理", "总监", "主任", "师傅", "医生", "律师", "教授", "博士"}
 
 var (
 	isSurname, isNick, notGiven = runes(zhSurnames), runes(zhNickSurnames), runes(zhNotGiven)
@@ -307,7 +309,7 @@ func zhName(s string, i int) (a, b int, ok bool) {
 	}
 	// a surname and a title is a person (孙经理, 邓总)
 	if !nick {
-		for _, t := range append(zhTitles, "总") {
+		for _, t := range append(slices.Clone(zhTitles), "总") {
 			if rest := s[i+sur:]; strings.HasPrefix(rest, t) && !(t == "总" && zhTotal(rest[len(t):])) {
 				return i, i + sur + len(t), true
 			}

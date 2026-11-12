@@ -18,7 +18,19 @@ import (
 func ScopedProvider(ctx context.Context, st store.Store, ownerUserID, agentID string, base provider.Provider) provider.Provider {
 	var priv config.PrivacyCfg
 	_ = scope.SettingInto(ctx, st, "privacy", ownerUserID, agentID, &priv)
-	return WrapProvider(base, Options{Entropy: priv.PIIScrubbing.Entropy, Words: priv.PIIScrubbing.Words, Key: KeyFor(agentID)}, priv.PIIScrubbing.Enabled)
+	return WrapProvider(base, OptionsFor(agentID, priv), priv.PIIScrubbing.Enabled)
+}
+
+// OptionsFor 从 privacy 配置组装 scrub 选项 (高熵兜底 + 用户敏感词 +
+// agent 维度指纹密钥)。交互循环 (manager 在 agent 构建时盖戳) 与后台
+// 管线 (ScopedProvider) 共用这一个构造函数 —— 新选项只加一处, 不会
+// 出现"一条管线 scrub 选项集旧、静默绕过新开关"的漂移。
+func OptionsFor(agentID string, priv config.PrivacyCfg) Options {
+	return Options{
+		Entropy: priv.PIIScrubbing.Entropy,
+		Words:   priv.PIIScrubbing.Words,
+		Key:     KeyFor(agentID),
+	}
 }
 
 // WrapProvider returns a provider whose outgoing messages are

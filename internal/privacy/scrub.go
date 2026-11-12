@@ -210,6 +210,43 @@ func replaceWith(text string, re *regexp.Regexp, placeholder func(matched string
 	return b.String()
 }
 
+// replaceGroups 是 replaceWith 的捕获组版: 只替换匹配中 groups 指定
+// 的捕获组 (如路径中的用户名段、user@host 的两段), 组间及组外字符
+// 原样保留。keep(text, start, end) 为 false 的整个匹配跳过。
+func replaceGroups(text string, re *regexp.Regexp, groups []int, placeholder func(value string, groupIdx int) string, keep func(text string, start, end int) bool) string {
+	idx := re.FindAllStringSubmatchIndex(text, -1)
+	if len(idx) == 0 {
+		return text
+	}
+	var b strings.Builder
+	prev := 0
+	replaced := false
+	for _, m := range idx {
+		if keep != nil && !keep(text, m[0], m[1]) {
+			continue
+		}
+		b.WriteString(text[prev:m[0]])
+		last := m[0]
+		for _, g := range groups {
+			gs, ge := m[2*g], m[2*g+1]
+			if gs < 0 {
+				continue
+			}
+			b.WriteString(text[last:gs])
+			b.WriteString(placeholder(text[gs:ge], g))
+			last = ge
+		}
+		b.WriteString(text[last:m[1]])
+		prev = m[1]
+		replaced = true
+	}
+	if !replaced {
+		return text
+	}
+	b.WriteString(text[prev:])
+	return b.String()
+}
+
 func replaceEmails(text string, key []byte) string {
 	return replaceWith(text, emailRe, tagger("EMAIL", key), func(t string, s, e int) bool {
 		// git@ URL：邮箱后紧跟 ':' + 非空白 → git@host:path，不当邮箱
