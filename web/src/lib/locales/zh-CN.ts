@@ -193,6 +193,8 @@ const zhCN: Record<string, string> = {
   "privacy.scrubHint": "基于正则规则脱敏已知敏感格式（推荐开启）。",
   "privacy.entropyTitle": "高熵兜底（实验）",
   "privacy.entropyHint": "仅在周围出现密钥语义词时才检测未知高熵随机串。可能误伤 base64 数据，默认关闭。",
+  "privacy.wordsTitle": "自定义敏感词",
+  "privacy.wordsHint": "登记人名、项目代号、主机名等正则抓不到的词，命中即脱敏。每行一个或逗号分隔；中文按子串匹配，英文按整词匹配（大小写不敏感）。",
   "settings.knowledge": "知识库",
   "settings.wiki": "维基",
   "settings.context": "上下文",

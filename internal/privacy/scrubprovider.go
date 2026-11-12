@@ -18,7 +18,7 @@ import (
 func ScopedProvider(ctx context.Context, st store.Store, ownerUserID, agentID string, base provider.Provider) provider.Provider {
 	var priv config.PrivacyCfg
 	_ = scope.SettingInto(ctx, st, "privacy", ownerUserID, agentID, &priv)
-	return WrapProvider(base, Options{Entropy: priv.PIIScrubbing.Entropy}, priv.PIIScrubbing.Enabled)
+	return WrapProvider(base, Options{Entropy: priv.PIIScrubbing.Entropy, Words: priv.PIIScrubbing.Words, Key: KeyFor(agentID)}, priv.PIIScrubbing.Enabled)
 }
 
 // WrapProvider returns a provider whose outgoing messages are

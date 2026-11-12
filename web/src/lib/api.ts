@@ -2779,7 +2779,7 @@ export async function startMaintenanceVacuum(): Promise<{ ok?: boolean; error?: 
 
 // --- Privacy config (agent PII scrubbing settings) ---
 export interface PrivacyConfig {
-  piiScrubbing?: { enabled?: boolean; entropy?: boolean };
+  piiScrubbing?: { enabled?: boolean; entropy?: boolean; words?: string[] };
   [k: string]: any;
 }
 export async function getAgentPrivacy(agentId: string): Promise<{ privacy?: PrivacyConfig }> {

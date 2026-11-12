@@ -400,6 +400,10 @@ type PIIScrubCfg struct {
 	// Entropy 启用高熵兜底（默认关）。仅在候选串周围出现密钥语义词时才查熵，
 	// 用于抓未知格式的随机串；可能误伤 base64 数据，故默认关闭。
 	Entropy bool `json:"entropy,omitempty"`
+	// Words 用户自定义敏感词（人名 / 项目代号 / 主机名），命中即脱敏，
+	// 占位标签 WORD。含 CJK 的词子串匹配，纯 ASCII 词整词匹配
+	// （大小写不敏感）。
+	Words []string `json:"words,omitempty"`
 }
 
 type SkillsLearnerCfg struct {

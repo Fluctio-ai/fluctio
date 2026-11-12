@@ -36,8 +36,8 @@ func TestScrub(t *testing.T) {
 		{"email", "联系 a@b.com 谢谢", "联系 [EMAIL] 谢谢"},
 		// git@ URL 不当邮箱脱（修复点）
 		{"git at url", "git clone git@github.com:user/repo.git", "git clone git@github.com:user/repo.git"},
-		// ssh 命令里的 user@host 不脱（修复点）
-		{"ssh command", "ssh root@server.example.com uptime", "ssh root@server.example.com uptime"},
+		// ssh 命令里的 user@host 脱（登录名 + 基础设施主机名）
+		{"ssh command", "ssh root@server.example.com uptime", "ssh [USERNAME]@[HOSTNAME] uptime"},
 		// 中国手机号（修复点：适配中文）
 		{"phone cn", "电话 13800138000 找我", "电话 [PHONE] 找我"},
 		// 手机号数字边界：嵌在更长数字串里不脱

@@ -1,6 +1,7 @@
 package privacy
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,13 @@ type Options struct {
 	// 仅当候选串周围出现密钥语义词（password / token / api_key / 密码 等）
 	// 时才查香农熵，避免误伤 base64 数据、hash、UUID 等合法高熵串。
 	Entropy bool
+	// Words 用户自定义敏感词（人名 / 项目代号 / 主机名等正则抓不到
+	// 的词）。含 CJK 的词子串匹配；纯 ASCII 的词按整词边界 + 大小写
+	// 折叠匹配。占位符标签 WORD，可经恢复通道还原。
+	Words []string
+	// Key 指纹密钥（HMAC）。nil = 安装级全局密钥；KeyFor(agentID)
+	// 混入 agent 维度。见 key.go。
+	Key []byte
 }
 
 // 结构化 PII 正则。Go 的 regexp 是 RE2，不支持前后向断言，
@@ -75,28 +83,29 @@ var sshCommands = []string{"ssh ", "scp ", "rsync ", "sftp ", "ssh-copy-id ", "s
 // 不构成实际去假名通道。
 const fingerprintLen = 6
 
-// fingerprintSuffix 返回 value 的确定性指纹（sha256 截断 hex）。
-// 同值同指纹、异值异指纹：模型可据此推理"同一号码 / 同一把 key"，
-// 指纹本身不回显原文任何位。确定性同时保证每轮对原始历史重放 scrub
-// 时字节级稳定 —— 占位符不破坏前缀缓存。
-func fingerprintSuffix(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	// 只编码前 fingerprintLen/2 字节：hex 前 6 位 = 前 3 字节的编码，
-	// 与整段编码后截断逐字节相同，省掉 58/64 的 hex 工作。
+// fingerprintSuffix 返回 value 在 key 下的确定性指纹（HMAC-SHA256
+// 前 3 字节的 hex）。key 使离线枚举失效（拿不到安装密钥就无法对
+// 手机号全域枚举匹配指纹），agent 维度的 key 使同一值在不同 agent
+// 下指纹不同（厂商无法跨 agent 关联同一 PII）。同值同指纹 → 每轮
+// 对原始历史重放 scrub 时字节级稳定，前缀缓存不受影响。
+func fingerprintSuffix(value string, key []byte) string {
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(value))
+	sum := h.Sum(nil)
 	return hex.EncodeToString(sum[:fingerprintLen/2])
 }
 
 // tagged 生成 "[LABEL_xxxxxx]" 假名占位符，并录入恢复台账
 // （隐私恢复的映射来源，见 ledger.go）。
-func tagged(label, value string) string {
-	ph := "[" + label + "_" + fingerprintSuffix(value) + "]"
+func tagged(label, value string, key []byte) string {
+	ph := "[" + label + "_" + fingerprintSuffix(value, key) + "]"
 	recordSwap(ph, value)
 	return ph
 }
 
 // tagger 返回 replaceWith / ReplaceAllStringFunc 需要的占位符函数。
-func tagger(label string) func(string) string {
-	return func(value string) string { return tagged(label, value) }
+func tagger(label string, key []byte) func(string) string {
+	return func(value string) string { return tagged(label, value, key) }
 }
 
 // Scrub 替换文本中的 PII / 密钥为假名占位符 [LABEL_xxxxxx]（默认 Options）。
@@ -106,20 +115,25 @@ func Scrub(text string) string {
 
 // ScrubWith 同 Scrub，但接受 Options 控制高熵兜底等行为。
 func ScrubWith(text string, opts Options) string {
+	key := opts.keyOrDefault()
 	// 顺序敏感：先替换长的 / 具体的，避免被宽规则吃掉
-	text = privateKeyRe.ReplaceAllStringFunc(text, tagger("PRIVATE_KEY"))
-	text = jwtRe.ReplaceAllStringFunc(text, tagger("TOKEN"))
-	text = apiKeyRe.ReplaceAllStringFunc(text, tagger("API_KEY"))
-	text = replaceIDCards(text)   // 身份证 18 位（先于银行卡，避免被 Luhn 误标）
-	text = replaceBankCards(text) // 银行卡 13-19 位 + Luhn
-	text = ssnRe.ReplaceAllStringFunc(text, tagger("SSN"))
-	text = replaceEmails(text) // 邮箱（排除 git@ URL / ssh 命令）
-	text = replaceIPv4(text)  // IP（边界 + 私网白名单）
-	text = replacePhones(text)
-	text = replaceJSONPasswords(text)
-	text = replaceContextSecrets(text) // 上下文口令（保留 key，脱 value）
+	text = privateKeyRe.ReplaceAllStringFunc(text, tagger("PRIVATE_KEY", key))
+	text = jwtRe.ReplaceAllStringFunc(text, tagger("TOKEN", key))
+	text = apiKeyRe.ReplaceAllStringFunc(text, tagger("API_KEY", key))
+	text = replaceIDCards(text, key)   // 身份证 18 位（先于银行卡，避免被 Luhn 误标）
+	text = replaceBankCards(text, key) // 银行卡 13-19 位 + Luhn
+	text = ssnRe.ReplaceAllStringFunc(text, tagger("SSN", key))
+	text = replaceEmails(text, key) // 邮箱（排除 git@ URL / ssh 命令）
+	text = replaceIPv4(text, key)   // IP（边界 + 私网白名单）
+	text = replacePhones(text, key)
+	text = replaceSSHTargets(text, key) // ssh/scp 行的 user@host（USER + HOST）
+	text = replaceHomeUsers(text, key)  // /home/<u>、/Users/<u>、C:\Users\<u>
+	text = replaceZhNames(text, key)    // 中文姓名（上下文确认，PERSON）
+	text = replaceWords(text, opts.Words, key)
+	text = replaceJSONPasswords(text, key)
+	text = replaceContextSecrets(text, key) // 上下文口令（保留 key，脱 value）
 	if opts.Entropy {
-		text = replaceHighEntropy(text)
+		text = replaceHighEntropy(text, key)
 	}
 	return text
 }
@@ -196,8 +210,8 @@ func replaceWith(text string, re *regexp.Regexp, placeholder func(matched string
 	return b.String()
 }
 
-func replaceEmails(text string) string {
-	return replaceWith(text, emailRe, tagger("EMAIL"), func(t string, s, e int) bool {
+func replaceEmails(text string, key []byte) string {
+	return replaceWith(text, emailRe, tagger("EMAIL", key), func(t string, s, e int) bool {
 		// git@ URL：邮箱后紧跟 ':' + 非空白 → git@host:path，不当邮箱
 		if e < len(t) && t[e] == ':' && e+1 < len(t) && t[e+1] != ' ' && t[e+1] != '\t' {
 			return false
@@ -210,20 +224,20 @@ func replaceEmails(text string) string {
 	})
 }
 
-func replaceIDCards(text string) string {
-	return replaceWith(text, idCardRe, tagger("IDCARD"), func(t string, s, e int) bool {
+func replaceIDCards(text string, key []byte) string {
+	return replaceWith(text, idCardRe, tagger("IDCARD", key), func(t string, s, e int) bool {
 		return digitBounded(t, s, e)
 	})
 }
 
-func replaceBankCards(text string) string {
-	return replaceWith(text, bankCardRe, tagger("CARD"), func(t string, s, e int) bool {
+func replaceBankCards(text string, key []byte) string {
+	return replaceWith(text, bankCardRe, tagger("CARD", key), func(t string, s, e int) bool {
 		return digitBounded(t, s, e) && luhnValid(t[s:e])
 	})
 }
 
-func replaceIPv4(text string) string {
-	return replaceWith(text, ipv4Re, tagger("IP"), func(t string, s, e int) bool {
+func replaceIPv4(text string, key []byte) string {
+	return replaceWith(text, ipv4Re, tagger("IP", key), func(t string, s, e int) bool {
 		if !ipBounded(t, s, e) {
 			return false
 		}
@@ -232,29 +246,29 @@ func replaceIPv4(text string) string {
 	})
 }
 
-func replacePhones(text string) string {
+func replacePhones(text string, key []byte) string {
 	// 中国手机号：裸 11 位，需数字边界防误伤
-	text = replaceWith(text, phoneCNRe, tagger("PHONE"), func(t string, s, e int) bool {
+	text = replaceWith(text, phoneCNRe, tagger("PHONE", key), func(t string, s, e int) bool {
 		return digitBounded(t, s, e)
 	})
 	// 美国手机号：自带分隔符 / 括号结构，保留现有行为
-	text = phoneUSRe.ReplaceAllStringFunc(text, tagger("PHONE"))
+	text = phoneUSRe.ReplaceAllStringFunc(text, tagger("PHONE", key))
 	return text
 }
 
 // replaceJSONPasswords 只脱 password 字段的值，保留字段名与 JSON 结构。
-func replaceJSONPasswords(text string) string {
+func replaceJSONPasswords(text string, key []byte) string {
 	return jsonPasswordRe.ReplaceAllStringFunc(text, func(m string) string {
 		sub := jsonPasswordRe.FindStringSubmatchIndex(m)
 		if sub == nil || len(sub) < 6 || sub[4] < 0 {
 			return m
 		}
-		return m[:sub[4]] + tagged("SECRET", m[sub[4]:sub[5]]) + m[sub[5]:]
+		return m[:sub[4]] + tagged("SECRET", m[sub[4]:sub[5]], key) + m[sub[5]:]
 	})
 }
 
 // replaceContextSecrets 只脱 value，保留 key + 分隔符。
-func replaceContextSecrets(text string) string {
+func replaceContextSecrets(text string, key []byte) string {
 	return contextSecretRe.ReplaceAllStringFunc(text, func(m string) string {
 		sub := contextSecretRe.FindStringSubmatchIndex(m)
 		if sub == nil || len(sub) < 6 || sub[4] < 0 {
@@ -268,13 +282,13 @@ func replaceContextSecrets(text string) string {
 		if len(value) <= 16 && shannonEntropy(value) < 3.0 {
 			return m
 		}
-		return m[:sub[4]] + tagged("SECRET", value)
+		return m[:sub[4]] + tagged("SECRET", value, key)
 	})
 }
 
 // replaceHighEntropy 高熵兜底（保守版）：仅密钥上下文命中时才查熵。
-func replaceHighEntropy(text string) string {
-	return replaceWith(text, entropyTokenRe, tagger("SECRET"), func(t string, s, e int) bool {
+func replaceHighEntropy(text string, key []byte) string {
+	return replaceWith(text, entropyTokenRe, tagger("SECRET", key), func(t string, s, e int) bool {
 		cand := t[s:e]
 		// 排除：模板变量 / 标准 hash / UUID
 		if isTemplateVar(cand) || isHexHash(cand) || isUUID(cand) {

@@ -14,6 +14,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/kb"
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/scope"
 	"github.com/fluctio-ai/fluctio/internal/session"
 	"github.com/fluctio-ai/fluctio/internal/store"
@@ -328,6 +329,10 @@ func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider
 			if err := scope.SettingInto(context.Background(), db, "privacy", m.uid, rc.ID, &priv); err == nil {
 				ag.piiScrubEnabled = priv.PIIScrubbing.Enabled
 				ag.piiEntropyEnabled = priv.PIIScrubbing.Entropy
+				ag.piiWords = priv.PIIScrubbing.Words
+				// agent 维度的指纹密钥: 同值跨 agent 指纹不同 (厂商无法跨
+				// agent 关联同一 PII), 跨重启稳定。见 privacy/key.go。
+				ag.piiKey = privacy.KeyFor(rc.ID)
 			}
 		}
 		// KB auto-query hook + knowledgebase_* tools: the hook searches the

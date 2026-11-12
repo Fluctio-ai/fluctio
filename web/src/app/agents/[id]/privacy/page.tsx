@@ -18,6 +18,7 @@ export default function AgentPrivacyPage() {
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(false);
   const [entropy, setEntropy] = useState(false);
+  const [wordsText, setWordsText] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -25,6 +26,7 @@ export default function AgentPrivacyPage() {
     const pii = res.privacy?.piiScrubbing;
     setEnabled(!!pii?.enabled);
     setEntropy(!!pii?.entropy);
+    setWordsText((pii?.words || []).join("\n"));
     setLoading(false);
   }, [agentId]);
 
@@ -33,7 +35,11 @@ export default function AgentPrivacyPage() {
   }, [refresh]);
 
   const save = async () => {
-    const res = await setAgentPrivacy(agentId, { piiScrubbing: { enabled, entropy } });
+    const words = wordsText
+      .split(/[\n,，;；]+/)
+      .map((w) => w.trim())
+      .filter(Boolean);
+    const res = await setAgentPrivacy(agentId, { piiScrubbing: { enabled, entropy, words } });
     if (res.error) throw new Error(res.error);
   };
 
@@ -69,6 +75,25 @@ export default function AgentPrivacyPage() {
           checked={entropy}
           onCheckedChange={setEntropy}
           disabled={!enabled}
+        />
+      </SettingsCard>
+
+      <SettingsCard className="space-y-3">
+        <div>
+          <div className="text-sm font-medium">
+            {t("privacy.wordsTitle") || "自定义敏感词"}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">
+            {t("privacy.wordsHint") ||
+              "登记人名、项目代号、主机名等正则抓不到的词，命中即脱敏。每行一个或逗号分隔；中文按子串匹配，英文按整词匹配（大小写不敏感）。"}
+          </div>
+        </div>
+        <textarea
+          className="w-full min-h-28 rounded-md border border-border bg-background px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+          value={wordsText}
+          onChange={(e) => setWordsText(e.target.value)}
+          disabled={!enabled}
+          placeholder={"夜莺项目\nmumu-nas\nCAT"}
         />
       </SettingsCard>
     </div>

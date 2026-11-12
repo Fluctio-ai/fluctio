@@ -193,6 +193,8 @@ const en: Record<string, string> = {
   "privacy.scrubHint": "Regex-based redaction of known sensitive formats (recommended).",
   "privacy.entropyTitle": "Entropy Fallback (experimental)",
   "privacy.entropyHint": "Detects unknown high-entropy secrets only when surrounded by keyword context. May false-positive on base64 data; off by default.",
+  "privacy.wordsTitle": "Custom sensitive words",
+  "privacy.wordsHint": "Register names, codenames, hostnames and other words regex can't catch; matches are redacted. One per line or comma-separated; Chinese matches by substring, English by whole word (case-insensitive).",
   "settings.knowledge": "Knowledge",
   "settings.wiki": "Wiki",
   "settings.context": "Context",
