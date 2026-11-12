@@ -86,9 +86,12 @@ func fingerprintSuffix(value string) string {
 	return hex.EncodeToString(sum[:fingerprintLen/2])
 }
 
-// tagged 生成 "[LABEL_xxxxxx]" 假名占位符。
+// tagged 生成 "[LABEL_xxxxxx]" 假名占位符，并录入恢复台账
+// （隐私恢复的映射来源，见 ledger.go）。
 func tagged(label, value string) string {
-	return "[" + label + "_" + fingerprintSuffix(value) + "]"
+	ph := "[" + label + "_" + fingerprintSuffix(value) + "]"
+	recordSwap(ph, value)
+	return ph
 }
 
 // tagger 返回 replaceWith / ReplaceAllStringFunc 需要的占位符函数。

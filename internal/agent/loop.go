@@ -1234,6 +1234,14 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 	a.recordLLMCallDiag(ctx, time.Since(start), llmDiagInfo{
 		status: "ok", resp: resp, msgCount: msgCount, hasImage: hasImg,
 	})
+	// 隐私恢复通道: scrub 开启时,模型回显的 [LABEL_xxxxxx] 占位符
+	// 在落库 / 发给用户 / 交给工具执行前换回真值(工具参数换回后
+	// 才能拿真值干活;下轮出站 scrub 会对历史重新脱敏)。放在 diag
+	// 之后:llm_call_diag 不落真值。所有交互式路径(主循环 / 流式 /
+	// plan 模式)都经此函数装配响应,一处覆盖。
+	if a.piiScrubEnabled {
+		privacy.RestoreResponse(resp)
+	}
 	return resp, nil
 }
 
