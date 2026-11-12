@@ -566,19 +566,43 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
     container.scrollTo({ top: Math.max(0, Math.min(previewRange, previewTop - 12)), behavior: "auto" });
   };
 
-  // Stamp the anchors after the preview DOM commits. Cheap (one pass over
-  // the lines per rendered run) and idempotent — re-runs on every content
-  // change, which also clears stale stamps when blocks were deleted.
+  // Stamp the anchors after the preview DOM commits. Runs per content
+  // change, and idempotent — re-stamping also clears stale data-line attrs
+  // when blocks were deleted.
+  //
+  // A MutationObserver re-stamps on ANY subtree change, not just [parts]
+  // flips: Streamdown commits new blocks through startTransition (its DOM
+  // lands AFTER this effect ran — the "second note shows no anchors" bug),
+  // and Shiki highlighting / board SVGs / math resolve replace content
+  // asynchronously. data-line attribute writes are not observed (no
+  // attributes filter), so stamping never re-triggers itself. rAF-coalesced
+  // because highlight tokenization can fire many mutations in one frame.
   React.useEffect(() => {
     const container = previewRef.current;
     if (!container) return;
-    const runs = container.querySelectorAll<HTMLElement>(".chat-md");
-    let run = 0;
-    for (const p of parts) {
-      if (p.kind !== "md") continue;
-      const el = runs[run++];
-      if (el && p.text.trim()) stampRunAnchors(el, p.text, p.startLine);
-    }
+    const stamp = () => {
+      const runs = container.querySelectorAll<HTMLElement>(".chat-md");
+      let run = 0;
+      for (const p of parts) {
+        if (p.kind !== "md") continue;
+        const el = runs[run++];
+        if (el && p.text.trim()) stampRunAnchors(el, p.text, p.startLine);
+      }
+    };
+    stamp();
+    let raf = 0;
+    const mo = new MutationObserver(() => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        stamp();
+      });
+    });
+    mo.observe(container, { childList: true, subtree: true, characterData: true });
+    return () => {
+      mo.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [parts]);
 
   // Rendered body shared by the desktop split pane and the mobile preview
@@ -586,7 +610,13 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   const previewBody = draft.content_md.trim() ? (
     parts.map((p, i) =>
       p.kind === "md" ? (
-        p.text.trim() ? <ChatMarkdown key={i} text={p.text} /> : null
+        // Keyed by note id: switching notes must REMOUNT ChatMarkdown.
+        // Reusing the instance (key={i}) lets Streamdown's block-level memo
+        // keep serving the previous note's first block (observed: the old
+        // H1 stayed while the new note's paragraphs rendered — anchor
+        // matching then failed completely and scroll-sync died). Typing
+        // keeps selectedId stable, so streaming edits are unaffected.
+        p.text.trim() ? <ChatMarkdown key={`${selectedId}-${i}`} text={p.text} /> : null
       ) : (
         <BoardCard
           key={i}
