@@ -1,6 +1,8 @@
 package privacy
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"math"
 	"regexp"
@@ -40,8 +42,8 @@ var (
 // 替换时只脱 value（第 2 组），保留 key。
 var contextSecretRe = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|api[_\s-]?key|access[_\s-]?key|bearer|authorization|密码|口令|密钥|凭证|令牌)\s*(?:是|为|[:：=])\s*['"]?([^\s'",。；;]{4,})`)
 
-// JSON password 字段。
-var jsonPasswordRe = regexp.MustCompile(`(?i)("password"\s*:\s*)"[^"]*"`)
+// JSON password 字段。group 2 捕获引号内的值本身。
+var jsonPasswordRe = regexp.MustCompile(`(?i)("password"\s*:\s*)"([^"]*)"`)
 
 // 高熵兜底（仅 Options.Entropy=true 时启用）。
 var (
@@ -68,7 +70,31 @@ var commonPlaceholders = []string{
 // ssh 命令前缀。user@host 在这些命令里是 SSH 目标，不是邮箱。
 var sshCommands = []string{"ssh ", "scp ", "rsync ", "sftp ", "ssh-copy-id ", "ssh-keygen "}
 
-// Scrub 替换文本中的 PII / 密钥为占位符（默认 Options）。
+// fingerprintLen 假名指纹的 hex 长度：24 bit 在会话规模（≤几十个不同值）
+// 下碰撞可忽略；对全域枚举（如 10^11 个手机号）只保留 1/2^24 的筛选度，
+// 不构成实际去假名通道。
+const fingerprintLen = 6
+
+// fingerprintSuffix 返回 value 的确定性指纹（sha256 截断 hex）。
+// 同值同指纹、异值异指纹：模型可据此推理"同一号码 / 同一把 key"，
+// 指纹本身不回显原文任何位。确定性同时保证每轮对原始历史重放 scrub
+// 时字节级稳定 —— 占位符不破坏前缀缓存。
+func fingerprintSuffix(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:fingerprintLen]
+}
+
+// tagged 生成 "[LABEL_xxxxxx]" 假名占位符。
+func tagged(label, value string) string {
+	return "[" + label + "_" + fingerprintSuffix(value) + "]"
+}
+
+// tagger 返回 replaceWith / ReplaceAllStringFunc 需要的占位符函数。
+func tagger(label string) func(string) string {
+	return func(value string) string { return tagged(label, value) }
+}
+
+// Scrub 替换文本中的 PII / 密钥为假名占位符 [LABEL_xxxxxx]（默认 Options）。
 func Scrub(text string) string {
 	return ScrubWith(text, Options{})
 }
@@ -76,16 +102,16 @@ func Scrub(text string) string {
 // ScrubWith 同 Scrub，但接受 Options 控制高熵兜底等行为。
 func ScrubWith(text string, opts Options) string {
 	// 顺序敏感：先替换长的 / 具体的，避免被宽规则吃掉
-	text = privateKeyRe.ReplaceAllString(text, "[PRIVATE_KEY]")
-	text = jwtRe.ReplaceAllString(text, "[TOKEN]")
-	text = apiKeyRe.ReplaceAllString(text, "[API_KEY]")
+	text = privateKeyRe.ReplaceAllStringFunc(text, tagger("PRIVATE_KEY"))
+	text = jwtRe.ReplaceAllStringFunc(text, tagger("TOKEN"))
+	text = apiKeyRe.ReplaceAllStringFunc(text, tagger("API_KEY"))
 	text = replaceIDCards(text)   // 身份证 18 位（先于银行卡，避免被 Luhn 误标）
 	text = replaceBankCards(text) // 银行卡 13-19 位 + Luhn
-	text = ssnRe.ReplaceAllString(text, "[SSN]")
+	text = ssnRe.ReplaceAllStringFunc(text, tagger("SSN"))
 	text = replaceEmails(text) // 邮箱（排除 git@ URL / ssh 命令）
 	text = replaceIPv4(text)  // IP（边界 + 私网白名单）
 	text = replacePhones(text)
-	text = jsonPasswordRe.ReplaceAllString(text, `${1}"[REDACTED]"`)
+	text = replaceJSONPasswords(text)
 	text = replaceContextSecrets(text) // 上下文口令（保留 key，脱 value）
 	if opts.Entropy {
 		text = replaceHighEntropy(text)
@@ -140,8 +166,9 @@ func ContainsPII(text string) bool {
 }
 
 // replaceWith 找出 re 的所有匹配，对每个匹配调 keep(text, start, end)
-// 决定是否替换为 placeholder（keep 返回 true = 替换）。单遍重建，O(n)。
-func replaceWith(text string, re *regexp.Regexp, placeholder string, keep func(text string, start, end int) bool) string {
+// 决定是否替换为 placeholder(matched) 的产物（keep 返回 true = 替换）。
+// 单遍重建，O(n)。
+func replaceWith(text string, re *regexp.Regexp, placeholder func(matched string) string, keep func(text string, start, end int) bool) string {
 	var b strings.Builder
 	prev := 0
 	matched := false
@@ -154,7 +181,7 @@ func replaceWith(text string, re *regexp.Regexp, placeholder string, keep func(t
 			matched = true
 		}
 		b.WriteString(text[prev:s])
-		b.WriteString(placeholder)
+		b.WriteString(placeholder(text[s:e]))
 		prev = e
 	}
 	if !matched {
@@ -165,7 +192,7 @@ func replaceWith(text string, re *regexp.Regexp, placeholder string, keep func(t
 }
 
 func replaceEmails(text string) string {
-	return replaceWith(text, emailRe, "[EMAIL]", func(t string, s, e int) bool {
+	return replaceWith(text, emailRe, tagger("EMAIL"), func(t string, s, e int) bool {
 		// git@ URL：邮箱后紧跟 ':' + 非空白 → git@host:path，不当邮箱
 		if e < len(t) && t[e] == ':' && e+1 < len(t) && t[e+1] != ' ' && t[e+1] != '\t' {
 			return false
@@ -179,19 +206,19 @@ func replaceEmails(text string) string {
 }
 
 func replaceIDCards(text string) string {
-	return replaceWith(text, idCardRe, "[IDCARD]", func(t string, s, e int) bool {
+	return replaceWith(text, idCardRe, tagger("IDCARD"), func(t string, s, e int) bool {
 		return digitBounded(t, s, e)
 	})
 }
 
 func replaceBankCards(text string) string {
-	return replaceWith(text, bankCardRe, "[CARD]", func(t string, s, e int) bool {
+	return replaceWith(text, bankCardRe, tagger("CARD"), func(t string, s, e int) bool {
 		return digitBounded(t, s, e) && luhnValid(t[s:e])
 	})
 }
 
 func replaceIPv4(text string) string {
-	return replaceWith(text, ipv4Re, "[IP]", func(t string, s, e int) bool {
+	return replaceWith(text, ipv4Re, tagger("IP"), func(t string, s, e int) bool {
 		if !ipBounded(t, s, e) {
 			return false
 		}
@@ -202,12 +229,23 @@ func replaceIPv4(text string) string {
 
 func replacePhones(text string) string {
 	// 中国手机号：裸 11 位，需数字边界防误伤
-	text = replaceWith(text, phoneCNRe, "[PHONE]", func(t string, s, e int) bool {
+	text = replaceWith(text, phoneCNRe, tagger("PHONE"), func(t string, s, e int) bool {
 		return digitBounded(t, s, e)
 	})
 	// 美国手机号：自带分隔符 / 括号结构，保留现有行为
-	text = phoneUSRe.ReplaceAllString(text, "[PHONE]")
+	text = phoneUSRe.ReplaceAllStringFunc(text, tagger("PHONE"))
 	return text
+}
+
+// replaceJSONPasswords 只脱 password 字段的值，保留字段名与 JSON 结构。
+func replaceJSONPasswords(text string) string {
+	return jsonPasswordRe.ReplaceAllStringFunc(text, func(m string) string {
+		sub := jsonPasswordRe.FindStringSubmatchIndex(m)
+		if sub == nil || len(sub) < 6 || sub[4] < 0 {
+			return m
+		}
+		return m[:sub[4]] + tagged("SECRET", m[sub[4]:sub[5]]) + m[sub[5]:]
+	})
 }
 
 // replaceContextSecrets 只脱 value，保留 key + 分隔符。
@@ -225,13 +263,13 @@ func replaceContextSecrets(text string) string {
 		if len(value) <= 16 && shannonEntropy(value) < 3.0 {
 			return m
 		}
-		return m[:sub[4]] + "[REDACTED]"
+		return m[:sub[4]] + tagged("SECRET", value)
 	})
 }
 
 // replaceHighEntropy 高熵兜底（保守版）：仅密钥上下文命中时才查熵。
 func replaceHighEntropy(text string) string {
-	return replaceWith(text, entropyTokenRe, "[REDACTED]", func(t string, s, e int) bool {
+	return replaceWith(text, entropyTokenRe, tagger("SECRET"), func(t string, s, e int) bool {
 		cand := t[s:e]
 		// 排除：模板变量 / 标准 hash / UUID
 		if isTemplateVar(cand) || isHexHash(cand) || isUUID(cand) {

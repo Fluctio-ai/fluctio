@@ -319,6 +319,16 @@ func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider
 					ag.registry.SetReranker(reranker)
 				}
 			}
+			// Privacy scrubbing gate: the production path
+			// (NewAgentWithSkillsCfg) never loads fullCfg.Privacy — same
+			// reason as the memoryCfg stamp above. Read the scope-merged
+			// row (system → owner → agent) so the UI toggle actually
+			// reaches the loop's scrub points and bgProvider's wrap.
+			var priv config.PrivacyCfg
+			if err := scope.SettingInto(context.Background(), db, "privacy", m.uid, rc.ID, &priv); err == nil {
+				ag.piiScrubEnabled = priv.PIIScrubbing.Enabled
+				ag.piiEntropyEnabled = priv.PIIScrubbing.Entropy
+			}
 		}
 		// KB auto-query hook + knowledgebase_* tools: the hook searches the
 		// KB and injects results (augment) or short-circuits the LLM (strict);
