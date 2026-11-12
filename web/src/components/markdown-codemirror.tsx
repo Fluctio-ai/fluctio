@@ -38,10 +38,18 @@ export function MarkdownCodeMirror({
   value,
   onChange,
   placeholder,
+  onCursorLine,
+  onViewLine,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
+  // Scroll-sync hooks for the notes split view (1-based lines, same
+  // convention as the preview's data-line anchors). onCursorLine fires on
+  // click/typing (selection moves); onViewLine on scroll (topmost visible
+  // line, rAF-throttled). Both optional — other callers get none of this.
+  onCursorLine?: (line: number) => void;
+  onViewLine?: (line: number) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const dark = resolvedTheme === "dark";
@@ -72,15 +80,53 @@ export function MarkdownCodeMirror({
   // the parent re-renders on every keystroke — a fresh array (and a fresh
   // markdown() language instance) used to force a full reconfigure and a
   // document reparse per keystroke. Rebuild only on a theme flip.
-  const extensions = React.useMemo(
-    () => [markdown(), EditorView.lineWrapping, ...themeExt],
-    [themeExt],
+  //
+  // The scroll-sync listeners below are created ONCE and deliberately
+  // capture the first-render callbacks (an every-render rebuild would
+  // re-trigger the reconfigure above). That is safe under one contract:
+  // the caller's callbacks must close over refs only, never per-render
+  // state — notes-view's syncPreviewLine closes over its previewRef, so a
+  // stale closure behaves identically to a fresh one.
+  const syncExt = React.useMemo(
+    () =>
+      EditorView.updateListener.of((u) => {
+        if (u.selectionSet) {
+          onCursorLine?.(u.state.doc.lineAt(u.state.selection.main.head).number);
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot by design, see contract above
+    [],
   );
+  const extensions = React.useMemo(
+    () => [markdown(), EditorView.lineWrapping, ...themeExt, syncExt],
+    [themeExt, syncExt],
+  );
+  // Scroll → topmost visible line. onCreateEditor fires exactly once per
+  // editor instance (a prop reference change never re-invokes it in @uiw),
+  // and the scrollDOM lives and dies with that instance — one posAtCoords
+  // per animation frame is plenty.
+  const handleEditorReady = React.useCallback((view: EditorView) => {
+    let raf = 0;
+    view.scrollDOM.addEventListener(
+      "scroll",
+      () => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          const pos = view.posAtCoords({ x: 8, y: 12 });
+          if (pos !== null) onViewLine?.(view.state.doc.lineAt(pos).number);
+        });
+      },
+      { passive: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot by design, see contract above
+  }, []);
   return (
     <CodeMirror
       value={value}
       onChange={onChange}
       placeholder={placeholder}
+      onCreateEditor={handleEditorReady}
       // The wrapper div needs an explicit height — @uiw's height prop only
       // themes the inner .cm-editor, so without this the wrapper stretches
       // to document height and blows past the flex-constrained parent.

@@ -96,23 +96,39 @@ const EMPTY_BOARD = JSON.stringify({ type: "excalidraw", version: 2, elements: [
 
 const BOARD_FENCE_RE = /(^|\n)(```whiteboard\n[\s\S]*?\n```)(?=\n|$)/g;
 
-type BodyPart = { kind: "md"; text: string } | { kind: "board"; json: string };
+type BodyPart =
+  | { kind: "md"; text: string; startLine: number }
+  | { kind: "board"; json: string; line: number };
 
 // splitBody partitions the markdown body into md runs and whiteboard
 // fences so the preview can render boards as interactive cards between
 // the surrounding text. Fence content is preserved verbatim, which keeps
 // round-tripping (preview → edit → textarea) lossless.
+//
+// startLine/line are 1-based GLOBAL line numbers (within the whole note),
+// fed to ChatMarkdown's lineAnchor / BoardCard's data-line so the preview
+// blocks can be scroll-synced to the editor's caret line. Advancement rule:
+// an md run always ends with the \n that precedes a fence (the regex's m[1]
+// goes to the run), so the run spans lines(run)−1 line breaks and the next
+// part starts at run.startLine + lines(run) − 1; a fence does NOT include
+// its trailing \n, so the next part starts at fence.line + lines(fence).
 function splitBody(md: string): BodyPart[] {
   const parts: BodyPart[] = [];
   let last = 0;
+  let line = 1;
   for (const m of md.matchAll(BOARD_FENCE_RE)) {
     const fence = m[2];
     const start = (m.index ?? 0) + (m[1] ? m[1].length : 0);
-    if (start > last) parts.push({ kind: "md", text: md.slice(last, start) });
-    parts.push({ kind: "board", json: fence.slice("```whiteboard\n".length, -"```".length).trim() });
+    if (start > last) {
+      const text = md.slice(last, start);
+      parts.push({ kind: "md", text, startLine: line });
+      line += text.split("\n").length - 1;
+    }
+    parts.push({ kind: "board", json: fence.slice("```whiteboard\n".length, -"```".length).trim(), line });
+    line += fence.split("\n").length;
     last = start + fence.length;
   }
-  if (last < md.length) parts.push({ kind: "md", text: md.slice(last) });
+  if (last < md.length) parts.push({ kind: "md", text: md.slice(last), startLine: line });
   return parts;
 }
 
@@ -122,6 +138,69 @@ function boardElementCount(json: string): number {
 
 function boardSlots(md: string): number[] {
   return splitBody(md).reduce<number[]>((acc, p, i) => (p.kind === "board" ? [...acc, i] : acc), []);
+}
+
+// ── preview anchor stamping (editor→preview scroll sync) ──
+// Streamdown parses each markdown block as an independent parse run, so no
+// plugin can recover global source lines (every block's AST position starts
+// at 1). Instead we stamp AFTER render: match each rendered top-level
+// element to the first source line whose marker-stripped text it renders.
+// A two-pointer scan in source order; elements that match nothing (hr,
+// image-only paragraphs, math/mermaid chrome) simply carry no anchor and
+// sync falls through to the previous stamped block.
+
+// Block prefixes that vanish in rendered text: ATX heading, bullet/ordered
+// list marker (incl. task checkbox), quote marker, table row pipes.
+const BLOCK_PREFIX_RE = /^(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+|>\s*|\|)/;
+// Inline markup that survives to the DOM only as rendered text: links/
+// images keep their label, emphasis/code-span marks drop out.
+function stripMdMarkers(line: string): string {
+  let s = line
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*_~`]+/g, "")
+    .trim();
+  let prev = "";
+  while (s !== prev) {
+    prev = s;
+    s = s.replace(BLOCK_PREFIX_RE, "");
+  }
+  return s;
+}
+// Alphanumeric runs only (CJK counts): whitespace/punctuation differences
+// between source and render can't break the prefix compare.
+const wordChars = (s: string) => s.match(/[\p{L}\p{N}]+/gu)?.join("") ?? "";
+
+function stampRunAnchors(run: HTMLElement, text: string, startLine: number) {
+  // Streamdown wraps all blocks in one container div (.space-y-4); the
+  // block elements are that wrapper's children. Unwrap one level when we
+  // see it (sole child with multiple children); otherwise stamp run's own
+  // children — a lone block then lands on its wrapper, still positionally
+  // correct.
+  let host: HTMLElement = run;
+  if (run.children.length === 1) {
+    const only = run.children[0];
+    if (only instanceof HTMLElement && only.children.length > 1) host = only;
+  }
+  for (const el of host.children) if (el instanceof HTMLElement) delete el.dataset.line;
+  const lines = text.split("\n");
+  let cursor = 0;
+  for (const el of host.children) {
+    if (!(el instanceof HTMLElement)) continue;
+    // Code blocks: the <code> body is the verbatim source (the fence line
+    // has no word chars, so the first code line matches). Everything else:
+    // leading text is enough — lists/quotes render their items in order.
+    const src = el.querySelector("code")?.textContent ?? el.textContent ?? "";
+    const want = wordChars(src);
+    if (!want) continue;
+    for (; cursor < lines.length; cursor++) {
+      const have = wordChars(stripMdMarkers(lines[cursor]));
+      if (have && want.startsWith(have)) {
+        el.dataset.line = String(startLine + cursor);
+        cursor++;
+        break;
+      }
+    }
+  }
 }
 
 function formatBytes(n: number): string {
@@ -342,7 +421,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
     if (from === to) return;
     setDraft((d) => {
       const ss = boardSlots(d.content_md);
-      const jsons = splitBody(d.content_md).filter((p): p is { kind: "board"; json: string } => p.kind === "board").map((p) => p.json);
+      const jsons = splitBody(d.content_md).filter((p): p is Extract<BodyPart, { kind: "board" }> => p.kind === "board").map((p) => p.json);
       const [moved] = jsons.splice(from, 1);
       if (!moved) return d;
       const at = to > from ? (before ? to - 1 : to) : (before ? to : to + 1);
@@ -397,6 +476,64 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   const dark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
   const charCount = draft.content_md.replace(/```whiteboard[\s\S]*?\n```/g, "").replace(/\s/g, "").length;
 
+  // ── editor → preview scroll sync (one-way) ──
+  // The editor reports its caret line (click/typing → smooth) or topmost
+  // visible line (scroll → instant); we align the preview to the last
+  // stamped block at or above that line. Anchors are the data-line attrs
+  // stamped after render (stampRunAnchors) + BoardCard's fence line — all
+  // 1-based global note lines. Preview→editor sync is deliberately absent:
+  // it needs re-entrancy locks and isn't the workflow ("write here, read
+  // there").
+  const previewRef = React.useRef<HTMLDivElement | null>(null);
+  // A caret jump makes CodeMirror scroll the caret line into view, and that
+  // induced editor scrolling fires onViewLine for ~0.5s — long enough to
+  // override the caret's own alignment with a top-line alignment (observed
+  // live). Grace-window those induced events away so a click on a distant
+  // line lands the preview on the CLICKED block, not the block the editor's
+  // top line happened to show.
+  const caretSyncAtRef = React.useRef(0);
+  // caret=true (click/typing): only scroll when the target block is OUTSIDE
+  // the preview viewport, so writing inside the visible block never jerks
+  // the preview. caret=false (editor scroll): always align the topmost
+  // block. Both instant — CSS smooth scrolling stalls in headless browsers
+  // and an interrupted mid-flight smooth lands the preview between blocks.
+  const syncPreviewLine = (line: number, caret: boolean) => {
+    const container = previewRef.current;
+    // offsetParent is null when the desktop pane is display:none (mobile
+    // shows the preview as a full-screen sheet instead — nothing to sync).
+    if (!container || container.offsetParent === null) return;
+    const blocks = container.querySelectorAll<HTMLElement>("[data-line]");
+    if (!blocks.length) return;
+    let target = blocks[0];
+    for (const el of blocks) {
+      if (Number(el.dataset.line) <= line) target = el;
+      else break;
+    }
+    if (caret) {
+      const r = target.getBoundingClientRect();
+      const c = container.getBoundingClientRect();
+      if (r.top >= c.top - 4 && r.bottom <= c.top + container.clientHeight + 4) return;
+    }
+    const top =
+      target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
+    container.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+  };
+
+  // Stamp the anchors after the preview DOM commits. Cheap (one pass over
+  // the lines per rendered run) and idempotent — re-runs on every content
+  // change, which also clears stale stamps when blocks were deleted.
+  React.useEffect(() => {
+    const container = previewRef.current;
+    if (!container) return;
+    const runs = container.querySelectorAll<HTMLElement>(".chat-md");
+    let run = 0;
+    for (const p of parts) {
+      if (p.kind !== "md") continue;
+      const el = runs[run++];
+      if (el && p.text.trim()) stampRunAnchors(el, p.text, p.startLine);
+    }
+  }, [parts]);
+
   // Rendered body shared by the desktop split pane and the mobile preview
   // sheet — one source of truth so both stay in sync with the draft.
   const previewBody = draft.content_md.trim() ? (
@@ -409,6 +546,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
           slot={slots.indexOf(i)}
           totalSlots={slots.length}
           json={p.json}
+          dataLine={p.line}
           dark={dark}
           dragging={dragBoardSlot}
           dropAt={boardDropAt}
@@ -605,7 +743,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
               {/* 正文：desktop textarea + live preview 分栏；mobile 只显 md 源码
                   （渲染预览收进右上角浮动按钮的全屏 sheet） */}
               <div className="flex h-full flex-col md:flex-row-reverse">
-                <div className="hidden min-w-0 flex-1 overflow-y-auto p-4 md:block md:h-full">
+                <div ref={previewRef} className="hidden min-w-0 flex-1 overflow-y-auto p-4 md:block md:h-full">
                   {previewBody}
                 </div>
                 <div className="h-full min-h-0 w-full shrink-0 border-t md:w-1/2 md:border-t-0 md:border-r">
@@ -613,6 +751,14 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                     value={draft.content_md}
                     onChange={(v) => setDraft((d) => ({ ...d, content_md: v }))}
                     placeholder={t("knowledge.notes.bodyPlaceholder")}
+                    onCursorLine={(l) => {
+                      caretSyncAtRef.current = Date.now();
+                      syncPreviewLine(l, true);
+                    }}
+                    onViewLine={(l) => {
+                      if (Date.now() - caretSyncAtRef.current < 450) return;
+                      syncPreviewLine(l, false);
+                    }}
                   />
                 </div>
               </div>
@@ -763,6 +909,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
 // never pay for it.
 function BoardCard({
   slot, totalSlots, json, dark,
+  dataLine,
   dragging, dropAt,
   onDragStartSlot, onDragOverSlot, onDropSlot, onDragEndSlot,
   onOpen, onRemove,
@@ -771,6 +918,9 @@ function BoardCard({
   totalSlots: number;
   json: string;
   dark: boolean;
+  // 1-based global line of the fence — a scroll-sync anchor for the split
+  // preview (a caret inside a fence maps to this card).
+  dataLine?: number;
   dragging: number | null;
   dropAt: { slot: number; before: boolean } | null;
   onDragStartSlot: (slot: number) => void;
@@ -815,6 +965,7 @@ function BoardCard({
   return (
     <div
       draggable
+      data-line={dataLine}
       onDragStart={(e) => {
         if (totalSlots < 2) { e.preventDefault(); return; } // nowhere to move
         onDragStartSlot(slot);
