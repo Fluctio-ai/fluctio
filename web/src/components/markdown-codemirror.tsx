@@ -40,6 +40,7 @@ export function MarkdownCodeMirror({
   placeholder,
   onCursorLine,
   onViewLine,
+  onEditorReady,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -47,9 +48,12 @@ export function MarkdownCodeMirror({
   // Scroll-sync hooks for the notes split view (1-based lines, same
   // convention as the preview's data-line anchors). onCursorLine fires on
   // click/typing (selection moves); onViewLine on scroll (topmost visible
-  // line, rAF-throttled). Both optional — other callers get none of this.
+  // line, rAF-throttled). onEditorReady hands out the EditorView once so
+  // the caller can map lines to pixel heights. All optional — other
+  // callers get none of this.
   onCursorLine?: (line: number) => void;
   onViewLine?: (line: number) => void;
+  onEditorReady?: (view: EditorView) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const dark = resolvedTheme === "dark";
@@ -106,6 +110,7 @@ export function MarkdownCodeMirror({
   // and the scrollDOM lives and dies with that instance — one posAtCoords
   // per animation frame is plenty.
   const handleEditorReady = React.useCallback((view: EditorView) => {
+    onEditorReady?.(view);
     let raf = 0;
     view.scrollDOM.addEventListener(
       "scroll",

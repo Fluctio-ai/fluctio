@@ -57,6 +57,7 @@ export function sanitizeSvgHtml(html: string): string {
     return "";
   }
 }
+import type { EditorView } from "@codemirror/view";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import {
   deleteNote,
@@ -485,6 +486,10 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   // it needs re-entrancy locks and isn't the workflow ("write here, read
   // there").
   const previewRef = React.useRef<HTMLDivElement | null>(null);
+  // Handed out once by the editor (onEditorReady) so the scroll-sync
+  // interpolation can map anchor lines to pixel heights. Type-only import —
+  // the EditorView class itself stays inside the lazy editor chunk.
+  const editorViewRef = React.useRef<EditorView | null>(null);
   // A caret jump makes CodeMirror scroll the caret line into view, and that
   // induced editor scrolling fires onViewLine for ~0.5s — long enough to
   // override the caret's own alignment with a top-line alignment (observed
@@ -513,10 +518,52 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
       const r = target.getBoundingClientRect();
       const c = container.getBoundingClientRect();
       if (r.top >= c.top - 4 && r.bottom <= c.top + container.clientHeight + 4) return;
+      // Caret jumps land exactly on the clicked block's top.
+      const top =
+        target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
+      container.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+      return;
     }
-    const top =
-      target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
-    container.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+    // Editor scroll: ByteMD-style block-interval interpolation so the
+    // preview follows CONTINUOUSLY — the top visible line at 60% inside
+    // source block i scrolls the preview to 60% inside block i's rendered
+    // span — instead of snapping to block tops only at block boundaries.
+    // Height tables are rebuilt per event; anchor counts are small (tens)
+    // and lineBlockAt is a binary search, so one pass per frame is fine.
+    const view = editorViewRef.current;
+    if (!view) {
+      const top =
+        target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
+      container.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+      return;
+    }
+    const doc = view.state.doc;
+    const editTops: number[] = [];
+    const previewTops: number[] = [];
+    for (const el of blocks) {
+      const ln = Math.min(Number(el.dataset.line), doc.lines);
+      editTops.push(view.lineBlockAt(doc.line(ln).from).top);
+      previewTops.push(
+        el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      );
+    }
+    const editRange = view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight;
+    const previewRange = container.scrollHeight - container.clientHeight;
+    const editTop = view.scrollDOM.scrollTop;
+    let i = 0;
+    while (i < editTops.length - 1 && editTops[i + 1] <= editTop) i++;
+    let previewTop: number;
+    if (editTop <= editTops[0] || editTops.length === 1) {
+      previewTop = 0;
+    } else if (i >= editTops.length - 1) {
+      // Past the last anchor (e.g. trailing blank lines): ride to the bottom.
+      previewTop = previewRange;
+    } else {
+      const span = editTops[i + 1] - editTops[i];
+      const frac = span > 0 ? (editTop - editTops[i]) / span : 0;
+      previewTop = previewTops[i] + frac * (previewTops[i + 1] - previewTops[i]);
+    }
+    container.scrollTo({ top: Math.max(0, Math.min(previewRange, previewTop - 12)), behavior: "auto" });
   };
 
   // Stamp the anchors after the preview DOM commits. Cheap (one pass over
@@ -758,6 +805,9 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                     onViewLine={(l) => {
                       if (Date.now() - caretSyncAtRef.current < 450) return;
                       syncPreviewLine(l, false);
+                    }}
+                    onEditorReady={(v) => {
+                      editorViewRef.current = v;
                     }}
                   />
                 </div>
