@@ -5031,6 +5031,11 @@ func (a *Agent) streamFinalDeliveryAfterCap(ctx context.Context, inboundMsg bus.
 	capMeta := iterationCapMetadata(a.maxToolIterations)
 	finalMessages := append(messages, capReachedNudge(a.maxToolIterations))
 	sr, err := a.provider.ChatStream(ctx, finalMessages, nil, a.model, a.maxTokens, a.temperature)
+	// 隐私恢复通道: 这条路径的 chunk 直发用户, 过恢复
+	// 后再转发。
+	if a.piiScrubEnabled {
+		sr = privacy.RestoreStreamReader(sr)
+	}
 	if err != nil {
 		// Streaming endpoint failed — persist+emit a fallback line
 		// with the badge so the user still gets the signal.

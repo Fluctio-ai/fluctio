@@ -78,3 +78,35 @@ func RestoreResponse(resp *provider.Response) {
 		resp.ToolCalls[i].Function.Arguments = Restore(resp.ToolCalls[i].Function.Arguments)
 	}
 }
+
+// RestoreStreamReader 包装流式响应:每个 chunk 的内容与 tool call
+// 参数过恢复通道后再转发。错误在源流结束后、输出通道关闭前挂到
+// 包装流上(消费者只在通道关闭后读 Err,时序安全)。用于流式直发
+// 路径(streamFinalDeliveryAfterCap)。
+func RestoreStreamReader(sr *provider.StreamReader) *provider.StreamReader {
+	if sr == nil {
+		return nil
+	}
+	out := make(chan provider.StreamChunk)
+	wrapped := provider.NewStreamReader(out)
+	go func() {
+		defer close(out)
+		for {
+			chunk, ok := sr.Next()
+			if !ok {
+				break
+			}
+			if chunk.Content != "" {
+				chunk.Content = Restore(chunk.Content)
+			}
+			for i := range chunk.ToolCalls {
+				chunk.ToolCalls[i].Function.Arguments = Restore(chunk.ToolCalls[i].Function.Arguments)
+			}
+			out <- chunk
+		}
+		if err := sr.Err(); err != nil {
+			wrapped.SetErr(err)
+		}
+	}()
+	return wrapped
+}
