@@ -26,24 +26,19 @@ import (
 // cross-delivered proactive pushes carrying conversation bodies to the
 // wrong user whenever more than one super_admin exists. agents.user_id
 // was dropped in phase 4 and AgentRecord.UserID is never populated by
-// the store, so the owner is resolved from session ownership:
-// sessions.user_id is the documented channel-owner / UserSpace owner,
-// and the agent's oldest session belongs to whoever created it
-// (foreign-attach viewers via EnsureAgent only add later sessions).
+// the store. Sessions carry no user_id column either (ownership is
+// runtime ctx state), so the old sessions.user_id lookup errored
+// for EVERY agent and every sweep silently skipped — the failure
+// watchdog has never fired in production because of it. Single-user
+// reality: the owner is agent-independent — the first super_admin,
+// same source push routing uses.
 // No resolvable owner → warn + "" (fail-closed); deliverSweepNudge
 // skips every leg and the sweeps retry on the next tick.
 func sweepOwnerUID(ctx context.Context, dbs *store.DBStore, ag store.AgentRecord) string {
 	if dbs == nil {
 		return ""
 	}
-	ph := "?"
-	if dbs.Dialect() == "postgres" {
-		ph = "$1"
-	}
-	var uid string
-	err := dbs.DB().QueryRowContext(ctx,
-		`SELECT user_id FROM sessions WHERE agent_id = `+ph+` AND user_id <> '' ORDER BY updated_at ASC LIMIT 1`,
-		ag.ID).Scan(&uid)
+	uid, err := dbs.LookupSessionOwner(ctx, ag.ID, "")
 	if err != nil || uid == "" {
 		slog.Warn("notification enqueue: no owner for agent, skipping delivery", "agent", ag.ID, "error", err)
 		return ""

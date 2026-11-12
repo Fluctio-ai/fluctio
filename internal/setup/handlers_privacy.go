@@ -51,6 +51,11 @@ func (s *Server) handleUpdateAgentPrivacy(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	// The scrub gates are stamped at agent build time (see the manager's
+	// privacy stamp); without a rebuild the toggle silently waits for
+	// the next restart. Drop every UserSpace holding this agent so the
+	// next access rebuilds with the new row.
+	s.invalidateAgent(id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -89,6 +94,16 @@ func (s *Server) handleUpdateSystemPrivacy(w http.ResponseWriter, r *http.Reques
 	if err := scope.SaveSetting(r.Context(), s.dataStore, "", "", "privacy", priv); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
+	}
+	// The system row shadows every agent — rebuild all cached
+	// UserSpaces so the toggle takes effect without a daemon restart
+	// (same pattern as handleAdminReload).
+	type globalInvalidator interface{ ReloadAgents() error }
+	if inv, ok := s.userResolver.(globalInvalidator); ok {
+		if err := inv.ReloadAgents(); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

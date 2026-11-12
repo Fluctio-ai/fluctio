@@ -1,11 +1,13 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // TestAnalyzeFailureChain walks every tail shape the sweep can meet:
@@ -285,5 +287,28 @@ func TestShouldScan(t *testing.T) {
 				t.Errorf("shouldScan = %v, want %v (%s)", got, c.want, c.reason)
 			}
 		})
+	}
+}
+
+// TestSweepOwnerUIDResolvesSuperAdmin locks the owner-resolution contract
+// for the background sweeps: agents and sessions carry no user_id column,
+// so the old sessions.user_id query errored for every agent and the
+// failure watchdog never fired in production. Owner = first super_admin
+// (same source push routing uses).
+func TestSweepOwnerUIDResolvesSuperAdmin(t *testing.T) {
+	dbs, err := store.NewDBStore("sqlite", "file::memory:")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer dbs.Close()
+	ctx := context.Background()
+	if err := dbs.Migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := dbs.CreateUser(ctx, &store.UserRecord{ID: "u-admin", Username: "a", Email: "a@x", Role: "super_admin"}); err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	if uid := sweepOwnerUID(ctx, dbs, store.AgentRecord{ID: "agt_x"}); uid != "u-admin" {
+		t.Fatalf("sweepOwnerUID = %q, want u-admin", uid)
 	}
 }
