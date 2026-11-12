@@ -101,7 +101,7 @@ func (q *quotaBreaker) clear() {
 func (a *Agent) quotaProbeInterval(ctx context.Context) time.Duration {
 	if a.dataStore != nil {
 		var c config.FailureRetryCfg
-		if err := scope.SettingInto(ctx, a.dataStore, config.FailureNamespace, "", "", &c); err == nil && c.QuotaProbeMin >= 1 {
+		if err := scope.SettingInto(ctx, a.dataStore, config.FailureNamespace, "", &c); err == nil && c.QuotaProbeMin >= 1 {
 			return time.Duration(c.QuotaProbeMin) * time.Minute
 		}
 	}

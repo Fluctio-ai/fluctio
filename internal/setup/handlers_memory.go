@@ -30,7 +30,7 @@ func (s *Server) handleGetAgentMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	var mem config.MemoryCfg
 	if s.dataStore != nil {
-		_ = scope.SettingInto(r.Context(), s.dataStore, "memory", "", id, &mem)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "memory", id, &mem)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"memory": mem})
 }
@@ -151,7 +151,7 @@ func (s *Server) handleReindexAgentMemory(w http.ResponseWriter, r *http.Request
 
 	// Resolve the agent's effective embedding config (system→owner→agent).
 	var vec config.VectorCfg
-	if err := scope.SettingInto(r.Context(), db, "vectorization", s.effectiveUserID(r), id, &vec); err != nil {
+	if err := scope.SettingInto(r.Context(), db, "vectorization", id, &vec); err != nil {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

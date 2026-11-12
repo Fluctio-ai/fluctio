@@ -43,10 +43,10 @@ func toolsGetCmd() *cobra.Command {
 				Tools:         map[string]config.ToolCategoryCfg{},
 			}
 			if merged {
-				if err := scope.SettingInto(ctx, st, gateway.NSToolProviders, userID, agentID, &out.ToolProviders); err != nil {
+				if err := scope.SettingInto(ctx, st, gateway.NSToolProviders, agentID, &out.ToolProviders); err != nil {
 					return err
 				}
-				if err := scope.SettingInto(ctx, st, gateway.NSToolCategories, userID, agentID, &out.Tools); err != nil {
+				if err := scope.SettingInto(ctx, st, gateway.NSToolCategories, agentID, &out.Tools); err != nil {
 					return err
 				}
 			} else {

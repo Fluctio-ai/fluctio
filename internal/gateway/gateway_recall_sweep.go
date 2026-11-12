@@ -49,7 +49,7 @@ func (g *Gateway) sweepAllAgentsImplicitFeedback(ctx context.Context) {
 	cfg := store.DefaultImplicitFeedbackConfig
 	for _, ag := range agents {
 		var vec config.VectorCfg
-		if err := scope.SettingInto(ctx, db, NSVectorization, ag.UserID, ag.ID, &vec); err != nil {
+		if err := scope.SettingInto(ctx, db, NSVectorization, ag.ID, &vec); err != nil {
 			continue
 		}
 		if !vec.Embedding.Enabled {

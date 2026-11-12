@@ -199,7 +199,7 @@ func runOnce(ctx context.Context, db *store.DBStore, perCallDelay time.Duration)
 // calls validate reachability naturally.
 func embedderForAgent(ctx context.Context, db *store.DBStore, ownerUserID, agentID string) embedding.Embedder {
 	var vec config.VectorCfg
-	if err := scope.SettingInto(ctx, db, "vectorization", ownerUserID, agentID, &vec); err != nil {
+	if err := scope.SettingInto(ctx, db, "vectorization", agentID, &vec); err != nil {
 		return nil
 	}
 	if !vec.Embedding.Enabled {

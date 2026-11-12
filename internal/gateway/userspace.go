@@ -228,34 +228,34 @@ func assembleConfig(ctx context.Context, st store.Store, userID, agentID string)
 	if st == nil {
 		return cfg, nil
 	}
-	if err := scope.SettingInto(ctx, st, NSAgentDefaults, userID, agentID, &cfg.Agents.Defaults); err != nil {
+	if err := scope.SettingInto(ctx, st, NSAgentDefaults, agentID, &cfg.Agents.Defaults); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSSandbox, userID, agentID, &cfg.Sandbox); err != nil {
+	if err := scope.SettingInto(ctx, st, NSSandbox, agentID, &cfg.Sandbox); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSObjectStore, userID, agentID, &cfg.ObjectStore); err != nil {
+	if err := scope.SettingInto(ctx, st, NSObjectStore, agentID, &cfg.ObjectStore); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSHooks, userID, agentID, &cfg.Hooks); err != nil {
+	if err := scope.SettingInto(ctx, st, NSHooks, agentID, &cfg.Hooks); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSPlugins, userID, agentID, &cfg.Plugins); err != nil {
+	if err := scope.SettingInto(ctx, st, NSPlugins, agentID, &cfg.Plugins); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSTaskQueue, userID, agentID, &cfg.TaskQueue); err != nil {
+	if err := scope.SettingInto(ctx, st, NSTaskQueue, agentID, &cfg.TaskQueue); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSToolProviders, userID, agentID, &cfg.ToolProviders); err != nil {
+	if err := scope.SettingInto(ctx, st, NSToolProviders, agentID, &cfg.ToolProviders); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSToolCategories, userID, agentID, &cfg.Tools); err != nil {
+	if err := scope.SettingInto(ctx, st, NSToolCategories, agentID, &cfg.Tools); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSSkillsInstall, userID, agentID, &cfg.Skills.Install); err != nil {
+	if err := scope.SettingInto(ctx, st, NSSkillsInstall, agentID, &cfg.Skills.Install); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSSkillsEntries, userID, agentID, &cfg.Skills.Entries); err != nil {
+	if err := scope.SettingInto(ctx, st, NSSkillsEntries, agentID, &cfg.Skills.Entries); err != nil {
 		return nil, err
 	}
 	// Per-agent skill env overrides used to live in a single user-scope
@@ -272,32 +272,32 @@ func assembleConfig(ctx context.Context, st store.Store, userID, agentID string)
 			cfg.Skills.AgentEntries = entries
 		}
 	}
-	if err := scope.SettingInto(ctx, st, NSMemory, userID, agentID, &cfg.Memory); err != nil {
+	if err := scope.SettingInto(ctx, st, NSMemory, agentID, &cfg.Memory); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSPrivacy, userID, agentID, &cfg.Privacy); err != nil {
+	if err := scope.SettingInto(ctx, st, NSPrivacy, agentID, &cfg.Privacy); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSSkillsLearner, userID, agentID, &cfg.SkillsLearner); err != nil {
+	if err := scope.SettingInto(ctx, st, NSSkillsLearner, agentID, &cfg.SkillsLearner); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSHeartbeat, userID, agentID, &cfg.Heartbeat); err != nil {
+	if err := scope.SettingInto(ctx, st, NSHeartbeat, agentID, &cfg.Heartbeat); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSTeams, userID, agentID, &cfg.Teams); err != nil {
+	if err := scope.SettingInto(ctx, st, NSTeams, agentID, &cfg.Teams); err != nil {
 		return nil, err
 	}
-	if err := scope.SettingInto(ctx, st, NSBindings, userID, agentID, &cfg.Bindings); err != nil {
+	if err := scope.SettingInto(ctx, st, NSBindings, agentID, &cfg.Bindings); err != nil {
 		return nil, err
 	}
-	provs, err := scope.Providers(ctx, st, userID, agentID)
+	provs, err := scope.Providers(ctx, st, agentID)
 	if err != nil {
 		return nil, err
 	}
 	for k, v := range provs {
 		cfg.Providers[k] = v
 	}
-	chs, err := scope.Channels(ctx, st, userID, agentID)
+	chs, err := scope.Channels(ctx, st, agentID)
 	if err != nil {
 		return nil, err
 	}

@@ -20,7 +20,7 @@ import (
 func (s *Server) handleGetSystemBackup(w http.ResponseWriter, r *http.Request) {
 	var cfg config.BackupCfg
 	if s.dataStore != nil {
-		_ = scope.SettingInto(r.Context(), s.dataStore, "backup", "", "", &cfg)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "backup", "", &cfg)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"backup": cfg})
 }

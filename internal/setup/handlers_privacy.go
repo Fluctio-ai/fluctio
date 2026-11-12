@@ -24,7 +24,7 @@ func (s *Server) handleGetAgentPrivacy(w http.ResponseWriter, r *http.Request) {
 	}
 	var priv config.PrivacyCfg
 	if s.dataStore != nil {
-		_ = scope.SettingInto(r.Context(), s.dataStore, "privacy", "", id, &priv)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "privacy", id, &priv)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"privacy": priv})
 }
@@ -60,7 +60,7 @@ func (s *Server) handleUpdateAgentPrivacy(w http.ResponseWriter, r *http.Request
 func (s *Server) handleGetSystemPrivacy(w http.ResponseWriter, r *http.Request) {
 	var priv config.PrivacyCfg
 	if s.dataStore != nil {
-		_ = scope.SettingInto(r.Context(), s.dataStore, "privacy", "", "", &priv)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "privacy", "", &priv)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"privacy": priv})
 }

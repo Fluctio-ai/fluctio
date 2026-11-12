@@ -79,10 +79,10 @@ func ScopeFromOwnership(userID, agentID string) (scope, scopeID string) {
 	}
 }
 
-// Providers returns the merged map of LLM provider configs for a given
-// (user, agent). Pass agentID="" to get only the user-level view. Pass
-// both empty to get system-only.
-func Providers(ctx context.Context, st store.Store, userID, agentID string) (map[string]config.ProviderConfig, error) {
+// Providers returns the merged map of LLM provider configs across the
+// system → agent chain (user layer retired in the single-user flatten,
+// pinned in fallback_test.go). Pass agentID="" for the system-only view.
+func Providers(ctx context.Context, st store.Store, agentID string) (map[string]config.ProviderConfig, error) {
 	if st == nil {
 		return nil, errors.New("scope.Providers: store is required")
 	}
@@ -136,7 +136,7 @@ func AgentScopeProviders(ctx context.Context, st store.Store, agentID string) (m
 
 // Channels returns the merged channel map. Disabled rows in an inner
 // scope erase the outer entry.
-func Channels(ctx context.Context, st store.Store, userID, agentID string) (map[string]config.ChannelConfig, error) {
+func Channels(ctx context.Context, st store.Store, agentID string) (map[string]config.ChannelConfig, error) {
 	if st == nil {
 		return nil, errors.New("scope.Channels: store is required")
 	}
@@ -155,21 +155,7 @@ func Channels(ctx context.Context, st store.Store, userID, agentID string) (map[
 	} else {
 		apply(rows)
 	}
-	if userID != "" {
-		if rows, err := st.ListConfigs(ctx, store.KindChannel, ""); err != nil {
-			return nil, err
-		} else {
-			apply(rows)
-		}
-	}
 	if agentID != "" {
-		if rows, err := st.ListConfigs(ctx, store.KindChannel, agentID); err != nil {
-			return nil, err
-		} else {
-			apply(rows)
-		}
-	}
-	if userID != "" && agentID != "" {
 		if rows, err := st.ListConfigs(ctx, store.KindChannel, agentID); err != nil {
 			return nil, err
 		} else {
@@ -180,11 +166,14 @@ func Channels(ctx context.Context, st store.Store, userID, agentID string) (map[
 }
 
 // Setting returns the merged JSON for one namespace across the
-// system → user → agent → per-(user, agent) chain. Field-level merge on
-// the top-level map; inner-ownership fields override outer ones. Unset
-// namespaces yield an empty map without erroring — callers Unmarshal
-// into typed structs and rely on zero-valued fields.
-func Setting(ctx context.Context, st store.Store, namespace, userID, agentID string) (map[string]interface{}, error) {
+// system → agent chain. The user and per-(user, agent) layers were
+// retired in the single-user flatten (pinned by the contract comment
+// in fallback_test.go): agents are global, so an agent-scope row is
+// the only override layer. Field-level merge on the top-level map;
+// agent fields override system ones. Unset namespaces yield an empty
+// map without erroring — callers Unmarshal into typed structs and
+// rely on zero-valued fields.
+func Setting(ctx context.Context, st store.Store, namespace, agentID string) (map[string]interface{}, error) {
 	if st == nil {
 		return nil, errors.New("scope.Setting: store is required")
 	}
@@ -220,8 +209,8 @@ func Setting(ctx context.Context, st store.Store, namespace, userID, agentID str
 
 // SettingInto resolves Setting and unmarshals the merged JSON into dst.
 // Convenience for callers that want a typed config block.
-func SettingInto(ctx context.Context, st store.Store, namespace, userID, agentID string, dst interface{}) error {
-	merged, err := Setting(ctx, st, namespace, userID, agentID)
+func SettingInto(ctx context.Context, st store.Store, namespace, agentID string, dst interface{}) error {
+	merged, err := Setting(ctx, st, namespace, agentID)
 	if err != nil {
 		return err
 	}

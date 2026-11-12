@@ -134,7 +134,7 @@ func (s *Server) handleRecallTest(w http.ResponseWriter, r *http.Request) {
 	var emb embedding.Embedder
 	semantic := false
 	var vec config.VectorCfg
-	if err := scope.SettingInto(ctx, db, "vectorization", s.effectiveUserID(r), id, &vec); err == nil && vec.Embedding.Enabled {
+	if err := scope.SettingInto(ctx, db, "vectorization", id, &vec); err == nil && vec.Embedding.Enabled {
 		emb = embedding.ProbeEmbedder(ctx, embedding.NewOpenAICompatEmbedder(
 			vec.Embedding.APIBase, vec.Embedding.APIKey, vec.Embedding.Model, vec.Embedding.Dim, vec.Embedding.DimEnabled))
 		semantic = emb.Available()

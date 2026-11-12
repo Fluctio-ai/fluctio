@@ -124,7 +124,7 @@ func runWikiAutoGenForAgent(ctx context.Context, st store.Store, agentID string,
 	}
 
 	var vec config.VectorCfg
-	if err := scope.SettingInto(ctx, dbs, "vectorization", "", agentID, &vec); err != nil {
+	if err := scope.SettingInto(ctx, dbs, "vectorization", agentID, &vec); err != nil {
 		slog.Debug("wiki autogen: vectorization cfg read failed", "agent", agentID, "error", err)
 	}
 	gen := wiki.NewGenerator(ws, kbs, invoker, wiki.EmbedderFromVectorCfg(vec), vec.WikiThreshold)
@@ -195,7 +195,7 @@ func (g *Gateway) runWikiAutoGenCycle(ctx context.Context) {
 	}
 	for _, ar := range agents {
 		var mem config.MemoryCfg
-		if err := scope.SettingInto(ctx, g.store, "memory", ar.UserID, ar.ID, &mem); err != nil {
+		if err := scope.SettingInto(ctx, g.store, "memory", ar.ID, &mem); err != nil {
 			continue
 		}
 		cfg := mem.WikiAutoGen
@@ -232,21 +232,15 @@ func runWikiAutoGenCycleForTest(ctx context.Context, g *Gateway) {
 }
 
 // resolveWikiProvider mirrors setup.Server.providerForAgent: merge
-// system → user(owner) → agent provider scopes, then resolve the model id
+// system → agent provider scopes (user layer retired — see scope.Setting),
 // (cfg model override wins, else agent-level agents.defaults, else system
 // default) and instantiate the provider. Returns (nil, "") when anything
 // is missing so the caller can skip the agent cleanly.
 func resolveWikiProvider(st store.Store, agentID, modelOverride string) (provider.Provider, string) {
 	ctx := context.Background()
 
-	var ownerUserID string
-	if agentID != "" {
-		if ag, err := st.GetAgent(ctx, agentID); err == nil && ag != nil {
-			ownerUserID = ag.UserID
-		}
-	}
 
-	providerMap, err := scope.Providers(ctx, st, ownerUserID, agentID)
+	providerMap, err := scope.Providers(ctx, st, agentID)
 	if err != nil || len(providerMap) == 0 {
 		return nil, ""
 	}
@@ -278,7 +272,7 @@ func resolveWikiProvider(st store.Store, agentID, modelOverride string) (provide
 	// resolver feeds all consume raw conversation-derived content, and
 	// they run outside the interactive loop's scrub point. The scoped
 	// privacy row decides via privacy.ScopedProvider (missing row = off).
-	return privacy.ScopedProvider(ctx, st, ownerUserID, agentID,
+	return privacy.ScopedProvider(ctx, st, agentID,
 		provider.NewProvider(p.APIKey, p.APIBase, p.APIType)), model
 }
 
@@ -400,7 +394,7 @@ func (g *Gateway) runWikiEmbedBackfillCycle(ctx context.Context) {
 		// Same vectorization-scope read as runWikiAutoGenForAgent — owner
 		// left empty so the agent-level + system-level merge resolves.
 		var vec config.VectorCfg
-		if err := scope.SettingInto(ctx, g.store, "vectorization", "", ar.ID, &vec); err != nil {
+		if err := scope.SettingInto(ctx, g.store, "vectorization", ar.ID, &vec); err != nil {
 			continue
 		}
 		if !vec.WikiEmbedding {

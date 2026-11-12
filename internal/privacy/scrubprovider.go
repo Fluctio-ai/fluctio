@@ -9,15 +9,19 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
-// ScopedProvider reads the (owner, agent)-scoped privacy config and wraps
-// base so its calls scrub PII per that row (missing row = off, zero value).
-// The single entry point for background pipelines that consume raw
+// ScopedProvider reads the agent-scope "privacy" row and wraps base so
+// its calls scrub PII per that row (missing row = off, zero value). The
+// single entry point for background pipelines that consume raw
 // conversation or article content outside the interactive loop's scrub
 // point — wiki/cards autogen, KB insights/merge, skill-learner extraction
 // all route through here, so a scope-key or default change lands once.
-func ScopedProvider(ctx context.Context, st store.Store, ownerUserID, agentID string, base provider.Provider) provider.Provider {
+//
+// 注: 曾接受 ownerUserID 以合并 system → owner → agent 三层, 但 user
+// 层在 single-user flatten 后退役 (契约钉在 internal/scope/fallback_
+// test.go), 该参数从未生效 — 已随 scope 读取函数一并移除。
+func ScopedProvider(ctx context.Context, st store.Store, agentID string, base provider.Provider) provider.Provider {
 	var priv config.PrivacyCfg
-	_ = scope.SettingInto(ctx, st, "privacy", ownerUserID, agentID, &priv)
+	_ = scope.SettingInto(ctx, st, "privacy", agentID, &priv)
 	return WrapProvider(base, OptionsFor(agentID, priv), priv.PIIScrubbing.Enabled)
 }
 

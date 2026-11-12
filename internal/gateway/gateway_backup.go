@@ -39,7 +39,7 @@ func (g *Gateway) runBackupSchedule(ctx context.Context) {
 		}
 	}()
 	var cfg config.BackupCfg
-	if err := scope.SettingInto(ctx, g.store, NSBackup, "", "", &cfg); err != nil {
+	if err := scope.SettingInto(ctx, g.store, NSBackup, "", &cfg); err != nil {
 		slog.Warn("backup: read config failed", "error", err)
 		return
 	}

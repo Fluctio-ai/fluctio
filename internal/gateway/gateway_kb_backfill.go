@@ -63,7 +63,7 @@ func (g *Gateway) runKbEmbedBackfillCycle(ctx context.Context) {
 		// Same vectorization-scope read as runWikiEmbedBackfillCycle — owner
 		// left empty so the agent-level + system-level merge resolves.
 		var vec config.VectorCfg
-		if err := scope.SettingInto(ctx, g.store, "vectorization", "", ar.ID, &vec); err != nil {
+		if err := scope.SettingInto(ctx, g.store, "vectorization", ar.ID, &vec); err != nil {
 			continue
 		}
 		if !vec.KBEmbedding {

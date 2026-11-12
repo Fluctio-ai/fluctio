@@ -49,19 +49,19 @@ func (s *Server) loadUserConfig(r *http.Request) (*config.Config, error) {
 		Channels:  map[string]config.ChannelConfig{},
 	}
 	for _, ns := range settingNamespaces {
-		if err := scope.SettingInto(r.Context(), s.dataStore, ns.namespace, uid, "", ns.dst(cfg)); err != nil {
+		if err := scope.SettingInto(r.Context(), s.dataStore, ns.namespace, "", ns.dst(cfg)); err != nil {
 			return nil, err
 		}
 	}
-	if err := scope.SettingInto(r.Context(), s.dataStore, scope.PrefsNamespace, uid, "", &cfg.Prefs); err != nil {
+	if err := scope.SettingInto(r.Context(), s.dataStore, scope.PrefsNamespace, "", &cfg.Prefs); err != nil {
 		return nil, err
 	}
-	if provs, err := scope.Providers(r.Context(), s.dataStore, uid, ""); err == nil {
+	if provs, err := scope.Providers(r.Context(), s.dataStore, ""); err == nil {
 		for k, v := range provs {
 			cfg.Providers[k] = v
 		}
 	}
-	if chs, err := scope.Channels(r.Context(), s.dataStore, uid, ""); err == nil {
+	if chs, err := scope.Channels(r.Context(), s.dataStore, ""); err == nil {
 		for k, v := range chs {
 			cfg.Channels[k] = v
 		}
@@ -534,7 +534,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	// can't render an Inheriting/Override badge.
 	sysDefaults := config.AgentsConfig{}.Defaults
 	if s.dataStore != nil {
-		_ = scope.SettingInto(r.Context(), s.dataStore, "agents.defaults", "", "", &sysDefaults)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "agents.defaults", "", &sysDefaults)
 	}
 	serverTimezone := time.Local.String()
 	// Marshal-then-extend keeps the response shape compatible (existing

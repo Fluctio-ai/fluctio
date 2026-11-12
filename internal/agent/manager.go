@@ -286,7 +286,7 @@ func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider
 			// endpoint degrades to nilEmbedder (vector recall skipped) instead
 			// of erroring every search.
 			var mem config.MemoryCfg
-			if err := scope.SettingInto(context.Background(), db, "memory", m.uid, rc.ID, &mem); err == nil {
+			if err := scope.SettingInto(context.Background(), db, "memory", rc.ID, &mem); err == nil {
 				// Stamp the merged memory config onto the agent so PostTurn
 				// hooks read operator-set values. The build path
 				// (NewAgentWithSkillsCfg) never loads fullCfg.Memory, so
@@ -306,7 +306,7 @@ func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider
 				// Vector config (embedding/reranker) lives under its own
 				// "vectorization" namespace now, split out from memory.
 				var vec config.VectorCfg
-				_ = scope.SettingInto(context.Background(), db, "vectorization", m.uid, rc.ID, &vec)
+				_ = scope.SettingInto(context.Background(), db, "vectorization", rc.ID, &vec)
 				if vec.Embedding.Enabled {
 					ec := vec.Embedding
 					emb := embedding.ProbeEmbedder(context.Background(),
@@ -326,7 +326,7 @@ func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider
 			// row (system → owner → agent) so the UI toggle actually
 			// reaches the loop's scrub points and bgProvider's wrap.
 			var priv config.PrivacyCfg
-			if err := scope.SettingInto(context.Background(), db, "privacy", m.uid, rc.ID, &priv); err == nil {
+			if err := scope.SettingInto(context.Background(), db, "privacy", rc.ID, &priv); err == nil {
 				ag.piiScrubEnabled = priv.PIIScrubbing.Enabled
 				// Options 由隐私包统一组装 (privacy.OptionsFor), 交互循环与
 				// 后台管线 (ScopedProvider) 共用同一构造函数, 新选项不会漏接。

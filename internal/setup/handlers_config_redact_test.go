@@ -110,7 +110,7 @@ func TestGetConfigResponsesRedactCredentials(t *testing.T) {
 			t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
 		}
 		var stored map[string]interface{}
-		if err := scope.SettingInto(ctx, s.dataStore, "sandbox", "", "", &stored); err != nil {
+		if err := scope.SettingInto(ctx, s.dataStore, "sandbox", "", &stored); err != nil {
 			t.Fatalf("read back sandbox: %v", err)
 		}
 		if got, _ := stored["e2bKey"].(string); got != e2bKey {

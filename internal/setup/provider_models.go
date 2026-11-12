@@ -27,14 +27,7 @@ func (s *Server) providerConfigForAgent(ctx context.Context, agentID string) (co
 		return config.ProviderConfig{}, fmt.Errorf("data store unavailable")
 	}
 
-	var ownerUserID string
-	if agentID != "" {
-		if ag, err := s.dataStore.GetAgent(ctx, agentID); err == nil && ag != nil {
-			ownerUserID = ag.UserID
-		}
-	}
-
-	providerMap, err := scope.Providers(ctx, s.dataStore, ownerUserID, agentID)
+	providerMap, err := scope.Providers(ctx, s.dataStore, agentID)
 	if err != nil {
 		return config.ProviderConfig{}, fmt.Errorf("load providers: %w", err)
 	}

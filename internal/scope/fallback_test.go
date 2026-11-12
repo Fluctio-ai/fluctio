@@ -34,7 +34,7 @@ func TestSettingPrecedence_AgentBeatsSystem(t *testing.T) {
 
 	// System default wins on its own.
 	var got config.AgentDefaults
-	if err := SettingInto(ctx, db, "agents.defaults", "", agentID, &got); err != nil {
+	if err := SettingInto(ctx, db, "agents.defaults", agentID, &got); err != nil {
 		t.Fatalf("setting into: %v", err)
 	}
 	if got.Model != "deepseek/deepseek-v4-pro" {
@@ -47,7 +47,7 @@ func TestSettingPrecedence_AgentBeatsSystem(t *testing.T) {
 		t.Fatalf("save agent: %v", err)
 	}
 	got = config.AgentDefaults{}
-	if err := SettingInto(ctx, db, "agents.defaults", "", agentID, &got); err != nil {
+	if err := SettingInto(ctx, db, "agents.defaults", agentID, &got); err != nil {
 		t.Fatalf("setting into: %v", err)
 	}
 	if got.Model != "anthropic/claude-opus-4-7" {
@@ -72,7 +72,7 @@ func TestSettingPrecedence_AgentBeatsSystem(t *testing.T) {
 		t.Fatalf("delete agent-scope: %v", err)
 	}
 	got = config.AgentDefaults{}
-	if err := SettingInto(ctx, db, "agents.defaults", "", agentID, &got); err != nil {
+	if err := SettingInto(ctx, db, "agents.defaults", agentID, &got); err != nil {
 		t.Fatalf("setting into after delete: %v", err)
 	}
 	if got.Model != "deepseek/deepseek-v4-pro" {

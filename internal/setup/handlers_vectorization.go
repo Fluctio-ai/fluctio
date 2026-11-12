@@ -28,7 +28,7 @@ func (s *Server) handleGetAgentVectorization(w http.ResponseWriter, r *http.Requ
 	}
 	var vec config.VectorCfg
 	if s.dataStore != nil {
-		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", id, &vec)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", id, &vec)
 	}
 	maskVectorKeys(&vec)
 	writeJSON(w, http.StatusOK, map[string]any{"vectorization": vec})
@@ -54,7 +54,7 @@ func (s *Server) handleUpdateAgentVectorization(w http.ResponseWriter, r *http.R
 	}
 	if s.dataStore != nil {
 		var stored config.VectorCfg
-		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", id, &stored)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", id, &stored)
 		mergeVectorKeys(vec, stored)
 	}
 	if err := scope.SaveSetting(r.Context(), s.dataStore, "", id, "vectorization", vec); err != nil {
@@ -71,7 +71,7 @@ func (s *Server) handleUpdateAgentVectorization(w http.ResponseWriter, r *http.R
 func (s *Server) handleGetSystemVectorization(w http.ResponseWriter, r *http.Request) {
 	var vec config.VectorCfg
 	if s.dataStore != nil {
-		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", "", &vec)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", &vec)
 	}
 	maskVectorKeys(&vec)
 	writeJSON(w, http.StatusOK, map[string]any{"vectorization": vec})
@@ -96,7 +96,7 @@ func (s *Server) handleUpdateSystemVectorization(w http.ResponseWriter, r *http.
 	}
 	if s.dataStore != nil {
 		var stored config.VectorCfg
-		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", "", &stored)
+		_ = scope.SettingInto(r.Context(), s.dataStore, "vectorization", "", &stored)
 		mergeVectorKeys(vec, stored)
 	}
 	if err := scope.SaveSetting(r.Context(), s.dataStore, "", "", "vectorization", vec); err != nil {

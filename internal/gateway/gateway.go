@@ -859,7 +859,7 @@ func (g *Gateway) Run() error {
 	if dbs, ok := g.store.(*store.DBStore); ok {
 		interval := 10 * time.Minute
 		var mem config.MemoryCfg
-		if err := scope.SettingInto(context.Background(), g.store, NSMemory, "", "", &mem); err == nil && mem.Settings.ReindexIntervalMin > 0 {
+		if err := scope.SettingInto(context.Background(), g.store, NSMemory, "", &mem); err == nil && mem.Settings.ReindexIntervalMin > 0 {
 			interval = time.Duration(mem.Settings.ReindexIntervalMin) * time.Minute
 		}
 		perCallDelay := 200 * time.Millisecond
@@ -971,7 +971,7 @@ func (g *Gateway) Run() error {
 	idleAfter := 2 * time.Hour
 	{
 		var mem config.MemoryCfg
-		if err := scope.SettingInto(context.Background(), g.store, NSMemory, "", "", &mem); err == nil && mem.Settings.IdleSummaryIdleMin > 0 {
+		if err := scope.SettingInto(context.Background(), g.store, NSMemory, "", &mem); err == nil && mem.Settings.IdleSummaryIdleMin > 0 {
 			idleAfter = time.Duration(mem.Settings.IdleSummaryIdleMin) * time.Minute
 		}
 	}
@@ -1144,7 +1144,7 @@ func redisPrefix(v string) string {
 func readObjectStoreCfg(st store.Store) config.ObjectStoreCfg {
 	cfg := &config.Config{}
 	if st != nil {
-		_ = scope.SettingInto(context.Background(), st, NSObjectStore, "", "", &cfg.ObjectStore)
+		_ = scope.SettingInto(context.Background(), st, NSObjectStore, "", &cfg.ObjectStore)
 	}
 	config.LoadEnv().ApplyToConfig(cfg)
 	return cfg.ObjectStore
@@ -1153,7 +1153,7 @@ func readObjectStoreCfg(st store.Store) config.ObjectStoreCfg {
 func readSystemHooks(st store.Store) config.HooksCfg {
 	var out config.HooksCfg
 	if st != nil {
-		_ = scope.SettingInto(context.Background(), st, NSHooks, "", "", &out)
+		_ = scope.SettingInto(context.Background(), st, NSHooks, "", &out)
 	}
 	return out
 }
@@ -1161,7 +1161,7 @@ func readSystemHooks(st store.Store) config.HooksCfg {
 func readSystemPlugins(st store.Store) config.PluginsCfg {
 	var out config.PluginsCfg
 	if st != nil {
-		_ = scope.SettingInto(context.Background(), st, NSPlugins, "", "", &out)
+		_ = scope.SettingInto(context.Background(), st, NSPlugins, "", &out)
 	}
 	return out
 }
@@ -1169,7 +1169,7 @@ func readSystemPlugins(st store.Store) config.PluginsCfg {
 func readSystemTaskQueue(st store.Store) config.TaskQueueCfg {
 	var out config.TaskQueueCfg
 	if st != nil {
-		_ = scope.SettingInto(context.Background(), st, NSTaskQueue, "", "", &out)
+		_ = scope.SettingInto(context.Background(), st, NSTaskQueue, "", &out)
 	}
 	return out
 }
@@ -1184,7 +1184,7 @@ func readSystemTaskQueue(st store.Store) config.TaskQueueCfg {
 func readSystemSandboxCfg(st store.Store) (config.SandboxCfg, error) {
 	cfg := &config.Config{}
 	if st != nil {
-		if err := scope.SettingInto(context.Background(), st, NSSandbox, "", "", &cfg.Sandbox); err != nil {
+		if err := scope.SettingInto(context.Background(), st, NSSandbox, "", &cfg.Sandbox); err != nil {
 			config.LoadEnv().ApplyToConfig(cfg)
 			return cfg.Sandbox, fmt.Errorf("read sandbox setting: %w", err)
 		}

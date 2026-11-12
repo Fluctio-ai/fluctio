@@ -32,7 +32,7 @@ func (s *Server) handleWikiReindexEmbed(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var vec config.VectorCfg
-	if err := scope.SettingInto(r.Context(), db, "vectorization", "", id, &vec); err != nil {
+	if err := scope.SettingInto(r.Context(), db, "vectorization", id, &vec); err != nil {
 		jsonResponse(w, http.StatusOK, map[string]any{"ok": false, "error": "vectorization cfg read failed"})
 		return
 	}
@@ -402,7 +402,7 @@ func (s *Server) handleWikiAutogenStatus(w http.ResponseWriter, r *http.Request)
 	enabled := false
 	var mem config.MemoryCfg
 	if s.dataStore != nil {
-		_ = scope.SettingInto(ctx, s.dataStore, "memory", "", agentID, &mem)
+		_ = scope.SettingInto(ctx, s.dataStore, "memory", agentID, &mem)
 		enabled = mem.WikiAutoGen.Enabled
 	}
 
@@ -501,7 +501,7 @@ func (s *Server) runWikiGeneration(agentID string, sourceIDs []string, force boo
 
 	var vec config.VectorCfg
 	if dbs, ok := s.dataStore.(*store.DBStore); ok {
-		if err := scope.SettingInto(ctx, dbs, "vectorization", "", agentID, &vec); err != nil {
+		if err := scope.SettingInto(ctx, dbs, "vectorization", agentID, &vec); err != nil {
 			slog.Debug("wiki generate: vectorization cfg read failed", "agent", agentID, "error", err)
 		}
 	}
@@ -556,14 +556,7 @@ func (s *Server) providerForAgent(agentID string) (provider.Provider, string) {
 
 	ctx := context.Background()
 
-	var ownerUserID string
-	if agentID != "" {
-		if ag, err := s.dataStore.GetAgent(ctx, agentID); err == nil && ag != nil {
-			ownerUserID = ag.UserID
-		}
-	}
-
-	providerMap, err := scope.Providers(ctx, s.dataStore, ownerUserID, agentID)
+	providerMap, err := scope.Providers(ctx, s.dataStore, agentID)
 	if err != nil || len(providerMap) == 0 {
 		slog.Warn("wiki: no providers configured", "error", err)
 		return nil, ""

@@ -32,7 +32,7 @@ func (s *Server) scrubbedAgentProvider(r *http.Request, agentID string, prov pro
 	if s.dataStore == nil {
 		return prov
 	}
-	return privacy.ScopedProvider(r.Context(), s.dataStore, "", agentID, prov)
+	return privacy.ScopedProvider(r.Context(), s.dataStore, agentID, prov)
 }
 
 // handleListKBSources lists knowledge base sources for an agent.
@@ -268,7 +268,7 @@ func (s *Server) kbStoreFor(agentID string) *kb.KBStore {
 	}
 	ks := kb.NewKBStore(dbs.DB(), dbs.Dialect())
 	var vec config.VectorCfg
-	if err := scope.SettingInto(context.Background(), dbs, "vectorization", "", agentID, &vec); err == nil &&
+	if err := scope.SettingInto(context.Background(), dbs, "vectorization", agentID, &vec); err == nil &&
 		vec.KBEmbedding && vec.Embedding.Enabled {
 		emb := embedding.NewOpenAICompatEmbedder(vec.Embedding.APIBase, vec.Embedding.APIKey, vec.Embedding.Model, vec.Embedding.Dim, vec.Embedding.DimEnabled)
 		if emb.Available() {

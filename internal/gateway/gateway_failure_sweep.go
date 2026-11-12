@@ -80,7 +80,7 @@ func failureRetryRuntime(ctx context.Context, st store.Store) (base time.Duratio
 	base, max = 0, 0
 	if st != nil {
 		var c config.FailureRetryCfg
-		if err := scope.SettingInto(ctx, st, config.FailureNamespace, "", "", &c); err == nil {
+		if err := scope.SettingInto(ctx, st, config.FailureNamespace, "", &c); err == nil {
 			if c.BackoffBaseMin >= 1 {
 				base = time.Duration(c.BackoffBaseMin) * time.Minute
 			}
