@@ -168,8 +168,11 @@ export function ShareFileDialog({
           {created && (
             <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
               <p className="text-xs text-muted-foreground">{t("share.linkReady")}</p>
-              <div className="flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate rounded bg-background px-2 py-1.5 font-mono text-xs">
+              <div className="flex items-start gap-2">
+                {/* break-all: the URL has no spaces, so a plain wrap point
+                    doesn't exist; wrapping at any char keeps the full link
+                    visible inside the dialog. */}
+                <code className="min-w-0 flex-1 break-all rounded bg-background px-2 py-1.5 font-mono text-xs">
                   {created.url}
                 </code>
                 <Button size="sm" variant="outline" onClick={copy} className="shrink-0">
