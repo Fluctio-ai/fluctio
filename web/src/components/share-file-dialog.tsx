@@ -111,7 +111,10 @@ export function ShareFileDialog({
             {t("share.dialogDesc", { name: basename })}
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-4 py-1">
+        {/* min-w-0: the grid-implemented DialogContent sizes this item to
+            its min-content by default; one unbroken ~90-char URL would
+            stretch the grid track past the dialog edge. */}
+        <div className="min-w-0 space-y-4 py-1">
           {/* Duration presets — segmented buttons, same dialect as the
               Changed/All files switch in chat-workspace. */}
           <div className="space-y-1.5">
