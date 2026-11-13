@@ -77,7 +77,19 @@ export function ShareFileDialog({
         setError(res.error || `HTTP error`);
         return;
       }
-      const url = res.url?.startsWith("http") ? res.url : `${window.location.origin}/f/${res.token}`;
+      // The URL prefers the server-configured FLUCTIO_PUBLIC_BASE_URL,
+      // else falls back to the request Host — which a reverse proxy may
+      // have rewritten to localhost. When the minted URL names loopback
+      // but the dashboard itself was reached from a real origin, the
+      // page origin is the address the recipient can actually reach.
+      const hostIsLoopback = (u: string) =>
+        /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(u);
+      let url = res.url?.startsWith("http")
+        ? res.url
+        : `${window.location.origin}/f/${res.token}`;
+      if (hostIsLoopback(url) && !hostIsLoopback(window.location.origin)) {
+        url = `${window.location.origin}/f/${res.token}`;
+      }
       setCreated({ url });
       setCopied(false);
       loadShares();
