@@ -24,6 +24,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # `ffmpeg` for audio/video processing (transcode/trim/mux/thumbnails) —
 # the agent exec's it directly for media tasks; Debian's build ships
 # x264/aac so no extra repos are needed.
+# `ghostscript` for printing: IPP printers don't accept PDF directly, so
+# the print skill rasterizes PDF → PWG via the `pwgraster` device before
+# sending a print job. Without this package that device doesn't exist and
+# the whole print chain is dead.
+# `poppler-utils` for PDF → image / text extraction (pdftoppm et al.) —
+# backup path for the print skill's image chain.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         python3 \
@@ -34,6 +40,8 @@ RUN apt-get update \
         git \
         sudo \
         ffmpeg \
+        ghostscript \
+        poppler-utils \
         fonts-noto-cjk \
         fonts-noto-color-emoji \
  && ln -sf /usr/bin/python3 /usr/local/bin/python
@@ -61,6 +69,14 @@ RUN apt-get update \
 # support; classifies scanned/image PDFs so the agent routes those to OCR.
 # Faster + higher quality than pymupdf4llm/markitdown. The system prompt
 # points the agent at `pdf_inspector.process_pdf` for /workspace PDFs.
+#
+# pyipp + aiohttp: IPP print-chain client — pyipp speaks the IPP protocol
+# (status/attributes/print jobs) over aiohttp's TLS transport to reach the
+# printer directly. Pillow (already listed) handles the page-layout side
+# (photo sizing onto 6-inch/A4 PDF blanks).
+#
+# matplotlib: chart rendering (growth curves, data viz) — was being
+# reinstalled from scratch after every sandbox rebuild; baked in now.
 RUN pip install --break-system-packages --no-cache-dir \
         'camoufox==0.4.11' \
         'camoufox-cli==0.7.6' \
@@ -70,7 +86,16 @@ RUN pip install --break-system-packages --no-cache-dir \
         pillow \
         beautifulsoup4 \
         lxml \
-        pdf-inspector
+        pdf-inspector \
+        pyipp \
+        aiohttp \
+        matplotlib
+
+# Route runtime pip installs (skills' ensure_deps fallbacks) through the
+# NJU PyPI mirror — default PyPI is slow/timeout-prone from CN networks.
+# Deliberately set AFTER the build-time pip install above so CI builds
+# keep pulling from default PyPI.
+ENV PIP_INDEX_URL=https://mirror.nju.edu.cn/pypi/web/simple
 
 # Pull Camoufox (anti-detect Firefox) + the system libs it needs to run
 # headless. `--with-deps` shells out to apt for the Firefox runtime
