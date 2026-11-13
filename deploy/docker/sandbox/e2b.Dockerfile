@@ -1,4 +1,4 @@
-FROM thinkany/fluctio-sandbox:latest
+FROM ghcr.io/fluctio-ai/fluctio-sandbox:latest
 
 WORKDIR /workspace
 
