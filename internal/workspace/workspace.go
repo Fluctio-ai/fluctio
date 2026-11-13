@@ -75,6 +75,32 @@ type ObjectInfo struct {
 	ModTime     time.Time // UTC
 }
 
+// ScopeKeyPrefix returns the agent-root-relative prefix naming a (projectID,
+// sessionID) scope, mirroring the layout table above:
+//
+//	("", "")    → ""                (agent-shared root)
+//	("", "x")   → "sessions/x"      (loose chat)
+//	("p", "")   → "projects/p"      (project root)
+//	("p", "x")  → "projects/p/x"    (project chat)
+//
+// Callers that need an agent-root store key for a project/session-scoped
+// path join this prefix with the path (file_shares stores agent-root keys
+// so the file server resolves them via Get(agentID, "", "", key)). IDs are
+// expected to be store-generated (agt_/proj_/s- charset) — no segment
+// validation here; LocalFS.resolvePath enforces containment at consumption
+// time.
+func ScopeKeyPrefix(projectID, sessionID string) string {
+	switch {
+	case projectID != "" && sessionID != "":
+		return "projects/" + projectID + "/" + sessionID
+	case projectID != "":
+		return "projects/" + projectID
+	case sessionID != "":
+		return "sessions/" + sessionID
+	}
+	return ""
+}
+
 // Common errors. Implementations should wrap these with fmt.Errorf("%w: ...")
 // when adding context, so callers can still errors.Is() match.
 var (

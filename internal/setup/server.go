@@ -436,6 +436,15 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/files/{path...}", auth(s.handleAgentFile))
 	mux.HandleFunc("DELETE /api/agents/{id}/files/{path...}", auth(s.handleAgentFileDelete))
 	mux.HandleFunc("POST /api/agents/{id}/files", auth(s.handleAgentFileUpload))
+	// Public share links to workspace files (see handlers_shares.go). The
+	// mint route puts {path...} last — a ".../files/{path...}/share"
+	// pattern would panic, ServeMux requires the wildcard at the end.
+	// GET /f/{token} is deliberately registered WITHOUT the auth wrapper:
+	// the token itself is the credential.
+	mux.HandleFunc("POST /api/agents/{id}/share/{path...}", auth(s.handleAgentFileShare))
+	mux.HandleFunc("GET /api/agents/{id}/shares", auth(s.handleAgentShareList))
+	mux.HandleFunc("DELETE /api/share/{token}", auth(s.handleShareDelete))
+	mux.HandleFunc("GET /f/{token}", s.handleSharedFile)
 	// Self-hosted-only: opens the workspace dir in the operator's
 	// native file browser (Finder/Explorer/xdg-open). Hosted
 	// deployments 403 inside the handler — chatters there don't

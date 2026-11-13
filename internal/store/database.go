@@ -3300,6 +3300,26 @@ func (d *DBStore) migrationSQL() []string {
 			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_regex_hooks_agent ON agent_regex_hooks (agent_id, sort_order)`,
+		// file_shares backs capability-limited public links to single
+		// workspace files (GET /f/{token}, no auth). One row per link; the
+		// random token is the only credential and carries no path/agent
+		// information. path is the agent-root store key (including the
+		// sessions/<sid>/ or projects/<pid>/ prefix) so the file server
+		// resolves it via workspaceStore.Get(agentID, "", "", path).
+		// expires_at NULL = permanent; max_uses 0 = unlimited; both are
+		// enforced in ConsumeFileShare's single conditional UPDATE.
+		`CREATE TABLE IF NOT EXISTS file_shares (
+			token TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			path TEXT NOT NULL,
+			created_by TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			expires_at TIMESTAMP NULL,
+			max_uses INTEGER NOT NULL DEFAULT 0,
+			use_count INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_file_shares_agent ON file_shares (agent_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_file_shares_expires ON file_shares (expires_at)`,
 	}
 }
 
@@ -3673,6 +3693,140 @@ func (d *DBStore) DeleteExpiredWebSessions(ctx context.Context, before time.Time
 	_, err := d.db.ExecContext(ctx,
 		fmt.Sprintf(`DELETE FROM web_sessions WHERE expires_at < %s`, d.ph(1)), before)
 	return err
+}
+
+// --- File shares (public /f/{token} links) ---
+
+func (d *DBStore) CreateFileShare(ctx context.Context, rec *FileShareRecord) error {
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = time.Now().UTC()
+	}
+	// expires_at NULL = permanent: pass a nil-typed value, not a zero
+	// time.Time, so the driver writes SQL NULL.
+	var expires any
+	if rec.ExpiresAt != nil {
+		expires = *rec.ExpiresAt
+	}
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`INSERT INTO file_shares (token, agent_id, path, created_by, created_at, expires_at, max_uses, use_count)
+			VALUES (%s, %s, %s, %s, %s, %s, %s, %s)`,
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8)),
+		rec.Token, rec.AgentID, rec.Path, rec.CreatedBy, rec.CreatedAt, expires, rec.MaxUses, rec.UseCount)
+	return err
+}
+
+func (d *DBStore) GetFileShare(ctx context.Context, token string) (*FileShareRecord, error) {
+	row := d.db.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT token, agent_id, path, created_by, created_at, expires_at, max_uses, use_count FROM file_shares WHERE token = %s`, d.ph(1)),
+		token)
+	rec, err := scanFileShare(row)
+	if err != nil {
+		return nil, scanErr(err)
+	}
+	return rec, nil
+}
+
+// ConsumeFileShare atomically bumps use_count for a share that is both
+// unexpired and under its use limit, and returns the updated row. The
+// expiry + limit guards live in the same conditional UPDATE as the
+// increment, so an expired share never burns a use and concurrent readers
+// can never exceed max_uses (SQLite serialises on the single write conn;
+// Postgres row-locks the row). RowsAffected==0 falls back to a read to
+// distinguish ErrNotFound from ErrFileShareExhausted.
+func (d *DBStore) ConsumeFileShare(ctx context.Context, token string, now time.Time) (*FileShareRecord, error) {
+	res, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE file_shares SET use_count = use_count + 1
+			WHERE token = %s AND (max_uses = 0 OR use_count < max_uses) AND (expires_at IS NULL OR expires_at > %s)`,
+			d.ph(1), d.ph(2)),
+		token, now)
+	if err != nil {
+		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		rec, rerr := d.GetFileShare(ctx, token)
+		if rerr != nil {
+			return nil, rerr // ErrNotFound (or scan failure)
+		}
+		return rec, ErrFileShareExhausted
+	}
+	return d.GetFileShare(ctx, token)
+}
+
+func (d *DBStore) ListFileSharesByAgent(ctx context.Context, agentID string) ([]FileShareRecord, error) {
+	rows, err := d.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT token, agent_id, path, created_by, created_at, expires_at, max_uses, use_count
+			FROM file_shares WHERE agent_id = %s ORDER BY created_at DESC`, d.ph(1)),
+		agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileShareRecord
+	for rows.Next() {
+		rec, err := scanFileShare(rows)
+		if err != nil {
+			return nil, scanErr(err)
+		}
+		out = append(out, *rec)
+	}
+	return out, rows.Err()
+}
+
+func (d *DBStore) DeleteFileShare(ctx context.Context, token string) error {
+	_, err := d.db.ExecContext(ctx,
+		fmt.Sprintf(`DELETE FROM file_shares WHERE token = %s`, d.ph(1)), token)
+	return err
+}
+
+// scanFileShare reads one file_shares row from a *sql.Row or *sql.Rows
+// (both satisfy the shared Scan method set).
+func scanFileShare(sc interface{ Scan(dest ...any) error }) (*FileShareRecord, error) {
+	var rec FileShareRecord
+	var expires sql.NullTime
+	if err := sc.Scan(&rec.Token, &rec.AgentID, &rec.Path, &rec.CreatedBy, &rec.CreatedAt, &expires, &rec.MaxUses, &rec.UseCount); err != nil {
+		return nil, err
+	}
+	if expires.Valid {
+		t := expires.Time
+		rec.ExpiresAt = &t
+	}
+	return &rec, nil
+}
+
+// PruneExpiredFileShares deletes file_shares rows past their expires_at, in
+// bounded batches. Permanent rows (expires_at NULL) are never touched.
+// Deliberately not on the store.Store interface — the retention sweep
+// reaches it via a *DBStore type assertion (see
+// gateway_fileshare_retention.go), same pattern as PruneSessionEvents.
+func (d *DBStore) PruneExpiredFileShares(ctx context.Context, before time.Time, batchSize int) (int64, error) {
+	if batchSize <= 0 {
+		batchSize = 500
+	}
+	var total int64
+	for {
+		res, err := d.db.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM file_shares
+				WHERE token IN (
+					SELECT token FROM file_shares
+					WHERE expires_at IS NOT NULL AND expires_at < %s
+					LIMIT %s
+				)`, d.ph(1), d.ph(2)),
+			before, batchSize)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < int64(batchSize) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		default:
+		}
+	}
+	return total, nil
 }
 
 // --- Mobile push devices ---

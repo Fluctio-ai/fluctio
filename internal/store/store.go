@@ -22,6 +22,10 @@ var ErrNotFound = errors.New("store: not found")
 // the forks first.
 var ErrSessionHasChildren = errors.New("session has fork children")
 
+// ErrFileShareExhausted is returned by ConsumeFileShare when the share row
+// exists but is expired or past max_uses. Caller maps it to HTTP 410.
+var ErrFileShareExhausted = errors.New("file share expired or exhausted")
+
 // Store is the unified interface for all persistent data.
 //
 // DEPLOYMENT SEMANTICS (single-user flatten, phase 3.2/4): Fluctio is a
@@ -64,6 +68,16 @@ type Store interface {
 	GetWebSession(ctx context.Context, sid string) (*WebSessionRecord, error)
 	DeleteWebSession(ctx context.Context, sid string) error
 	DeleteExpiredWebSessions(ctx context.Context, before time.Time) error
+
+	// --- File shares (public /f/{token} links to workspace files) ---
+	CreateFileShare(ctx context.Context, rec *FileShareRecord) error
+	GetFileShare(ctx context.Context, token string) (*FileShareRecord, error)
+	// ConsumeFileShare atomically increments use_count for an unexpired,
+	// under-limit share and returns the row. ErrNotFound = no such token;
+	// ErrFileShareExhausted = exists but expired or hit max_uses.
+	ConsumeFileShare(ctx context.Context, token string, now time.Time) (*FileShareRecord, error)
+	ListFileSharesByAgent(ctx context.Context, agentID string) ([]FileShareRecord, error)
+	DeleteFileShare(ctx context.Context, token string) error
 
 	// --- Mobile push devices (per user) ---
 	SavePushDevice(ctx context.Context, d *PushDeviceRecord) error
@@ -418,6 +432,20 @@ type WebSessionRecord struct {
 	UserID    string    `json:"userId"`
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+// FileShareRecord is one row of file_shares — a capability-limited public
+// link (GET /f/{token}, no login) to a single workspace file. ExpiresAt nil
+// = permanent; MaxUses 0 = unlimited.
+type FileShareRecord struct {
+	Token     string     `json:"token"`
+	AgentID   string     `json:"agentId"`
+	Path      string     `json:"path"`
+	CreatedBy string     `json:"createdBy"`
+	CreatedAt time.Time  `json:"createdAt"`
+	ExpiresAt *time.Time `json:"expiresAt"`
+	MaxUses   int        `json:"maxUses"`
+	UseCount  int        `json:"useCount"`
 }
 
 // PushDeviceRecord stores one mobile push destination for a user.

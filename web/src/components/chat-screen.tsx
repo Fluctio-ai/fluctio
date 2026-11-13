@@ -31,6 +31,7 @@ import {
 } from "@/components/chat-turn";
 import { splitDataImagesCached, splitReplyOptionsCached, splitOnMarker, SPLIT_MARKER } from "@/components/chat-content";
 import { FilesPanel } from "@/components/chat-file-tree";
+import { ShareFileDialog } from "@/components/share-file-dialog";
 import { FileViewer, WorkspacePanel } from "@/components/chat-workspace";
 import { BUILTIN_COMMANDS, READ_ONLY_SLASH_COMMANDS, SlashMenu, TodoPanel, type SlashCommand, type SlashItem } from "@/components/chat-widgets";
 
@@ -82,6 +83,7 @@ const RegularBubble = memo(function RegularBubble({
   onFork,
   onOpenFile,
   onOpenFilesSheet,
+  onShareFile,
   onPlanEdit,
 }: RegularBubbleCallbacks & { msg: ChatMessage }) {
   // Quick-reply options: one split per render feeds both the bubble text
@@ -265,7 +267,12 @@ const RegularBubble = memo(function RegularBubble({
           )}
         </div>
         {msg.files && msg.files.length > 0 && (
-          <FilesPanel agentId={selectedAgent} files={msg.files} onOpenFile={onOpenFile} />
+          <FilesPanel
+            agentId={selectedAgent}
+            files={msg.files}
+            onOpenFile={onOpenFile}
+            onShare={onShareFile}
+          />
         )}
         <div
           className={`flex items-center gap-1.5 mt-1 ${
@@ -438,6 +445,7 @@ interface RegularBubbleCallbacks {
   onFork: (msg: ChatMessage) => void;
   onOpenFile: (file: ProducedFile) => void;
   onOpenFilesSheet: () => void;
+  onShareFile: (file: { path: string }) => void;
   onPlanEdit: () => void;
 }
 
@@ -771,6 +779,9 @@ export function ChatScreen() {
   // handed to WorkspacePanel as initialFile so opening the panel also
   // opens that file's preview, instead of landing on an empty tree.
   const [pendingFile, setPendingFile] = useState<ProducedFile | null>(null);
+  // Share-link minting target from a produced-file chip (FilesPanel's
+  // share button) — rendered by the ShareFileDialog at the bottom.
+  const [shareTarget, setShareTarget] = useState<{ path: string } | null>(null);
   // The workspace/preview panel opens to the right of chat. The platform
   // sidebar is left in whatever state the user put it — opening a file in
   // the conversation no longer collapses it.
@@ -2706,6 +2717,7 @@ export function ChatScreen() {
                         agentId={selectedAgent}
                         files={r.files!}
                         onOpenFile={(f) => { setPendingFile(f); setFilesSheetOpen(true); }}
+                        onShare={(f) => setShareTarget({ path: f.path })}
                       />
                     ));
                   if (rounds.length === 1) {
@@ -2789,6 +2801,7 @@ export function ChatScreen() {
                           setFilesSheetOpen(true);
                         }}
                         onOpenFilesSheet={() => setFilesSheetOpen(true)}
+                        onShareFile={(f) => setShareTarget({ path: f.path })}
                         onPlanEdit={() => {
                           setInput("");
                           textareaRef.current?.focus();
@@ -2822,6 +2835,7 @@ export function ChatScreen() {
                       setFilesSheetOpen(true);
                     }}
                     onOpenFilesSheet={() => setFilesSheetOpen(true)}
+                    onShareFile={(f) => setShareTarget({ path: f.path })}
                     onPlanEdit={() => {
                       setInput("");
                       textareaRef.current?.focus();
@@ -3244,6 +3258,18 @@ export function ChatScreen() {
           projectId={!urlSessionId && urlProjectId ? urlProjectId : undefined}
           initialFile={pendingFile}
           onClose={() => { setFilesSheetOpen(false); setPendingFile(null); }}
+        />
+      )}
+      {/* Share-link minting from a produced-file chip (the FilesPanel share
+          button) — same dialog the workspace panel's tree/viewer use. */}
+      {selectedAgent && (
+        <ShareFileDialog
+          key={shareTarget?.path ?? "none"}
+          agentId={selectedAgent}
+          file={shareTarget}
+          onOpenChange={(o) => {
+            if (!o) setShareTarget(null);
+          }}
         />
       )}
     </div>

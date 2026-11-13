@@ -19,6 +19,7 @@ import {
   FolderOpen,
   Image as ImageIcon,
   Music,
+  Share2,
   Trash2,
 } from "lucide-react";
 
@@ -87,7 +88,18 @@ export function formatBytes(n?: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function FilesPanel({ agentId, files, onOpenFile }: { agentId: string; files: ProducedFile[]; onOpenFile: (f: ProducedFile) => void }) {
+export function FilesPanel({
+  agentId,
+  files,
+  onOpenFile,
+  onShare,
+}: {
+  agentId: string;
+  files: ProducedFile[];
+  onOpenFile: (f: ProducedFile) => void;
+  // Optional per-row share-link affordance (opens the ShareFileDialog).
+  onShare?: (f: ProducedFile) => void;
+}) {
   const t = useT();
   return (
     <div className="mt-2 space-y-1.5 max-w-[85%]">
@@ -114,6 +126,15 @@ export function FilesPanel({ agentId, files, onOpenFile }: { agentId: string; fi
                   <div className="text-2xs text-muted-foreground/70">{formatBytes(f.size)}</div>
                 )}
               </button>
+              {onShare && (
+                <button
+                  onClick={() => onShare(f)}
+                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                  title={t("chat.files.share")}
+                >
+                  <Share2 className="h-4 w-4" />
+                </button>
+              )}
               <a
                 href={downloadUrl}
                 className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
@@ -189,6 +210,7 @@ export function FileTreeView({
   selectedPath,
   onSelect,
   onDelete,
+  onShare,
   defaultExpandDepth = 1,
 }: {
   files: WorkspaceFile[];
@@ -198,6 +220,9 @@ export function FileTreeView({
   // Optional per-row delete affordance (owner-only server-side). Called
   // with the row's node — folders included; the handler expands them.
   onDelete?: (node: FileTreeNode) => void;
+  // Optional per-row share-link affordance. Files only — folders have no
+  // single link target.
+  onShare?: (node: FileTreeNode) => void;
   // Folders shallower than this are open on first load (1 = open the root
   // folders only) so the user sees the top entries without a deep dump.
   defaultExpandDepth?: number;
@@ -243,6 +268,7 @@ export function FileTreeView({
           selectedPath={selectedPath}
           onSelect={onSelect}
           onDelete={onDelete}
+          onShare={onShare}
         />
       ))}
     </div>
@@ -257,6 +283,7 @@ function FileTreeRow({
   selectedPath,
   onSelect,
   onDelete,
+  onShare,
 }: {
   node: FileTreeNode;
   depth: number;
@@ -265,6 +292,7 @@ function FileTreeRow({
   selectedPath?: string;
   onSelect: (f: ProducedFile) => void;
   onDelete?: (node: FileTreeNode) => void;
+  onShare?: (node: FileTreeNode) => void;
 }) {
   const t = useT();
   const pad = { paddingLeft: 8 + depth * 14 };
@@ -275,6 +303,15 @@ function FileTreeRow({
       title={t("chat.files.delete")}
     >
       <Trash2 className="h-3.5 w-3.5" />
+    </button>
+  );
+  const shareBtn = onShare && !node.isDir && (
+    <button
+      onClick={(e) => { e.stopPropagation(); onShare(node); }}
+      className="shrink-0 rounded p-1 text-muted-foreground/60 opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover/row:opacity-100"
+      title={t("chat.files.share")}
+    >
+      <Share2 className="h-3.5 w-3.5" />
     </button>
   );
   if (node.isDir) {
@@ -307,6 +344,7 @@ function FileTreeRow({
               selectedPath={selectedPath}
               onSelect={onSelect}
               onDelete={onDelete}
+              onShare={onShare}
             />
           ))}
       </>
@@ -328,6 +366,7 @@ function FileTreeRow({
         <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="truncate text-foreground">{node.name}</span>
       </button>
+      {shareBtn}
       {delBtn}
     </div>
   );

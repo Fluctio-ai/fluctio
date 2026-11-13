@@ -1546,6 +1546,45 @@ export async function deleteAgentFile(agentId: string, path: string): Promise<vo
   }
 }
 
+// --- Public share links (/f/{token}, no login). Minted per file with a
+// time box and optional use cap; see internal/setup/handlers_shares.go. ---
+
+export interface FileShare {
+  token: string;
+  agentId: string;
+  path: string;
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string | null; // null = permanent
+  maxUses: number; // 0 = unlimited
+  useCount: number;
+}
+
+export async function shareAgentFile(
+  agentId: string,
+  path: string,
+  opts: { ttlHours?: number; maxUses?: number },
+): Promise<{ ok?: boolean; token?: string; url?: string; path?: string; expiresAt?: string | null; maxUses?: number; error?: string }> {
+  const res = await apiFetch(`/api/agents/${encodeURIComponent(agentId)}/share/${path.split("/").map(encodePathSegment).join("/")}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ttlHours: opts.ttlHours ?? 0, maxUses: opts.maxUses ?? 0 }),
+  });
+  return res.json();
+}
+
+export async function listAgentFileShares(agentId: string): Promise<FileShare[]> {
+  const res = await apiFetch(`/api/agents/${encodeURIComponent(agentId)}/shares`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return (data?.shares || []) as FileShare[];
+}
+
+export async function deleteFileShare(token: string): Promise<void> {
+  const res = await apiFetch(`/api/share/${encodeURIComponent(token)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`revoke failed: ${res.status}`);
+}
+
 // Agents
 export async function getAgents(): Promise<AgentDetail[]> {
   const res = await apiFetch("/api/agents");

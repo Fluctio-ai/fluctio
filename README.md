@@ -262,6 +262,7 @@ high → low):
 | `FLUCTIO_OBJECT_STORE_ALIYUN_INTERNAL` | empty | `true` / `1` to use the Alibaba Cloud internal endpoint. |
 | `FLUCTIO_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error`. |
 | `FLUCTIO_DEBUG_MODE` | empty (off) | `true` / `1` for verbose debug output (prompt dumps, request traces). |
+| `FLUCTIO_PUBLIC_BASE_URL` | empty | Externally reachable base URL (e.g. `https://fluct.example.com`). Used for public file-share links (`/f/{token}`) and the agent-side `share_file` tool; without it share URLs minted from the dashboard fall back to the request host and the tool errors. |
 
 ### Runtime tuning
 

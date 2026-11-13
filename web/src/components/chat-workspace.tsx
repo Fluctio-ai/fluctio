@@ -21,6 +21,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
+  Share2,
   X,
 } from "lucide-react";
 
@@ -38,6 +39,7 @@ import {
 } from "@/lib/api";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { ShareFileDialog } from "@/components/share-file-dialog";
 import { usePersistedDragWidth } from "@/hooks/use-drag-width";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import {
@@ -314,6 +316,10 @@ export function WorkspacePanel({
     collect(deleteTarget);
     return n;
   }, [deleteTarget]);
+
+  // Share-link minting: files only (folders have no single link target).
+  // The dialog owns duration/use-cap selection and the existing-share list.
+  const [shareTarget, setShareTarget] = useState<{ path: string } | null>(null);
 
   // Strip prefixes for the tree: backend-provided when it resolved the
   // scope (it knows which project a chat belongs to — the URL doesn't);
@@ -627,6 +633,7 @@ export function WorkspacePanel({
                       files={list}
                       rootPrefixes={treePrefixes}
                       onDelete={handleDeleteNode}
+                      onShare={(n) => !n.isDir && setShareTarget({ path: n.path })}
                       selectedPath={previewing?.path}
                       onSelect={(f) => setPreviewing(f)}
                     />
@@ -646,6 +653,7 @@ export function WorkspacePanel({
                   agentId={agentId}
                   file={previewing}
                   onClose={() => setPreviewing(null)}
+                  onShare={() => setShareTarget({ path: previewing.path })}
                 />
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
@@ -716,6 +724,18 @@ export function WorkspacePanel({
         onConfirm={confirmDeleteNode}
       />
 
+      {/* Public share-link minting for one workspace file (see
+          ShareFileDialog). Keyed by path so switching files remounts and
+          resets the minted-link state. */}
+      <ShareFileDialog
+        key={shareTarget?.path ?? "none"}
+        agentId={agentId}
+        file={shareTarget}
+        onOpenChange={(o) => {
+          if (!o) setShareTarget(null);
+        }}
+      />
+
       {/* Mobile full-screen workspace sheet (md:hidden). The desktop
           aside above is `hidden md:flex`, so without this branch the
           header workspace toggle is a no-op on phones — the panel
@@ -761,6 +781,7 @@ export function WorkspacePanel({
                 agentId={agentId}
                 file={previewing}
                 onClose={() => setPreviewing(null)}
+                onShare={() => setShareTarget({ path: previewing.path })}
               />
             </div>
           </div>
@@ -785,6 +806,7 @@ export function WorkspacePanel({
                   files={list}
                   rootPrefixes={treePrefixes}
                   onDelete={handleDeleteNode}
+                  onShare={(n) => !n.isDir && setShareTarget({ path: n.path })}
                   onSelect={(f) => setPreviewing(f)}
                 />
               );
@@ -799,7 +821,18 @@ export function WorkspacePanel({
 // FileViewer renders a selected workspace file inline (right column of the
 // Files tab): image / pdf / markdown / highlighted text / rendered-or-source
 // HTML. onClose, when given, deselects the file.
-export function FileViewer({ agentId, file, onClose }: { agentId: string; file: ProducedFile; onClose?: () => void }) {
+export function FileViewer({
+  agentId,
+  file,
+  onClose,
+  onShare,
+}: {
+  agentId: string;
+  file: ProducedFile;
+  onClose?: () => void;
+  // Optional share-link affordance (opens the ShareFileDialog).
+  onShare?: () => void;
+}) {
   const t = useT();
   const { preview } = fileKind(file.path);
   const src = fileUrl(agentId, file.path, false);
@@ -857,6 +890,15 @@ export function FileViewer({ agentId, file, onClose }: { agentId: string; file: 
             >
               <ExternalLink className="h-4 w-4" />
             </a>
+            {onShare && (
+              <button
+                onClick={onShare}
+                className="rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                title={t("chat.files.share")}
+              >
+                <Share2 className="h-4 w-4" />
+              </button>
+            )}
             {onClose && (
               <button
                 onClick={onClose}

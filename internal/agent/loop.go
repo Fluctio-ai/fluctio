@@ -5380,6 +5380,10 @@ var chatbotBuiltinAllowlist = []string{
 	// extension mechanism — without exec the chatbot can't run them.
 	"exec",
 	"load_skill",
+	// share_file hands a generated artifact (audio/image/HTML) to
+	// consumers that can't log in — chatbots on smart speakers and IM
+	// need it for exactly the deliverable-and-play flow.
+	"share_file",
 }
 
 // builtinAllowForMode returns the built-in tool name allowlist for the

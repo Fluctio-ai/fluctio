@@ -260,6 +260,14 @@ func (m *Manager) buildAgentWithSkillsCfg(rc config.ResolvedAgent, prov provider
 		tools.RegisterTimezoneTool(ag.registry, m.opts.dataStore)
 		tools.RegisterGetTimeTool(ag.registry)
 		tools.RegisterPreferenceTool(ag.registry, m.opts.dataStore)
+		// share_file mints capability-limited public /f/{token} links to
+		// workspace artifacts — how the agent hands generated audio/images
+		// to consumers that can't log in (smart speakers, IM contacts).
+		// Needs both stores: workspace resolves the scope-relative path,
+		// relational persists the share row.
+		if m.opts.workspaceStore != nil {
+			tools.RegisterShareFileTool(ag.registry, m.opts.dataStore, rc.ID)
+		}
 		// /goal feature: token-accounting hook + update_goal tool, all
 		// keyed on the agent's owner (set above by SetOwnerUserID).
 		// Same dataStore guard as cron because both features need the

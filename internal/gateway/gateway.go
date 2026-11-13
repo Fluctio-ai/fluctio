@@ -1016,6 +1016,14 @@ func (g *Gateway) Run() error {
 		defer wg.Done()
 		g.runNotificationsRetention(ctx)
 	}()
+	// file_shares retention: hourly prune of expired public /f/{token}
+	// links. Per-row expiry (no config knob) — see
+	// gateway_fileshare_retention.go.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		g.runFileShareRetention(ctx)
+	}()
 	// hardcase mining: hourly aggregation of zero-hit recall events into
 	// the review queue (recall_hardcases) — the golden-set feeder. Disabled
 	// when FLUCTIO_RECALL_HARDCASE_MINING_HOURS<=0.
