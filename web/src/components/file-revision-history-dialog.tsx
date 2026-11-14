@@ -5,7 +5,9 @@ import { History, Loader2, RotateCcw } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { diffLines } from "@/lib/diff";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -55,30 +57,38 @@ export function FileRevisionHistoryDialog({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [restoring, setRestoring] = useState(false);
 
-  const refresh = useCallback(async () => {
+  // Single fetch+parse path for the revision list — the open-effect and
+  // the post-restore refresh both go through here. The effect applies
+  // results inside a .then callback (setState-in-effect lint shape).
+  const fetchRevisions = useCallback(async (): Promise<Revision[] | null> => {
     const res = await apiFetch(`/api/agents/${agentId}/system-files/${filename}/revisions`);
-    if (res.ok) {
-      const data = await res.json();
-      setRevisions(data.revisions || []);
-    }
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.revisions || [];
   }, [agentId, filename]);
+
+  const applyRevisions = (revs: Revision[]) => {
+    setRevisions(revs);
+    setSelected(null);
+  };
 
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    apiFetch(`/api/agents/${agentId}/system-files/${filename}/revisions`)
-      .then(async (res) => {
-        if (cancelled || !res.ok) return;
-        const data = await res.json();
-        if (cancelled) return;
-        setRevisions(data.revisions || []);
-        setSelected(null);
+    fetchRevisions()
+      .then((revs) => {
+        if (!cancelled && revs !== null) applyRevisions(revs);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [open, agentId, filename]);
+  }, [open, fetchRevisions]);
+
+  const refresh = useCallback(async () => {
+    const revs = await fetchRevisions();
+    if (revs !== null) applyRevisions(revs);
+  }, [fetchRevisions]);
 
   const loadDetail = async (id: number) => {
     setLoadingDetail(true);
@@ -142,18 +152,19 @@ export function FileRevisionHistoryDialog({
               <button
                 key={r.id}
                 onClick={() => loadDetail(r.id)}
-                className={`w-full px-3 py-2 text-left text-sm transition-colors ${
+                className={cn(
+                  "w-full px-3 py-2 text-left text-sm transition-colors",
                   selected?.id === r.id ? "bg-accent" : "hover:bg-accent/50"
-                }`}
+                )}
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-xs px-1.5 py-0.5 rounded border border-border text-muted-foreground">
+                  <Badge variant="outline" className="text-muted-foreground">
                     {writerLabel(t, r.writer)}
-                  </span>
+                  </Badge>
                   {i === 0 && (
-                    <span className="text-xs px-1.5 py-0.5 rounded border border-success/30 text-success">
+                    <Badge variant="outline" className="border-success/30 text-success">
                       {t("customize.history.current")}
-                    </span>
+                    </Badge>
                   )}
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
@@ -184,13 +195,14 @@ export function FileRevisionHistoryDialog({
                 {diffLines(selected.prev_content, selected.content).map((row, i) => (
                   <div
                     key={i}
-                    className={`px-3 whitespace-pre-wrap break-all ${
+                    className={cn(
+                      "px-3 whitespace-pre-wrap break-all",
                       row.type === "add"
                         ? "bg-success/10 text-success"
                         : row.type === "del"
                           ? "bg-destructive/10 text-destructive line-through"
                           : "text-muted-foreground"
-                    }`}
+                    )}
                   >
                     {row.type === "add" ? "+ " : row.type === "del" ? "- " : "  "}
                     {row.text}

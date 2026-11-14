@@ -342,6 +342,13 @@ func New(env *config.EnvConfig) (*Gateway, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
+	// Agent-file revision history: one knob, read once at boot — the
+	// store gates recording on it and the consolidation sweep prunes
+	// with the same value. <=0 disables recording (history freezes).
+	if db, ok := st.(*store.DBStore); ok && db != nil {
+		db.SetAgentFileRevisionKeep(readRetentionHours("FLUCTIO_AGENT_FILE_REVISIONS_KEEP",
+			store.DefaultAgentFileRevisionKeep))
+	}
 
 	// Single-user enforcement: owner identity comes from env vars first
 	// (FLUCTIO_OWNER_JSON or four individual FLUCTIO_* vars), falling back

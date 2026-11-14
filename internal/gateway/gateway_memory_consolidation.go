@@ -51,14 +51,13 @@ func (g *Gateway) consolidateMemoriesOnce(ctx context.Context) {
 	}
 
 	// Agent-file revision history: cap at FLUCTIO_AGENT_FILE_REVISIONS_KEEP
-	// (default 100 per file). A disabled history (keep<=0) freezes in place
-	// rather than being pruned away.
-	if keep := store.AgentFileRevisionsKeepFromEnv(); keep > 0 {
-		if n, err := db.PruneAgentFileRevisions(ctx, keep); err != nil {
-			slog.Warn("agent file revision prune", "error", err)
-		} else if n > 0 {
-			slog.Info("agent file revisions pruned", "deleted", n, "keep", keep)
-		}
+	// (default 100 per file, read once at boot). A disabled history
+	// (keep<=0) freezes in place rather than being pruned away —
+	// PruneAgentFileRevisions no-ops on it.
+	if n, err := db.PruneAgentFileRevisions(ctx, db.AgentFileRevisionKeep()); err != nil {
+		slog.Warn("agent file revision prune", "error", err)
+	} else if n > 0 {
+		slog.Info("agent file revisions pruned", "deleted", n)
 	}
 }
 

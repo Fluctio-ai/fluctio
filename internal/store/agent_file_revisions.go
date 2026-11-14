@@ -1,25 +1,19 @@
 package store
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
-	"strconv"
-	"strings"
 	"time"
 )
 
 // Agent file revision history: every agent_files write that actually
 // changed the content lands one row here, tagged with the writer and a
-// short reason — the "commit message". This replaces the old
-// overwrite-is-destroy audit story (slog + the write-only
-// MEMORY.archive.md) with diffable, attributable, rollback-able history.
+// short reason — the "commit message". Together with the diffable list /
+// detail API this is the attributable history the write-only
+// MEMORY.archive.md never provided (the archive still records what the
+// tidy sweep pruned; revisions record every writer's changes).
 //
 // Recording happens inside SaveAgentFile, so no writer can bypass it;
 // CompareAndSwapAgentFile forwards through SaveAgentFile and inherits it.
@@ -28,14 +22,13 @@ import (
 // row. Content is deliberately not part of the list shape — only
 // GetAgentFileRevision returns bytes.
 type AgentFileRevision struct {
-	ID          int64     `json:"id"`
-	AgentID     string    `json:"agent_id"`
-	Filename    string    `json:"filename"`
-	Writer      string    `json:"writer"`
-	Reason      string    `json:"reason"`
-	ContentHash string    `json:"content_hash"`
-	Size        int       `json:"size"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID        int64     `json:"id"`
+	AgentID   string    `json:"agent_id"`
+	Filename  string    `json:"filename"`
+	Writer    string    `json:"writer"`
+	Reason    string    `json:"reason"`
+	Size      int       `json:"size"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // AgentFileRevisionDetail is a revision plus the content of the
@@ -72,40 +65,23 @@ func applyFileWriteOpts(opts []FileWriteOpt) fileWriteOpts {
 			o(&out)
 		}
 	}
-	if out.writer == "" {
-		out.writer = "system"
-	}
 	return out
 }
 
-// DefaultAgentFileRevisionKeep bounds history per (agent, filename) when
-// nothing overrides it; the gateway wires FLUCTIO_AGENT_FILE_REVISIONS_KEEP
-// over it (<=0 disables recording entirely).
+// DefaultAgentFileRevisionKeep bounds history per (agent, filename).
+// The gateway reads FLUCTIO_AGENT_FILE_REVISIONS_KEEP (<=0 disables
+// recording entirely) and wires the value via SetAgentFileRevisionKeep.
 const DefaultAgentFileRevisionKeep = 100
-
-// AgentFileRevisionsKeepFromEnv reads FLUCTIO_AGENT_FILE_REVISIONS_KEEP
-// (default 100 revisions kept per file; <=0 disables recording; parse
-// error falls back to the default with a warning). Read once at store
-// open (factory) and per pass by the prune sweep — same helper, same
-// semantics.
-func AgentFileRevisionsKeepFromEnv() int {
-	v := strings.TrimSpace(os.Getenv("FLUCTIO_AGENT_FILE_REVISIONS_KEEP"))
-	if v == "" {
-		return DefaultAgentFileRevisionKeep
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		slog.Warn("agent file revisions: invalid env, using default",
-			"env", "FLUCTIO_AGENT_FILE_REVISIONS_KEEP", "value", v, "default", DefaultAgentFileRevisionKeep)
-		return DefaultAgentFileRevisionKeep
-	}
-	return n
-}
 
 // SetAgentFileRevisionKeep overrides how many revisions to keep per
 // (agent, filename); keep<=0 turns recording off (existing rows stay
 // until pruned by a later positive setting).
 func (d *DBStore) SetAgentFileRevisionKeep(keep int) { d.agentFileRevisionKeep = keep }
+
+// AgentFileRevisionKeep returns the effective per-file revision cap.
+// The gateway's consolidation sweep prunes with the same value it
+// installed at boot.
+func (d *DBStore) AgentFileRevisionKeep() int { return d.agentFileRevisionKeep }
 
 func (d *DBStore) migrateAgentFileRevisions(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx, d.adaptDDL(`CREATE TABLE IF NOT EXISTS agent_file_revisions (
@@ -115,7 +91,6 @@ func (d *DBStore) migrateAgentFileRevisions(ctx context.Context) error {
 		writer TEXT NOT NULL DEFAULT '',
 		reason TEXT NOT NULL DEFAULT '',
 		content TEXT NOT NULL,
-		content_hash TEXT NOT NULL,
 		size INTEGER NOT NULL DEFAULT 0,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`)); err != nil {
@@ -137,21 +112,20 @@ func (d *DBStore) recordAgentFileRevision(ctx context.Context, tx *sql.Tx, agent
 	if d.agentFileRevisionKeep <= 0 {
 		return nil
 	}
-	sum := sha256.Sum256(data)
 	_, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`INSERT INTO agent_file_revisions
-			(agent_id, filename, writer, reason, content, content_hash, size, created_at)
-			VALUES (%s, %s, %s, %s, %s, %s, %s, %s)`,
-			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7), d.ph(8)),
-		agentID, filename, o.writer, o.reason, string(data), hex.EncodeToString(sum[:]), len(data), time.Now().UTC())
+			(agent_id, filename, writer, reason, content, size, created_at)
+			VALUES (%s, %s, %s, %s, %s, %s, %s)`,
+			d.ph(1), d.ph(2), d.ph(3), d.ph(4), d.ph(5), d.ph(6), d.ph(7)),
+		agentID, filename, o.writer, o.reason, string(data), len(data), time.Now().UTC())
 	return err
 }
 
-const agentFileRevisionCols = `id, agent_id, filename, writer, reason, content_hash, size, created_at`
+const agentFileRevisionCols = `id, agent_id, filename, writer, reason, size, created_at`
 
 func scanAgentFileRevision(row interface{ Scan(...any) error }) (AgentFileRevision, error) {
 	var r AgentFileRevision
-	err := row.Scan(&r.ID, &r.AgentID, &r.Filename, &r.Writer, &r.Reason, &r.ContentHash, &r.Size, &r.CreatedAt)
+	err := row.Scan(&r.ID, &r.AgentID, &r.Filename, &r.Writer, &r.Reason, &r.Size, &r.CreatedAt)
 	return r, err
 }
 
@@ -194,7 +168,7 @@ func (d *DBStore) GetAgentFileRevision(ctx context.Context, agentID, filename st
 		id, agentID, filename)
 	var detail AgentFileRevisionDetail
 	err := row.Scan(&detail.ID, &detail.AgentID, &detail.Filename, &detail.Writer, &detail.Reason,
-		&detail.ContentHash, &detail.Size, &detail.CreatedAt, &detail.Content)
+		&detail.Size, &detail.CreatedAt, &detail.Content)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -227,18 +201,4 @@ func (d *DBStore) PruneAgentFileRevisions(ctx context.Context, keep int) (int64,
 		return 0, err
 	}
 	return res.RowsAffected()
-}
-
-// agentFilesContentChanged reports whether the (agent, filename) row's
-// current bytes differ from data. A missing file counts as changed (the
-// save will create it).
-func (d *DBStore) agentFilesContentChanged(ctx context.Context, agentID, filename string, data []byte) (bool, error) {
-	prev, err := d.GetAgentFile(ctx, agentID, filename)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return true, nil
-		}
-		return false, err
-	}
-	return !bytes.Equal(prev, data), nil
 }

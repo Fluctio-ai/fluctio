@@ -129,14 +129,7 @@ func (m *Memory) LoadMemory() string {
 
 // SaveMemory overwrites the long-term memory.
 func (m *Memory) SaveMemory(content string) error {
-	if m.store != nil {
-		if m.userID == "" {
-			return fmt.Errorf("agent.Memory.SaveMemory: userID required")
-		}
-		return m.store.SaveMemory(m.ctx(), m.agentID, m.userID, content)
-	}
-	os.MkdirAll(m.workspace, 0o755)
-	return os.WriteFile(m.memoryPath(), []byte(content), 0o644)
+	return m.saveMemoryAs(content, "system", "")
 }
 
 // (ReviewAndUpdateMemory removed with the heartbeat: it scanned HISTORY.md,

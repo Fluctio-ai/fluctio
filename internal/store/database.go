@@ -5111,44 +5111,46 @@ func (d *DBStore) CompareAndSwapAgentFile(ctx context.Context, agentID, filename
 	return true, nil
 }
 
-// SaveAgentFile writes the (agent_id, filename) row (upsert). Content
-// changes are recorded in agent_file_revisions in the same transaction —
-// the save and its history commit or roll back together, and a rewrite
-// with identical bytes records nothing.
+// SaveAgentFile writes the (agent_id, filename) row (upsert). The
+// DO UPDATE's WHERE clause makes same-byte writes no-ops (no updated_at
+// bump, no revision), and the affected-row count gates the revision
+// insert — one statement replaces the old read-then-write pre-check,
+// which also double-read the row on every CAS path. Content changes are
+// recorded in agent_file_revisions in the same transaction: the save
+// and its history commit or roll back together.
 func (d *DBStore) SaveAgentFile(ctx context.Context, agentID, filename string, data []byte, opts ...FileWriteOpt) error {
 	if agentID == "" {
 		return errors.New("store: SaveAgentFile requires agent_id")
 	}
 	o := applyFileWriteOpts(opts)
-	changed, err := d.agentFilesContentChanged(ctx, agentID, filename, data)
-	if err != nil {
-		return err
-	}
-	if !changed {
-		return nil
-	}
 	now := time.Now().UTC()
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	var res sql.Result
 	if d.dialect == "postgres" {
-		_, err = tx.ExecContext(ctx,
+		res, err = tx.ExecContext(ctx,
 			`INSERT INTO agent_files (agent_id, filename, content, updated_at)
 				VALUES ($1, $2, $3, $4)
-				ON CONFLICT (agent_id, filename) DO UPDATE SET content=$3, updated_at=$4`,
+				ON CONFLICT (agent_id, filename) DO UPDATE SET content=$3, updated_at=$4
+				WHERE agent_files.content <> $3`,
 			agentID, filename, string(data), now)
 	} else {
-		_, err = tx.ExecContext(ctx,
+		res, err = tx.ExecContext(ctx,
 			`INSERT INTO agent_files (agent_id, filename, content, updated_at)
 				VALUES (?, ?, ?, ?)
 				ON CONFLICT (agent_id, filename) DO UPDATE SET
-				  content=excluded.content, updated_at=excluded.updated_at`,
+				  content=excluded.content, updated_at=excluded.updated_at
+				WHERE agent_files.content <> excluded.content`,
 			agentID, filename, string(data), now)
 	}
 	if err != nil {
 		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return tx.Commit()
 	}
 	if err := d.recordAgentFileRevision(ctx, tx, agentID, filename, data, o); err != nil {
 		return err
