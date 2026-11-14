@@ -25,6 +25,9 @@ type DBStore struct {
 	db      *sql.DB
 	dialect string // "postgres" or "sqlite"
 	dsn     string // connection string; backup re-connects via pg_dump
+	// agentFileRevisionKeep is the per-file revision cap; <=0 disables
+	// history recording. Wired from FLUCTIO_AGENT_FILE_REVISIONS_KEEP.
+	agentFileRevisionKeep int
 }
 
 // NewDBStore creates a database-backed store.
@@ -50,7 +53,7 @@ func NewDBStore(dialect, dsn string) (*DBStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping %s: %w", dialect, err)
 	}
-	return &DBStore{db: db, dialect: dialect, dsn: dsn}, nil
+	return &DBStore{db: db, dialect: dialect, dsn: dsn, agentFileRevisionKeep: DefaultAgentFileRevisionKeep}, nil
 }
 
 // DB returns the underlying *sql.DB so satellite packages (e.g.
@@ -244,6 +247,9 @@ func (d *DBStore) Migrate(ctx context.Context) error {
 	}
 	if err := d.migrateShelvedCandidates(ctx); err != nil {
 		return fmt.Errorf("migrate shelved candidates table: %w", err)
+	}
+	if err := d.migrateAgentFileRevisions(ctx); err != nil {
+		return fmt.Errorf("migrate agent file revisions table: %w", err)
 	}
 	if err := d.migrateKBCards(ctx); err != nil {
 		return fmt.Errorf("migrate kb cards tables: %w", err)
@@ -4058,6 +4064,7 @@ func (d *DBStore) DeleteAgent(ctx context.Context, agentID string) error {
 	defer tx.Rollback()
 	for _, t := range []string{
 		"agent_files",
+		"agent_file_revisions",
 		"sessions",
 		"session_messages",
 		"session_events",
@@ -5087,7 +5094,7 @@ func AgentFileLock(agentID, filename string) *sync.Mutex {
 // still matches expect. Under the per-file process lock the read-compare-
 // write window is closed, so a concurrent writer between the check and
 // the save can no longer silently lose (or lose) either side's bytes.
-func (d *DBStore) CompareAndSwapAgentFile(ctx context.Context, agentID, filename string, expect, next []byte) (bool, error) {
+func (d *DBStore) CompareAndSwapAgentFile(ctx context.Context, agentID, filename string, expect, next []byte, opts ...FileWriteOpt) (bool, error) {
 	mu := AgentFileLock(agentID, filename)
 	mu.Lock()
 	defer mu.Unlock()
@@ -5098,33 +5105,55 @@ func (d *DBStore) CompareAndSwapAgentFile(ctx context.Context, agentID, filename
 	if !bytes.Equal(current, expect) {
 		return false, nil
 	}
-	if err := d.SaveAgentFile(ctx, agentID, filename, next); err != nil {
+	if err := d.SaveAgentFile(ctx, agentID, filename, next, opts...); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-// SaveAgentFile writes the (agent_id, filename) row (upsert).
-func (d *DBStore) SaveAgentFile(ctx context.Context, agentID, filename string, data []byte) error {
+// SaveAgentFile writes the (agent_id, filename) row (upsert). Content
+// changes are recorded in agent_file_revisions in the same transaction —
+// the save and its history commit or roll back together, and a rewrite
+// with identical bytes records nothing.
+func (d *DBStore) SaveAgentFile(ctx context.Context, agentID, filename string, data []byte, opts ...FileWriteOpt) error {
 	if agentID == "" {
 		return errors.New("store: SaveAgentFile requires agent_id")
 	}
+	o := applyFileWriteOpts(opts)
+	changed, err := d.agentFilesContentChanged(ctx, agentID, filename, data)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
 	now := time.Now().UTC()
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	if d.dialect == "postgres" {
-		_, err := d.db.ExecContext(ctx,
+		_, err = tx.ExecContext(ctx,
 			`INSERT INTO agent_files (agent_id, filename, content, updated_at)
 				VALUES ($1, $2, $3, $4)
 				ON CONFLICT (agent_id, filename) DO UPDATE SET content=$3, updated_at=$4`,
 			agentID, filename, string(data), now)
+	} else {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO agent_files (agent_id, filename, content, updated_at)
+				VALUES (?, ?, ?, ?)
+				ON CONFLICT (agent_id, filename) DO UPDATE SET
+				  content=excluded.content, updated_at=excluded.updated_at`,
+			agentID, filename, string(data), now)
+	}
+	if err != nil {
 		return err
 	}
-	_, err := d.db.ExecContext(ctx,
-		`INSERT INTO agent_files (agent_id, filename, content, updated_at)
-			VALUES (?, ?, ?, ?)
-			ON CONFLICT (agent_id, filename) DO UPDATE SET
-			  content=excluded.content, updated_at=excluded.updated_at`,
-		agentID, filename, string(data), now)
-	return err
+	if err := d.recordAgentFileRevision(ctx, tx, agentID, filename, data, o); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *DBStore) DeleteAgentFile(ctx context.Context, agentID, filename string) error {

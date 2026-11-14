@@ -135,7 +135,8 @@ func upsertUserMDTimezone(ctx context.Context, r *Registry, userID, tz string) e
 		content = "# Current Chatter\n" + tzPrefix + tz
 	}
 
-	if err := r.systemFileStore.SaveWorkspaceFile(ctx, r.agentID, userID, filename, []byte(content)); err != nil {
+	if err := r.systemFileStore.SaveWorkspaceFile(ctx, r.agentID, userID, filename, []byte(content),
+		store.WithFileWriter("agent", "set_timezone")); err != nil {
 		return fmt.Errorf("save USER.md: %w", err)
 	}
 	return nil

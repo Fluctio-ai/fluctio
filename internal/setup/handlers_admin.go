@@ -788,7 +788,8 @@ func (s *Server) forkAgentContent(r *http.Request, src, dst *store.AgentRecord) 
 		if len(data) == 0 {
 			continue
 		}
-		if err := s.dataStore.SaveAgentFile(r.Context(), dst.ID, name, data); err != nil {
+		if err := s.dataStore.SaveAgentFile(r.Context(), dst.ID, name, data,
+			store.WithFileWriter("system", "fork from "+src.ID)); err != nil {
 			return err
 		}
 	}

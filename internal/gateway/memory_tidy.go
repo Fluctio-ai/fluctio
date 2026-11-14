@@ -221,7 +221,8 @@ Output STRICT JSON only — no markdown fences, no commentary:
 	// CAS instead of read-then-save: a concurrent auto-persist appending
 	// between the check and the write used to silently overwrite one
 	// side's bytes. The store-side per-file lock closes the window.
-	swapped, err := st.CompareAndSwapAgentFile(ctx, agentID, "MEMORY.md", original, []byte(tidied))
+	swapped, err := st.CompareAndSwapAgentFile(ctx, agentID, "MEMORY.md", original, []byte(tidied),
+		store.WithFileWriter("tidy", fmt.Sprintf("%d edits", len(archived))))
 	if err != nil {
 		slog.Warn("memory tidy: save failed", "agent", agentID, "error", err)
 		return
@@ -258,7 +259,8 @@ func archiveMemoryTidy(ctx context.Context, st store.Store, agentID string, entr
 		slog.Warn("memory tidy: archive read failed, skipping append", "agent", agentID, "error", err)
 		return
 	}
-	if err := st.SaveAgentFile(ctx, agentID, memoryArchiveFile, append(prev, []byte(sb.String())...)); err != nil {
+	if err := st.SaveAgentFile(ctx, agentID, memoryArchiveFile, append(prev, []byte(sb.String())...),
+		store.WithFileWriter("tidy", "archive append")); err != nil {
 		slog.Warn("memory tidy: archive save failed", "agent", agentID, "error", err)
 	}
 }

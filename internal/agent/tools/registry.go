@@ -15,6 +15,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/embedding"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 	"github.com/fluctio-ai/fluctio/internal/sandbox"
+	"github.com/fluctio-ai/fluctio/internal/store"
 	"github.com/fluctio-ai/fluctio/internal/workspace"
 )
 
@@ -365,7 +366,7 @@ type turnFailKey struct {
 type SystemFileStore interface {
 	GetWorkspaceFile(ctx context.Context, agentID, userID, filename string) ([]byte, error)
 	GetWorkspaceFileExact(ctx context.Context, agentID, userID, filename string) ([]byte, error)
-	SaveWorkspaceFile(ctx context.Context, agentID, userID, filename string, data []byte) error
+	SaveWorkspaceFile(ctx context.Context, agentID, userID, filename string, data []byte, opts ...store.FileWriteOpt) error
 }
 
 // SetWorkspaceStore installs a workspace store on the registry. File tools

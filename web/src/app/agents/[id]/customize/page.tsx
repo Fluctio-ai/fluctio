@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SaveButton } from "@/components/save-button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Save, Check, Loader2, RotateCcw } from "lucide-react";
+import { Save, Check, Loader2, RotateCcw, History } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { PageHeader } from "@/components/settings-ui";
+import { FileRevisionHistoryDialog } from "@/components/file-revision-history-dialog";
 
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
@@ -47,6 +48,7 @@ export default function AgentCustomizePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const loadAll = async () => {
     const entries = await Promise.all(
@@ -140,6 +142,9 @@ export default function AgentCustomizePage() {
         desc={t("customize.subtitle", { name: agentName })}
         actions={
           <div className="flex gap-2">
+            <Button onClick={() => setHistoryOpen(true)} variant="outline" title={t("customize.historyTitle")}>
+              <History className="h-4 w-4 mr-2" /> {t("customize.history")}
+            </Button>
             {active?.source === "db" && (
               <Button
                 onClick={handleRevert}
@@ -213,6 +218,14 @@ export default function AgentCustomizePage() {
         // short of "fills the viewport".
         style={{ height: "min(55vh, 480px)", minHeight: 280 }}
         placeholder={`# ${activeTab}\n\n${t("customize.placeholder")}`}
+      />
+
+      <FileRevisionHistoryDialog
+        agentId={agentId}
+        filename={activeTab}
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        onRestored={loadAll}
       />
     </div>
   );

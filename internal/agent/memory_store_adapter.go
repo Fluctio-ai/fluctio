@@ -36,8 +36,8 @@ func (a *MemoryStoreAdapter) GetMemory(ctx context.Context, agentID, _ string) (
 	return string(data), nil
 }
 
-func (a *MemoryStoreAdapter) SaveMemory(ctx context.Context, agentID, _ string, content string) error {
-	return a.st.SaveAgentFile(ctx, agentID, memoryFilename, []byte(content))
+func (a *MemoryStoreAdapter) SaveMemory(ctx context.Context, agentID, _ string, content string, opts ...store.FileWriteOpt) error {
+	return a.st.SaveAgentFile(ctx, agentID, memoryFilename, []byte(content), opts...)
 }
 
 func (a *MemoryStoreAdapter) GetWorkspaceFile(ctx context.Context, agentID, _ string, filename string) ([]byte, error) {
@@ -51,6 +51,6 @@ func (a *MemoryStoreAdapter) GetWorkspaceFileExact(ctx context.Context, agentID,
 	return a.st.GetAgentFile(ctx, agentID, filename)
 }
 
-func (a *MemoryStoreAdapter) SaveWorkspaceFile(ctx context.Context, agentID, _ string, filename string, data []byte) error {
-	return a.st.SaveAgentFile(ctx, agentID, filename, data)
+func (a *MemoryStoreAdapter) SaveWorkspaceFile(ctx context.Context, agentID, _ string, filename string, data []byte, opts ...store.FileWriteOpt) error {
+	return a.st.SaveAgentFile(ctx, agentID, filename, data, opts...)
 }

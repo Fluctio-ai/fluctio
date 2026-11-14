@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"testing"
+
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 type memoryStoreSpy struct {
@@ -17,7 +19,7 @@ func (s *memoryStoreSpy) GetMemory(context.Context, string, string) (string, err
 	return "persisted", nil
 }
 
-func (s *memoryStoreSpy) SaveMemory(context.Context, string, string, string) error {
+func (s *memoryStoreSpy) SaveMemory(context.Context, string, string, string, ...store.FileWriteOpt) error {
 	s.saveMemoryCalls++
 	return nil
 }
@@ -31,7 +33,7 @@ func (s *memoryStoreSpy) GetWorkspaceFileExact(context.Context, string, string, 
 	return []byte("user-profile"), nil
 }
 
-func (s *memoryStoreSpy) SaveWorkspaceFile(context.Context, string, string, string, []byte) error {
+func (s *memoryStoreSpy) SaveWorkspaceFile(context.Context, string, string, string, []byte, ...store.FileWriteOpt) error {
 	s.saveWorkspaceFileCalls++
 	return nil
 }
@@ -60,7 +62,7 @@ func TestNewMemoryWithStoreForUserEmptyUserIDFailsClosed(t *testing.T) {
 	if store.getWorkspaceFileExactCall != 0 {
 		t.Fatalf("GetWorkspaceFileExact called %d times, want 0", store.getWorkspaceFileExactCall)
 	}
-	if err := mem.SaveUserFile("x"); err == nil {
+	if err := mem.SaveUserFile("x", "test"); err == nil {
 		t.Fatal("SaveUserFile() error = nil, want error")
 	}
 	if store.saveWorkspaceFileCalls != 0 {
@@ -80,7 +82,7 @@ func TestNewMemoryWithStoreForUserCanBeRebound(t *testing.T) {
 	if got := mem.LoadUserFile(); got != "user-profile" {
 		t.Fatalf("LoadUserFile() = %q, want user-profile", got)
 	}
-	if err := mem.SaveUserFile("x"); err != nil {
+	if err := mem.SaveUserFile("x", "test"); err != nil {
 		t.Fatalf("SaveUserFile() error = %v", err)
 	}
 }

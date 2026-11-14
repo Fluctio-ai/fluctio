@@ -17,6 +17,7 @@ import (
 	"github.com/fluctio-ai/fluctio/internal/llmjson"
 	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // MemoryStore is an optional interface for DB-backed memory persistence.
@@ -35,10 +36,10 @@ import (
 //     leak the owner's.
 type MemoryStore interface {
 	GetMemory(ctx context.Context, agentID, userID string) (string, error)
-	SaveMemory(ctx context.Context, agentID, userID, content string) error
+	SaveMemory(ctx context.Context, agentID, userID, content string, opts ...store.FileWriteOpt) error
 	GetWorkspaceFile(ctx context.Context, agentID, userID, filename string) ([]byte, error)
 	GetWorkspaceFileExact(ctx context.Context, agentID, userID, filename string) ([]byte, error)
-	SaveWorkspaceFile(ctx context.Context, agentID, userID, filename string, data []byte) error
+	SaveWorkspaceFile(ctx context.Context, agentID, userID, filename string, data []byte, opts ...store.FileWriteOpt) error
 }
 
 type Memory struct {
@@ -143,8 +144,9 @@ func (m *Memory) SaveMemory(content string) error {
 // maintained freshness path is AutoPersistMemory below.)
 
 // SaveMemoryWithScan scans content for threats before writing to MEMORY.md.
-// Logs warnings for any detected threats but still writes (to avoid data loss).
-func (m *Memory) SaveMemoryWithScan(content string) error {
+// Logs warnings for any detected threats but still writes (to avoid data
+// loss). reason becomes the revision-history commit message for this write.
+func (m *Memory) SaveMemoryWithScan(content, reason string) error {
 	if threats := privacy.Scan(content); len(threats) > 0 {
 		for _, t := range threats {
 			slog.Warn("memory safety threat detected in MEMORY.md write",
@@ -154,11 +156,24 @@ func (m *Memory) SaveMemoryWithScan(content string) error {
 			)
 		}
 	}
-	return m.SaveMemory(content)
+	return m.saveMemoryAs(content, "auto-persist", reason)
 }
 
-// SaveUserFile writes USER.md with threat scanning.
-func (m *Memory) SaveUserFile(content string) error {
+// saveMemoryAs is SaveMemory with revision attribution for the writer.
+func (m *Memory) saveMemoryAs(content, writer, reason string) error {
+	if m.store != nil {
+		if m.userID == "" {
+			return fmt.Errorf("agent.Memory.SaveMemory: userID required")
+		}
+		return m.store.SaveMemory(m.ctx(), m.agentID, m.userID, content, store.WithFileWriter(writer, reason))
+	}
+	os.MkdirAll(m.workspace, 0o755)
+	return os.WriteFile(m.memoryPath(), []byte(content), 0o644)
+}
+
+// SaveUserFile writes USER.md with threat scanning. reason becomes the
+// revision-history commit message for this write.
+func (m *Memory) SaveUserFile(content, reason string) error {
 	if threats := privacy.Scan(content); len(threats) > 0 {
 		for _, t := range threats {
 			slog.Warn("memory safety threat detected in USER.md write",
@@ -172,7 +187,8 @@ func (m *Memory) SaveUserFile(content string) error {
 		if m.userID == "" {
 			return fmt.Errorf("agent.Memory.SaveUserFile: userID required")
 		}
-		return m.store.SaveWorkspaceFile(m.ctx(), m.agentID, m.userID, "USER.md", []byte(content))
+		return m.store.SaveWorkspaceFile(m.ctx(), m.agentID, m.userID, "USER.md", []byte(content),
+			store.WithFileWriter("auto-persist", reason))
 	}
 	os.MkdirAll(m.workspace, 0o755)
 	return os.WriteFile(filepath.Join(m.workspace, "USER.md"), []byte(content), 0o644)
@@ -534,8 +550,9 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": [], "memory_
 
 	// appendPersisted rewrites a memory file with any new items appended
 	// under a dated section — one helper for both MEMORY.md and USER.md,
-	// whose write blocks were otherwise copy-paste.
-	appendPersisted := func(current string, items, rewritten []string, save func(string) error, name string) {
+	// whose write blocks were otherwise copy-paste. save receives the new
+	// content plus a revision "commit message" summarizing this round.
+	appendPersisted := func(current string, items, rewritten []string, save func(string, string) error, name string) {
 		if len(items) == 0 && len(rewritten) == 0 {
 			return
 		}
@@ -550,7 +567,15 @@ If nothing worth saving, output: {"memory_facts": [], "user_notes": [], "memory_
 		for _, item := range items {
 			sb.WriteString(fmt.Sprintf("- %s\n", item))
 		}
-		if err := save(sb.String()); err != nil {
+		reason := fmt.Sprintf("+%d entries, %d rewrites", len(items), len(rewritten))
+		if len(items) > 0 {
+			snippet := strings.TrimSpace(items[0])
+			if len(snippet) > 60 {
+				snippet = snippet[:60] + "…"
+			}
+			reason += " · " + snippet
+		}
+		if err := save(sb.String(), reason); err != nil {
 			slog.Warn("auto-persist: failed to save "+name, "error", err)
 		} else {
 			slog.Info("auto-persist: updated "+name, "items", len(items), "rewrites", len(rewritten))

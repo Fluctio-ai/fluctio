@@ -454,6 +454,9 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("GET /api/agents/{id}/system-files/{name}", auth(s.handleGetAgentSystemFile))
 	mux.HandleFunc("PUT /api/agents/{id}/system-files/{name}", auth(s.handlePutAgentSystemFile))
 	mux.HandleFunc("DELETE /api/agents/{id}/system-files/{name}", auth(s.handleDeleteAgentSystemFile))
+	mux.HandleFunc("GET /api/agents/{id}/system-files/{name}/revisions", auth(s.handleListAgentSystemFileRevisions))
+	mux.HandleFunc("GET /api/agents/{id}/system-files/{name}/revisions/{rev}", auth(s.handleGetAgentSystemFileRevision))
+	mux.HandleFunc("POST /api/agents/{id}/system-files/{name}/revisions/{rev}/restore", auth(s.handleRestoreAgentSystemFileRevision))
 
 	// Per-agent projects: named workspace folders that group chats and
 	// share files across all sessions inside them. POST .../sessions

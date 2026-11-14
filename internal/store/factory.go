@@ -41,6 +41,7 @@ func New(cfg *StorageConfig, homeDir string) (Store, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open database: %w", err)
 		}
+		db.SetAgentFileRevisionKeep(AgentFileRevisionsKeepFromEnv())
 		if cfg.AutoMigrate {
 			slog.Info("running database migrations")
 			if err := db.Migrate(context.Background()); err != nil {

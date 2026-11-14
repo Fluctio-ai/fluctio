@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fluctio-ai/fluctio/internal/config"
+	"github.com/fluctio-ai/fluctio/internal/store"
 )
 
 // fakeMemoryStore is a deterministic in-memory MemoryStore for the
@@ -34,7 +35,7 @@ func (f *fakeMemoryStore) GetMemory(ctx context.Context, agentID, userID string)
 	return "", nil
 }
 
-func (f *fakeMemoryStore) SaveMemory(ctx context.Context, agentID, userID, content string) error {
+func (f *fakeMemoryStore) SaveMemory(ctx context.Context, agentID, userID, content string, _ ...store.FileWriteOpt) error {
 	f.put(agentID, userID, "MEMORY.md", content)
 	return nil
 }
@@ -57,7 +58,7 @@ func (f *fakeMemoryStore) GetWorkspaceFileExact(ctx context.Context, agentID, us
 	return nil, nil
 }
 
-func (f *fakeMemoryStore) SaveWorkspaceFile(ctx context.Context, agentID, userID, filename string, data []byte) error {
+func (f *fakeMemoryStore) SaveWorkspaceFile(ctx context.Context, agentID, userID, filename string, data []byte, _ ...store.FileWriteOpt) error {
 	f.put(agentID, userID, filename, string(data))
 	return nil
 }

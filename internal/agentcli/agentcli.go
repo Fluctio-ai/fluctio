@@ -460,7 +460,7 @@ func PutFile(ctx context.Context, st store.Store, agentID, filename string, data
 	if err := validateSystemFilename(filename); err != nil {
 		return err
 	}
-	return st.SaveAgentFile(ctx, agentID, filename, data)
+	return st.SaveAgentFile(ctx, agentID, filename, data, store.WithFileWriter("cli", ""))
 }
 
 // GetFile reads a system file.

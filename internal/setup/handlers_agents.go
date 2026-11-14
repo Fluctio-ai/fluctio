@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/fluctio-ai/fluctio/internal/agent/tools"
@@ -974,7 +975,8 @@ func (s *Server) handlePutAgentSystemFile(w http.ResponseWriter, r *http.Request
 	if !s.checkSystemFileWritable(w, r, id, name) {
 		return
 	}
-	if err := s.dataStore.SaveAgentFile(r.Context(), id, name, []byte(body.Content)); err != nil {
+	if err := s.dataStore.SaveAgentFile(r.Context(), id, name, []byte(body.Content),
+		store.WithFileWriter("ui", "")); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
@@ -996,6 +998,89 @@ func (s *Server) handleDeleteAgentSystemFile(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := s.dataStore.DeleteAgentFile(r.Context(), id, name); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	s.invalidateAgent(id)
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// Revision history for system files (agent_file_revisions): list is
+// metadata only; detail carries content plus the previous version for
+// diffing; restore rewrites the current file with an old revision's
+// bytes — itself recorded as a new revision, so rollback is auditable
+// and reversible too.
+func (s *Server) handleListAgentSystemFileRevisions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	if !agentSystemFileAllowlist[name] {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "filename not allowed"})
+		return
+	}
+	revs, err := s.dataStore.ListAgentFileRevisions(r.Context(), id, name, 0)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if revs == nil {
+		revs = []store.AgentFileRevision{}
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"revisions": revs})
+}
+
+func (s *Server) handleGetAgentSystemFileRevision(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	if !agentSystemFileAllowlist[name] {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "filename not allowed"})
+		return
+	}
+	revID, err := strconv.ParseInt(r.PathValue("rev"), 10, 64)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid revision id"})
+		return
+	}
+	detail, err := s.dataStore.GetAgentFileRevision(r.Context(), id, name, revID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			jsonResponse(w, http.StatusNotFound, map[string]any{"error": "revision not found"})
+			return
+		}
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleRestoreAgentSystemFileRevision(w http.ResponseWriter, r *http.Request) {
+	if !s.requireWritable(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	name := r.PathValue("name")
+	if !agentSystemFileAllowlist[name] {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "filename not allowed"})
+		return
+	}
+	revID, err := strconv.ParseInt(r.PathValue("rev"), 10, 64)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, map[string]any{"error": "invalid revision id"})
+		return
+	}
+	if !s.checkSystemFileWritable(w, r, id, name) {
+		return
+	}
+	detail, err := s.dataStore.GetAgentFileRevision(r.Context(), id, name, revID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			jsonResponse(w, http.StatusNotFound, map[string]any{"error": "revision not found"})
+			return
+		}
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := s.dataStore.SaveAgentFile(r.Context(), id, name, []byte(detail.Content),
+		store.WithFileWriter("ui", "rollback to #"+strconv.FormatInt(revID, 10))); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}

@@ -277,11 +277,17 @@ type Store interface {
 	// SOUL.md, IDENTITY.md, MEMORY.md, AGENTS.md, BOOTSTRAP.md, etc.
 	// Flattened to one row per (agentID, filename) — the per-user overlay
 	// was removed when agent_files was collapsed onto the agent dimension.
+	//
+	// Content-changing saves also land a row in agent_file_revisions
+	// (writer + reason via WithFileWriter) so history, attribution and
+	// rollback survive the overwrite. List/Get below read that history.
 	GetAgentFile(ctx context.Context, agentID, filename string) ([]byte, error)
-	CompareAndSwapAgentFile(ctx context.Context, agentID, filename string, expect, next []byte) (bool, error)
-	SaveAgentFile(ctx context.Context, agentID, filename string, data []byte) error
+	CompareAndSwapAgentFile(ctx context.Context, agentID, filename string, expect, next []byte, opts ...FileWriteOpt) (bool, error)
+	SaveAgentFile(ctx context.Context, agentID, filename string, data []byte, opts ...FileWriteOpt) error
 	DeleteAgentFile(ctx context.Context, agentID, filename string) error
 	ListAgentFiles(ctx context.Context, agentID string) ([]string, error)
+	ListAgentFileRevisions(ctx context.Context, agentID, filename string, limit int) ([]AgentFileRevision, error)
+	GetAgentFileRevision(ctx context.Context, agentID, filename string, id int64) (*AgentFileRevisionDetail, error)
 
 	// --- Configs (providers / settings live here; channels have their own table) ---
 	//
