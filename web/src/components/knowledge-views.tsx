@@ -19,6 +19,7 @@ import {
   ArrowLeftIcon,
   AlignLeftIcon,
   AlertTriangleIcon,
+  BookmarkIcon,
   CheckIcon,
   CheckSquareIcon,
   ChevronDownIcon,
@@ -71,7 +72,7 @@ import { dayKey, endOfToday, formatFullTime, formatListTime, pad2 } from "@/lib/
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
-import { KbRow } from "@/components/kb-row";
+import { KbRow, ListEmptyState } from "@/components/kb-row";
 import { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -467,7 +468,12 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
             {loading ? (
               <p className="text-xs text-muted-foreground px-2 py-1.5">{t("common.loading")}</p>
             ) : sources.length === 0 ? (
-              <p className="text-xs text-muted-foreground px-2 py-1.5">{t("knowledge.noSources")}</p>
+              <ListEmptyState
+                icon={FileTextIcon}
+                text={t("knowledge.noSources")}
+                actionLabel={t("knowledge.text")}
+                onAction={() => setTextDialogOpen(true)}
+              />
             ) : visibleSources.length === 0 ? (
               <p className="text-xs text-muted-foreground px-2 py-1.5">{t("knowledge.noSearchResult")}</p>
             ) : (
@@ -1133,7 +1139,12 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
           {loading ? (
             <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
           ) : bookmarks.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("knowledge.noBookmarks")}</p>
+            <ListEmptyState
+              icon={BookmarkIcon}
+              text={t("knowledge.noBookmarks")}
+              actionLabel={t("knowledge.addBookmark")}
+              onAction={() => setAddOpen(true)}
+            />
           ) : visible.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("knowledge.noSearchResult")}</p>
           ) : (

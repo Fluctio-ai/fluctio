@@ -48,7 +48,7 @@ import { useAgentName } from "@/hooks/use-agent-name";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
 import { formatFullTime, formatListTime } from "@/lib/time";
-import { KbRow } from "@/components/kb-row";
+import { KbRow, ListEmptyState } from "@/components/kb-row";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 
 // WikiPage is the three-pane wiki browser at /agents/<id>/wiki/.
@@ -472,9 +472,7 @@ export default function WikiPage() {
                 {t("common.loading")}
               </p>
             ) : pages.length === 0 ? (
-              <p className="text-xs text-muted-foreground px-2 py-1.5">
-                {t("wiki.noPages")}
-              </p>
+              <ListEmptyState icon={BookOpenIcon} text={t("wiki.noPages")} />
             ) : (
               PAGE_TYPE_SECTIONS(t).map((section) => {
                 const sectionPages = grouped[section.type] || [];

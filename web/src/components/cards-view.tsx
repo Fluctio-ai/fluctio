@@ -53,7 +53,7 @@ import { endOfToday, formatFullTime, formatListTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
-import { KbRow } from "@/components/kb-row";
+import { KbRow, ListEmptyState } from "@/components/kb-row";
 import { CardDeck, CardsReview } from "@/components/cards-review";
 import { usePaneResize, PaneDivider } from "@/components/pane-divider";
 
@@ -435,7 +435,12 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
             {loading ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("common.loading")}</p>
             ) : cards.length === 0 ? (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("cards.empty")}</p>
+              <ListEmptyState
+                icon={LayersIcon}
+                text={t("cards.empty")}
+                actionLabel={t("cards.add")}
+                onAction={() => setAddOpen(true)}
+              />
             ) : (
               cards.map((c) => {
                 const due = isDueSoon(c, now);

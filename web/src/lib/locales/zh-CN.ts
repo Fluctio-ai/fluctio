@@ -836,7 +836,7 @@ const zhCN: Record<string, string> = {
   "knowledge.searchTodos": "搜索待办…",
   "knowledge.sortNewest": "最新优先",
   "knowledge.sortOldest": "最早优先",
-  "knowledge.noSearchResult": "没有匹配的闪记。",
+  "knowledge.noSearchResult": "没有匹配的内容。",
   "knowledge.bookmarks": "书签",
   "knowledge.addBookmark": "添加书签",
   "knowledge.bookmarkUrlLabel": "链接",

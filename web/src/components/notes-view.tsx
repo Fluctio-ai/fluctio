@@ -17,6 +17,7 @@ import {
   ImagePlusIcon,
   PaperclipIcon,
   PenLineIcon,
+  PencilIcon,
   PlusIcon,
   Trash2Icon,
   XIcon,
@@ -72,7 +73,7 @@ import {
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { formatFullTime, formatListTime } from "@/lib/time";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
-import { KbRow } from "@/components/kb-row";
+import { KbRow, ListEmptyState } from "@/components/kb-row";
 import { cn } from "@/lib/utils";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { Whiteboard } from "@/components/whiteboard";
@@ -680,8 +681,15 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
           <div className="p-2">
             {loading ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("common.loading")}</p>
+            ) : filtered.length === 0 && !query.trim() ? (
+              <ListEmptyState
+                icon={PenLineIcon}
+                text={t("knowledge.notes.empty")}
+                actionLabel={t("knowledge.notes.new")}
+                onAction={newNote}
+              />
             ) : filtered.length === 0 ? (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("knowledge.notes.empty")}</p>
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("knowledge.noSearchResult")}</p>
             ) : (
               filtered.map((n) => (
                 <KbRow
@@ -693,14 +701,24 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                   timeTitle={formatFullTime(n.updated_at)}
                   description={noteSnippet(n) || undefined}
                   actions={
-                    <button
-                      type="button"
-                      className="shrink-0 text-muted-foreground hover:text-destructive"
-                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(n); }}
-                      aria-label={t("knowledge.notes.delete")}
-                    >
-                      <Trash2Icon className="size-3.5" />
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted-foreground hover:text-primary"
+                        onClick={(e) => { e.stopPropagation(); select(n); }}
+                        aria-label={t("common.edit")}
+                      >
+                        <PencilIcon className="size-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(n); }}
+                        aria-label={t("knowledge.notes.delete")}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                      </button>
+                    </>
                   }
                 />
               ))

@@ -836,7 +836,7 @@ const en: Record<string, string> = {
   "knowledge.searchTodos": "Search todos…",
   "knowledge.sortNewest": "Newest first",
   "knowledge.sortOldest": "Oldest first",
-  "knowledge.noSearchResult": "No matching flashes.",
+  "knowledge.noSearchResult": "No matching entries.",
   "knowledge.bookmarks": "Bookmarks",
   "knowledge.addBookmark": "Add bookmark",
   "knowledge.bookmarkUrlLabel": "URL",
