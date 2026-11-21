@@ -13,16 +13,19 @@ import (
 )
 
 // scanSource decodes one kb_sources row — the original 10 columns plus the five
-// content-type columns (type/status/start_at/end_at/reminded_at) — into a
-// KBSource. Shared by ListSources and ListTodos so the 15-column scan lives in
-// exactly one place. Returns ok=false on scan error so callers skip the row.
+// content-type columns (type/status/start_at/end_at/reminded_at) and the
+// insights join column — into a KBSource. Shared by ListSources / ListTodos /
+// ListFlashes / ListDueTodos so the 17-column scan lives in exactly one place.
+// Returns ok=false on scan error so callers skip the row.
 func scanSource(rows *sql.Rows) (KBSource, bool) {
 	var s KBSource
 	var wikiGeneratedAt, createdAt, updatedAt, wikiDirtyAt sql.NullString
 	var typeNS, statusNS, startAtNS, endAtNS, remindedAtNS sql.NullString
+	var insightsGeneratedAt sql.NullString
 	if err := rows.Scan(&s.ID, &s.AgentID, &s.Title, &s.SourceType, &s.SourceRef,
 		&s.EntryCount, &s.TotalChars, &wikiGeneratedAt, &createdAt, &updatedAt,
-		&typeNS, &statusNS, &startAtNS, &endAtNS, &remindedAtNS, &wikiDirtyAt); err != nil {
+		&typeNS, &statusNS, &startAtNS, &endAtNS, &remindedAtNS, &wikiDirtyAt,
+		&insightsGeneratedAt); err != nil {
 		return KBSource{}, false
 	}
 	s.CreatedAt, _ = time.Parse(time.RFC3339, createdAt.String)
@@ -35,6 +38,11 @@ func scanSource(rows *sql.Rows) (KBSource, bool) {
 	if wikiDirtyAt.Valid && wikiDirtyAt.String != "" {
 		if t, err := time.Parse(time.RFC3339, wikiDirtyAt.String); err == nil {
 			s.WikiDirtyAt = &t
+		}
+	}
+	if insightsGeneratedAt.Valid && insightsGeneratedAt.String != "" {
+		if t, err := time.Parse(time.RFC3339, insightsGeneratedAt.String); err == nil {
+			s.InsightsGeneratedAt = &t
 		}
 	}
 	s.Type = typeNS.String
@@ -347,7 +355,9 @@ func (s *KBStore) ListTodos(ctx context.Context, agentID, status string, dueWith
 		order = "end_at ASC"
 	}
 	q := fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
-		type, status, start_at, end_at, reminded_at, wiki_dirty_at
+		type, status, start_at, end_at, reminded_at, wiki_dirty_at,
+		(SELECT i.generated_at FROM kb_article_insights i
+			WHERE i.agent_id = kb_sources.agent_id AND i.source_id = kb_sources.id) AS insights_generated_at
 		FROM kb_sources WHERE %s ORDER BY %s`,
 		strings.Join(conditions, " AND "), order)
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -377,7 +387,9 @@ func (s *KBStore) ListFlashes(ctx context.Context, agentID string, limit int) ([
 	}
 	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
-			type, status, start_at, end_at, reminded_at, wiki_dirty_at
+			type, status, start_at, end_at, reminded_at, wiki_dirty_at,
+			(SELECT i.generated_at FROM kb_article_insights i
+				WHERE i.agent_id = kb_sources.agent_id AND i.source_id = kb_sources.id) AS insights_generated_at
 			FROM kb_sources WHERE agent_id = %s AND type = 'flash'
 			ORDER BY updated_at DESC LIMIT %s`, s.ph(1), s.ph(2)),
 		agentID, limit)
@@ -650,7 +662,9 @@ func (s *KBStore) ListDueTodos(ctx context.Context, agentID string, withinHours 
 	}
 	horizon := time.Now().UTC().Add(time.Duration(withinHours) * time.Hour).Format(time.RFC3339)
 	q := fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
-		type, status, start_at, end_at, reminded_at, wiki_dirty_at
+		type, status, start_at, end_at, reminded_at, wiki_dirty_at,
+		(SELECT i.generated_at FROM kb_article_insights i
+			WHERE i.agent_id = kb_sources.agent_id AND i.source_id = kb_sources.id) AS insights_generated_at
 		FROM kb_sources
 		WHERE agent_id = %s AND type = 'todo' AND status IN ('pending', 'in_progress')
 		AND end_at != '' AND end_at <= %s AND reminded_at = ''

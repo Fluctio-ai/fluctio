@@ -29,6 +29,10 @@ type KBSource struct {
 	// WikiDirtyAt, when set and later than WikiGeneratedAt, marks the source's
 	// derived wiki pages as stale — the autogen sweep rebuilds them.
 	WikiDirtyAt *time.Time `json:"wiki_dirty_at,omitempty"`
+	// InsightsGeneratedAt, when set, means the deep-reading pass has run on
+	// this article (a kb_article_insights row exists). The app article list
+	// uses the flag to show the processed mark on the row.
+	InsightsGeneratedAt *time.Time `json:"insights_generated_at,omitempty"`
 }
 
 type KBEntry struct {

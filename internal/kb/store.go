@@ -1027,7 +1027,9 @@ func (s *KBStore) ListSources(ctx context.Context, agentID string, limit, offset
 	}
 	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf(`SELECT id, agent_id, title, source_type, source_ref, entry_count, total_chars, wiki_generated_at, created_at, updated_at,
-			type, status, start_at, end_at, reminded_at, wiki_dirty_at
+			type, status, start_at, end_at, reminded_at, wiki_dirty_at,
+			(SELECT i.generated_at FROM kb_article_insights i
+				WHERE i.agent_id = kb_sources.agent_id AND i.source_id = kb_sources.id) AS insights_generated_at
 			FROM kb_sources WHERE agent_id = %s ORDER BY created_at DESC LIMIT %s OFFSET %s`,
 			s.ph(1), s.ph(2), s.ph(3)),
 		agentID, limit, offset)
