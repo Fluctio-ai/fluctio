@@ -1,7 +1,7 @@
 "use client";
 import { useLocale, useT } from "@/lib/i18n";
 
-import { createElement, isValidElement, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SearchInput } from "@/components/ui/search-input";
@@ -27,6 +27,7 @@ import {
   ChevronRightIcon,
   CopyIcon,
   FileTextIcon,
+  LightbulbIcon,
   ListOrderedIcon,
   PencilIcon,
   PlusIcon,
@@ -73,6 +74,8 @@ import { readCache, writeCache } from "@/lib/page-data-cache";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { KbRow, ListEmptyState } from "@/components/kb-row";
+import { usePaneResize, PaneDivider } from "@/components/pane-divider";
+import { MarkdownSplitEditor } from "@/components/markdown-split-editor";
 import { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -828,6 +831,13 @@ function EmptyHint() {
 
 type FlashItem = { src: KBSource; content: string };
 
+// flashTitle derives the row title: the first non-empty line of the body
+// (flashes have no separate title field — the backend re-derives src.title
+// from the content on save, but the body's own first line reads truer).
+function flashTitle(content: string, fallback: string): string {
+  return content.split("\n").map((l) => l.trim()).find(Boolean) || fallback;
+}
+
 // KB list toolbars share one "add" affordance — h-7 + text-xs, the reading-
 // surface mini deliberately below the settings h-8 default. Encoded once so
 // the three toolbars can't drift.
@@ -845,6 +855,12 @@ function ToolbarAddButton({
   );
 }
 
+// FlashView — 灵感闪记 as a notes-style two-pane: left KbRow list (search +
+// sort + 记一笔), right pane flips between a DocMarkdown reading state
+// (header meta + pencil/delete) and the shared MarkdownSplitEditor
+// (CodeMirror + live preview). Saves are 1.2s-debounced autosaves — upsert
+// via kbSaveFlash for a new flash, kbUpdateFlash for an existing one (the
+// backend rewrites the chunk, re-derives the title, re-embeds).
 export function FlashView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
   const { locale } = useLocale();
@@ -853,18 +869,30 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
     agentId ? readCache<FlashItem[]>(`kb-flash:${agentId}`) : undefined,
   );
   const [flashes, setFlashes] = useState<FlashItem[]>(initialFlash ?? []);
-  const [draft, setDraft] = useState("");
-  const [flashOpen, setFlashOpen] = useState(false);
   const [loading, setLoading] = useState(!initialFlash);
-  const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
   const [sortNew, setSortNew] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<FlashItem | null>(null);
-  // Manual content edit (the pencil on a card): editTarget is the flash
-  // being edited, editDraft its textarea value.
-  const [editTarget, setEditTarget] = useState<FlashItem | null>(null);
-  const [editDraft, setEditDraft] = useState("");
-  const [editSaving, setEditSaving] = useState(false);
+  // Master-detail state: selectedId = the flash shown in the right pane;
+  // creating = the right pane holds a not-yet-saved new flash; editing =
+  // the right pane is the split editor instead of the reading state.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "dirty" | "idle">("saved");
+  // Mirrors for async callbacks (notes-view pattern): an autosave response
+  // must not land on a flash the user has since switched away from.
+  const selectedIdRef = useRef<string | null>(null);
+  const creatingRef = useRef(false);
+  useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
+  useEffect(() => { creatingRef.current = creating; }, [creating]);
+  // Autosave suppression: swapping the draft wholesale (select/new/delete)
+  // isn't an edit.
+  const skipSaveRef = useRef(true);
+  // Resizable left pane — same 220–520px contract as articles/notes.
+  const listRef = useRef<HTMLDivElement>(null);
+  const { width: leftWidth, startDrag } = usePaneResize(listRef, 320, 220, 520);
 
   const load = useCallback(async () => {
     if (!agentId) return;
@@ -889,33 +917,88 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleSave = useCallback(async () => {
+  const selected = flashes.find((f) => f.src.id === selectedId) ?? null;
+  const rightOpen = creating || selectedId !== null;
+
+  const select = useCallback((f: FlashItem) => {
+    setSelectedId(f.src.id);
+    setCreating(false);
+    setEditing(false);
+    setDraft(f.content);
+    setSaveState("saved");
+    skipSaveRef.current = true; // loading a flash into the draft isn't an edit
+  }, []);
+
+  const startEdit = useCallback((f: FlashItem) => {
+    select(f);
+    setEditing(true);
+  }, [select]);
+
+  const newFlash = useCallback(() => {
+    setCreating(true);
+    setSelectedId(null);
+    setEditing(true);
+    setDraft("");
+    setSaveState("saved");
+    skipSaveRef.current = true;
+  }, []);
+
+  const backToList = useCallback(() => {
+    setSelectedId(null);
+    setCreating(false);
+    setEditing(false);
+    skipSaveRef.current = true;
+    setDraft("");
+  }, []);
+
+  // Autosave: draft edits settle for 1.2s, then upsert. skipSaveRef
+  // suppresses the first fire after select/new/back swapped the draft.
+  useEffect(() => {
+    if (skipSaveRef.current) { skipSaveRef.current = false; return; }
     if (!agentId || !draft.trim()) return;
-    setSaving(true);
-    try {
-      const res = await kbSaveFlash(agentId, draft.trim());
-      if ("error" in res) notify(res.error!); else { setDraft(""); setFlashOpen(false); await load(); }
-    } catch { notify(t("knowledge.failedAddText")); }
-    setSaving(false);
-  }, [agentId, draft, load, t]);
+    const targetId = creatingRef.current ? null : selectedIdRef.current;
+    if (!creatingRef.current && !targetId) return;
+    setSaveState("dirty");
+    const timer = setTimeout(async () => {
+      setSaveState("saving");
+      try {
+        if (targetId) {
+          const res = await kbUpdateFlash(agentId, targetId, draft.trim());
+          // Stale-response guard: the user switched flashes mid-flight.
+          if (selectedIdRef.current !== targetId) { setSaveState("idle"); return; }
+          if ("error" in res && res.error) { notify(res.error); setSaveState("dirty"); return; }
+          setSaveState("saved");
+          const nowIso = new Date().toISOString();
+          setFlashes((prev) => prev.map((f) =>
+            f.src.id === targetId ? { ...f, content: draft.trim(), src: { ...f.src, updated_at: nowIso } } : f,
+          ));
+        } else {
+          const res = await kbSaveFlash(agentId, draft.trim());
+          if (!creatingRef.current) { setSaveState("idle"); return; }
+          if (res.error || !res.source_id) { notify(res.error ?? t("knowledge.notes.saveFailed")); setSaveState("dirty"); return; }
+          setSaveState("saved");
+          // Adopt the server id: further keystrokes update, not re-create.
+          // skipSaveRef swallows the draft-effect run the identity change
+          // would otherwise trigger.
+          skipSaveRef.current = true;
+          setCreating(false);
+          setSelectedId(res.source_id);
+          await load();
+        }
+      } catch { notify(t("knowledge.notes.saveFailed")); setSaveState("dirty"); }
+    }, 1200);
+    return () => clearTimeout(timer);
+    // draft drives the save; selection identity is read through refs so
+    // switching panes doesn't cancel (or double-fire) an in-flight save.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, agentId]);
 
   const handleDelete = useCallback(async (id: string) => {
     if (!agentId) return;
     await deleteKBSource(agentId, id);
+    if (selectedIdRef.current === id) backToList();
     load();
-  }, [agentId, load]);
-
-  // handleUpdateFlash saves the edit dialog's content over the existing
-  // flash (backend rewrites the chunk, re-derives the title, re-embeds).
-  const handleUpdateFlash = useCallback(async () => {
-    if (!agentId || !editTarget || !editDraft.trim()) return;
-    setEditSaving(true);
-    const res = await kbUpdateFlash(agentId, editTarget.src.id, editDraft.trim());
-    setEditSaving(false);
-    if ("error" in res) { notify(res.error!); return; }
-    setEditTarget(null);
-    load();
-  }, [agentId, editTarget, editDraft, notify, load]);
+  }, [agentId, load, backToList]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -926,100 +1009,178 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
     });
   }, [flashes, query, sortNew]);
 
+  const charCount = (editing ? draft : selected?.content ?? "").replace(/\s/g, "").length;
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b px-3 py-2">
-        <SearchInput value={query} onChange={setQuery} placeholder={t("knowledge.searchFlashes")} />
-        <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setSortNew((v) => !v)}>
-          {sortNew ? t("knowledge.sortNewest") : t("knowledge.sortOldest")}
-        </Button>
-        <ToolbarAddButton onClick={() => setFlashOpen(true)}>{t("knowledge.flashes")}</ToolbarAddButton>
+    <div className="flex h-full min-h-0">
+      {/* ── list pane (notes DNA: muted surface, resizable, KbRow) ── */}
+      <div
+        ref={listRef}
+        style={{ "--pane-lw": `${leftWidth}px` } as React.CSSProperties}
+        className={cn(
+          "w-full flex-col border-r bg-muted/30 md:w-[var(--pane-lw)] md:shrink-0",
+          rightOpen ? "hidden md:flex" : "flex",
+        )}
+      >
+        <div className="border-b">
+          <div className="flex items-center gap-2 p-3 pb-2">
+            <SearchInput value={query} onChange={setQuery} placeholder={t("knowledge.searchFlashes")} />
+            <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setSortNew((v) => !v)}>
+              {sortNew ? t("knowledge.sortNewest") : t("knowledge.sortOldest")}
+            </Button>
+            <ToolbarAddButton onClick={newFlash}>{t("knowledge.flashNew")}</ToolbarAddButton>
+          </div>
+          <p className="px-3 pb-2 text-xs tabular-nums text-muted-foreground">
+            {t("knowledge.notes.count", { n: flashes.length })}
+          </p>
+        </div>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="p-2">
+            {loading ? (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("common.loading")}</p>
+            ) : flashes.length === 0 ? (
+              <ListEmptyState
+                icon={LightbulbIcon}
+                text={t("knowledge.noFlashes")}
+                actionLabel={t("knowledge.flashNew")}
+                onAction={newFlash}
+              />
+            ) : visible.length === 0 ? (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("knowledge.noSearchResult")}</p>
+            ) : (
+              visible.map((f) => (
+                <KbRow
+                  key={f.src.id}
+                  selected={f.src.id === selectedId}
+                  onClick={() => select(f)}
+                  title={flashTitle(f.content, t("knowledge.flashes"))}
+                  time={formatListTime(f.src.created_at, locale)}
+                  timeTitle={formatFullTime(f.src.created_at)}
+                  actions={
+                    <>
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted-foreground hover:text-primary"
+                        onClick={(e) => { e.stopPropagation(); startEdit(f); }}
+                        aria-label={t("common.edit")}
+                      >
+                        <PencilIcon className="h-3.5 w-3.5" />
+                      </button>
+                      <CopyIconButton sizeClass="h-3.5 w-3.5" value={f.content} />
+                      <button
+                        type="button"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(f); }}
+                        aria-label={t("common.delete")}
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  }
+                />
+              ))
+            )}
+          </div>
+        </ScrollArea>
       </div>
-      <ScrollArea className="flex-1 min-h-0">
-        <div className="p-4 columns-1 sm:columns-2 lg:columns-3 gap-3">
-          {loading ? (
-            <p className="text-xs text-muted-foreground">{t("common.loading")}</p>
-          ) : flashes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("knowledge.noFlashes")}</p>
-          ) : visible.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("knowledge.noSearchResult")}</p>
-          ) : (
-            visible.map(({ src, content }) => (
-              <div
-                key={src.id}
-                className="group mb-3 break-inside-avoid rounded-lg border bg-background p-3"
+
+      <PaneDivider onPointerDown={startDrag} />
+
+      {/* ── right pane: reading state ⇄ notes-grade split editor ── */}
+      <div className={cn("min-w-0 flex-1 flex-col", rightOpen ? "flex" : "hidden md:flex")}>
+        {rightOpen ? (
+          <>
+            <div className="flex items-center gap-2 border-b p-3">
+              <button
+                type="button"
+                onClick={backToList}
+                className="-ml-1 shrink-0 text-muted-foreground hover:text-foreground md:hidden"
+                aria-label={t("common.back")}
               >
-                <DocMarkdown text={content} />
-                <div className="mt-2 flex items-center justify-between text-xs tabular-nums text-muted-foreground">
-                  <span title={formatFullTime(src.created_at)}>{formatListTime(src.created_at, locale)}</span>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-primary relative after:absolute after:-inset-2"
-                      onClick={() => { setEditDraft(content); setEditTarget({ src, content }); }}
+                <ArrowLeftIcon className="h-5 w-5" />
+              </button>
+              {creating ? (
+                <span className="text-sm font-medium">{t("knowledge.flashNew")}</span>
+              ) : (
+                selected && (
+                  <>
+                    <span
+                      className="text-xs tabular-nums text-muted-foreground"
+                      title={formatFullTime(selected.src.created_at)}
+                    >
+                      {formatListTime(selected.src.created_at, locale)}
+                    </span>
+                    <span className="text-xs text-muted-foreground">·</span>
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {t("knowledge.notes.words", { n: charCount })}
+                    </span>
+                  </>
+                )
+              )}
+              <span className="flex-1" />
+              {editing ? (
+                <>
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {saveState === "saving" ? t("knowledge.notes.saving")
+                      : saveState === "dirty" ? t("knowledge.notes.dirty")
+                      : t("knowledge.notes.saved")}
+                  </span>
+                  {!creating && (
+                    <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs" onClick={() => setEditing(false)}>
+                      {t("common.done")}
+                    </Button>
+                  )}
+                </>
+              ) : (
+                selected && (
+                  <>
+                    <Button
+                      size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0"
+                      onClick={() => startEdit(selected)}
                       aria-label={t("common.edit")}
                     >
-                      <PencilIcon className="h-3 w-3" />
-                    </button>
-                    <CopyIconButton sizeClass="h-3 w-3" value={content} />
-                    <button
-                      type="button"
-                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive relative after:absolute after:-inset-2"
-                      onClick={() => setDeleteTarget({ src, content })}
+                      <PencilIcon className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0 hover:text-destructive"
+                      onClick={() => setDeleteTarget(selected)}
                       aria-label={t("common.delete")}
                     >
-                      <TrashIcon className="h-3 w-3" />
-                    </button>
-                  </div>
-                </div>
+                      <TrashIcon className="h-3.5 w-3.5" />
+                    </Button>
+                  </>
+                )
+              )}
+            </div>
+            {editing ? (
+              <div className="min-h-0 flex-1">
+                <MarkdownSplitEditor
+                  value={draft}
+                  onChange={setDraft}
+                  placeholder={t("knowledge.flashPlaceholder")}
+                  resetKey={creating ? "new" : selectedId}
+                />
               </div>
-            ))
-          )}
-        </div>
-      </ScrollArea>
-
-      <Dialog open={flashOpen} onOpenChange={setFlashOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t("knowledge.saveFlash")}</DialogTitle></DialogHeader>
-          <div className="space-y-1.5">
-            <Label>{t("knowledge.contentLabel")}</Label>
-            <textarea
-              className="flex min-h-[120px] w-full rounded-md border bg-transparent px-3 py-2 text-sm"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              placeholder={t("knowledge.flashPlaceholder")}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFlashOpen(false)}>{t("common.cancel")}</Button>
-            <Button onClick={handleSave} disabled={saving || !draft.trim()}>
-              {saving ? t("common.saving") : t("knowledge.saveFlash")}
+            ) : (
+              selected && (
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="p-4">
+                    <DocMarkdown text={selected.content} />
+                  </div>
+                </ScrollArea>
+              )
+            )}
+          </>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+            <p className="text-sm text-muted-foreground">{t("knowledge.flashHint")}</p>
+            <Button size="sm" onClick={newFlash}>
+              <PlusIcon className="size-4" />
+              {t("knowledge.flashNew")}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Flash edit dialog — the pencil's target, same shape as the capture one. */}
-      <Dialog open={editTarget !== null} onOpenChange={(o) => { if (!o) setEditTarget(null); }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{t("knowledge.editFlash")}</DialogTitle></DialogHeader>
-          <div className="space-y-1.5">
-            <Label>{t("knowledge.contentLabel")}</Label>
-            <textarea
-              className="flex min-h-[120px] w-full rounded-md border bg-transparent px-3 py-2 text-sm"
-              value={editDraft}
-              onChange={(e) => setEditDraft(e.target.value)}
-              placeholder={t("knowledge.flashPlaceholder")}
-            />
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditTarget(null)}>{t("common.cancel")}</Button>
-            <Button onClick={handleUpdateFlash} disabled={editSaving || !editDraft.trim()}>
-              {editSaving ? t("common.saving") : t("common.save")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        )}
+      </div>
 
       <ConfirmDeleteDialog
         open={deleteTarget !== null}
