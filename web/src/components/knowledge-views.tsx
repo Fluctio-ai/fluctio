@@ -920,19 +920,17 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
   const selected = flashes.find((f) => f.src.id === selectedId) ?? null;
   const rightOpen = creating || selectedId !== null;
 
+  // Selecting opens the split editor directly — same affordance as notes
+  // (编辑+预览 by default); the reading state (Done → pencil) is a toggle,
+  // not a gate.
   const select = useCallback((f: FlashItem) => {
     setSelectedId(f.src.id);
     setCreating(false);
-    setEditing(false);
+    setEditing(true);
     setDraft(f.content);
     setSaveState("saved");
     skipSaveRef.current = true; // loading a flash into the draft isn't an edit
   }, []);
-
-  const startEdit = useCallback((f: FlashItem) => {
-    select(f);
-    setEditing(true);
-  }, [select]);
 
   const newFlash = useCallback(() => {
     setCreating(true);
@@ -1061,7 +1059,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
                       <button
                         type="button"
                         className="shrink-0 text-muted-foreground hover:text-primary"
-                        onClick={(e) => { e.stopPropagation(); startEdit(f); }}
+                        onClick={(e) => { e.stopPropagation(); select(f); }}
                         aria-label={t("common.edit")}
                       >
                         <PencilIcon className="h-3.5 w-3.5" />
@@ -1136,7 +1134,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
                   <>
                     <Button
                       size="sm" variant="ghost" className="h-7 w-7 shrink-0 p-0"
-                      onClick={() => startEdit(selected)}
+                      onClick={() => select(selected)}
                       aria-label={t("common.edit")}
                     >
                       <PencilIcon className="h-3.5 w-3.5" />
