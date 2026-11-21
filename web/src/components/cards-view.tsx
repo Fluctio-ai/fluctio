@@ -636,7 +636,12 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                           {" → "}
                           {t("cards.intervalProgress", { cur: rv.new_interval_index, total: 6 })}
                         </span>
-                        <span className="ml-auto text-muted-foreground">{new Date(rv.reviewed_at).toLocaleString()}</span>
+                        <span
+                          className="ml-auto tabular-nums text-muted-foreground"
+                          title={formatFullTime(rv.reviewed_at)}
+                        >
+                          {formatListTime(rv.reviewed_at, locale)}
+                        </span>
                       </div>
                     ))}
                   </div>

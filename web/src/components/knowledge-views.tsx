@@ -1346,11 +1346,14 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                   <span className="min-w-0 break-words text-xs tabular-nums text-muted-foreground">
                     <span title={formatFullTime(b.created_at)}>{formatListTime(b.created_at, locale)}</span>
                     {b.content ? ` · ${t("knowledge.bookmarkBody", { n: b.content.length })}` : ""}
-                    {b.promoted_to_article_id && (
-                      <span className="ml-2 text-success">{t("knowledge.bookmarkPromoted")}</span>
-                    )}
                   </span>
                   <div className="flex shrink-0 items-center gap-1.5">
+                    {b.promoted_to_article_id && (
+                      <span className="flex items-center gap-0.5 text-xs text-muted-foreground" title={t("knowledge.bookmarkPromoted")}>
+                        <CheckIcon className="h-3 w-3" />
+                        {t("knowledge.bookmarkPromoted")}
+                      </span>
+                    )}
                     {b.content && (
                       <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => setExpanded((m) => ({ ...m, [b.id]: !m[b.id] }))}>
                         {expanded[b.id] ? t("knowledge.bookmarkHideBody") : t("knowledge.bookmarkShowBody")}
