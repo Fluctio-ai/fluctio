@@ -218,9 +218,13 @@ function noteTitle(n: KBNote, untitled: string): string {
 
 // noteSnippet is the row's gray-small second line: the body text after the
 // line that became the title (manual title → the body starts at line one;
-// derived title → skip the line already shown as the title).
+// derived title → skip the line already shown as the title). Leading block
+// markers (# / - / > / …) are stripped so the snippet reads as prose, not
+// raw markdown source.
 function noteSnippet(n: KBNote): string {
-  const lines = n.content_md.split("\n").map((l) => l.trim()).filter(Boolean);
+  const strip = (l: string) =>
+    l.replace(/^(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+|>\s*)/, "").trim();
+  const lines = n.content_md.split("\n").map(strip).filter(Boolean);
   return (n.title ? lines : lines.slice(1)).join(" ").slice(0, 80);
 }
 
