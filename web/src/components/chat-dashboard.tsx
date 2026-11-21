@@ -58,9 +58,9 @@ import {
   kbListTodos,
   listAgentCronJobs,
 } from "@/lib/api";
-import { daysSince } from "@/lib/time";
+import { daysSince, formatFullTime, formatListTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
 
 // ChatDashboard — the agent board that replaces the blank Manus-style
 // empty state. Four light modules over data the backend already has:
@@ -86,6 +86,7 @@ const isOpenTodo = (s: KBSource) => s.status === "pending" || s.status === "in_p
 
 export function ChatDashboard({ agentId }: { agentId: string }) {
   const t = useT();
+  const { locale } = useLocale();
   // undefined = still loading, null = loaded-and-empty (only todos makes
   // that distinction; sessions' empty state renders an inline hint).
   const [stats, setStats] = useState<KBCardStats | null>(null);
@@ -418,9 +419,9 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
                   <span className="min-w-0 flex-1 truncate" title={j.schedule}>
                     {j.name || j.message || j.id}
                   </span>
-                  <span className="shrink-0 text-xs text-muted-foreground" title={j.schedule}>
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground" title={j.schedule}>
                     {j.nextRun
-                      ? t("dashboard.cron.next", { time: shortDateTime(j.nextRun ?? "", nowTs) })
+                      ? t("dashboard.cron.next", { time: formatListTime(j.nextRun ?? "", locale, { withTime: true }) })
                       : t("dashboard.cron.notScheduled")}
                   </span>
                 </li>
@@ -437,18 +438,6 @@ export function ChatDashboard({ agentId }: { agentId: string }) {
       </section>
     </div>
   );
-}
-
-// shortDateTime renders an ISO timestamp for the todo/cron due labels:
-// HH:mm on the stamped "today", else a short date + time. nowTs is the
-// load-time stamp (0 → best-effort with the parsed date only).
-function shortDateTime(iso: string, nowTs: number): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const sameDay = nowTs !== 0 && new Date(nowTs).toDateString() === d.toDateString();
-  return sameDay
-    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 // ShelvedRow renders one ledger entry. Open rows are a deep link back into
@@ -495,6 +484,7 @@ function ShelvedRow({
 // title text, and the due time — destructive-styled once past.
 function TodoRow({ todo, nowTs }: { todo: KBSource; nowTs: number }) {
   const t = useT();
+  const { locale } = useLocale();
   const overdue = nowTs !== 0 && new Date(todo.end_at ?? "").getTime() < nowTs;
   return (
     <li className="flex items-start gap-2 rounded px-1.5 py-0.5">
@@ -507,13 +497,14 @@ function TodoRow({ todo, nowTs }: { todo: KBSource; nowTs: number }) {
       {todo.end_at && (
         <span
           className={
-            "shrink-0 text-xs " +
+            "shrink-0 text-xs tabular-nums " +
             (overdue ? "font-medium text-destructive" : "text-muted-foreground")
           }
+          title={formatFullTime(todo.end_at)}
         >
           {overdue
             ? t("dashboard.todo.overdue")
-            : t("dashboard.todo.dueAt", { time: shortDateTime(todo.end_at, nowTs) })}
+            : t("dashboard.todo.dueAt", { time: formatListTime(todo.end_at, locale, { withTime: true }) })}
         </span>
       )}
     </li>

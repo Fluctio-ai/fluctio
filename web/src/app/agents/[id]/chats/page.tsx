@@ -49,7 +49,8 @@ import {
   deleteChatSession,
 } from "@/lib/api";
 import { ChannelIcon, channelLabel } from "@/components/channel-icon";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
+import { formatFullTime, formatListTime } from "@/lib/time";
 
 type Session = {
   id: string;
@@ -69,6 +70,7 @@ const PAGE_SIZE = 20;
 
 export default function AgentChatsPage() {
   const tt = useT();
+  const { locale } = useLocale();
   const router = useRouter();
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
@@ -218,8 +220,8 @@ export default function AgentChatsPage() {
                         <span>{channelLabel(s.channel)}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs text-muted-foreground whitespace-nowrap">
-                      {formatTime(s.createdAt)}
+                    <TableCell className="hidden sm:table-cell text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                      <span title={formatFullTime(s.createdAt)}>{formatListTime(s.createdAt, locale) || "—"}</span>
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">
@@ -345,13 +347,6 @@ export default function AgentChatsPage() {
       </AlertDialog>
     </div>
   );
-}
-
-function formatTime(ms?: number): string {
-  if (!ms) return "—";
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString();
 }
 
 function EditTitleDialog({

@@ -10,7 +10,6 @@ import * as React from "react";
 import dynamic from "next/dynamic";
 import {
   ArrowLeftIcon,
-  ChevronRightIcon,
   DownloadIcon,
   EyeIcon,
   FileIcon,
@@ -22,7 +21,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
 
 // sanitizeSvgHtml strips script-execution vectors from an exported
 // Excalidraw SVG string before it goes through dangerouslySetInnerHTML:
@@ -71,7 +70,9 @@ import {
   type KBNoteAttachment,
 } from "@/lib/api";
 import { readCache, writeCache } from "@/lib/page-data-cache";
+import { formatFullTime, formatListTime } from "@/lib/time";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { KbRow } from "@/components/kb-row";
 import { cn } from "@/lib/utils";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { Whiteboard } from "@/components/whiteboard";
@@ -214,13 +215,17 @@ function noteTitle(n: KBNote, untitled: string): string {
   return n.title || n.content_md.split("\n").map((l) => l.trim()).find(Boolean) || untitled;
 }
 
-function noteTime(iso: string): string {
-  const d = new Date(iso);
-  return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+// noteSnippet is the row's gray-small second line: the body text after the
+// line that became the title (manual title → the body starts at line one;
+// derived title → skip the line already shown as the title).
+function noteSnippet(n: KBNote): string {
+  const lines = n.content_md.split("\n").map((l) => l.trim()).filter(Boolean);
+  return (n.title ? lines : lines.slice(1)).join(" ").slice(0, 80);
 }
 
 export function NotesView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
+  const { locale } = useLocale();
   const agentId = useAgentIdFromURL();
   const [notes, setNotes] = React.useState<KBNote[]>(() =>
     agentId ? (readCache<KBNote[]>(`kb-notes:${agentId}`) ?? []) : [],
@@ -678,39 +683,27 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
             ) : filtered.length === 0 ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("knowledge.notes.empty")}</p>
             ) : (
-              filtered.map((n) => {
-                return (
-                  <div
-                    key={n.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => select(n)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(n); }
-                    }}
-                    className={cn(
-                      "group relative flex w-full cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-left text-sm hover:bg-accent",
-                      n.id === selectedId && "bg-accent",
-                    )}
-                  >
-                    <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate">{noteTitle(n, t("knowledge.notes.untitled"))}</p>
-                      <p className="text-xs tabular-nums text-muted-foreground">
-                        {noteTime(n.updated_at)}
-                      </p>
-                    </div>
+              filtered.map((n) => (
+                <KbRow
+                  key={n.id}
+                  selected={n.id === selectedId}
+                  onClick={() => select(n)}
+                  title={noteTitle(n, t("knowledge.notes.untitled"))}
+                  time={formatListTime(n.updated_at, locale)}
+                  timeTitle={formatFullTime(n.updated_at)}
+                  description={noteSnippet(n) || undefined}
+                  actions={
                     <button
                       type="button"
-                      className="relative shrink-0 text-muted-foreground opacity-0 after:absolute after:-inset-2 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
                       onClick={(e) => { e.stopPropagation(); setDeleteTarget(n); }}
                       aria-label={t("knowledge.notes.delete")}
                     >
                       <Trash2Icon className="size-3.5" />
                     </button>
-                  </div>
-                );
-              })
+                  }
+                />
+              ))
             )}
           </div>
         </ScrollArea>

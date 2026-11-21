@@ -67,10 +67,11 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { cn } from "@/lib/utils";
-import { dayKey, endOfToday, pad2 } from "@/lib/time";
+import { dayKey, endOfToday, formatFullTime, formatListTime, pad2 } from "@/lib/time";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { KbRow } from "@/components/kb-row";
 import { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -92,23 +93,6 @@ const INSIGHT_SECTIONS: ReadonlyArray<[Exclude<DetailTab, "text">, string, Lucid
 ];
 type TodoStatus = "pending" | "in_progress" | "done" | "cancelled";
 const TODO_STATUSES: TodoStatus[] = ["pending", "in_progress", "done", "cancelled"];
-
-// relativeTime renders a short "x minutes ago" style label. Intentionally
-// locale-light (the user base is zh-CN); falls back to a date for old items.
-function relativeTime(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const diff = Date.now() - d.getTime();
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "刚刚";
-  if (m < 60) return `${m} 分钟前`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  const day = Math.floor(h / 24);
-  if (day < 30) return `${day} 天前`;
-  return d.toLocaleDateString();
-}
 
 // datetimeLocalValue converts an RFC3339 string into the value a
 // <input type="datetime-local"> expects ("YYYY-MM-DDTHH:mm"), local time.
@@ -219,6 +203,7 @@ const ARTICLE_MD_COMPONENTS: Components = {
 
 export function ArticleView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
+  const { locale } = useLocale();
   const agentId = useAgentIdFromURL();
 
   const [initialArticle] = useState(() =>
@@ -487,45 +472,38 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
               <p className="text-xs text-muted-foreground px-2 py-1.5">{t("knowledge.noSearchResult")}</p>
             ) : (
               visibleSources.map((src) => (
-                <div
+                <KbRow
                   key={src.id}
-                  role="button"
-                  tabIndex={0}
-                  className={cn(
-                    "group w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-accent flex items-center gap-2 cursor-pointer",
-                    selectedSource?.id === src.id && "bg-accent",
-                  )}
+                  selected={selectedSource?.id === src.id}
                   onClick={() => handleSelectSource(src)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      handleSelectSource(src);
-                    }
-                  }}
-                >
-                  <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  <div className="flex-1 min-w-0">
-                    <p className="truncate">{src.title}</p>
-                    <p className="text-xs tabular-nums text-muted-foreground">
-                      {src.entry_count} entries · {(src.total_chars / 1024).toFixed(1)} KB
-                    </p>
-                  </div>
-                  <CopyIconButton
-                    sizeClass="h-3.5 w-3.5"
-                    value={async () => {
-                      const es = await listKBEntries(agentId, src.id);
-                      return `# ${src.title}\n\n${es.map((e) => e.content).join("\n")}`;
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive shrink-0 relative after:absolute after:-inset-2"
-                    onClick={(e) => { e.stopPropagation(); setDeleteTarget(src); }}
-                    aria-label={t("common.delete")}
-                  >
-                    <TrashIcon className="h-3.5 w-3.5" />
-                  </button>
-                </div>
+                  title={src.title}
+                  time={formatListTime(src.updated_at, locale)}
+                  timeTitle={formatFullTime(src.updated_at)}
+                  description={
+                    <span className="truncate">
+                      {src.entry_count} {t("knowledge.entries")} · {(src.total_chars / 1024).toFixed(1)} KB
+                    </span>
+                  }
+                  actions={
+                    <>
+                      <CopyIconButton
+                        sizeClass="h-3.5 w-3.5"
+                        value={async () => {
+                          const es = await listKBEntries(agentId, src.id);
+                          return `# ${src.title}\n\n${es.map((e) => e.content).join("\n")}`;
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-destructive shrink-0"
+                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(src); }}
+                        aria-label={t("common.delete")}
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  }
+                />
               ))
             )}
           </div>
@@ -863,6 +841,7 @@ function ToolbarAddButton({
 
 export function FlashView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
+  const { locale } = useLocale();
   const agentId = useAgentIdFromURL();
   const [initialFlash] = useState(() =>
     agentId ? readCache<FlashItem[]>(`kb-flash:${agentId}`) : undefined,
@@ -965,8 +944,8 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
                 className="group mb-3 break-inside-avoid rounded-lg border bg-background p-3"
               >
                 <DocMarkdown text={content} />
-                <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                  <span>{relativeTime(src.created_at)}</span>
+                <div className="mt-2 flex items-center justify-between text-xs tabular-nums text-muted-foreground">
+                  <span title={formatFullTime(src.created_at)}>{formatListTime(src.created_at, locale)}</span>
                   <div className="flex gap-2">
                     <button
                       type="button"
@@ -1054,6 +1033,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
 
 export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
+  const { locale } = useLocale();
   const agentId = useAgentIdFromURL();
   const [initialBm] = useState(() =>
     agentId ? readCache<KBBookmark[]>(`kb-bookmark:${agentId}`) : undefined,
@@ -1191,8 +1171,9 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                   <p className="mt-1.5 whitespace-pre-wrap break-words text-xs text-muted-foreground">{b.summary}</p>
                 )}
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                  <span className="min-w-0 break-words text-xs text-muted-foreground">
-                    {relativeTime(b.created_at)}{b.content ? ` · ${t("knowledge.bookmarkBody", { n: b.content.length })}` : ""}
+                  <span className="min-w-0 break-words text-xs tabular-nums text-muted-foreground">
+                    <span title={formatFullTime(b.created_at)}>{formatListTime(b.created_at, locale)}</span>
+                    {b.content ? ` · ${t("knowledge.bookmarkBody", { n: b.content.length })}` : ""}
                     {b.promoted_to_article_id && (
                       <span className="ml-2 text-success">{t("knowledge.bookmarkPromoted")}</span>
                     )}

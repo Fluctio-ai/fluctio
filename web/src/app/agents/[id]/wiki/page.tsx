@@ -1,5 +1,5 @@
 "use client";
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
 import { usePageHeader } from "@/components/sidebar";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,7 +21,6 @@ import {
 import {
   ArrowLeftIcon,
   BookOpenIcon,
-  ChevronRightIcon,
   DatabaseIcon,
   LightbulbIcon,
   NetworkIcon,
@@ -48,6 +47,8 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
+import { formatFullTime, formatListTime } from "@/lib/time";
+import { KbRow } from "@/components/kb-row";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 
 // WikiPage is the three-pane wiki browser at /agents/<id>/wiki/.
@@ -93,6 +94,7 @@ const graphTheme = (): import("@/components/wiki-graph/engine").GraphTheme => ({
 
 export default function WikiPage() {
   const t = useT();
+  const { locale } = useLocale();
   usePageHeader(<h1 className="text-sm font-semibold">{t("wiki.title")}</h1>, []);
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
@@ -490,30 +492,28 @@ export default function WikiPage() {
                       )}
                     </div>
                     {sectionPages.map((page) => (
-                      <div
+                      <KbRow
                         key={page.id}
-                        role="button"
-                        tabIndex={0}
-                        className={cn(
-                          "group w-full text-left px-3 py-1.5 text-sm rounded-md hover:bg-accent flex items-center gap-1.5 cursor-pointer",
-                          selectedPageId === page.id && "bg-accent font-medium",
-                        )}
+                        selected={selectedPageId === page.id}
                         onClick={() => handleSelectPage(page.id)}
-                      >
-                        <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
-                        <span className="truncate flex-1">{page.title}</span>
-                        <button
-                          type="button"
-                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openDelete(page);
-                          }}
-                          aria-label={t("common.delete")}
-                        >
-                          <TrashIcon className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
+                        title={page.title}
+                        titleClassName={selectedPageId === page.id ? "font-medium" : undefined}
+                        time={formatListTime(page.updated_at, locale)}
+                        timeTitle={formatFullTime(page.updated_at)}
+                        actions={
+                          <button
+                            type="button"
+                            className="text-muted-foreground hover:text-destructive shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDelete(page);
+                            }}
+                            aria-label={t("common.delete")}
+                          >
+                            <TrashIcon className="h-3.5 w-3.5" />
+                          </button>
+                        }
+                      />
                     ))}
                     {!query.trim() && sectionPages.length < sectionTotal && (
                       <Button

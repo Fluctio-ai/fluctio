@@ -1,6 +1,6 @@
 "use client";
 
-import { useT } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -22,7 +22,6 @@ import {
   ArchiveRestoreIcon,
   ArrowLeftIcon,
   CalendarIcon,
-  ChevronRightIcon,
   FlameIcon,
   LayersIcon,
   PencilIcon,
@@ -50,10 +49,11 @@ import {
 } from "@/lib/api";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useWikiTitle } from "@/hooks/use-wiki-title";
-import { endOfToday } from "@/lib/time";
+import { endOfToday, formatFullTime, formatListTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { KbRow } from "@/components/kb-row";
 import { CardDeck, CardsReview } from "@/components/cards-review";
 import { usePaneResize, PaneDivider } from "@/components/pane-divider";
 
@@ -81,6 +81,7 @@ function isDueSoon(c: KBCard, now: number): "overdue" | "today" | null {
 
 export function CardsView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
+  const { locale } = useLocale();
   const router = useRouter();
   const agentId = useAgentIdFromURL();
 
@@ -439,51 +440,50 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
               cards.map((c) => {
                 const due = isDueSoon(c, now);
                 return (
-                  <div
+                  <KbRow
                     key={c.id}
-                    role="button"
-                    tabIndex={0}
-                    className={cn(
-                      "group mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-left hover:bg-accent",
-                      selected?.id === c.id && "bg-accent",
-                    )}
+                    selected={selected?.id === c.id}
                     onClick={() => openCard(c)}
-                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCard(c); } }}
-                  >
-                    <ChevronRightIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
-                    <div className="min-w-0 flex-1">
-                    <p className={cn("truncate text-sm", c.status === "archived" && "text-muted-foreground line-through")}>
-                      {c.question}
-                    </p>
-                    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <LayersIcon className="size-3 shrink-0" />
-                      {t(`cards.source.${c.source_type}`)}
-                      {due === "overdue" && (
-                        <Badge variant="outline" className="border-destructive/40 px-1 py-0 text-2xs text-destructive">
-                          {t("cards.overdue")}
-                        </Badge>
-                      )}
-                      {due === "today" && (
-                        <Badge variant="outline" className="border-warning/50 px-1 py-0 text-2xs text-warning">
-                          {t("cards.dueToday")}
-                        </Badge>
-                      )}
-                      {c.status === "mastered" && (
-                        <Badge variant="outline" className="border-success/40 px-1 py-0 text-2xs text-success">
-                          {t("cards.mastered")}
-                        </Badge>
-                      )}
+                    title={c.question}
+                    titleClassName={c.status === "archived" ? "text-muted-foreground line-through" : undefined}
+                    time={formatListTime(c.due_at || c.created_at, locale)}
+                    timeTitle={formatFullTime(c.due_at || c.created_at)}
+                    description={
+                      <>
+                        <LayersIcon className="size-3 shrink-0" />
+                        <span className="truncate">{t(`cards.source.${c.source_type}`)}</span>
+                      </>
+                    }
+                    badge={
+                      <>
+                        {due === "overdue" && (
+                          <Badge variant="outline" className="border-destructive/40 px-1 py-0 text-2xs text-destructive">
+                            {t("cards.overdue")}
+                          </Badge>
+                        )}
+                        {due === "today" && (
+                          <Badge variant="outline" className="border-warning/50 px-1 py-0 text-2xs text-warning">
+                            {t("cards.dueToday")}
+                          </Badge>
+                        )}
+                        {c.status === "mastered" && (
+                          <Badge variant="outline" className="border-success/40 px-1 py-0 text-2xs text-success">
+                            {t("cards.mastered")}
+                          </Badge>
+                        )}
+                      </>
+                    }
+                    actions={
                       <button
                         type="button"
-                        className="ml-auto shrink-0 rounded-md p-0.5 opacity-0 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                        className="shrink-0 rounded-md p-0.5 text-muted-foreground hover:text-destructive"
                         onClick={(e) => { e.stopPropagation(); setDeleteTarget(c); }}
                         aria-label={t("common.delete")}
                       >
                         <TrashIcon className="size-3" />
                       </button>
-                    </p>
-                    </div>
-                  </div>
+                    }
+                  />
                 );
               })
             )}
