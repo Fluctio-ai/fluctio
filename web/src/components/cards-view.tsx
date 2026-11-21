@@ -54,6 +54,7 @@ import { cn } from "@/lib/utils";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { KbRow, ListEmptyState } from "@/components/kb-row";
+import { DocMarkdown } from "@/components/doc-markdown";
 import { CardDeck, CardsReview } from "@/components/cards-review";
 import { usePaneResize, PaneDivider } from "@/components/pane-divider";
 
@@ -560,9 +561,9 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                   {flipped ? t("cards.back") : t("cards.front")}
                 </p>
                 {flipped ? (
-                  <div className="mt-2 whitespace-pre-wrap break-words text-base leading-relaxed">{selected.answer}</div>
+                  <DocMarkdown className="mt-2 break-words" text={selected.answer} />
                 ) : (
-                  <p className="mt-2 break-words text-lg font-medium">{selected.question}</p>
+                  <DocMarkdown className="mt-2 break-words" text={selected.question} />
                 )}
                 <p className="mt-3 text-xs text-muted-foreground">{t("cards.flipHint")}</p>
               </button>
@@ -570,7 +571,10 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
               {selected.source_excerpt && (
                 <div className="rounded-lg border border-dashed p-3">
                   <p className="text-xs text-muted-foreground">{t("cards.excerpt")}</p>
-                  <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{selected.source_excerpt}</p>
+                  <DocMarkdown
+                    className="mt-1 break-words [--tw-prose-body:var(--color-muted-foreground)] [--tw-prose-headings:var(--color-muted-foreground)]"
+                    text={selected.source_excerpt}
+                  />
                 </div>
               )}
 
