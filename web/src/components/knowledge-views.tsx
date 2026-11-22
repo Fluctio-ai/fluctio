@@ -207,7 +207,6 @@ const ARTICLE_MD_COMPONENTS: Components = {
 
 export function ArticleView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
-  const { locale } = useLocale();
   const agentId = useAgentIdFromURL();
 
   const [initialArticle] = useState(() =>
@@ -486,8 +485,7 @@ export function ArticleView({ notify }: { notify: (msg: string) => void }) {
                   selected={selectedSource?.id === src.id}
                   onClick={() => handleSelectSource(src)}
                   title={src.title}
-                  time={formatListTime(src.updated_at, locale)}
-                  timeTitle={formatFullTime(src.updated_at)}
+                  timeAt={src.updated_at}
                   description={
                     <span className="truncate">
                       {src.entry_count} {t("knowledge.entries")} · {(src.total_chars / 1024).toFixed(1)} KB
@@ -1001,11 +999,14 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = q ? flashes.filter((f) => f.content.toLowerCase().includes(q)) : flashes;
-    return [...list].sort((a, b) => {
+    const sorted = [...list].sort((a, b) => {
       const cmp = a.src.created_at < b.src.created_at ? 1 : a.src.created_at > b.src.created_at ? -1 : 0;
       return sortNew ? cmp : -cmp;
     });
-  }, [flashes, query, sortNew]);
+    // Row titles ride this memo: flashTitle splits the whole body, so it
+    // must not re-run per row on every draft keystroke.
+    return sorted.map((f) => ({ ...f, rowTitle: flashTitle(f.content, t("knowledge.flashes")) }));
+  }, [flashes, query, sortNew, t]);
 
   const charCount = (editing ? draft : selected?.content ?? "").replace(/\s/g, "").length;
 
@@ -1029,7 +1030,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
             <ToolbarAddButton onClick={newFlash}>{t("knowledge.flashNew")}</ToolbarAddButton>
           </div>
           <p className="px-3 pb-2 text-xs tabular-nums text-muted-foreground">
-            {t("knowledge.notes.count", { n: flashes.length })}
+            {t("knowledge.flashCount", { n: flashes.length })}
           </p>
         </div>
         <ScrollArea className="min-h-0 flex-1">
@@ -1051,9 +1052,8 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
                   key={f.src.id}
                   selected={f.src.id === selectedId}
                   onClick={() => select(f)}
-                  title={flashTitle(f.content, t("knowledge.flashes"))}
-                  time={formatListTime(f.src.created_at, locale)}
-                  timeTitle={formatFullTime(f.src.created_at)}
+                  title={f.rowTitle}
+                  timeAt={f.src.created_at}
                   actions={
                     <>
                       <button
@@ -1104,7 +1104,7 @@ export function FlashView({ notify }: { notify: (msg: string) => void }) {
                   <>
                     <span
                       className="text-xs tabular-nums text-muted-foreground"
-                      title={formatFullTime(selected.src.created_at)}
+                      title={formatFullTime(selected.src.created_at, locale)}
                     >
                       {formatListTime(selected.src.created_at, locale)}
                     </span>
@@ -1342,7 +1342,7 @@ export function BookmarkView({ notify }: { notify: (msg: string) => void }) {
                 )}
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                   <span className="min-w-0 break-words text-xs tabular-nums text-muted-foreground">
-                    <span title={formatFullTime(b.created_at)}>{formatListTime(b.created_at, locale)}</span>
+                    <span title={formatFullTime(b.created_at, locale)}>{formatListTime(b.created_at, locale)}</span>
                     {b.content ? ` · ${t("knowledge.bookmarkBody", { n: b.content.length })}` : ""}
                   </span>
                   <div className="flex shrink-0 items-center gap-1.5">

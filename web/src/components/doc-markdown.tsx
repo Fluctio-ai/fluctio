@@ -18,17 +18,28 @@ export const DOC_PROSE_CLASS =
 // react-markdown components overrides (the article view demotes 来源
 // headings); heavier customization (the wiki's wiki-link anchors) still
 // renders its own ReactMarkdown on DOC_PROSE_CLASS.
+// muted retints body/headings to muted-foreground (secondary content like
+// source excerpts) — the named variant keeps the typography plugin's
+// CSS-var mechanism out of call sites.
 export function DocMarkdown({
   text,
   className,
   components,
+  muted,
 }: {
   text: string;
   className?: string;
   components?: Components;
+  muted?: boolean;
 }) {
   return (
-    <div className={cn(DOC_PROSE_CLASS, className)}>
+    <div
+      className={cn(
+        DOC_PROSE_CLASS,
+        muted && "[--tw-prose-body:var(--color-muted-foreground)] [--tw-prose-headings:var(--color-muted-foreground)]",
+        className,
+      )}
+    >
       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
         {text}
       </ReactMarkdown>

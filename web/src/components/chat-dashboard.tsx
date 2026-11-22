@@ -500,7 +500,7 @@ function TodoRow({ todo, nowTs }: { todo: KBSource; nowTs: number }) {
             "shrink-0 text-xs tabular-nums " +
             (overdue ? "font-medium text-destructive" : "text-muted-foreground")
           }
-          title={formatFullTime(todo.end_at)}
+          title={formatFullTime(todo.end_at, locale)}
         >
           {overdue
             ? t("dashboard.todo.overdue")

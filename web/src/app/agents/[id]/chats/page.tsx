@@ -221,7 +221,7 @@ export default function AgentChatsPage() {
                       </div>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell text-xs tabular-nums text-muted-foreground whitespace-nowrap">
-                      <span title={formatFullTime(s.createdAt)}>{formatListTime(s.createdAt, locale) || "—"}</span>
+                      <span title={formatFullTime(s.createdAt, locale)}>{formatListTime(s.createdAt, locale) || "—"}</span>
                     </TableCell>
                     <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex justify-end gap-1">

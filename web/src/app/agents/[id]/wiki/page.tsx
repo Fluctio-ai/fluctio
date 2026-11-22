@@ -1,5 +1,5 @@
 "use client";
-import { useLocale, useT } from "@/lib/i18n";
+import { useT } from "@/lib/i18n";
 import { usePageHeader } from "@/components/sidebar";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -47,7 +47,6 @@ import { useAgentIdFromURL } from "@/hooks/use-agent-id";
 import { useAgentName } from "@/hooks/use-agent-name";
 import { useTheme } from "@/components/theme-provider";
 import { cn } from "@/lib/utils";
-import { formatFullTime, formatListTime } from "@/lib/time";
 import { KbRow, ListEmptyState } from "@/components/kb-row";
 import { readCache, writeCache } from "@/lib/page-data-cache";
 
@@ -94,7 +93,6 @@ const graphTheme = (): import("@/components/wiki-graph/engine").GraphTheme => ({
 
 export default function WikiPage() {
   const t = useT();
-  const { locale } = useLocale();
   usePageHeader(<h1 className="text-sm font-semibold">{t("wiki.title")}</h1>, []);
   const agentId = useAgentIdFromURL();
   const agentName = useAgentName(agentId);
@@ -496,8 +494,7 @@ export default function WikiPage() {
                         onClick={() => handleSelectPage(page.id)}
                         title={page.title}
                         titleClassName={selectedPageId === page.id ? "font-medium" : undefined}
-                        time={formatListTime(page.updated_at, locale)}
-                        timeTitle={formatFullTime(page.updated_at)}
+                        timeAt={page.updated_at}
                         actions={
                           <button
                             type="button"

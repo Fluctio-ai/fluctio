@@ -27,6 +27,17 @@ export function daysSince(dateStr: string, nowMs: number): number {
   return Math.max(0, Math.round((nowMs - new Date(dateStr + "T00:00:00").getTime()) / 86400000));
 }
 
+// Hoisted Intl formatters — formatListTime/formatFullTime run per list row
+// per render, so their options must not be re-resolved on every call.
+const WEEKDAY_FMT = {
+  en: new Intl.DateTimeFormat("en-US", { weekday: "short" }),
+  "zh-CN": new Intl.DateTimeFormat("zh-CN", { weekday: "short" }),
+} as const;
+const FULL_FMT = {
+  en: new Intl.DateTimeFormat("en-US"),
+  "zh-CN": new Intl.DateTimeFormat("zh-CN"),
+} as const;
+
 // formatListTime renders a list-row timestamp in five tiers, aligned with
 // the app's RowMetaTime: today → HH:mm · yesterday → 昨天/Yesterday ·
 // within the week (past or future) → weekday (周三/Wed) · same year →
@@ -49,17 +60,20 @@ export function formatListTime(
   const tail = opts?.withTime ? ` ${hm}` : "";
   if (dayDiff === 1) return (locale === "en" ? "Yesterday" : "昨天") + tail;
   if (dayDiff === -1) return (locale === "en" ? "Tomorrow" : "明天") + tail;
-  if (Math.abs(dayDiff) < 7)
-    return d.toLocaleDateString(locale === "en" ? "en-US" : "zh-CN", { weekday: "short" }) + tail;
+  if (Math.abs(dayDiff) < 7) return WEEKDAY_FMT[locale].format(d) + tail;
   if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}${tail}`;
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}${tail}`;
 }
 
 // formatFullTime is the tooltip/detail companion to formatListTime — the
 // full locale date+time string, for spots where the short tier dropped
-// information (hover tooltips, detail headers).
-export function formatFullTime(iso: string | number | Date | null | undefined): string {
+// information (hover tooltips, detail headers). Same locale contract as
+// formatListTime so a zh-CN UI never gets browser-locale tooltips.
+export function formatFullTime(
+  iso: string | number | Date | null | undefined,
+  locale: "en" | "zh-CN" = "zh-CN",
+): string {
   if (iso == null || iso === "") return "";
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? "" : d.toLocaleString();
+  return isNaN(d.getTime()) ? "" : FULL_FMT[locale].format(d);
 }

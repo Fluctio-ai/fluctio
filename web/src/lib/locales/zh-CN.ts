@@ -831,6 +831,7 @@ const zhCN: Record<string, string> = {
   "knowledge.flashPlaceholder": "记一笔灵感…",
   "knowledge.flashNew": "记一笔",
   "knowledge.flashHint": "选择左侧的灵感查看，或记一笔新的",
+  "knowledge.flashCount": "{n} 条",
   "knowledge.saveFlash": "记录",
   "knowledge.editFlash": "编辑灵感",
   "knowledge.noFlashes": "还没有灵感闪记。点「记一笔」写下第一笔。",

@@ -452,8 +452,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                     onClick={() => openCard(c)}
                     title={c.question}
                     titleClassName={c.status === "archived" ? "text-muted-foreground line-through" : undefined}
-                    time={formatListTime(c.due_at || c.created_at, locale)}
-                    timeTitle={formatFullTime(c.due_at || c.created_at)}
+                    timeAt={c.due_at || c.created_at}
                     description={
                       <>
                         <LayersIcon className="size-3 shrink-0" />
@@ -572,7 +571,8 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                 <div className="rounded-lg border border-dashed p-3">
                   <p className="text-xs text-muted-foreground">{t("cards.excerpt")}</p>
                   <DocMarkdown
-                    className="mt-1 break-words [--tw-prose-body:var(--color-muted-foreground)] [--tw-prose-headings:var(--color-muted-foreground)]"
+                    muted
+                    className="mt-1 break-words"
                     text={selected.source_excerpt}
                   />
                 </div>
@@ -638,7 +638,7 @@ export function CardsView({ notify }: { notify: (msg: string) => void }) {
                         </span>
                         <span
                           className="ml-auto tabular-nums text-muted-foreground"
-                          title={formatFullTime(rv.reviewed_at)}
+                          title={formatFullTime(rv.reviewed_at, locale)}
                         >
                           {formatListTime(rv.reviewed_at, locale)}
                         </span>

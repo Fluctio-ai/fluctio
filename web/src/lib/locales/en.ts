@@ -831,6 +831,7 @@ const en: Record<string, string> = {
   "knowledge.flashPlaceholder": "Capture a spark…",
   "knowledge.flashNew": "New flash",
   "knowledge.flashHint": "Select a flash on the left, or capture a new one",
+  "knowledge.flashCount": "{n} total",
   "knowledge.saveFlash": "Save",
   "knowledge.editFlash": "Edit flash",
   "knowledge.noFlashes": "No inspiration flashes yet. Hit “New flash” to capture your first one.",

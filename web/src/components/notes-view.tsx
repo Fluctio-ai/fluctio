@@ -11,7 +11,6 @@ import dynamic from "next/dynamic";
 import {
   ArrowLeftIcon,
   DownloadIcon,
-  EyeIcon,
   FileIcon,
   GripVerticalIcon,
   ImagePlusIcon,
@@ -20,9 +19,8 @@ import {
   PencilIcon,
   PlusIcon,
   Trash2Icon,
-  XIcon,
 } from "lucide-react";
-import { useLocale, useT } from "@/lib/i18n";
+import { useT } from "@/lib/i18n";
 
 // sanitizeSvgHtml strips script-execution vectors from an exported
 // Excalidraw SVG string before it goes through dangerouslySetInnerHTML:
@@ -57,8 +55,8 @@ export function sanitizeSvgHtml(html: string): string {
     return "";
   }
 }
-import type { EditorView } from "@codemirror/view";
 import { useAgentIdFromURL } from "@/hooks/use-agent-id";
+import { usePreviewScrollSync } from "@/hooks/use-preview-scroll-sync";
 import {
   deleteNote,
   deleteNoteAttachment,
@@ -71,11 +69,12 @@ import {
   type KBNoteAttachment,
 } from "@/lib/api";
 import { readCache, writeCache } from "@/lib/page-data-cache";
-import { formatFullTime, formatListTime } from "@/lib/time";
+import { BLOCK_PREFIX_RE, stampRunAnchors } from "@/lib/markdown-sync";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { KbRow, ListEmptyState } from "@/components/kb-row";
 import { cn } from "@/lib/utils";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { MobilePreviewSheet } from "@/components/mobile-preview-sheet";
 import { Whiteboard } from "@/components/whiteboard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -143,68 +142,8 @@ function boardSlots(md: string): number[] {
   return splitBody(md).reduce<number[]>((acc, p, i) => (p.kind === "board" ? [...acc, i] : acc), []);
 }
 
-// ── preview anchor stamping (editor→preview scroll sync) ──
-// Streamdown parses each markdown block as an independent parse run, so no
-// plugin can recover global source lines (every block's AST position starts
-// at 1). Instead we stamp AFTER render: match each rendered top-level
-// element to the first source line whose marker-stripped text it renders.
-// A two-pointer scan in source order; elements that match nothing (hr,
-// image-only paragraphs, math/mermaid chrome) simply carry no anchor and
-// sync falls through to the previous stamped block.
-
-// Block prefixes that vanish in rendered text: ATX heading, bullet/ordered
-// list marker (incl. task checkbox), quote marker, table row pipes.
-const BLOCK_PREFIX_RE = /^(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+|>\s*|\|)/;
-// Inline markup that survives to the DOM only as rendered text: links/
-// images keep their label, emphasis/code-span marks drop out.
-function stripMdMarkers(line: string): string {
-  let s = line
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/[*_~`]+/g, "")
-    .trim();
-  let prev = "";
-  while (s !== prev) {
-    prev = s;
-    s = s.replace(BLOCK_PREFIX_RE, "");
-  }
-  return s;
-}
-// Alphanumeric runs only (CJK counts): whitespace/punctuation differences
-// between source and render can't break the prefix compare.
-const wordChars = (s: string) => s.match(/[\p{L}\p{N}]+/gu)?.join("") ?? "";
-
-function stampRunAnchors(run: HTMLElement, text: string, startLine: number) {
-  // Streamdown wraps all blocks in one container div (.space-y-4); the
-  // block elements are that wrapper's children. Unwrap one level when we
-  // see it (sole child with multiple children); otherwise stamp run's own
-  // children — a lone block then lands on its wrapper, still positionally
-  // correct.
-  let host: HTMLElement = run;
-  if (run.children.length === 1) {
-    const only = run.children[0];
-    if (only instanceof HTMLElement && only.children.length > 1) host = only;
-  }
-  for (const el of host.children) if (el instanceof HTMLElement) delete el.dataset.line;
-  const lines = text.split("\n");
-  let cursor = 0;
-  for (const el of host.children) {
-    if (!(el instanceof HTMLElement)) continue;
-    // Code blocks: the <code> body is the verbatim source (the fence line
-    // has no word chars, so the first code line matches). Everything else:
-    // leading text is enough — lists/quotes render their items in order.
-    const src = el.querySelector("code")?.textContent ?? el.textContent ?? "";
-    const want = wordChars(src);
-    if (!want) continue;
-    for (; cursor < lines.length; cursor++) {
-      const have = wordChars(stripMdMarkers(lines[cursor]));
-      if (have && want.startsWith(have)) {
-        el.dataset.line = String(startLine + cursor);
-        cursor++;
-        break;
-      }
-    }
-  }
-}
+// Anchor stamping (editor→preview scroll sync) lives in lib/markdown-sync.ts
+// — shared with MarkdownSplitEditor.
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -222,15 +161,13 @@ function noteTitle(n: KBNote, untitled: string): string {
 // markers (# / - / > / …) are stripped so the snippet reads as prose, not
 // raw markdown source.
 function noteSnippet(n: KBNote): string {
-  const strip = (l: string) =>
-    l.replace(/^(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+|>\s*)/, "").trim();
+  const strip = (l: string) => l.replace(BLOCK_PREFIX_RE, "").trim();
   const lines = n.content_md.split("\n").map(strip).filter(Boolean);
   return (n.title ? lines : lines.slice(1)).join(" ").slice(0, 80);
 }
 
 export function NotesView({ notify }: { notify: (msg: string) => void }) {
   const t = useT();
-  const { locale } = useLocale();
   const agentId = useAgentIdFromURL();
   const [notes, setNotes] = React.useState<KBNote[]>(() =>
     agentId ? (readCache<KBNote[]>(`kb-notes:${agentId}`) ?? []) : [],
@@ -260,10 +197,6 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   // boardDialog indexes into splitBody(draft.content_md)'s board slots;
   // -1 = closed.
   const [boardDialog, setBoardDialog] = React.useState(-1);
-  // Mobile only: the rendered preview opens on demand behind a floating eye
-  // button (chat-file-preview sheet shape) instead of a stacked pane, so the
-  // md source owns the screen. Desktop keeps the side-by-side split.
-  const [previewOpen, setPreviewOpen] = React.useState(false);
   // Resizable left pane — mirrors ArticleView's divider (220–520px).
   const [leftWidth, setLeftWidth] = React.useState(320);
   // Note-list ordering is server-side newest-first (updated_at DESC) —
@@ -312,7 +245,6 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
     setSelectedId(null);
     skipSaveRef.current = true;
     setDraft({ title: "", content_md: "" });
-    setPreviewOpen(false);
   }, []);
 
   React.useEffect(() => {
@@ -445,11 +377,19 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return notes;
-    return notes.filter((n) =>
-      (n.title + "\n" + n.content_md).toLowerCase().includes(q),
-    );
-  }, [notes, query]);
+    const list = q
+      ? notes.filter((n) =>
+          (n.title + "\n" + n.content_md).toLowerCase().includes(q),
+        )
+      : notes;
+    // Row derivations (title fallback + snippet strip) ride this memo so a
+    // draft keystroke never re-runs them for every row.
+    return list.map((n) => ({
+      n,
+      title: noteTitle(n, t("knowledge.notes.untitled")),
+      snippet: noteSnippet(n),
+    }));
+  }, [notes, query, t]);
 
   // Delete flows through ConfirmDeleteDialog: the trash button stages the
   // note, the confirm closes the editor if it held that note.
@@ -487,94 +427,10 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
   const dark = typeof document !== "undefined" && document.documentElement.classList.contains("dark");
   const charCount = draft.content_md.replace(/```whiteboard[\s\S]*?\n```/g, "").replace(/\s/g, "").length;
 
-  // ── editor → preview scroll sync (one-way) ──
-  // The editor reports its caret line (click/typing → smooth) or topmost
-  // visible line (scroll → instant); we align the preview to the last
-  // stamped block at or above that line. Anchors are the data-line attrs
-  // stamped after render (stampRunAnchors) + BoardCard's fence line — all
-  // 1-based global note lines. Preview→editor sync is deliberately absent:
-  // it needs re-entrancy locks and isn't the workflow ("write here, read
-  // there").
-  const previewRef = React.useRef<HTMLDivElement | null>(null);
-  // Handed out once by the editor (onEditorReady) so the scroll-sync
-  // interpolation can map anchor lines to pixel heights. Type-only import —
-  // the EditorView class itself stays inside the lazy editor chunk.
-  const editorViewRef = React.useRef<EditorView | null>(null);
-  // A caret jump makes CodeMirror scroll the caret line into view, and that
-  // induced editor scrolling fires onViewLine for ~0.5s — long enough to
-  // override the caret's own alignment with a top-line alignment (observed
-  // live). Grace-window those induced events away so a click on a distant
-  // line lands the preview on the CLICKED block, not the block the editor's
-  // top line happened to show.
-  const caretSyncAtRef = React.useRef(0);
-  // caret=true (click/typing): only scroll when the target block is OUTSIDE
-  // the preview viewport, so writing inside the visible block never jerks
-  // the preview. caret=false (editor scroll): always align the topmost
-  // block. Both instant — CSS smooth scrolling stalls in headless browsers
-  // and an interrupted mid-flight smooth lands the preview between blocks.
-  const syncPreviewLine = (line: number, caret: boolean) => {
-    const container = previewRef.current;
-    // offsetParent is null when the desktop pane is display:none (mobile
-    // shows the preview as a full-screen sheet instead — nothing to sync).
-    if (!container || container.offsetParent === null) return;
-    const blocks = container.querySelectorAll<HTMLElement>("[data-line]");
-    if (!blocks.length) return;
-    let target = blocks[0];
-    for (const el of blocks) {
-      if (Number(el.dataset.line) <= line) target = el;
-      else break;
-    }
-    if (caret) {
-      const r = target.getBoundingClientRect();
-      const c = container.getBoundingClientRect();
-      if (r.top >= c.top - 4 && r.bottom <= c.top + container.clientHeight + 4) return;
-      // Caret jumps land exactly on the clicked block's top.
-      const top =
-        target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
-      container.scrollTo({ top: Math.max(0, top), behavior: "auto" });
-      return;
-    }
-    // Editor scroll: ByteMD-style block-interval interpolation so the
-    // preview follows CONTINUOUSLY — the top visible line at 60% inside
-    // source block i scrolls the preview to 60% inside block i's rendered
-    // span — instead of snapping to block tops only at block boundaries.
-    // Height tables are rebuilt per event; anchor counts are small (tens)
-    // and lineBlockAt is a binary search, so one pass per frame is fine.
-    const view = editorViewRef.current;
-    if (!view) {
-      const top =
-        target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 12;
-      container.scrollTo({ top: Math.max(0, top), behavior: "auto" });
-      return;
-    }
-    const doc = view.state.doc;
-    const editTops: number[] = [];
-    const previewTops: number[] = [];
-    for (const el of blocks) {
-      const ln = Math.min(Number(el.dataset.line), doc.lines);
-      editTops.push(view.lineBlockAt(doc.line(ln).from).top);
-      previewTops.push(
-        el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
-      );
-    }
-    const editRange = view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight;
-    const previewRange = container.scrollHeight - container.clientHeight;
-    const editTop = view.scrollDOM.scrollTop;
-    let i = 0;
-    while (i < editTops.length - 1 && editTops[i + 1] <= editTop) i++;
-    let previewTop: number;
-    if (editTop <= editTops[0] || editTops.length === 1) {
-      previewTop = 0;
-    } else if (i >= editTops.length - 1) {
-      // Past the last anchor (e.g. trailing blank lines): ride to the bottom.
-      previewTop = previewRange;
-    } else {
-      const span = editTops[i + 1] - editTops[i];
-      const frac = span > 0 ? (editTop - editTops[i]) / span : 0;
-      previewTop = previewTops[i] + frac * (previewTops[i + 1] - previewTops[i]);
-    }
-    container.scrollTo({ top: Math.max(0, Math.min(previewRange, previewTop - 12)), behavior: "auto" });
-  };
+  // ── editor → preview scroll sync (one-way) — the shared machinery lives
+  // in hooks/use-preview-scroll-sync.ts; anchors are the data-line attrs
+  // stamped per md run below (+ BoardCard's fence line).
+  const { previewRef, onCursorLine, onViewLine, onEditorReady } = usePreviewScrollSync();
 
   // Stamp the anchors after the preview DOM commits. Runs per content
   // change, and idempotent — re-stamping also clears stale data-line attrs
@@ -613,7 +469,7 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
       mo.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [parts]);
+  }, [parts, previewRef]);
 
   // Rendered body shared by the desktop split pane and the mobile preview
   // sheet — one source of truth so both stay in sync with the draft.
@@ -695,15 +551,14 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
             ) : filtered.length === 0 ? (
               <p className="px-2 py-1.5 text-xs text-muted-foreground">{t("knowledge.noSearchResult")}</p>
             ) : (
-              filtered.map((n) => (
+              filtered.map(({ n, title, snippet }) => (
                 <KbRow
                   key={n.id}
                   selected={n.id === selectedId}
                   onClick={() => select(n)}
-                  title={noteTitle(n, t("knowledge.notes.untitled"))}
-                  time={formatListTime(n.updated_at, locale)}
-                  timeTitle={formatFullTime(n.updated_at)}
-                  description={noteSnippet(n) || undefined}
+                  title={title}
+                  timeAt={n.updated_at}
+                  description={snippet || undefined}
                   actions={
                     <>
                       <button
@@ -843,29 +698,16 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
                     value={draft.content_md}
                     onChange={(v) => setDraft((d) => ({ ...d, content_md: v }))}
                     placeholder={t("knowledge.notes.bodyPlaceholder")}
-                    onCursorLine={(l) => {
-                      caretSyncAtRef.current = Date.now();
-                      syncPreviewLine(l, true);
-                    }}
-                    onViewLine={(l) => {
-                      if (Date.now() - caretSyncAtRef.current < 450) return;
-                      syncPreviewLine(l, false);
-                    }}
-                    onEditorReady={(v) => {
-                      editorViewRef.current = v;
-                    }}
+                    onCursorLine={onCursorLine}
+                    onViewLine={onViewLine}
+                    onEditorReady={onEditorReady}
                   />
                 </div>
               </div>
-              {/* mobile: floating preview entry, chat-file-preview shaped */}
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(true)}
-                className="absolute right-3 top-3 z-10 rounded-full border bg-background/80 p-2 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted hover:text-foreground md:hidden"
-                aria-label={t("knowledge.notes.preview")}
-              >
-                <EyeIcon className="size-4" />
-              </button>
+              {/* mobile: floating preview entry + full-screen sheet */}
+              <MobilePreviewSheet title={draft.title || t("knowledge.notes.untitled")}>
+                {previewBody}
+              </MobilePreviewSheet>
             </div>
 
             {/* attachments strip */}
@@ -917,34 +759,6 @@ export function NotesView({ notify }: { notify: (msg: string) => void }) {
             {dragOver && (
               <div className="shrink-0 border-t-2 border-dashed border-primary/60 bg-primary/5 px-3 py-2 text-center text-xs text-primary">
                 {t("knowledge.notes.dropHere")}
-              </div>
-            )}
-
-            {/* mobile full-screen rendered preview (same sheet shape as the
-                chat file viewer); renders after the whiteboard dialog's JSX
-                position so the board editor still stacks above it */}
-            {previewOpen && (
-              <div
-                className="fixed inset-0 z-50 flex flex-col bg-background md:hidden"
-                style={{
-                  paddingTop: "env(safe-area-inset-top)",
-                  paddingBottom: "env(safe-area-inset-bottom)",
-                }}
-              >
-                <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-                  <span className="min-w-0 truncate text-sm font-medium">
-                    {draft.title || t("knowledge.notes.untitled")}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewOpen(false)}
-                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                    aria-label={t("preview.close")}
-                  >
-                    <XIcon className="h-4 w-4" />
-                  </button>
-                </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-4">{previewBody}</div>
               </div>
             )}
 

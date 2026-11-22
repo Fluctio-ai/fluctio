@@ -21,6 +21,8 @@
 import type { ReactNode } from "react";
 import { ChevronRightIcon, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useLocale } from "@/lib/i18n";
+import { formatFullTime, formatListTime } from "@/lib/time";
 import { Button } from "@/components/ui/button";
 
 const HIDE_ON_HOVER = "transition-opacity group-hover:opacity-0 group-focus-within:opacity-0";
@@ -31,8 +33,7 @@ const HIT_AREA = "[&_button]:relative [&_button]:after:absolute [&_button]:after
 export function KbRow({
   title,
   titleClassName,
-  time,
-  timeTitle,
+  timeAt,
   description,
   badge,
   actions,
@@ -42,10 +43,9 @@ export function KbRow({
 }: {
   title: ReactNode;
   titleClassName?: string;
-  /** Short tier label (formatListTime) for the title row's right slot. */
-  time?: string;
-  /** Full-string tooltip for the time slot (formatFullTime). */
-  timeTitle?: string;
+  /** Row timestamp — rendered as the formatListTime tier label in the title
+      row's right slot, with the formatFullTime string as its tooltip. */
+  timeAt?: string | number | Date | null;
   /** Gray-small second line (left). */
   description?: ReactNode;
   /** Desc-row right slot, default content (due badges, markers). */
@@ -57,6 +57,9 @@ export function KbRow({
   onClick?: () => void;
   className?: string;
 }) {
+  const { locale } = useLocale();
+  const time = formatListTime(timeAt, locale);
+  const timeTitle = formatFullTime(timeAt, locale);
   const hasDescRow = description != null || badge != null;
   // Single-line rows promote the action group into the title row, where it
   // swaps places with the time label on hover.
