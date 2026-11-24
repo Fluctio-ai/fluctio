@@ -2381,6 +2381,20 @@ export function ChatScreen() {
     setAttachments((prev) => [...prev, ...newFiles]);
   }, []);
 
+  // Ctrl+V paste: clipboard files (screenshots, files copied from Explorer)
+  // drop straight into the attachment chips, same as the attach button.
+  // Plain-text paste has an empty file list and falls through untouched.
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      if (!canAttach) return;
+      const files = Array.from(e.clipboardData?.files ?? []);
+      if (files.length === 0) return;
+      e.preventDefault();
+      setAttachments((prev) => [...prev, ...files]);
+    },
+    [canAttach],
+  );
+
   const removeAttachment = useCallback((idx: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== idx));
   }, []);
@@ -3024,6 +3038,7 @@ export function ChatScreen() {
                     value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                     onBlur={() => setTimeout(() => setSlashOpen(false), SLASH_BLUR_CLOSE_MS)}
                     placeholder={
                       isReadOnlyView
@@ -3149,6 +3164,7 @@ export function ChatScreen() {
                     value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                     onBlur={() => setTimeout(() => setSlashOpen(false), SLASH_BLUR_CLOSE_MS)}
                     placeholder={
                       isReadOnlyView

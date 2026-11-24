@@ -65,7 +65,7 @@ Open `http://localhost:18953` and login with your admin token.
 
 Click an agent to enter its management panel:
 
-- **Chat** — Talk to the agent (debug/test); conversation auto-titled from the first exchange
+- **Chat** — Talk to the agent (debug/test); conversation auto-titled from the first exchange; attach files via the paperclip button or paste (Ctrl+V) screenshots / files straight into the composer
 - **Files** — Edit SOUL.md, IDENTITY.md, MEMORY.md, etc.
 - **Skills** — Agent-private skills
 - **Models** — Agent-specific provider + model overrides (shadow system entries by name; agent-scope `agents.defaults.model` overrides the system default)
