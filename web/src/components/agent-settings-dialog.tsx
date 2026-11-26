@@ -281,8 +281,10 @@ export function AgentSettingsDialog({
           // clips a tab or a save button.
           "flex flex-col h-[100dvh] w-full max-w-none rounded-none",
           "pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]",
-          // ≥sm: the original centered two-column dialog.
-          "sm:h-[85vh] sm:w-[95vw] sm:max-w-[1100px] sm:rounded-xl sm:pt-0 sm:pb-0",
+          // ≥sm: the original centered two-column dialog. Height hugs the
+          // tab content (the rail sets the floor) instead of a fixed 85vh
+          // that left sparse tabs floating over a void.
+          "sm:h-auto sm:max-h-[85vh] sm:w-[95vw] sm:max-w-[1100px] sm:rounded-xl sm:pt-0 sm:pb-0",
           "sm:grid sm:grid-cols-[220px_1fr] sm:grid-rows-1",
         )}
       >

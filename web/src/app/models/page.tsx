@@ -359,7 +359,7 @@ export default function ModelsPage() {
     // wipes its stored API key. Refuse duplicates instead.
     const duplicate = !editingId && providers.some((p) => p.name === name);
     if (duplicate) {
-      window.alert(`A provider named "${name}" already exists — open it to edit instead of creating a duplicate.`);
+      window.alert(tt("models.duplicateName", { name }));
       return;
     }
     const cleanedModels = formModels.filter((m) => m.id.trim());

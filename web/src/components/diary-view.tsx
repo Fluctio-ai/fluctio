@@ -340,7 +340,7 @@ export function DiaryView({ notify }: { notify: (msg: string) => void }) {
                     d.date > todayCST()
                       ? "opacity-30 text-muted-foreground cursor-default"
                       : d.empty
-                        ? "border border-destructive text-destructive cursor-pointer hover:scale-110"
+                        ? "border border-border text-muted-foreground cursor-pointer hover:scale-110"
                         : d.has
                           ? cn(heatLevel(d.weight), "text-foreground cursor-pointer hover:scale-110")
                           : "opacity-40 text-muted-foreground cursor-pointer hover:scale-110",

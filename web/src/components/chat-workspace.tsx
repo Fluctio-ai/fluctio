@@ -487,7 +487,8 @@ export function WorkspacePanel({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                    title={`Open preview in new tab: ${appPreview.previewUrl}`}
+                    title={t("preview.openPreviewTab", { url: appPreview.previewUrl })}
+                    aria-label={t("preview.openPreviewTab", { url: appPreview.previewUrl })}
                   >
                     <ExternalLink className="h-4 w-4" />
                   </a>
@@ -501,6 +502,7 @@ export function WorkspacePanel({
                       : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                   }`}
                   title={t("preview.downloadAllZip")}
+                  aria-label={t("preview.downloadAllZip")}
                 >
                   <Download className="h-4 w-4" />
                 </a>
@@ -510,6 +512,7 @@ export function WorkspacePanel({
                     disabled={revealing || (!sessionId && !projectId)}
                     className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
                     title={t("preview.openFolderFinder")}
+                    aria-label={t("preview.openFolderFinder")}
                   >
                     <FolderSearch className="h-4 w-4" />
                   </button>
@@ -519,6 +522,7 @@ export function WorkspacePanel({
                   disabled={loading}
                   className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-50"
                   title={t("preview.refresh")}
+                  aria-label={t("preview.refresh")}
                 >
                   <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
                 </button>
@@ -528,6 +532,7 @@ export function WorkspacePanel({
               onClick={onClose}
               className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
               title={t("preview.close")}
+              aria-label={t("preview.close")}
             >
               <X className="h-4 w-4" />
             </button>
@@ -547,7 +552,7 @@ export function WorkspacePanel({
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                Files
+                {t("preview.files")}
               </button>
               <button
                 onClick={() => setTab("preview")}
@@ -557,20 +562,21 @@ export function WorkspacePanel({
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                Preview
+                {t("preview.preview")}
                 {(appPreview.status === "starting" || appPreview.status === "scaffolding") && (
                   <RefreshCw className="h-3 w-3 animate-spin" />
                 )}
               </button>
             </div>
           ) : (
-            <span className="px-1 text-xs font-medium text-muted-foreground">Files</span>
+            <span className="px-1 text-xs font-medium text-muted-foreground">{t("preview.files")}</span>
           )}
           {tab === "code" && (
             <button
               onClick={() => setTreeCollapsed((c) => !c)}
               className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-              title={treeCollapsed ? "Show file tree" : "Hide file tree"}
+              title={treeCollapsed ? t("preview.showFileTree") : t("preview.hideFileTree")}
+              aria-label={treeCollapsed ? t("preview.showFileTree") : t("preview.hideFileTree")}
             >
               {treeCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
             </button>

@@ -720,6 +720,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// nested {id}/apikeys + {id}/agents accept admin-or-self
 	// (gated in-handler via requireUserOrAdmin).
 	mux.HandleFunc("POST /api/users/{id}/apikeys", auth(s.handleCreateUserAPIKey))
+	mux.HandleFunc("GET /api/users", admin(s.handleListUsers))
 	mux.HandleFunc("GET /api/users/{id}/agents", auth(s.handleListUserAgents))
 	mux.HandleFunc("POST /api/users/{id}/agents", auth(s.handleCreateUserAgent))
 	// Cross-tenant agent list moved into /api/agents?all=true (admin-only

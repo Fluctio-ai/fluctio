@@ -133,16 +133,15 @@ export function NotifySettingsCard() {
       />
       {loadFailed ? (
         // Fail closed on load failure: show the error instead of toggles
-        // whose edits would silently never persist. English copy — no
-        // generic load-failure i18n key exists in the locales.
+        // whose edits would silently never persist.
         <div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          <span>Failed to load configuration — edits are disabled until it loads.</span>
+          <span>{t("common.loadConfigFailed")}</span>
           <button
             type="button"
             onClick={() => void loadConfig()}
             className="text-xs font-medium underline underline-offset-2"
           >
-            Retry
+            {t("common.retry")}
           </button>
         </div>
       ) : (

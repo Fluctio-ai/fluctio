@@ -72,6 +72,8 @@ export function channelLabel(channel?: string): string {
       return "Feishu";
     case "qq":
       return "QQ";
+    case "heartbeat":
+      return "Heartbeat";
     case "web":
     case "":
     case undefined:

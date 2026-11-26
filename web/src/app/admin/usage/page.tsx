@@ -162,7 +162,7 @@ function SummaryCard({ label, value, hint }: { label: string; value: string; hin
           <p className="text-sm text-muted-foreground">{label}</p>
           <Coins className="h-4 w-4 text-muted-foreground" />
         </div>
-        <p className="text-2xl font-semibold mt-2">{value}</p>
+        <p className="text-2xl font-semibold mt-2 tabular-nums">{value}</p>
         {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
       </CardContent>
     </Card>

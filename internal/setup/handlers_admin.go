@@ -637,6 +637,26 @@ func (s *Server) handleListUserAgents(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]any{"agents": out})
 }
 
+// handleListUsers returns every account on the platform. Admin-only:
+// the usage dashboard resolves ranking user IDs to display names
+// through this list (the frontend has always called GET /api/users —
+// the route simply didn't exist, so the lookup silently 404'd and the
+// table fell back to raw IDs).
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	if s.accounts == nil {
+		jsonResponse(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "auth not configured"})
+		return
+	}
+	accts, err := s.accounts.List(r.Context())
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "failed to list users"})
+		return
+	}
+	out := make([]*users.Account, 0, len(accts))
+	out = append(out, accts...)
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "users": out})
+}
+
 type adminCreateUserAgentReq struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`

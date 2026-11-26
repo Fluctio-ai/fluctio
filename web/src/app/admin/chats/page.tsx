@@ -59,6 +59,10 @@ export default function AdminChatsPage() {
   const safePage = Math.min(page, totalPages);
   const pageStart = (safePage - 1) * PAGE_SIZE;
   const pageRows = sorted.slice(pageStart, pageStart + PAGE_SIZE);
+  // Single-user sessions (and heartbeat/system runs) carry no owner
+  // fields — an all-empty column reads as a rendering bug, so only
+  // render it when at least one row can actually name its owner.
+  const anyOwner = sorted.some((s) => s.ownerDisplayName || s.ownerUsername || s.userId);
 
   return (
     <div className="p-6 space-y-6 max-w-5xl mx-auto">
@@ -105,7 +109,7 @@ export default function AdminChatsPage() {
                 <TableRow>
                   <TableHead>{t("adminChats.col.title")}</TableHead>
                   <TableHead className="hidden md:table-cell w-[200px]">{t("adminChats.col.agent")}</TableHead>
-                  <TableHead className="hidden lg:table-cell w-[180px]">{t("adminChats.col.owner")}</TableHead>
+                  {anyOwner && <TableHead className="hidden lg:table-cell w-[180px]">{t("adminChats.col.owner")}</TableHead>}
                   <TableHead className="hidden md:table-cell w-[120px]">{t("adminChats.col.channel")}</TableHead>
                   <TableHead className="hidden sm:table-cell w-[160px]">{t("adminChats.col.updated")}</TableHead>
                   <TableHead className="w-[60px] text-right">{t("adminChats.col.open")}</TableHead>
@@ -132,19 +136,21 @@ export default function AdminChatsPage() {
                         <span className="truncate" title={s.agentId}>{s.agentName || s.agentId}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground whitespace-nowrap">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <UserIcon className="size-3.5 shrink-0" />
-                        <span className="truncate" title={s.ownerEmail}>{s.ownerDisplayName || s.ownerUsername || s.userId}</span>
-                      </div>
-                    </TableCell>
+                    {anyOwner && (
+                      <TableCell className="hidden lg:table-cell text-xs text-muted-foreground whitespace-nowrap">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <UserIcon className="size-3.5 shrink-0" />
+                          <span className="truncate" title={s.ownerEmail}>{s.ownerDisplayName || s.ownerUsername || s.userId}</span>
+                        </div>
+                      </TableCell>
+                    )}
                     <TableCell className="hidden md:table-cell text-xs text-muted-foreground whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
                         <ChannelIcon channel={s.channel} className="size-3.5 text-muted-foreground" />
                         <span>{channelLabel(s.channel)}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs text-muted-foreground whitespace-nowrap">
+                    <TableCell className="hidden sm:table-cell text-xs text-muted-foreground whitespace-nowrap tabular-nums">
                       {formatTime(s.updatedAt)}
                     </TableCell>
                     <TableCell className="text-right">
@@ -152,6 +158,7 @@ export default function AdminChatsPage() {
                         href={`/agents/${encodeURIComponent(s.agentId)}/chat/${encodeURIComponent(s.id)}/`}
                         target="_blank" rel="noopener noreferrer"
                         title={t("adminChats.openTitle")}
+                        aria-label={t("adminChats.openTitle")}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                       >
                         <ExternalLink className="size-4" />

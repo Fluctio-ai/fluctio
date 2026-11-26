@@ -283,7 +283,7 @@ const RegularBubble = memo(function RegularBubble({
             <>
               {msg.timestamp > 0 && (
                 <span
-                  className="opacity-0 group-hover:opacity-100 text-2xs text-muted-foreground/60 transition-all"
+                  className="opacity-0 group-hover:opacity-100 text-2xs text-muted-foreground/60 transition-opacity"
                   title={formatDateTime(msg.timestamp)}
                 >
                   {formatTime(msg.timestamp)}
@@ -291,7 +291,7 @@ const RegularBubble = memo(function RegularBubble({
               )}
               <button
                 onClick={() => onCopy(msg)}
-                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-[opacity,background-color]"
                 title={t("chat.copy")}
               >
                 {copiedId === msg.id ? (
@@ -302,7 +302,7 @@ const RegularBubble = memo(function RegularBubble({
               </button>
               <button
                 onClick={() => onRetry(msg)}
-                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-[opacity,background-color]"
                 title={t("chat.resend")}
               >
                 <RotateCcw className="h-3 w-3" />
@@ -320,7 +320,7 @@ const RegularBubble = memo(function RegularBubble({
               )}
               <button
                 onClick={() => onCopy(msg)}
-                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-[opacity,background-color]"
                 title={t("chat.copy")}
               >
                 {copiedId === msg.id ? (
@@ -331,7 +331,7 @@ const RegularBubble = memo(function RegularBubble({
               </button>
               <button
                 onClick={onOpenFilesSheet}
-                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-[opacity,background-color]"
                 title={t("chat.viewTaskFiles")}
               >
                 <FolderOpen className="h-3 w-3" />
@@ -339,7 +339,7 @@ const RegularBubble = memo(function RegularBubble({
               {msg.seq != null && msg.seq >= 0 && (
                 <button
                   onClick={() => onFork(msg)}
-                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-all"
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded-md hover:bg-muted text-muted-foreground/60 hover:text-muted-foreground transition-[opacity,background-color]"
                   title={t("chat.fork")}
                 >
                   <GitBranch className="h-3 w-3" />
@@ -2581,13 +2581,6 @@ export function ChatScreen() {
     }
     return null;
   })();
-  // Hero title is the same on both the bare agent home and a project
-  // landing page — Manus-style "what can I do" prompt. Project pages
-  // render a small info card UNDER the hero (folder + name + meta)
-  // instead of taking over the headline, so users always know which
-  // agent they're chatting with first.
-  const heroTitle = t("chat.heroTitle");
-
   return (
     <div className="flex h-[calc(100vh-3rem)] flex-row">
       <div
@@ -2597,15 +2590,15 @@ export function ChatScreen() {
           // from the parent's h-[calc(100vh-3rem)]. Without it `justify-
           // center` centers content inside the post-header area, which
           // sits visually ~24px below the true viewport mid-line — the
-          // user notices the hero + composer pair drifting low. Adding
+          // user notices the composer drifting low. Adding
           // an equal bottom padding biases the centered group upward by
           // half the header height so the optical centre lines up with
           // the geometric centre of the screen.
-          // Empty state now also carries the dashboard board below the
-          // composer: `safe_center` keeps the Manus-style centering while
+          // Empty state also carries the dashboard board below the
+          // composer: `safe_center` keeps the centering while
           // the content fits, and falls back to start-aligned scrolling
           // (instead of clipping the top) when the board overflows the
-          // viewport — plain justify-center would cut the hero off-screen.
+          // viewport — plain justify-center would cut the content off-screen.
           (isEmpty
             ? " [justify-content:safe_center] overflow-y-auto pb-12"
             : "")
@@ -2624,18 +2617,12 @@ export function ChatScreen() {
           }
         >
           <div className="mx-auto max-w-2xl space-y-3">
-            {isEmpty && (
-              <div className="pb-10 pt-8 text-center motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1 motion-safe:duration-200">
-                <h1 className="text-3xl md:text-4xl font-semibold tracking-tight">
-                  {heroTitle}
-                </h1>
-              </div>
-            )}
-
             {/* Reverse-infinite scroll: spinner while an older page loads. */}
             {loadingOlder && (
-              <div className="flex justify-center py-2">
-                <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+              <div className="flex items-center justify-center gap-1 py-2">
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60" style={{ animationDelay: "0ms" }} />
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60" style={{ animationDelay: "200ms" }} />
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-muted-foreground/60" style={{ animationDelay: "400ms" }} />
               </div>
             )}
 
@@ -3381,7 +3368,6 @@ type ToolFamily = {
   icon: typeof Wrench;
   accent: string;        // group header + per-tool family icon color
   title: string;         // per-tool title text color
-  dot: string;           // per-tool spinner border color
   check: string;         // per-tool check icon color
   nonDefault: boolean;   // render the family icon beside per-tool title
 };
@@ -3392,7 +3378,6 @@ const DEFAULT_FAMILY: ToolFamily = {
   icon: Wrench,
   accent: "text-muted-foreground",
   title: "text-foreground",
-  dot: "border-info/60",
   check: "text-success",
   nonDefault: false,
 };
@@ -3489,7 +3474,11 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
             className="rounded-md flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className="h-5 w-5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
+              <span className="flex shrink-0 items-center gap-0.5">
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-info" style={{ animationDelay: "0ms" }} />
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-info" style={{ animationDelay: "200ms" }} />
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-info" style={{ animationDelay: "400ms" }} />
+              </span>
             ) : roundIndex !== undefined ? (
               // When this group is a round inside a bundle, the leading
               // glyph carries the round number — gives the bundle's
@@ -3508,10 +3497,10 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
             )}
             <span className="font-medium text-foreground">
               {isRH
-                ? (allDone ? "Regex Hook matched" : "Regex Hook running...")
+                ? (allDone ? t("chatScreen.regexHookMatched") : t("chatScreen.regexHookRunning"))
                 : (allDone
-                  ? `Executed ${tools.length} tool${tools.length > 1 ? "s" : ""}`
-                  : `Running tools (${doneCount}/${tools.length})...`)}
+                  ? t(tools.length > 1 ? "chatScreen.toolsExecutedMany" : "chatScreen.toolsExecutedOne", { count: tools.length })
+                  : t("chatScreen.toolsRunning", { done: doneCount, total: tools.length }))}
             </span>
             <span className="text-muted-foreground/60 text-2xs flex-1 text-left truncate">
               {tools.map((tc) => isRH ? tc.name.replace(/^regex_hook:\s*/, "") : tc.name).join(", ")}
@@ -3538,7 +3527,11 @@ function ToolCallGroup({ msg, surfacedSrcs, agentId, sessionId, workspaceRoot, n
                       return (
                         <>
                           {tc.result === undefined ? (
-                            <div className={`h-3 w-3 shrink-0 rounded-full border-2 ${fam.dot} border-t-transparent animate-spin`} />
+                            <span className="flex shrink-0 items-center gap-0.5">
+                              <span className="typing-dot inline-block h-1 w-1 rounded-full bg-info/70" style={{ animationDelay: "0ms" }} />
+                              <span className="typing-dot inline-block h-1 w-1 rounded-full bg-info/70" style={{ animationDelay: "200ms" }} />
+                              <span className="typing-dot inline-block h-1 w-1 rounded-full bg-info/70" style={{ animationDelay: "400ms" }} />
+                            </span>
                           ) : (
                             <Check className={`h-3 w-3 ${fam.check} shrink-0`} />
                           )}
@@ -3680,7 +3673,11 @@ function ToolRoundsBundle({
             className="rounded-md flex w-full items-center gap-2 px-3 py-2 text-xs hover:bg-muted/50 transition-colors"
           >
             {!allDone ? (
-              <div className="h-3.5 w-3.5 shrink-0 rounded-full border-2 border-info border-t-transparent animate-spin" />
+              <span className="flex shrink-0 items-center gap-0.5">
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-info" style={{ animationDelay: "0ms" }} />
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-info" style={{ animationDelay: "200ms" }} />
+                <span className="typing-dot inline-block h-1.5 w-1.5 rounded-full bg-info" style={{ animationDelay: "400ms" }} />
+              </span>
             ) : (
               <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             )}

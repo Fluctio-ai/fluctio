@@ -194,6 +194,11 @@ export class WikiGraphEngine {
 
   private tweens = new Map<string, TweenHandle>();
 
+  // prefers-reduced-motion: settle physics synchronously, skip viewport
+  // and hover tweens, and let the rAF loop sleep once a frame is clean
+  // instead of re-submitting the settled graph 60×/s.
+  private reducedMotion = false;
+
   private hoveredNodeId: string | null = null;
   private selectedId: string | null = null;
   private focusedNeighbours = new Set<string>();
@@ -263,6 +268,14 @@ export class WikiGraphEngine {
       return;
     }
     this.app = app;
+    // The TickerPlugin binds app.render into the app ticker, and Ticker.add
+    // auto-starts (autoStart defaults true) — so Application's autoStart:false
+    // doesn't actually keep the ticker idle, and it would re-schedule rAF
+    // 60×/s re-submitting an unchanged stage. Nothing here listens to the
+    // ticker (frames are driven manually below, resize via ResizeObserver),
+    // so stop it and forbid restarts.
+    app.ticker.stop();
+    app.ticker.autoStart = false;
     this.width = app.screen.width;
     this.height = app.screen.height;
     this.canvas = app.canvas as HTMLCanvasElement;
@@ -284,13 +297,14 @@ export class WikiGraphEngine {
 
     this.bindZoomAndDrag();
     this.canvas.addEventListener("dblclick", this.onDoubleClick);
+    this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.rafId = requestAnimationFrame(this.renderFrame);
 
     this.resizeObserver = new ResizeObserver(() => {
       this.width = this.container.clientWidth;
       this.height = this.container.clientHeight;
       this.app.renderer.resize(this.width, this.height);
-      this.renderDirty = true;
+      this.wakeRender();
     });
     this.resizeObserver.observe(this.container);
   }
@@ -402,7 +416,7 @@ export class WikiGraphEngine {
     );
     const tx = this.width / 2 - ((minX + cx + maxX + cx) / 2) * k;
     const ty = this.height / 2 - ((minY + cy + maxY + cy) / 2) * k;
-    if (opts?.animate) {
+    if (opts?.animate && !this.reducedMotion) {
       this.animateToViewport(tx, ty, k, 500);
     } else {
       this.setTransform(tx, ty, k);
@@ -429,10 +443,29 @@ export class WikiGraphEngine {
     return this.theme.typeColors[n.pageType] ?? this.theme.node;
   }
 
+  // Run the d3-force layout to rest in one synchronous burst — the
+  // reduced-motion replacement for letting the timer animate the cool-down.
+  private settleSim(): void {
+    if (!this.sim) return;
+    this.sim.stop();
+    let guard = 500;
+    while (this.sim.alpha() >= this.sim.alphaMin() && guard-- > 0) this.sim.tick();
+  }
+
+  // Mark the frame dirty and, under reduced motion, restart the render
+  // loop if it has gone to sleep. Normal mode leaves the always-on loop
+  // untouched, so this behaves exactly like the old bare flag write.
+  private wakeRender(): void {
+    this.renderDirty = true;
+    if (!this.destroyed && this.reducedMotion && this.rafId === 0) {
+      this.rafId = requestAnimationFrame(this.renderFrame);
+    }
+  }
+
   private rebuild(simLinks: SimLink[]): void {
     this.sim?.stop();
     this.lastLabelK = 0;
-    this.renderDirty = true;
+    this.wakeRender();
     this.nodeRenderData = [];
     this.linkRenderData = [];
     this.tweens.forEach((t) => t.stop());
@@ -473,6 +506,7 @@ export class WikiGraphEngine {
       if (!this.hasUserInteracted && !this.destroyed) this.fitView({ animate: true });
     });
     this.sim = sim;
+    if (this.reducedMotion) this.settleSim();
 
     const dpr = window.devicePixelRatio;
     for (const n of this.nodes) {
@@ -591,26 +625,37 @@ export class WikiGraphEngine {
     const focusId = this.focusId;
     const dim = focusId === this.selectedId ? FADE_ALPHA_SELECTED : FADE_ALPHA_HOVER;
 
-    this.tweens.get("hover")?.stop();
-    const nodeGroup = new Group();
-    for (const rd of this.nodeRenderData) {
-      const alpha = focusId === null ? 1 : rd.active ? 1 : dim;
-      nodeGroup.add(new Tween(rd.gfx).to({ alpha }, 200));
-    }
-    nodeGroup.getAll().forEach((tw) => tw.start());
-    this.tweens.set("hover", this.wrapTween(nodeGroup));
+    if (this.reducedMotion) {
+      // Snap dim/highlight to final values without the 200ms alpha tween.
+      for (const rd of this.nodeRenderData) {
+        rd.gfx.alpha = focusId === null ? 1 : rd.active ? 1 : dim;
+      }
+      for (const rd of this.linkRenderData) {
+        rd.alpha = focusId === null ? 1 : rd.active ? 1 : 0.2;
+        rd.color = rd.active ? this.theme.edgeHover : this.theme.edge;
+      }
+    } else {
+      this.tweens.get("hover")?.stop();
+      const nodeGroup = new Group();
+      for (const rd of this.nodeRenderData) {
+        const alpha = focusId === null ? 1 : rd.active ? 1 : dim;
+        nodeGroup.add(new Tween(rd.gfx).to({ alpha }, 200));
+      }
+      nodeGroup.getAll().forEach((tw) => tw.start());
+      this.tweens.set("hover", this.wrapTween(nodeGroup));
 
-    this.tweens.get("link")?.stop();
-    const linkGroup = new Group();
-    for (const rd of this.linkRenderData) {
-      const alpha = focusId === null ? 1 : rd.active ? 1 : 0.2;
-      rd.color = rd.active ? this.theme.edgeHover : this.theme.edge;
-      linkGroup.add(new Tween(rd).to({ alpha }, 200));
+      this.tweens.get("link")?.stop();
+      const linkGroup = new Group();
+      for (const rd of this.linkRenderData) {
+        const alpha = focusId === null ? 1 : rd.active ? 1 : 0.2;
+        rd.color = rd.active ? this.theme.edgeHover : this.theme.edge;
+        linkGroup.add(new Tween(rd).to({ alpha }, 200));
+      }
+      linkGroup.getAll().forEach((tw) => tw.start());
+      this.tweens.set("link", this.wrapTween(linkGroup));
     }
-    linkGroup.getAll().forEach((tw) => tw.start());
-    this.tweens.set("link", this.wrapTween(linkGroup));
 
-    this.renderDirty = true;
+    this.wakeRender();
   }
 
   /**
@@ -710,7 +755,7 @@ export class WikiGraphEngine {
     this.app.stage.position.set(t.x, t.y);
     // Label layout and the selection ring are screen-space (they depend on
     // k), so a transform change always schedules the next-frame rebuild.
-    this.renderDirty = true;
+    this.wakeRender();
   }
 
   private animateToViewport(tx: number, ty: number, k: number, durationMs: number): void {
@@ -784,7 +829,7 @@ export class WikiGraphEngine {
         .on("start", (event: D3DragEvent<HTMLCanvasElement, unknown, SimNode | undefined>) => {
           const subj = event.subject;
           if (!subj) return;
-          if (!event.active) this.sim?.alphaTarget(0.3).restart();
+          if (!event.active && !this.reducedMotion) this.sim?.alphaTarget(0.3).restart();
           subj.fx = subj.x;
           subj.fy = subj.y;
           subj.initialDragPos = { x: subj.x ?? 0, y: subj.y ?? 0 };
@@ -798,11 +843,20 @@ export class WikiGraphEngine {
           // Compensate zoom: screen delta / k → graph delta.
           subj.fx = subj.initialDragPos.x + (event.x - subj.initialDragPos.x) / this.currentTransform.k;
           subj.fy = subj.initialDragPos.y + (event.y - subj.initialDragPos.y) / this.currentTransform.k;
+          if (this.reducedMotion) {
+            // The d3 timer is stopped under reduced motion — tick a couple
+            // of steps so neighbours part around the dragged node, then
+            // render this discrete state.
+            this.sim?.tick();
+            this.sim?.tick();
+            this.wakeRender();
+          }
         })
         .on("end", (event: D3DragEvent<HTMLCanvasElement, unknown, SimNode | undefined>) => {
           const subj = event.subject;
           if (!subj) return;
           if (!event.active) this.sim?.alphaTarget(0);
+          if (this.reducedMotion) this.settleSim();
           subj.fx = null;
           subj.fy = null;
           this.dragging = false;
@@ -910,6 +964,13 @@ export class WikiGraphEngine {
     }
 
     this.app.renderer.render(this.app.stage);
+    if (this.reducedMotion && !busy) {
+      // Settled frame: put the loop to sleep instead of re-submitting an
+      // unchanged stage 60×/s. Interactions and resizes wake it via
+      // wakeRender().
+      this.rafId = 0;
+      return;
+    }
     this.rafId = requestAnimationFrame(this.renderFrame);
   };
 

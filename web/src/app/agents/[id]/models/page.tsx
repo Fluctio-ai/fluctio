@@ -512,7 +512,7 @@ export default function AgentModelsPage() {
     // instead of destroying credentials two clicks later.
     const duplicate = !editingId && providers.some((p) => p.name === name);
     if (duplicate) {
-      window.alert(`A provider named "${name}" already exists — open it to edit instead of creating a duplicate.`);
+      window.alert(t("models.duplicateName", { name }));
       return;
     }
     const cleanedModels = formModels.filter((m) => m.id.trim());

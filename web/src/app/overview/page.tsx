@@ -184,7 +184,7 @@ export default function OverviewPage() {
               <Bot className="h-4 w-4 text-primary" />
             </div>
           </div>
-          <p className="text-3xl font-semibold tracking-tight">
+          <p className="text-3xl font-semibold tracking-tight tabular-nums">
             {status?.agents?.length || 0}
           </p>
           <p className="text-xs text-muted-foreground mt-1">{t("overview.activeAgents")}</p>
@@ -199,7 +199,7 @@ export default function OverviewPage() {
                 <Users className="h-4 w-4 text-primary" />
               </div>
             </div>
-            <p className="text-3xl font-semibold tracking-tight">
+            <p className="text-3xl font-semibold tracking-tight tabular-nums">
               {status?.users ?? 0}
             </p>
             <p className="text-xs text-muted-foreground mt-1">{t("overview.registered")}</p>
@@ -215,7 +215,7 @@ export default function OverviewPage() {
                 <Smartphone className="h-4 w-4 text-primary" />
               </div>
             </div>
-            <p className="text-3xl font-semibold tracking-tight">
+            <p className="text-3xl font-semibold tracking-tight tabular-nums">
               {status?.chatters ?? 0}
             </p>
             <p className="text-xs text-muted-foreground mt-1">{t("overview.registered")}</p>
@@ -231,7 +231,7 @@ export default function OverviewPage() {
                 <MessagesSquare className="h-4 w-4 text-primary" />
               </div>
             </div>
-            <p className="text-3xl font-semibold tracking-tight">
+            <p className="text-3xl font-semibold tracking-tight tabular-nums">
               {chats ?? "—"}
             </p>
             <p className="text-xs text-muted-foreground mt-1">{t("overview.totalSessions")}</p>
@@ -247,7 +247,7 @@ export default function OverviewPage() {
                 <Radio className="h-4 w-4 text-primary" />
               </div>
             </div>
-            <p className="text-3xl font-semibold tracking-tight">{channelCount}</p>
+            <p className="text-3xl font-semibold tracking-tight tabular-nums">{channelCount}</p>
             <p className="text-xs text-muted-foreground mt-1">{t("overview.connected")}</p>
           </div>
         )}

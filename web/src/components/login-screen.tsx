@@ -27,7 +27,12 @@ export function LoginScreen({ onSuccess }: LoginScreenProps) {
     try {
       const res = await apiLogin(loginField.trim(), password);
       if (!res.ok) {
-        setError(res.error || t("login.invalidCredentials"));
+        // Authenticate() deliberately returns the same error for every
+        // failure mode; the only other login error is the rate limiter.
+        // Map both to localized copy instead of surfacing raw API English.
+        setError(res.error === "too many attempts; retry in a few minutes"
+          ? t("login.tooManyAttempts")
+          : t("login.invalidCredentials"));
         setLoading(false);
         return;
       }

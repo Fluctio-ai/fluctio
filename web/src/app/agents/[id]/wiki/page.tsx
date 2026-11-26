@@ -544,8 +544,10 @@ export default function WikiPage() {
         className="hidden md:block w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
       />
 
-      {/* Center: markdown preview */}
-      <div className={cn("flex-1 flex-col min-w-0", selectedPageId ? "flex" : "hidden md:flex")}>
+      {/* Center: markdown preview — hidden entirely until a page is
+          selected, so the graph below can take the freed width instead
+          of sitting squeezed next to an empty placeholder pane. */}
+      <div className={cn("flex-1 flex-col min-w-0", selectedPageId ? "flex" : "hidden")}>
         {selectedPage ? (
           <ScrollArea className="flex-1 min-h-0">
             <div className="p-6 max-w-5xl">
@@ -620,8 +622,9 @@ export default function WikiPage() {
         )}
       </div>
 
-      {/* Center/right resize handle + right-pane collapse */}
-      {!rightCollapsed && (
+      {/* Center/right resize handle + right-pane collapse. The handle is
+          pointless while the graph is flex-1 (nothing selected). */}
+      {!rightCollapsed && selectedPageId && (
         <div
           onPointerDown={(e) => startDrag(e, "right")}
           className="hidden lg:block w-1 shrink-0 cursor-col-resize hover:bg-primary/40 transition-colors"
@@ -633,12 +636,19 @@ export default function WikiPage() {
           className={cn(
             "flex-col",
             showGraphOverlay ? "fixed inset-0 z-50 bg-background flex" : "hidden",
-            "lg:static lg:z-auto lg:inset-auto lg:bg-transparent lg:border-l lg:shrink-0 lg:w-[var(--pane-rw)] lg:flex",
+            selectedPageId
+              ? "lg:static lg:z-auto lg:inset-auto lg:bg-transparent lg:border-l lg:shrink-0 lg:w-[var(--pane-rw)] lg:flex"
+              : "lg:static lg:z-auto lg:inset-auto lg:bg-transparent lg:border-l lg:flex-1 lg:flex",
           )}
         >
           <div className="p-3 border-b flex items-center gap-2">
             <NetworkIcon className="h-4 w-4" />
             <h3 className="text-sm font-semibold">{t("wiki.knowledgeGraph")}</h3>
+            {!selectedPageId && (
+              <span className="hidden lg:inline text-xs text-muted-foreground truncate">
+                {t("wiki.selectPagePrompt")}
+              </span>
+            )}
             <Button
               variant="ghost"
               size="icon"
