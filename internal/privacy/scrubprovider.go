@@ -38,7 +38,10 @@ func OptionsFor(agentID string, priv config.PrivacyCfg) Options {
 }
 
 // WrapProvider returns a provider whose outgoing messages are
-// PII-scrubbed when enabled. Background LLM pipelines (auto-persist,
+// PII-scrubbed when enabled, and whose responses have echoed scrubbed
+// placeholders restored back to real values (round-trip: scrub outbound,
+// restore inbound — the ledger recorded at tag time is the mapping).
+// Background LLM pipelines (auto-persist,
 // topic summaries, compaction, wiki/card generation, article insights,
 // diary, skill-learner extraction) consume the same conversation content
 // the interactive loop scrubs — but they call prov.Chat outside that
@@ -60,12 +63,27 @@ func WrapProvider(p provider.Provider, opts Options, enabled bool) provider.Prov
 	return scrubProvider{Provider: p, opts: opts, enabled: enabled}
 }
 
-// Chat scrubs every outgoing message before delegating.
+// Chat scrubs every outgoing message before delegating, then restores
+// scrubbed placeholders in the response (round-trip): background
+// pipelines persist their output locally (summaries, MEMORY.md, wiki,
+// insights), and a placeholder baked into those artifacts can never be
+// repaired later — the model copies it into code and writes it to disk.
+// RawAssistant passes through untouched: it replays masked next round.
 func (s scrubProvider) Chat(ctx context.Context, messages []provider.Message, tools []provider.Tool, model string, maxTokens int, temperature float64) (*provider.Response, error) {
-	return s.Provider.Chat(ctx, ScrubMessages(messages, s.opts), tools, model, maxTokens, temperature)
+	resp, err := s.Provider.Chat(ctx, ScrubMessages(messages, s.opts), tools, model, maxTokens, temperature)
+	if err != nil {
+		return resp, err
+	}
+	RestoreResponse(resp)
+	return resp, nil
 }
 
-// ChatStream scrubs the same way for streaming callers.
+// ChatStream scrubs the same way for streaming callers and wraps the
+// stream so echoed placeholders come back restored chunk-by-chunk.
 func (s scrubProvider) ChatStream(ctx context.Context, messages []provider.Message, tools []provider.Tool, model string, maxTokens int, temperature float64) (*provider.StreamReader, error) {
-	return s.Provider.ChatStream(ctx, ScrubMessages(messages, s.opts), tools, model, maxTokens, temperature)
+	sr, err := s.Provider.ChatStream(ctx, ScrubMessages(messages, s.opts), tools, model, maxTokens, temperature)
+	if err != nil {
+		return sr, err
+	}
+	return RestoreStreamReader(sr), nil
 }

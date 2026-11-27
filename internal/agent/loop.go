@@ -4827,6 +4827,15 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 			}
 			return a.provider.Chat(ctx, llm, tools, a.model, a.maxTokens, a.temperature)
 		})
+		// 隐私恢复通道(与 streamChatToResponseWithOptions 装配点同语义):
+		// 流式端点的 ReAct 迭代直接走 provider.Chat,不经那个装配点 ——
+		// 不在此恢复,工具参数带着占位符执行(写盘 = 占位符落盘),最终
+		// 正文落库与 API 消费者看到的也是占位符。必须先于 maybeRecover
+		// ToolCalls:recovery 从 Content 捞工具调用,先恢复才不会把占位符
+		// 捞进参数;RawAssistant 保持不动,下轮出站 scrub 重掩码保稳定。
+		if a.piiScrubEnabled {
+			privacy.RestoreResponse(resp)
+		}
 
 		hcAfter := &HookContext{AgentName: a.name, Point: AfterModelCall, Messages: messages, Response: resp, Error: err, StartTime: hcBefore.StartTime, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, GoalSessionKey: a.registry.GoalSessionKey()}
 		a.hooks.Run(ctx, hcAfter)
