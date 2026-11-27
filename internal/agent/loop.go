@@ -499,10 +499,12 @@ func summarizeMCPServers(servers map[string]config.MCPServerConfig, sessionDir s
 }
 
 // NewAgent creates a new Agent from a resolved config.
-// bgProvider returns a provider whose outgoing messages are PII-scrubbed
-// when privacy scrubbing is enabled. For background LLM pipelines
-// (compaction, topic summaries, auto-persist, insights) that consume raw
-// conversation content outside the interactive loop's scrub point —
+// bgProvider returns the round-trip wrapped provider — outbound
+// PII-scrubbed, inbound placeholders restored — when privacy scrubbing is
+// enabled. It serves every Chat caller outside the main loops' assembly
+// points: background LLM pipelines (compaction, topic summaries,
+// auto-persist, insights) that consume raw conversation content, the
+// subagent loop, and the streaming endpoint's blocking ReAct rounds —
 // without it they silently bypassed the privacy.piiScrubbing switch.
 // Returns the raw provider when scrubbing is off.
 func (a *Agent) bgProvider() provider.Provider {
@@ -1237,8 +1239,9 @@ func (a *Agent) streamChatToResponseWithOptions(ctx context.Context, messages []
 	// 隐私恢复通道: scrub 开启时,模型回显的 [LABEL_xxxxxx] 占位符
 	// 在落库 / 发给用户 / 交给工具执行前换回真值(工具参数换回后
 	// 才能拿真值干活;下轮出站 scrub 会对历史重新脱敏)。放在 diag
-	// 之后:llm_call_diag 不落真值。所有交互式路径(主循环 / 流式 /
-	// plan 模式)都经此函数装配响应,一处覆盖。
+	// 之后:llm_call_diag 不落真值。非流式主循环与 plan 模式经此函数
+	// 装配;流式 ReAct 迭代与 subagent 直接调 provider,恢复在各自
+	// 调用点的 round-trip 包装(bgProvider)里完成。
 	if a.piiScrubEnabled {
 		privacy.RestoreResponse(resp)
 	}
@@ -4820,22 +4823,14 @@ func (a *Agent) HandleMessageStream(ctx context.Context, msg bus.InboundMessage)
 		// context-length overflow so a long task survives instead of dying.
 		var resp *provider.Response
 		var ptlCompacted bool
+		// bgProvider 是 round-trip 包装(出站 scrub + 返回 restore):这条
+		// 流式端点的 ReAct 迭代不经 streamChatToResponseWithOptions 装配点
+		// (每轮用阻塞 Chat 是刻意的 —— 答案已由预调用生成,再走 ChatStream
+		// 会二次生成二次计费),双向隐私处理收进包装一处;此路径无
+		// llm_call_diag,不违反"diag 不落真值"的顺序约束。
 		resp, messages, ptlCompacted, err = a.callLLMWithPTLRecovery(ctx, messages, toolDefs, func(ctx context.Context, msgs []provider.Message, tools []provider.Tool) (*provider.Response, error) {
-			llm := msgs
-			if a.piiScrubEnabled {
-				llm = privacy.ScrubMessages(msgs, a.piiOpts)
-			}
-			return a.provider.Chat(ctx, llm, tools, a.model, a.maxTokens, a.temperature)
+			return a.bgProvider().Chat(ctx, msgs, tools, a.model, a.maxTokens, a.temperature)
 		})
-		// 隐私恢复通道(与 streamChatToResponseWithOptions 装配点同语义):
-		// 流式端点的 ReAct 迭代直接走 provider.Chat,不经那个装配点 ——
-		// 不在此恢复,工具参数带着占位符执行(写盘 = 占位符落盘),最终
-		// 正文落库与 API 消费者看到的也是占位符。必须先于 maybeRecover
-		// ToolCalls:recovery 从 Content 捞工具调用,先恢复才不会把占位符
-		// 捞进参数;RawAssistant 保持不动,下轮出站 scrub 重掩码保稳定。
-		if a.piiScrubEnabled {
-			privacy.RestoreResponse(resp)
-		}
 
 		hcAfter := &HookContext{AgentName: a.name, Point: AfterModelCall, Messages: messages, Response: resp, Error: err, StartTime: hcBefore.StartTime, Channel: msg.Channel, AccountID: msg.AccountID, ChatID: msg.ChatID, UserID: a.ownerUserID, GoalSessionKey: a.registry.GoalSessionKey()}
 		a.hooks.Run(ctx, hcAfter)
@@ -5093,6 +5088,12 @@ func (a *Agent) streamFinalDeliveryAfterCap(ctx context.Context, inboundMsg bus.
 		}
 		a.meterTokens(ctx, sess.Key(), streamUsage, 0)
 		content := full.String()
+		// 逐 chunk 恢复(RestoreStreamReader)对跨 chunk 切裂的占位符
+		// 无能为力(整 token 正则要求完整 token 落在同一 chunk);落库前
+		// 对拼装全文补一次,幂等,终态物化点收口。
+		if a.piiScrubEnabled {
+			content = privacy.Restore(content)
+		}
 		if content == "" {
 			content = fmt.Sprintf("I've reached the maximum number of tool iterations (%d) and couldn't synthesize a final response. The work above represents what I gathered before hitting the limit.", a.maxToolIterations)
 		}

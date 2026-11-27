@@ -23,7 +23,7 @@ func (c *captureProvider) Chat(ctx context.Context, messages []provider.Message,
 
 func (c *captureProvider) ChatStream(ctx context.Context, messages []provider.Message, tools []provider.Tool, model string, maxTokens int, temperature float64) (*provider.StreamReader, error) {
 	c.gotMessages = messages
-	ch := make(chan provider.StreamChunk, len(c.stream)+1)
+	ch := make(chan provider.StreamChunk, len(c.stream))
 	for _, chunk := range c.stream {
 		ch <- chunk
 	}

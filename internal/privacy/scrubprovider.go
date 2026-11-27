@@ -79,7 +79,10 @@ func (s scrubProvider) Chat(ctx context.Context, messages []provider.Message, to
 }
 
 // ChatStream scrubs the same way for streaming callers and wraps the
-// stream so echoed placeholders come back restored chunk-by-chunk.
+// stream so echoed placeholders come back restored chunk-by-chunk
+// (best-effort: a placeholder split across chunks passes through
+// unrestored — consumers persisting the assembled text should Restore
+// it once more; see RestoreStreamReader).
 func (s scrubProvider) ChatStream(ctx context.Context, messages []provider.Message, tools []provider.Tool, model string, maxTokens int, temperature float64) (*provider.StreamReader, error) {
 	sr, err := s.Provider.ChatStream(ctx, ScrubMessages(messages, s.opts), tools, model, maxTokens, temperature)
 	if err != nil {

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/fluctio-ai/fluctio/internal/privacy"
 	"github.com/fluctio-ai/fluctio/internal/provider"
 )
 
@@ -145,13 +144,10 @@ func (a *Agent) runSubagentLoop(ctx context.Context, task string, maxIterations 
 			})
 		}
 
-		// 隐私双向对齐主循环:出站 scrub(子代理此前裸调 provider,原始
-		// PII 直接出网)+ 返回 restore(工具参数换回真值后才拿真值干活,
-		// 写盘不是占位符;deliverable 落回父会话的也是真值)。
-		if a.piiScrubEnabled {
-			llmMsgs = privacy.ScrubMessages(llmMsgs, a.piiOpts)
-		}
-		resp, err := a.provider.Chat(ctx, llmMsgs, callTools, a.model, a.maxTokens, a.temperature)
+		// bgProvider 是 round-trip 包装(出站 scrub + 返回 restore):子代理
+		// 不经主循环的装配点,此前裸调 provider 让原始 PII 直接出网,工具
+		// 参数也带着占位符写盘;双向都收进包装一处,不再手抄。
+		resp, err := a.bgProvider().Chat(ctx, llmMsgs, callTools, a.model, a.maxTokens, a.temperature)
 		if err != nil {
 			// If the ctx itself expired, the parent caller has more
 			// useful framing than "context deadline exceeded" mid-
@@ -163,9 +159,6 @@ func (a *Agent) runSubagentLoop(ctx context.Context, task string, maxIterations 
 					subagentDefaultTimeout, i+1)
 			}
 			return "", fmt.Errorf("subagent chat failed at iteration %d: %w", i+1, err)
-		}
-		if a.piiScrubEnabled {
-			privacy.RestoreResponse(resp)
 		}
 
 		if !resp.HasToolCalls() {
@@ -276,15 +269,9 @@ func (a *Agent) runSubagentLoop(ctx context.Context, task string, maxIterations 
 		"phase":     "final-delivery",
 	}})
 	finalMessages := append(messages, capReachedNudge(maxIterations))
-	if a.piiScrubEnabled {
-		finalMessages = privacy.ScrubMessages(finalMessages, a.piiOpts)
-	}
-	finalResp, err := a.provider.Chat(ctx, finalMessages, nil, a.model, a.maxTokens, a.temperature)
+	finalResp, err := a.bgProvider().Chat(ctx, finalMessages, nil, a.model, a.maxTokens, a.temperature)
 	if err != nil {
 		return "", fmt.Errorf("subagent forced final delivery failed: %w", err)
-	}
-	if a.piiScrubEnabled {
-		privacy.RestoreResponse(finalResp)
 	}
 	if finalResp.Content == "" {
 		return fmt.Sprintf("[subagent reached %d-iteration limit without producing a final answer]", maxIterations), nil

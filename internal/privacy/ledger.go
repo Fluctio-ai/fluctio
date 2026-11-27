@@ -81,8 +81,12 @@ func RestoreResponse(resp *provider.Response) {
 
 // RestoreStreamReader 包装流式响应:每个 chunk 的内容与 tool call
 // 参数过恢复通道后再转发。错误在源流结束后、输出通道关闭前挂到
-// 包装流上(消费者只在通道关闭后读 Err,时序安全)。用于流式直发
-// 路径(streamFinalDeliveryAfterCap)。
+// 包装流上(消费者只在通道关闭后读 Err,时序安全)。调用方:
+// streamFinalDeliveryAfterCap 与 scrubProvider.ChatStream。
+//
+// 局限:逐 chunk 尽力恢复 —— 占位符被切到两个 chunk 时整 token
+// 正则匹配不上,该 chunk 原样放行;把拼装全文落库/交付的消费方
+// 须对全文再 Restore 一次(幂等)。
 func RestoreStreamReader(sr *provider.StreamReader) *provider.StreamReader {
 	if sr == nil {
 		return nil
